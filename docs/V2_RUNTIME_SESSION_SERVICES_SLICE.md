@@ -148,8 +148,35 @@ existing-key check. Repeating a valid current subscription remains idempotent.
 Owned processes use the existing shutdown guard. Borrowed processes are monitored
 and never forcefully terminated by the runtime. A managed runtime still needs
 its supervising parent to terminate its child if permanent restart is configured.
-The pending shared absolute-startup/guard-control budget work applies to this
-slice too; it does not claim durability hooks or unbounded backend work are safe.
+One original StoreSupervisor cohort deadline now covers guard registration,
+owned/borrowed service startup, binding hooks, listener startup and generation
+publication. An independent observer is armed before cohort startup can block.
+Each owned process records its provenance and is acknowledged by that observer
+before proceeding to finite guard registration. On cutoff, the observer marks
+that generation failed before killing only its registered owned processes;
+borrowed targets survive. Startup still runs under the real OTP parent, so
+ordinary owned shutdown and termination hooks retain their parent semantics.
+The observer and monitors retire on success and failure. Owned provenance
+remains until PID/cohort retirement so failed cohort shutdown also clears its
+registered descendants.
+
+Custom `bounded_startup: 1` adapters must call `watch_owned/1` before blocking
+initialization, pass its options to additional owned children, and use finite
+OTP startup timeouts. The watchdog bounds an adapter blocked in its supervisor's
+start call or binding hook. Unregistered or detached processes and arbitrary
+effects before registration remain outside this contract. Durable hooks still
+require separate qualification.
+
+Overall Runtime initialization remains a release gate: Runtime, Admission,
+ExecutionSupervisor, Scheduler handler initialization and the edge currently do
+not all consume one root deadline. A genuine cohort restart must get one fresh
+budget shared with replacement execution/handler startup. Normal lifetime
+shutdown-guard control also retains its existing contract; the new finite watch
+interface applies to startup. HTTP initialization claims need a separate bounded
+claim lifetime derived from the original invocation proof: their current lifetime
+inherits the shorter service operation wait (default 1s), while handler requests
+may run longer. An arbitrary caller may not extend a claim past its invocation.
+That distinction must be settled before HTTP initialization routing is enabled.
 
 ## Qualification
 
@@ -163,6 +190,8 @@ resource removals. Existing standalone session/store tests
 remain part of qualification. Current/minimum full/static results are recorded
 in the handoff evidence after the source freezes.
 
-The qualified phase implementation is integrated in the unpublished v2 draft. Before the borrowed-cohort correction, the combined current full selection passed 20 doctests, 34 properties and 3,937 executed tests (82 excluded), zero failures. The separately qualified correction rejects retired resource rows before URI lookup/re-subscription; both supported toolchains pass its 27 domain cases. One original cohort startup budget and actual HTTP routing remain separate open slices.
+The qualified phase implementation is integrated in the unpublished v2 draft. Before the borrowed-cohort correction, the combined current full selection passed 20 doctests, 34 properties and 3,937 executed tests (82 excluded), zero failures. The separately qualified correction rejects retired resource rows before URI lookup/re-subscription; both supported toolchains pass its 27 domain cases. At that checkpoint, the cohort startup budget and HTTP routing remained open slices.
 
-Final combined qualification with native RPC `0e4cfd1`: minimum/current full selections each pass 20 doctests, 34 properties and 3,938 executed tests, zero failures (82 excluded; minimum displays the 4,020-test inventory). Minimum merged Dialyzer passes all 67 existing filtered warnings with no new filters. Native RPC also passed 74 current stdio/framing cases and all nine Linux ACP package/SDK/archive jobs. Startup cutoff and production output/HTTP remain open.
+Final combined qualification with native RPC `0e4cfd1`: minimum/current full selections each pass 20 doctests, 34 properties and 3,938 executed tests, zero failures (82 excluded; minimum displays the 4,020-test inventory). Minimum merged Dialyzer passes all 67 existing filtered warnings with no new filters. Native RPC also passed 74 current stdio/framing cases and all nine Linux ACP package/SDK/archive jobs. That checkpoint left startup cutoff and production output/HTTP open.
+
+The startup follow-up is integrated into the unpublished v2 draft. It passes 100 runtime/services/startup regressions on both supported toolchains with independently source-built RPC `0e4cfd1`, including eight new startup cases. Whole-runtime initialization and production output/HTTP still require their separate integration gates.

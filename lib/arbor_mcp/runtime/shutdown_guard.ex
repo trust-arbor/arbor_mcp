@@ -6,6 +6,8 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownGuard do
   # follows process links, and exits after the root and owned descendants do.
   use GenServer
 
+  alias Arbor.MCP.Server.Runtime.{Deadline, ServiceStartup}
+
   @cleanup_grace_ms 50
 
   def start(supervisor, table, config) do
@@ -22,6 +24,23 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownGuard do
     ArgumentError -> {:error, :runtime_unavailable}
   catch
     :exit, _reason -> {:error, :runtime_unavailable}
+  end
+
+  def watch(table, pid, type, deadline) do
+    [{:shutdown_guard, guard}] = :ets.lookup(table, :shutdown_guard)
+
+    with :ok <- startup_call(guard, {:watch, pid}, deadline),
+         :ok <- watch_children(table, pid, type, deadline),
+         true <- Deadline.now() < deadline do
+      :ok
+    else
+      false -> {:error, :service_start_timeout}
+      error -> error
+    end
+  rescue
+    ArgumentError -> {:error, :runtime_unavailable}
+  catch
+    :exit, _reason -> {:error, :service_start_timeout}
   end
 
   def stop(table, reason) do
@@ -118,6 +137,7 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownGuard do
         {:noreply, state}
 
       {pid, monitors} ->
+        retire_owned(state.table, pid)
         state = %{state | monitors: monitors, children: Map.delete(state.children, pid)}
         finish_or_wait(state)
     end
@@ -161,6 +181,39 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownGuard do
     end)
   end
 
+  defp watch_children(_table, _pid, :worker, _deadline), do: :ok
+
+  defp watch_children(table, pid, :supervisor, deadline) do
+    with {:ok, children} <- startup_children(pid, deadline) do
+      Enum.reduce_while(children, :ok, fn
+        {_id, child, type, _modules}, :ok when is_pid(child) ->
+          case watch(table, child, type, deadline) do
+            :ok -> {:cont, :ok}
+            error -> {:halt, error}
+          end
+
+        _child, :ok ->
+          {:cont, :ok}
+      end)
+    end
+  end
+
+  defp startup_call(server, message, deadline) do
+    if Deadline.now() < deadline do
+      result = GenServer.call(server, message, min(4_294_967_295, Deadline.remaining(deadline)))
+      if Deadline.now() < deadline, do: result, else: {:error, :service_start_timeout}
+    else
+      {:error, :service_start_timeout}
+    end
+  end
+
+  defp startup_children(server, deadline) do
+    case startup_call(server, :which_children, deadline) do
+      children when is_list(children) -> {:ok, children}
+      error -> error
+    end
+  end
+
   defp watch_pid(state, pid) do
     if Map.has_key?(state.children, pid) do
       state
@@ -173,6 +226,22 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownGuard do
           monitors: Map.put(state.monitors, monitor, pid)
       }
     end
+  end
+
+  defp retire_owned(table, pid) do
+    case :ets.lookup(table, {:service_cohort_pid, pid}) do
+      [{{:service_cohort_pid, ^pid}, generation}] ->
+        ServiceStartup.kill_cohort(table, generation)
+        :ets.delete(table, {:service_cohort_pid, pid})
+
+      _other ->
+        :ok
+    end
+
+    :ets.match_delete(table, {{:service_start_owned, :_, pid}, :_})
+    :ets.delete(table, {:service_owner, pid})
+  rescue
+    ArgumentError -> :ok
   end
 
   defp force_children(state) do
