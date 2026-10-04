@@ -1,7 +1,16 @@
 defmodule Arbor.MCP.Server.Runtime.ServiceInvocation do
   @moduledoc false
 
-  alias Arbor.MCP.Server.Runtime.{Admission, Deadline, Ref, Services}
+  alias Arbor.MCP.Server.Runtime.{
+    Admission,
+    Deadline,
+    HTTPWriterBinding,
+    Ref,
+    ServiceRef,
+    Services
+  }
+
+  alias Arbor.MCP.SessionManager.SessionLease
 
   @enforce_keys [:runtime, :kind, :generation, :owner, :deadline, :origin]
   defstruct [:runtime, :kind, :generation, :owner, :deadline, :origin]
@@ -12,8 +21,29 @@ defmodule Arbor.MCP.Server.Runtime.ServiceInvocation do
             generation: reference(),
             owner: pid(),
             deadline: integer(),
-            origin: map() | nil
+            origin: map() | {:http, HTTPWriterBinding.t()} | nil
           }
+
+  @spec capture(map(), Deadline.t(), HTTPWriterBinding.t() | nil) ::
+          {:ok, t()} | {:error, atom()}
+  def capture(context, supplied_deadline, nil), do: capture(context, supplied_deadline)
+
+  def capture(%{origin: nil} = context, supplied_deadline, binding) do
+    with {:ok, proof} <- HTTPWriterBinding.validate(binding, context.runtime),
+         true <-
+           proof.owner == context.owner and proof.owner == self() and not is_nil(proof.lease) do
+      deadline =
+        if supplied_deadline == :infinity,
+          do: proof.deadline,
+          else: min(proof.deadline, supplied_deadline)
+
+      {:ok, snapshot(context, {:http, binding}, deadline)}
+    else
+      _invalid -> {:error, :invalid_http_invocation}
+    end
+  end
+
+  def capture(_context, _supplied_deadline, _binding), do: {:error, :invalid_http_invocation}
 
   @spec capture(map(), Deadline.t()) :: {:ok, t()} | {:error, atom()}
   def capture(%{origin: nil} = context, _supplied_deadline),
@@ -82,8 +112,26 @@ defmodule Arbor.MCP.Server.Runtime.ServiceInvocation do
 
   defp origin_current?(%__MODULE__{origin: nil}), do: true
 
+  defp origin_current?(%__MODULE__{origin: {:http, binding}} = invocation),
+    do: match?({:ok, _proof}, HTTPWriterBinding.validate(binding, invocation.runtime))
+
   defp origin_current?(invocation) do
     table = Ref.table(invocation.runtime)
     Admission.output_origin_valid?(table, invocation.origin)
   end
+
+  @spec matches_session?(t(), binary(), binary(), binary()) :: boolean()
+  def matches_session?(%__MODULE__{origin: {:http, writer}} = invocation, namespace, id, epoch) do
+    service = ServiceRef.new(invocation.runtime, :sessions)
+
+    with {:ok, proof} <- HTTPWriterBinding.validate(writer, invocation.runtime),
+         {:ok, {^id, ^epoch}} <- SessionLease.validate(proof.lease, service, :sessions),
+         {:ok, binding} <- Services.resolve(service, :sessions) do
+      namespace == (binding.namespace || "owned")
+    else
+      _invalid -> false
+    end
+  end
+
+  def matches_session?(%__MODULE__{}, _namespace, _id, _epoch), do: true
 end

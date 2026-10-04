@@ -20,7 +20,7 @@ defmodule Arbor.MCP.Transport.HTTP.BoundedStream do
              (is_binary(body) or is_nil(body)) and is_list(opts) do
     with {:ok, uri, address} <- TargetPolicy.resolve(url, opts) do
       pid =
-        spawn_link(fn ->
+        Arbor.MCP.Client.ConnectionScope.spawn_link(fn ->
           run(owner, method, uri, address, headers, body, opts)
         end)
 

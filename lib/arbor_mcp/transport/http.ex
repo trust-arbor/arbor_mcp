@@ -87,6 +87,7 @@ defmodule Arbor.MCP.Transport.HTTP do
   @behaviour Arbor.MCP.Transport
   require Logger
 
+  alias Arbor.MCP.Client.ConnectionScope
   alias Arbor.MCP.Authorization.{FullOAuthFlow, LogSanitizer}
 
   alias Arbor.MCP.Internal.{CACerts, DNSResolver, Headers, Options, Security, SecurityConfig, SSE}
@@ -377,7 +378,7 @@ defmodule Arbor.MCP.Transport.HTTP do
     # of leaving it hanging until timeout. No link is created, so the
     # exit-trapping client's {:EXIT, ...} transport handling is untouched.
     {_task_pid, task_ref} =
-      spawn_monitor(fn ->
+      ConnectionScope.spawn_monitor(fn ->
         result =
           case perform_and_maybe_auth(message, state) do
             {:ok, response} -> handle_http_response(response, state, message)
@@ -1240,6 +1241,7 @@ defmodule Arbor.MCP.Transport.HTTP do
          {:ok, http_options} <- modern_stream_http_options(url, state),
          {:ok, pid} <-
            ModernStreamClient.start(
+             _connection_scope: ConnectionScope.current(),
              parent: parent,
              request_id: request_id,
              url: url,
@@ -1459,6 +1461,7 @@ defmodule Arbor.MCP.Transport.HTTP do
         max_retry_delay: state.max_retry_delay,
         ssl_opts: transport_opts,
         parent: self(),
+        _connection_scope: ConnectionScope.current(),
         connect_timeout: state.timeouts.connect,
         handshake_timeout: state.timeouts.stream_handshake,
         idle_timeout: state.timeouts.stream_idle,

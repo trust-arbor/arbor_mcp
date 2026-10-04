@@ -12,7 +12,7 @@ defmodule Arbor.MCP.Compliance.StructuredOutputComplianceTest do
   """
   use ExUnit.Case, async: true
 
-  alias Arbor.MCP.Server.Tools
+  alias Arbor.MCP.Content.SchemaPolicy
 
   defmodule TestServer do
     use Arbor.MCP.Server.Handler
@@ -363,7 +363,7 @@ defmodule Arbor.MCP.Compliance.StructuredOutputComplianceTest do
       }
 
       # This tests the internal validation logic
-      result = Tools.validate_with_schema(valid_data, schema)
+      result = SchemaPolicy.validate(valid_data, schema)
       assert result == :ok
     end
 
@@ -379,7 +379,7 @@ defmodule Arbor.MCP.Compliance.StructuredOutputComplianceTest do
         "required" => ["temperature", "conditions"]
       }
 
-      result = Tools.validate_with_schema(invalid_data, schema)
+      result = SchemaPolicy.validate(invalid_data, schema)
       assert {:error, _errors} = result
     end
   end

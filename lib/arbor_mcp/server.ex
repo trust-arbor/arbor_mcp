@@ -25,11 +25,12 @@ defmodule Arbor.MCP.Server do
   lane is full. Controls issued inside a callback carry its invocation scope,
   so cancelled callbacks cannot send controls to a replacement peer.
 
-  > #### Deprecated API {: .warning}
-  >
-  > `Arbor.MCP.Server.Tools` (and `Tools.Simplified`) are deprecated, retained
-  > throughout 1.x, and planned for removal in **2.0.0**. Prefer
-  > `Arbor.MCP.Server.DSL` for new code.
+  Static definitions use `Arbor.MCP.Server.DSL`, including compile-time components.
+  Dynamic tool descriptors and dispatch belong in the application's Handler state;
+  `handle_list_tools/2` and `handle_call_tool/3` share its Runtime scheduler.
+  The former `Server.Tools` family was removed in v2. The
+  [dynamic tool example](https://github.com/trust-arbor/arbor_mcp/blob/master/examples/dynamic_tools.exs)
+  demonstrates registration, replacement, strict validation, and explicit defaults.
 
   > #### Protocol-deprecated features {: .warning}
   >

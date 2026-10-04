@@ -28,8 +28,12 @@ defmodule Arbor.MCP do
   - `Arbor.MCP.HttpPlug` - Phoenix/Plug MCP endpoint
   - `Arbor.MCP.Error` / `Arbor.MCP.Response` - Error and response helpers
 
-  ### Deprecated (retained through 1.x; planned for removal in 2.0.0)
-  - `Arbor.MCP.Server.Tools` and related modules — use `Arbor.MCP.Server.DSL`
+  ### Server definitions
+  Static tools, resources, templates, and prompts use `Arbor.MCP.Server.DSL`.
+  Dynamic tool catalogs belong in application Handler state through
+  `handle_list_tools/2` and `handle_call_tool/3`. The old `Server.Tools` family
+  was removed in v2; see the
+  [application-owned dynamic tool example](https://github.com/trust-arbor/arbor_mcp/blob/master/examples/dynamic_tools.exs).
 
   > #### Internal Modules {: .warning}
   >

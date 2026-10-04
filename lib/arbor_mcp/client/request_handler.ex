@@ -7,6 +7,7 @@ defmodule Arbor.MCP.Client.RequestHandler do
   """
 
   require Logger
+  alias Arbor.MCP.Client.ConnectionScope
   alias Arbor.MCP.Client.{Deadline, InputDispatcher, MRTR, NotificationListener}
   alias Arbor.MCP.Error
   alias Arbor.MCP.Internal.{Maps, Protocol, RequestParams, VersionRegistry}
@@ -1459,7 +1460,7 @@ defmodule Arbor.MCP.Client.RequestHandler do
       parent = self()
 
       {pid, ref} =
-        spawn_monitor(fn ->
+        ConnectionScope.spawn_monitor(fn ->
           outcome =
             try do
               MRTR.fulfill(input_requests, handler, handler_state, capabilities, opts)
@@ -1567,7 +1568,7 @@ defmodule Arbor.MCP.Client.RequestHandler do
     parent = self()
 
     {pid, ref} =
-      spawn_monitor(fn ->
+      ConnectionScope.spawn_monitor(fn ->
         outcome =
           try do
             {:ok, fun.()}

@@ -1,17 +1,16 @@
 defmodule Arbor.MCP.DeprecationCompatibilityTest do
   use ExUnit.Case, async: true
 
-  @retained_tools_modules [
+  @removed_tools_modules [
     Arbor.MCP.Server.Tools,
     Arbor.MCP.Server.Tools.Simplified,
     Arbor.MCP.Server.Tools.Builder,
+    Arbor.MCP.Server.Tools.Builder.Tool,
     Arbor.MCP.Server.Tools.Helpers,
     Arbor.MCP.Server.Tools.Registry,
     Arbor.MCP.Server.Tools.ResponseNormalizer,
     Arbor.MCP.Server.Tools.ASTValidator
   ]
-
-  @deprecated_metadata_modules [Arbor.MCP.Server.Tools]
 
   @retained_protocol_functions [
     {Arbor.MCP.Server, :send_log_message, 4},
@@ -33,32 +32,23 @@ defmodule Arbor.MCP.DeprecationCompatibilityTest do
     {Arbor.MCP.Server.Handler, :handle_set_log_level, 2}
   ]
 
-  test "deprecated Server.Tools modules remain public throughout 1.x" do
-    for module <- @retained_tools_modules do
-      assert Code.ensure_loaded?(module)
-      assert {:docs_v1, _, _, _, %{"en" => module_doc}, _, _} = Code.fetch_docs(module)
-      assert module_doc =~ "2.0.0"
-      refute module_doc =~ "1.1.0"
+  test "the complete Server.Tools family is absent from the v2 compiled application" do
+    for module <- @removed_tools_modules do
+      refute Code.ensure_loaded?(module)
+      assert :code.which(module) == :non_existing
+      assert Code.Typespec.fetch_types(module) == :error
     end
   end
 
-  test "remaining compiled deprecation metadata schedules Tools removal for 2.0" do
-    for module <- @deprecated_metadata_modules do
-      assert {:docs_v1, _, _, _, _, _, docs} = Code.fetch_docs(module)
+  test "using the retired Tools DSL fails instead of silently forwarding to another API" do
+    module = "RetiredToolsUse#{System.unique_integer([:positive])}"
 
-      messages =
-        for {_identifier, _line, _signatures, _doc, metadata} <- docs,
-            message = metadata[:deprecated],
-            is_binary(message),
-            do: message
-
-      assert messages != []
-      assert Enum.all?(messages, &String.contains?(&1, "2.0.0"))
-      refute Enum.any?(messages, &String.contains?(&1, "1.1.0"))
+    assert_raise CompileError, fn ->
+      Code.compile_string("defmodule #{module} do\nuse Arbor.MCP.Server.Tools\nend")
     end
   end
 
-  test "protocol-deprecated Roots, Sampling, and Logging APIs remain public in 1.x" do
+  test "protocol-deprecated Roots, Sampling, and Logging APIs remain public in v2" do
     for {module, name, arity} <- @retained_protocol_functions do
       assert Code.ensure_loaded?(module)
       assert function_exported?(module, name, arity)
@@ -69,7 +59,7 @@ defmodule Arbor.MCP.DeprecationCompatibilityTest do
     end
   end
 
-  test "protocol deprecation docs provide migrations without scheduling a 1.x removal" do
+  test "protocol deprecation docs provide migrations without removing retained functions" do
     documented = @retained_protocol_functions ++ @retained_protocol_callbacks
 
     for {module, name, arity} <- documented do

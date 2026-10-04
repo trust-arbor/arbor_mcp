@@ -219,7 +219,12 @@ defmodule Arbor.MCP.Server.Runtime.ServiceOperation do
               deadline: deadline
             }
 
-            attach_invocation(context, operation, supplied_deadline)
+            attach_invocation(
+              context,
+              operation,
+              supplied_deadline,
+              Keyword.get(opts, :invocation)
+            )
           else
             {:error, :operation_timeout}
           end
@@ -230,12 +235,19 @@ defmodule Arbor.MCP.Server.Runtime.ServiceOperation do
   defp operation_owner(:claim_initialization, %{owner: owner}), do: owner
   defp operation_owner(_operation, _origin), do: self()
 
-  defp attach_invocation(context, :claim_initialization, supplied_deadline) do
-    with {:ok, invocation} <- ServiceInvocation.capture(context, supplied_deadline),
-         do: {:ok, Map.put(context, :invocation, invocation)}
+  defp attach_invocation(context, :claim_initialization, supplied_deadline, binding) do
+    with {:ok, invocation} <- ServiceInvocation.capture(context, supplied_deadline, binding) do
+      {:ok,
+       context
+       |> Map.put(:invocation, invocation)
+       |> Map.put(:deadline, min(context.deadline, ServiceInvocation.deadline(invocation)))}
+    end
   end
 
-  defp attach_invocation(context, _operation, _supplied_deadline), do: {:ok, context}
+  defp attach_invocation(context, _operation, _supplied_deadline, nil), do: {:ok, context}
+
+  defp attach_invocation(_context, _operation, _supplied_deadline, _binding),
+    do: {:error, :invalid_http_invocation}
 
   defp validate_deadline(deadline),
     do:

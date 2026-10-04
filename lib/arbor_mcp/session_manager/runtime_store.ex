@@ -160,6 +160,7 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
          false <- row.initialized,
          false <- row.initialization_claimed,
          true <- ServiceInvocation.current?(context.invocation),
+         true <- ServiceInvocation.matches_session?(context.invocation, namespace, id, epoch),
          :ok <- ServiceOperation.validate_context(context) do
       token = make_ref()
 
@@ -178,6 +179,7 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
       case with :ok <- row_capacity(next, key, updated),
                 :ok <- ServiceOperation.validate_context(context),
                 true <- ServiceInvocation.current?(claim.invocation),
+                true <- claim_matches_session?(claim, key, epoch),
                 do: :ok do
         :ok ->
           SessionStore.insert(model.store, :sessions, {key, updated})
@@ -544,4 +546,7 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
        do: page(rest, count, limit, [event | result], used + bytes)
 
   defp page(_remaining, _count, _limit, result, _used), do: Enum.reverse(result)
+
+  defp claim_matches_session?(claim, {namespace, id}, epoch),
+    do: ServiceInvocation.matches_session?(claim.invocation, namespace, id, epoch)
 end

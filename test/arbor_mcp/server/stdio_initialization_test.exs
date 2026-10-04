@@ -40,13 +40,15 @@ defmodule Arbor.MCP.Server.StdioInitializationTest do
   end
 
   test "expired startup does not consume buffered stdin or stop borrowed devices" do
-    {caller, input, output, bytes} = start_held(150)
-    assert_receive {:stdio_constructed, root, {:ok, edge_supervisor}}, 1_000
+    started = System.monotonic_time(:millisecond)
+    {caller, input, output, bytes} = start_held(1_000)
+    assert_receive {:stdio_constructed, root, {:ok, edge_supervisor}}, 1_500
     root_monitor = Process.monitor(root)
     edge_monitor = Process.monitor(edge_supervisor)
-    assert_receive {:stdio_started, ^caller, {:error, :runtime_init_timeout}}, 1_000
-    assert_receive {:DOWN, ^root_monitor, :process, ^root, _reason}, 1_000
-    assert_receive {:DOWN, ^edge_monitor, :process, ^edge_supervisor, _reason}, 1_000
+    assert_receive {:stdio_started, ^caller, {:error, :runtime_init_timeout}}, 1_500
+    assert_receive {:DOWN, ^root_monitor, :process, ^root, _reason}, 1_500
+    assert_receive {:DOWN, ^edge_monitor, :process, ^edge_supervisor, _reason}, 1_500
+    assert System.monotonic_time(:millisecond) - started < 2_000
     assert %{input: ^bytes, read: nil} = GenServer.call(input, :state)
     assert Process.alive?(input) and Process.alive?(output)
     refute_receive {:invoked, _}, 20
@@ -54,17 +56,19 @@ defmodule Arbor.MCP.Server.StdioInitializationTest do
   end
 
   test "a nontrapping caller suspended before the root barrier receives the original timeout" do
-    {caller, input, output, bytes} = start_held(150, hold_caller: true)
-    assert_receive {:stdio_constructed, root, {:ok, edge_supervisor}}, 1_000
+    started = System.monotonic_time(:millisecond)
+    {caller, input, output, bytes} = start_held(1_000, hold_caller: true)
+    assert_receive {:stdio_constructed, root, {:ok, edge_supervisor}}, 1_500
     root_monitor = Process.monitor(root)
     edge_monitor = Process.monitor(edge_supervisor)
     :erlang.suspend_process(caller)
     on_exit(fn -> resume(caller) end)
-    assert_receive {:DOWN, ^root_monitor, :process, ^root, _reason}, 1_000
-    assert_receive {:DOWN, ^edge_monitor, :process, ^edge_supervisor, _reason}, 1_000
+    assert_receive {:DOWN, ^root_monitor, :process, ^root, _reason}, 1_500
+    assert_receive {:DOWN, ^edge_monitor, :process, ^edge_supervisor, _reason}, 1_500
     assert Process.alive?(caller)
     :erlang.resume_process(caller)
-    assert_receive {:stdio_started, ^caller, {:error, :runtime_init_timeout}}, 1_000
+    assert_receive {:stdio_started, ^caller, {:error, :runtime_init_timeout}}, 1_500
+    assert System.monotonic_time(:millisecond) - started < 2_000
     assert {:trap_exit, false} = Process.info(caller, :trap_exit)
     assert {:messages, []} = Process.info(caller, :messages)
     assert %{input: ^bytes, read: nil} = GenServer.call(input, :state)

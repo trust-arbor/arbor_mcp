@@ -1,5 +1,10 @@
 # HTTP borrowed-writer liability prerequisite
 
+This document records the standalone core checkpoint. The subsequent
+installation/authentication overlay is described in
+[V2_HTTP_WRITER_INSTALLATION_SLICE.md](V2_HTTP_WRITER_INSTALLATION_SLICE.md);
+the statements below about planned installation apply to that earlier snapshot.
+
 This isolated candidate is based on MCP commit
 `7b71184e8903671beb04e3698b9d47afc2e9e1aa`. It adds a private writer accounting
 core and standalone tests. It does not mount HTTP on Runtime, change HttpPlug,
@@ -145,8 +150,11 @@ qualification must measure this representation before release.
 
 ## Qualification
 
-The tracked, dependency-free runner is `elixir scripts/check_http_writer_core.exs`;
-it avoids the global test helper and opens no ports. Focused cases cover actual
+At the standalone checkpoint, `elixir scripts/check_http_writer_core.exs` was
+dependency-free. In the installation overlay the tracked runner loads the
+compiled project from `ARBOR_V2_BUILD`, because current source validity checks
+use Admission and the installed root proxy. It still avoids the global test
+helper and opens no ports. Focused cases cover actual
 blocked `IO.binwrite`, real concurrent producer pressure, a suspended guardian,
 producer-to-owner handoff, count/byte/frame edges, root/owner/writer death,
 generation retirement, duplicate completion, original deadlines, 140 sequential

@@ -1,3 +1,5 @@
+Arbor.MCP.Test.DynamicToolsExample.ensure_loaded()
+
 defmodule Arbor.MCP.Content.SchemaDialectTest do
   use ExUnit.Case, async: true
 
@@ -106,37 +108,56 @@ defmodule Arbor.MCP.Content.SchemaDialectTest do
     assert {:error, _} = SchemaPolicy.validate("7", root)
   end
 
-  test "retained registry stores modern opaque output caches for single and bulk registration" do
-    registry =
-      start_supervised!(%{
-        id: :schema_registry,
-        start: {GenServer, :start_link, [Arbor.MCP.Server.Tools.Registry, %{}, []]}
-      })
+  test "application-owned Handler stores modern output caches for single and bulk registration" do
+    alias Arbor.MCP.Examples.DynamicTools
+    alias Arbor.MCP.Examples.DynamicTools.Actions
+    alias Arbor.MCP.Server
+    alias Arbor.MCP.Server.HandlerServer
+    alias Arbor.MCP.Transport.Test
 
-    schema = %{type: "array", prefixItems: [%{type: "integer"}], items: false}
-    handler = fn arguments, state -> {:ok, arguments["value"], state} end
-    single = %{name: "single", inputSchema: %{type: "object"}, outputSchema: schema}
-    bulk = %{single | name: "bulk"}
+    root = start_supervised!({HandlerServer, handler: DynamicTools, transport: :test})
+    {:ok, transport} = Test.connect(server: root)
+    schema = %{"type" => "array", "prefixItems" => [%{"type" => "integer"}], "items" => false}
 
-    assert :ok = Arbor.MCP.Server.Tools.Registry.register_tool(registry, single, handler)
-    assert :ok = Arbor.MCP.Server.Tools.Registry.register_tools(registry, [{bulk, handler}])
+    single = %{
+      "name" => "single",
+      "inputSchema" => %{"type" => "object"},
+      "outputSchema" => schema
+    }
 
-    for name <- ["single", "bulk"] do
-      assert {:ok, [7], :unchanged} =
-               Arbor.MCP.Server.Tools.Registry.call_tool(
-                 registry,
-                 name,
-                 %{"value" => [7]},
-                 :unchanged
-               )
+    bulk = %{single | "name" => "bulk"}
 
-      assert {:error, _fixed_validation_error} =
-               Arbor.MCP.Server.Tools.Registry.call_tool(
-                 registry,
-                 name,
-                 %{"value" => [7, 8]},
-                 :unchanged
-               )
+    for entries <- [[{single, {Actions, :value}, %{}}], [{bulk, {Actions, :value}, %{}}]] do
+      assert {:ok, :ok} = Server.call(root, {:register, entries, :reject})
+      assert_receive {:transport_message, _changed}
+    end
+
+    for name <- ["single", "bulk"], value <- [[7], [7, 8]] do
+      request = %{
+        "jsonrpc" => "2.0",
+        "id" => "#{name}-#{length(value)}",
+        "method" => "tools/call",
+        "params" => %{
+          "name" => name,
+          "arguments" => %{"value" => value},
+          "_meta" => %{
+            "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities" => %{},
+            "io.modelcontextprotocol/clientInfo" => %{
+              "name" => "dynamic-schema",
+              "version" => "2"
+            }
+          }
+        }
+      }
+
+      assert {:ok, _transport} = Test.send_message(request, transport)
+      assert_receive {:transport_message, response}
+      result = if is_binary(response), do: Jason.decode!(response), else: response
+
+      if value == [7],
+        do: assert(result["result"]["structuredContent"] == [7]),
+        else: assert(result["result"]["isError"] == true)
     end
   end
 

@@ -24,6 +24,11 @@ defmodule Arbor.MCP.Server.Runtime.Config do
             max_output_bytes: 4_194_304,
             max_output_frames: 128,
             max_output_scope_bytes: 65_536,
+            max_http_writers: 128,
+            max_http_writer_metadata_bytes: 65_536,
+            max_http_io_frames: 128,
+            max_http_io_bytes: 4_194_304,
+            max_http_io_frame_bytes: 1_048_576,
             output_timeout_ms: 5_000,
             request_timeout_ms: 10_000,
             cancel_grace_ms: 100,
@@ -109,6 +114,11 @@ defmodule Arbor.MCP.Server.Runtime.Config do
       :max_output_bytes,
       :max_output_frames,
       :max_output_scope_bytes,
+      :max_http_writers,
+      :max_http_writer_metadata_bytes,
+      :max_http_io_frames,
+      :max_http_io_bytes,
+      :max_http_io_frame_bytes,
       :output_timeout_ms,
       :request_timeout_ms,
       :init_timeout_ms,
@@ -133,7 +143,12 @@ defmodule Arbor.MCP.Server.Runtime.Config do
       :init_timeout_ms,
       :shutdown_timeout_ms,
       :cancel_grace_ms,
-      :output_timeout_ms
+      :output_timeout_ms,
+      :max_http_writers,
+      :max_http_writer_metadata_bytes,
+      :max_http_io_frames,
+      :max_http_io_bytes,
+      :max_http_io_frame_bytes
     ]
 
     case Enum.find(keys, &(Map.fetch!(config, &1) > @timer_limit)) do

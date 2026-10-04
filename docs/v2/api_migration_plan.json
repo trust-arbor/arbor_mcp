@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "accepted retirement inventory; first fifteen callables removed and migration cases qualified; remaining prerequisites and final release qualification open",
+  "status": "accepted retirement inventory;96callables/8modules/4types removed in candidate; HTTP6/2modules and final release qualification open",
   "baseline": {
     "application": "ex_mcp",
     "package_version": "1.5.0",
@@ -1757,5 +1757,796 @@
     },
     "final_compiled_api_diff_complete": false,
     "stable_release": false
+  },
+  "tools_retirement_checkpoint": {
+    "status": "integrated: minimum/current full selections zero; current4995executed tests/minimum5077inventory82excluded;20doctests34properties both",
+    "removed_callables": [
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "function",
+        "name": "__normalize_response__",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_results",
+        "candidate_module": "Arbor.MCP.Server.Tools"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "function",
+        "name": "__tool__",
+        "arity": 4,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "function",
+        "name": "__validate_and_normalize_response__",
+        "arity": 3,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_results",
+        "candidate_module": "Arbor.MCP.Server.Tools"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "function",
+        "name": "compile_schema",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_schema",
+        "candidate_module": "Arbor.MCP.Server.Tools"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "function",
+        "name": "validate_with_schema",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_schema",
+        "candidate_module": "Arbor.MCP.Server.Tools"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "__before_compile__",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "__using__",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "annotations",
+        "arity": 1,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "description",
+        "arity": 1,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "handle",
+        "arity": 1,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "input_schema",
+        "arity": 1,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "output_schema",
+        "arity": 1,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "param",
+        "arity": 2,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "param",
+        "arity": 3,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "title",
+        "arity": 1,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "tool",
+        "arity": 2,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "tool",
+        "arity": 3,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools"
+      },
+      {
+        "module": "ExMCP.Server.Tools.ASTValidator",
+        "kind": "function",
+        "name": "validate_schema_ast",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_schema",
+        "candidate_module": "Arbor.MCP.Server.Tools.ASTValidator"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Builder",
+        "kind": "function",
+        "name": "annotations",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_builder",
+        "candidate_module": "Arbor.MCP.Server.Tools.Builder"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Builder",
+        "kind": "function",
+        "name": "build",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_builder",
+        "candidate_module": "Arbor.MCP.Server.Tools.Builder"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Builder",
+        "kind": "function",
+        "name": "description",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_builder",
+        "candidate_module": "Arbor.MCP.Server.Tools.Builder"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Builder",
+        "kind": "function",
+        "name": "handler",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_builder",
+        "candidate_module": "Arbor.MCP.Server.Tools.Builder"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Builder",
+        "kind": "function",
+        "name": "input_schema",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_builder",
+        "candidate_module": "Arbor.MCP.Server.Tools.Builder"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Builder",
+        "kind": "function",
+        "name": "new",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_builder",
+        "candidate_module": "Arbor.MCP.Server.Tools.Builder"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Builder",
+        "kind": "function",
+        "name": "output_schema",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_builder",
+        "candidate_module": "Arbor.MCP.Server.Tools.Builder"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Builder",
+        "kind": "function",
+        "name": "param",
+        "arity": 3,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_builder",
+        "candidate_module": "Arbor.MCP.Server.Tools.Builder"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Builder",
+        "kind": "function",
+        "name": "param",
+        "arity": 4,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_builder",
+        "candidate_module": "Arbor.MCP.Server.Tools.Builder"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Builder",
+        "kind": "function",
+        "name": "title",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_builder",
+        "candidate_module": "Arbor.MCP.Server.Tools.Builder"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Builder.Tool",
+        "kind": "function",
+        "name": "__struct__",
+        "arity": 0,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_builder",
+        "candidate_module": "Arbor.MCP.Server.Tools.Builder.Tool"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Builder.Tool",
+        "kind": "function",
+        "name": "__struct__",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_builder",
+        "candidate_module": "Arbor.MCP.Server.Tools.Builder.Tool"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Helpers",
+        "kind": "function",
+        "name": "array_schema",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_schema",
+        "candidate_module": "Arbor.MCP.Server.Tools.Helpers"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Helpers",
+        "kind": "function",
+        "name": "array_schema",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_schema",
+        "candidate_module": "Arbor.MCP.Server.Tools.Helpers"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Helpers",
+        "kind": "function",
+        "name": "error_response",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_results",
+        "candidate_module": "Arbor.MCP.Server.Tools.Helpers"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Helpers",
+        "kind": "function",
+        "name": "image_response",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_results",
+        "candidate_module": "Arbor.MCP.Server.Tools.Helpers"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Helpers",
+        "kind": "function",
+        "name": "image_response",
+        "arity": 3,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_results",
+        "candidate_module": "Arbor.MCP.Server.Tools.Helpers"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Helpers",
+        "kind": "function",
+        "name": "multi_content_response",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_results",
+        "candidate_module": "Arbor.MCP.Server.Tools.Helpers"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Helpers",
+        "kind": "function",
+        "name": "number_schema",
+        "arity": 0,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_schema",
+        "candidate_module": "Arbor.MCP.Server.Tools.Helpers"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Helpers",
+        "kind": "function",
+        "name": "number_schema",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_schema",
+        "candidate_module": "Arbor.MCP.Server.Tools.Helpers"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Helpers",
+        "kind": "function",
+        "name": "object_schema",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_schema",
+        "candidate_module": "Arbor.MCP.Server.Tools.Helpers"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Helpers",
+        "kind": "function",
+        "name": "object_schema",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_schema",
+        "candidate_module": "Arbor.MCP.Server.Tools.Helpers"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Helpers",
+        "kind": "function",
+        "name": "resource_response",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_results",
+        "candidate_module": "Arbor.MCP.Server.Tools.Helpers"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Helpers",
+        "kind": "function",
+        "name": "string_schema",
+        "arity": 0,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_schema",
+        "candidate_module": "Arbor.MCP.Server.Tools.Helpers"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Helpers",
+        "kind": "function",
+        "name": "string_schema",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_schema",
+        "candidate_module": "Arbor.MCP.Server.Tools.Helpers"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Helpers",
+        "kind": "function",
+        "name": "structured_response",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_results",
+        "candidate_module": "Arbor.MCP.Server.Tools.Helpers"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Helpers",
+        "kind": "function",
+        "name": "text_response",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_results",
+        "candidate_module": "Arbor.MCP.Server.Tools.Helpers"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Helpers",
+        "kind": "function",
+        "name": "validate_arguments",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_schema",
+        "candidate_module": "Arbor.MCP.Server.Tools.Helpers"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "call_tool",
+        "arity": 3,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "call_tool",
+        "arity": 4,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "child_spec",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "code_change",
+        "arity": 3,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "get_tool",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "get_tool",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "handle_call",
+        "arity": 3,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "handle_cast",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "handle_info",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "init",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "list_tools",
+        "arity": 0,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "list_tools",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "register_tool",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "register_tool",
+        "arity": 3,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "register_tools",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "register_tools",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "start_link",
+        "arity": 0,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "start_link",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "kind": "function",
+        "name": "terminate",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_registry",
+        "candidate_module": "Arbor.MCP.Server.Tools.Registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.ResponseNormalizer",
+        "kind": "function",
+        "name": "normalize",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_results",
+        "candidate_module": "Arbor.MCP.Server.Tools.ResponseNormalizer"
+      },
+      {
+        "module": "ExMCP.Server.Tools.ResponseNormalizer",
+        "kind": "function",
+        "name": "normalize_error",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_results",
+        "candidate_module": "Arbor.MCP.Server.Tools.ResponseNormalizer"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Simplified",
+        "kind": "function",
+        "name": "apply_default_description",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools.Simplified"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Simplified",
+        "kind": "function",
+        "name": "process_instructions",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools.Simplified"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Simplified",
+        "kind": "macro",
+        "name": "__before_compile__",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools.Simplified"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Simplified",
+        "kind": "macro",
+        "name": "__using__",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools.Simplified"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Simplified",
+        "kind": "macro",
+        "name": "annotations",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools.Simplified"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Simplified",
+        "kind": "macro",
+        "name": "deftool",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools.Simplified"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Simplified",
+        "kind": "macro",
+        "name": "deftool",
+        "arity": 3,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools.Simplified"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Simplified",
+        "kind": "macro",
+        "name": "description",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools.Simplified"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Simplified",
+        "kind": "macro",
+        "name": "input_schema",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools.Simplified"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Simplified",
+        "kind": "macro",
+        "name": "output_schema",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools.Simplified"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Simplified",
+        "kind": "macro",
+        "name": "param",
+        "arity": 2,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools.Simplified"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Simplified",
+        "kind": "macro",
+        "name": "param",
+        "arity": 3,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools.Simplified"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Simplified",
+        "kind": "macro",
+        "name": "run",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools.Simplified"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Simplified",
+        "kind": "macro",
+        "name": "title",
+        "arity": 1,
+        "compiled_deprecation": null,
+        "replacement_group": "tools_dsl",
+        "candidate_module": "Arbor.MCP.Server.Tools.Simplified"
+      }
+    ],
+    "removed_modules": [
+      "ExMCP.Server.Tools",
+      "ExMCP.Server.Tools.ASTValidator",
+      "ExMCP.Server.Tools.Builder",
+      "ExMCP.Server.Tools.Builder.Tool",
+      "ExMCP.Server.Tools.Helpers",
+      "ExMCP.Server.Tools.Registry",
+      "ExMCP.Server.Tools.ResponseNormalizer",
+      "ExMCP.Server.Tools.Simplified"
+    ],
+    "removed_types": [
+      {
+        "module": "ExMCP.Server.Tools.Builder.Tool",
+        "name": "param",
+        "arity": 0,
+        "definition": "param() :: %{\n  name: atom(),\n  type: atom() | {atom(), any()},\n  required: boolean(),\n  default: any(),\n  schema: map() | nil\n}",
+        "replacement_group": "tools_builder"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Builder.Tool",
+        "name": "t",
+        "arity": 0,
+        "definition": "t() :: %ExMCP.Server.Tools.Builder.Tool{\n  annotations: map(),\n  description: String.t(),\n  handler: function(),\n  input_schema: map() | nil,\n  name: String.t(),\n  output_schema: map() | nil,\n  params: [param()],\n  title: String.t() | nil\n}",
+        "replacement_group": "tools_builder"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "name": "handler",
+        "arity": 0,
+        "definition": "handler() :: (map(), any() -> {:ok, any()} | {:ok, any(), any()} | {:error, any()})",
+        "replacement_group": "tools_registry"
+      },
+      {
+        "module": "ExMCP.Server.Tools.Registry",
+        "name": "tool_definition",
+        "arity": 0,
+        "definition": "tool_definition() :: %{\n  optional(atom()) => any(),\n  name: String.t(),\n  description: String.t(),\n  inputSchema: map() | boolean(),\n  outputSchema: map() | boolean() | nil\n}",
+        "replacement_group": "tools_registry"
+      }
+    ],
+    "implemented_callable_total": 96,
+    "remaining_callable_count": 6,
+    "remaining_module_count": 2,
+    "retired_implementation_only_cases": 38,
+    "retained_dynamic_consumer_cases": 60,
+    "final_compiled_api_diff_complete": false,
+    "stable_release_qualified": false,
+    "compiled_audit": {
+      "script": "scripts/check_v2_api_retirements.exs",
+      "current": "96/102callables,8/10modules,4/4types absent",
+      "minimum": "96/102callables,8/10modules,4/4types absent",
+      "remaining_families": [
+        "http_owner",
+        "http_endpoint"
+      ],
+      "full_four_package_api_diff_complete": false
+    }
   }
 }

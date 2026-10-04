@@ -2,10 +2,8 @@ defmodule Arbor.MCP.Server.StructuredOutputTest do
   @moduledoc """
   Tests for MCP 2025-06-18 structured tool output.
 
-  Ported off the deprecated `Arbor.MCP.Server.Tools` DSL onto
-  `Arbor.MCP.Server.Handler` + `Arbor.MCP.Server.DSL` (audit L11) so that nothing here
-  blocks the 2.0.0 removal of `Arbor.MCP.Server.Tools`. The deprecated DSL keeps its
-  own dedicated coverage in `test/arbor_mcp/server/tools_test.exs`.
+  Structured results use `Arbor.MCP.Server.Handler` + `Arbor.MCP.Server.DSL`.
+  These wire/result assertions remain after the retired Tools family is removed.
 
   Note the field name: the spec field is `structuredContent`. `structuredOutput`
   is accepted as a legacy alias and normalized to `structuredContent`.

@@ -1,5 +1,10 @@
 # First v2 API retirements
 
+This document records the first fifteen-removal checkpoint. The later Tools
+retirement brings the current candidate to 96 of 102 callable removals, eight
+whole-module removals and four type removals; consult `V2_API_MIGRATION.md` and
+the machine-readable plan for current status.
+
 The candidate removes 15 of the 102 accepted callable retirements. Default
 arities count separately. The remaining 87 are the 81-callable Tools family
 and six HTTP wrapper/startup signatures; their consumer and transport

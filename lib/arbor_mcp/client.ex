@@ -41,6 +41,7 @@ defmodule Arbor.MCP.Client do
 
   alias Arbor.MCP.Client.{
     ConnectionManager,
+    ConnectionScope,
     Deadline,
     EraCache,
     MRTR,
@@ -317,7 +318,11 @@ defmodule Arbor.MCP.Client do
   def start_link(opts) do
     {name_opts, start_opts} = Keyword.split(opts, [:name])
 
-    case GenServer.start_link(__MODULE__, start_opts, name_opts) do
+    normalize_start_result(GenServer.start_link(__MODULE__, start_opts, name_opts))
+  end
+
+  defp normalize_start_result(result) do
+    case result do
       {:ok, pid} ->
         {:ok, pid}
 
@@ -365,6 +370,69 @@ defmodule Arbor.MCP.Client do
   catch
     :throw, {:transport_config_error, reason} ->
       {:error, {:invalid_transport_config, reason}}
+  end
+
+  @doc """
+  Opens a new client for the duration of `callback`, which runs in the calling process.
+
+  Returns `{:ok, value}` after confirmed cleanup, or
+  `{:error, {:cleanup_failed, reason, value}}` when cleanup cannot be confirmed.
+  Connection errors return before the callback runs. Exceptions, throws and exits
+  from the callback are raised again after bounded cleanup with their original stack.
+
+  The client is linked to a private guardian, which monitors the calling process.
+  Abrupt caller exit also closes the owned client. Existing servers and listeners
+  passed in a connection spec remain borrowed. This helper accepts connection
+  specs, rather than existing client PIDs.
+
+  `:establish_timeout` (default 12_000) and `:cleanup_timeout` (default 1_000)
+  are positive finite milliseconds. Establishment uses one cutoff across the
+  native constructor and protocol handshake. Cleanup uses a separate single
+  cutoff. `:max_scope_workers` bounds owned reverse-request workers (default 256).
+  Helper names must be local atoms. A stdio child requires a typed cleanup receipt;
+  a legacy HTTP session DELETE remains explicitly unconfirmed even after local
+  resources close. Arbitrary unregistered custom transport effects are outside
+  the owned-process contract.
+
+      Client.with_connection({:test, server: runtime}, fn client ->
+        Client.list_tools(client)
+      end)
+  """
+  @spec with_connection(connection_spec(), (t() -> value)) ::
+          {:ok, value} | {:error, term()}
+        when value: term()
+  def with_connection(spec, callback), do: with_connection(spec, [], callback)
+
+  @spec with_connection(connection_spec(), keyword(), (t() -> value)) ::
+          {:ok, value} | {:error, term()}
+        when value: term()
+  def with_connection(spec, opts, callback), do: ConnectionScope.run(spec, opts, callback)
+
+  @doc false
+  def connection_options(spec, opts) when not is_pid(spec) do
+    {:ok, Keyword.merge(do_parse_connection_spec(spec), opts)}
+  rescue
+    error in [ArgumentError, FunctionClauseError] ->
+      {:error, {:invalid_transport_config, error.__struct__}}
+  catch
+    :throw, {:transport_config_error, reason} ->
+      {:error, {:invalid_transport_config, reason}}
+  end
+
+  def connection_options(_spec, _opts), do: {:error, :existing_client_not_owned}
+
+  @doc false
+  def start_scoped(opts, scope, deadline) do
+    {name_opts, start_opts} = Keyword.split(opts, [:name])
+    start_opts = Keyword.put(start_opts, :_connection_scope, scope)
+
+    normalize_start_result(
+      GenServer.start_link(
+        __MODULE__,
+        start_opts,
+        Keyword.put(name_opts, :timeout, Deadline.remaining(deadline))
+      )
+    )
   end
 
   @doc """
@@ -1085,6 +1153,8 @@ defmodule Arbor.MCP.Client do
     Process.flag(:trap_exit, true)
     Process.put({__MODULE__, :client}, true)
 
+    :ok = ConnectionScope.register_client(Keyword.get(opts, :_connection_scope))
+
     # Build initial state from options
     state = build_initial_state(opts)
 
@@ -1382,6 +1452,11 @@ defmodule Arbor.MCP.Client do
 
   def handle_call({:batch_request, requests}, from, state) do
     RequestHandler.handle_batch_request(requests, from, state)
+  end
+
+  def handle_call({:scope_disconnect, deadline}, from, state) do
+    Process.put({ConnectionScope, :cleanup_deadline}, deadline)
+    handle_call(:disconnect, from, state)
   end
 
   def handle_call(:disconnect, _from, state) do
@@ -2161,15 +2236,27 @@ defmodule Arbor.MCP.Client do
   # disconnect/1 or the client loop for the transport's request timeout.
   defp close_transport(%{transport_mod: mod, transport_state: transport_state})
        when not is_nil(mod) and not is_nil(transport_state) do
-    case mod.close(Deadline.for_cleanup(mod, transport_state)) do
-      :ok -> :ok
-      {:error, _reason} = error -> error
-      other -> {:error, {:invalid_close_result, other}}
-    end
-  rescue
-    error -> {:error, {:cleanup_exception, error.__struct__}}
-  catch
-    kind, reason -> {:error, {:cleanup_failure, kind, reason}}
+    cleanup_state =
+      case Process.get({ConnectionScope, :cleanup_deadline}) do
+        nil -> Deadline.for_cleanup(mod, transport_state)
+        deadline -> Deadline.put_on_transport(mod, transport_state, deadline)
+      end
+
+    result =
+      try do
+        case mod.close(cleanup_state) do
+          :ok -> :ok
+          {:error, _reason} = error -> error
+          other -> {:error, {:invalid_close_result, other}}
+        end
+      rescue
+        error -> {:error, {:cleanup_exception, error.__struct__}}
+      catch
+        kind, reason -> {:error, {:cleanup_failure, kind, reason}}
+      end
+
+    ConnectionScope.closed(mod, transport_state, result)
+    result
   end
 
   defp close_transport(_state), do: :ok
@@ -2418,7 +2505,7 @@ defmodule Arbor.MCP.Client do
          {:replace, old, uris, generation}
        ) do
     {:ok, _pid} =
-      Task.start(fn ->
+      ConnectionScope.start_worker(fn ->
         Resources.replace_resource_subscription(client, old, uris, generation)
       end)
 

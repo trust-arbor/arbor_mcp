@@ -227,6 +227,7 @@ defmodule Arbor.MCP.MixProject do
         "docs/guides/PHOENIX_GUIDE.md",
         "docs/DSL_GUIDE.md",
         "docs/V2_SCHEMA_DIALECT.md",
+        "docs/V2_CLIENT_CONNECTION_SCOPE.md",
         "docs/TRANSPORT_GUIDE.md",
         "docs/CONFIGURATION.md",
         "docs/HTTP_LISTENERS.md",
@@ -243,7 +244,7 @@ defmodule Arbor.MCP.MixProject do
       groups_for_extras: [
         Introduction: ~r/README/,
         Guides:
-          ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|V2_SCHEMA_DIALECT|TRANSPORT_GUIDE|HTTP_LISTENERS|PROTOCOL_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
+          ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|V2_SCHEMA_DIALECT|V2_CLIENT_CONNECTION_SCOPE|TRANSPORT_GUIDE|HTTP_LISTENERS|PROTOCOL_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
         Changelog: ~r/CHANGELOG/
       ],
       groups_for_modules: [
@@ -271,15 +272,6 @@ defmodule Arbor.MCP.MixProject do
         ],
         Authorization: [
           Arbor.MCP.Authorization
-        ],
-        "Deprecated (planned removal in 2.0)": [
-          Arbor.MCP.Server.Tools,
-          Arbor.MCP.Server.Tools.Simplified,
-          Arbor.MCP.Server.Tools.Builder,
-          Arbor.MCP.Server.Tools.Helpers,
-          Arbor.MCP.Server.Tools.Registry,
-          Arbor.MCP.Server.Tools.ResponseNormalizer,
-          Arbor.MCP.Server.Tools.ASTValidator
         ]
       ],
       filter_modules: fn mod, _ ->

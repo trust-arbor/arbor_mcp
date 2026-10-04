@@ -424,24 +424,6 @@ defmodule Arbor.MCP.Content.BuildersTest do
       audio_without_transcript = Builders.audio("data", "audio/wav")
       assert Builders.extract_text(audio_without_transcript) == nil
     end
-
-    test "resize returns error placeholder" do
-      image_content = Builders.image("data", "image/png")
-      # Invoke dynamically so this compatibility test does not emit a deprecation warning.
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      result = apply(Builders, :resize, [image_content, 100, 100])
-
-      assert {:error, _} = result
-    end
-
-    test "compress returns error placeholder" do
-      image_content = Builders.image("data", "image/png")
-      # Invoke dynamically so this compatibility test does not emit a deprecation warning.
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      result = apply(Builders, :compress, [image_content])
-
-      assert {:error, _} = result
-    end
   end
 
   describe "edge cases" do

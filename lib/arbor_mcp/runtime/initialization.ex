@@ -379,7 +379,14 @@ defmodule Arbor.MCP.Server.Runtime.Initialization do
   end
 
   def preserve_record?({key, _value}) do
-    key in [:shutdown_guard, :closing, :runtime_initialization, :runtime_requirements] or
+    key in [
+      :shutdown_guard,
+      :closing,
+      :runtime_initialization,
+      :runtime_requirements,
+      :http_writer_domain,
+      :http_writer_proxy
+    ] or
       match?({:runtime_owned, _pid}, key)
   end
 

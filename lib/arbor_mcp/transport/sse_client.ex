@@ -18,6 +18,7 @@ defmodule Arbor.MCP.Transport.SSEClient do
   use GenServer
   require Logger
 
+  alias Arbor.MCP.Client.ConnectionScope
   alias Arbor.MCP.Internal.{Headers, Redaction, SSE}
   alias Arbor.MCP.Transport.HTTP.BoundedStream
   alias Arbor.RPC.LogSummary
@@ -128,7 +129,7 @@ defmodule Arbor.MCP.Transport.SSEClient do
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts)
+    ConnectionScope.start_process(__MODULE__, opts, :linked)
   end
 
   @doc """
@@ -147,6 +148,7 @@ defmodule Arbor.MCP.Transport.SSEClient do
 
   @impl true
   def init(opts) do
+    :ok = ConnectionScope.register_process(Keyword.get(opts, :_connection_scope))
     url = Keyword.fetch!(opts, :url)
     headers = Keyword.get(opts, :headers, [])
     ssl_opts = Keyword.get(opts, :ssl_opts, [])

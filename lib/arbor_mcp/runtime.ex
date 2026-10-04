@@ -93,6 +93,7 @@ defmodule Arbor.MCP.Server.Runtime do
     CallbackContext,
     Deadline,
     ExecutionSupervisor,
+    HTTPWriterProxy,
     Initialization,
     Ref,
     ShutdownGuard
@@ -154,6 +155,7 @@ defmodule Arbor.MCP.Server.Runtime do
 
     children =
       [
+        {HTTPWriterProxy, runtime_opts},
         {Admission, runtime_opts},
         {Arbor.MCP.Server.Runtime.StoreSupervisor, runtime_opts}
       ] ++
@@ -283,11 +285,17 @@ defmodule Arbor.MCP.Server.Runtime do
     end
   end
 
-  @spec stop(server(), term()) :: :ok | {:error, :runtime_unavailable}
+  @spec stop(server(), term()) :: :ok | {:error, term()}
   def stop(server, reason \\ :normal) do
     with {:ok, runtime} <- ref(server) do
+      domain = HTTPWriterProxy.domain(runtime)
+      HTTPWriterProxy.seal(domain)
       Process.unlink(Ref.supervisor(runtime))
-      ShutdownGuard.stop(Ref.table(runtime), reason)
+
+      case ShutdownGuard.stop(Ref.table(runtime), reason) do
+        :ok -> HTTPWriterProxy.cleanup_status(domain)
+        error -> error
+      end
     end
   end
 

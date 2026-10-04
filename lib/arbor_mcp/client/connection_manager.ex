@@ -8,7 +8,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
 
   require Logger
   # alias Arbor.MCP.TransportManager  # Not using full manager for now
-  alias Arbor.MCP.Client.{Deadline, EraCache, EraProbe}
+  alias Arbor.MCP.Client.{ConnectionScope, Deadline, EraCache, EraProbe}
   alias Arbor.MCP.Internal.{Protocol, VersionInfo, VersionRegistry}
   alias Arbor.MCP.Reliability.Retry
   alias Arbor.MCP.Testing.MockTransport
@@ -35,7 +35,13 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   """
   def establish_connection(state, opts) do
     with {:ok, timeout} <- establish_timeout(opts) do
-      opts = Keyword.put(opts, :establish_deadline, Deadline.after_ms(timeout))
+      opts =
+        Keyword.put(
+          opts,
+          :establish_deadline,
+          Deadline.earliest(ConnectionScope.establish_deadline(opts), Deadline.after_ms(timeout))
+        )
+
       retry_policy = Keyword.get(opts, :retry_policy, [])
 
       if retry_policy != [] do
@@ -82,7 +88,9 @@ defmodule Arbor.MCP.Client.ConnectionManager do
 
     with :ok <- check_deadline(deadline),
          {:ok, transport_manager_opts} <- prepare_transport_config(opts),
+         :ok <- ConnectionScope.opening(),
          {:ok, {transport_mod, transport_state}} <- connect_transport(transport_manager_opts),
+         :ok <- ConnectionScope.transport(transport_mod, transport_state),
          transport_state = Deadline.put_on_transport(transport_mod, transport_state, deadline),
          era_identity = EraCache.identity(transport_mod, transport_state, opts),
          :ok <- maybe_reset_era_cache(era_identity, opts),
@@ -93,6 +101,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
          state_after_protocol =
            Deadline.put_on_transport(transport_mod, state_after_protocol, nil),
          state_after_protocol = settle_transport_era(transport_mod, state_after_protocol, result),
+         :ok <- ConnectionScope.transport(transport_mod, state_after_protocol),
          {:ok, receiver_result} <-
            start_receiver_task(self(), transport_mod, state_after_protocol) do
       # Push mode returns {:push, updated_transport_state} — extract it
@@ -111,6 +120,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
         |> Map.put(:protocol_version, result["protocolVersion"])
         |> Map.put(:server_info, result["serverInfo"])
 
+      ConnectionScope.established()
       {:ok, new_state}
     else
       {:error, reason} ->
@@ -135,6 +145,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   defp close_on_failure({:ok, _result, _state} = success, _transport_mod), do: success
 
   defp close_on_failure({:error, reason, latest_state}, transport_mod) do
+    ConnectionScope.transport(transport_mod, latest_state)
     close_quietly(transport_mod, with_cleanup_deadline(transport_mod, latest_state))
     {:error, reason}
   end
@@ -150,7 +161,9 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   # starts the deferred SSE client. Only that is ended; the connection itself
   # (a stdio server, say) is what the probe goes on to use.
   defp abandon_legacy_attempt(HTTP, %HTTP{} = snapshot, %HTTP{} = attempt) do
-    HTTP.abandon_attempt(with_cleanup_deadline(HTTP, attempt), snapshot)
+    result = HTTP.abandon_attempt(with_cleanup_deadline(HTTP, attempt), snapshot)
+    ConnectionScope.closed(HTTP, attempt, result)
+    result
   end
 
   defp abandon_legacy_attempt(ReliabilityWrapper, snapshot, attempt) do
@@ -166,11 +179,22 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   defp abandon_legacy_attempt(_transport_mod, _snapshot, _attempt), do: :ok
 
   defp close_quietly(transport_mod, transport_state) do
-    transport_mod.close(transport_state)
+    result = transport_mod.close(transport_state)
+    ConnectionScope.closed(transport_mod, transport_state, result)
+    result
   rescue
-    _exception -> :ok
+    exception ->
+      ConnectionScope.closed(
+        transport_mod,
+        transport_state,
+        {:error, {:cleanup_exception, exception.__struct__}}
+      )
+
+      :ok
   catch
-    :exit, _reason -> :ok
+    :exit, reason ->
+      ConnectionScope.closed(transport_mod, transport_state, {:error, {:cleanup_exit, reason}})
+      :ok
   end
 
   defp establish_protocol(transport_mod, transport_state, opts, era_identity) do
@@ -806,7 +830,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   end
 
   defp receive_handshake_via_task(transport_mod, transport_state, timeout) do
-    task = Task.async(fn -> transport_mod.receive_message(transport_state) end)
+    task = ConnectionScope.async(fn -> transport_mod.receive_message(transport_state) end)
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
       {:ok, result} -> result
@@ -894,7 +918,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
             )
 
             task =
-              Task.async(fn ->
+              ConnectionScope.async(fn ->
                 __MODULE__.receive_loop(parent, transport_mod, transport_state)
               end)
 
@@ -910,7 +934,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
         )
 
         task =
-          Task.async(fn ->
+          ConnectionScope.async(fn ->
             __MODULE__.receive_loop(parent, transport_mod, transport_state)
           end)
 

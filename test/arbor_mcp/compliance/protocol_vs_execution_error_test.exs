@@ -46,15 +46,15 @@ defmodule Arbor.MCP.Compliance.ProtocolVsExecutionErrorTest do
     end
   end
 
-  defmodule DeprecatedToolsServer do
+  defmodule MigratedToolsServer do
     use Arbor.MCP.Server.Handler
-    use Arbor.MCP.Server.Tools
+    use Arbor.MCP.Server.DSL
 
     tool "echo", "Echo back the input" do
       param(:message, :string, required: true)
 
-      handle(fn %{message: message}, _state ->
-        {:ok, text: message}
+      run(fn %{message: message}, state ->
+        {:ok, ToolResult.text(message), state}
       end)
     end
   end
@@ -132,10 +132,10 @@ defmodule Arbor.MCP.Compliance.ProtocolVsExecutionErrorTest do
     end
   end
 
-  describe "deprecated Arbor.MCP.Server.Tools" do
+  describe "migrated Handler + DSL consumer" do
     test "unknown tool is protocol -32602, not isError" do
       assert {:error, %ProtocolError{} = error, %{}} =
-               DeprecatedToolsServer.handle_call_tool("nope", %{}, %{})
+               MigratedToolsServer.handle_call_tool("nope", %{}, %{})
 
       assert error.code == -32602
       assert error.message == "Unknown tool: nope"
@@ -144,7 +144,7 @@ defmodule Arbor.MCP.Compliance.ProtocolVsExecutionErrorTest do
     test "unknown tool through Dispatch is -32602, not isError" do
       {:ok, server} =
         HandlerServer.start_link(
-          handler: DeprecatedToolsServer,
+          handler: MigratedToolsServer,
           transport: :test
         )
 

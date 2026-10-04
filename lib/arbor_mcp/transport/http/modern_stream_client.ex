@@ -3,6 +3,7 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
 
   use GenServer
 
+  alias Arbor.MCP.Client.ConnectionScope
   alias Arbor.MCP.Internal.{Headers, Redaction, SSE}
   alias Arbor.MCP.Transport.HTTP.BoundedStream
 
@@ -60,7 +61,8 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
   ]
 
   @spec start(keyword()) :: GenServer.on_start()
-  def start(opts), do: GenServer.start(__MODULE__, opts)
+  def start(opts),
+    do: ConnectionScope.start_process(__MODULE__, opts, :unlinked)
 
   @spec cancel(pid()) :: :ok
   def cancel(pid) do
@@ -75,6 +77,7 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
 
   @impl true
   def init(opts) do
+    :ok = ConnectionScope.register_process(Keyword.get(opts, :_connection_scope))
     parent = Keyword.fetch!(opts, :parent)
     profile = httpc_profile()
     ensure_httpc_profile!(profile)

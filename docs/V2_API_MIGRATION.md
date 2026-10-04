@@ -1,7 +1,7 @@
 # V2 API migration inventory
 
-Status: accepted retirement inventory; the first 15 callable removals are
-implemented in the v2 candidate. Supported 1.x remains on the default branch.
+Status: accepted retirement inventory; 96 of 102 callable removals, eight
+whole-module removals and four type removals are implemented in the v2 candidate. Supported 1.x remains on the default branch.
 Candidate v2 source is in the isolated MCP checkout and canonical ACP repository.
 This inventory records the package/namespace split, implemented migrations and
 remaining release gates.
@@ -20,6 +20,18 @@ Read this alongside [package ownership](./V2_PACKAGE_CONTRACT.md) and the
 [runtime contract](./V2_RUNTIME_CONTRACT.md). Candidate runtime files remain
 under active development; the presence of a source file does not establish
 release-wide qualification or a final public API.
+
+The compiled checkpoint audit reads actual BEAM exports (including macro/default
+arities) and type metadata against the frozen baseline and accepted plan:
+
+```sh
+mix run --no-start scripts/check_v2_api_retirements.exs
+```
+
+Minimum/current artifacts confirm 96 callable, eight module and four type
+removals. Six HTTP callables and two wrappers remain. Pass `--complete` after
+HTTP migration; it fails while any planned removal is present. This audit does
+not replace the final four-package API/consumer comparison.
 
 ## Complete compiled-deprecation list
 
@@ -45,7 +57,9 @@ are temporary implementation state, not a promise that v2 will retain them.
 
 ## Remove the complete Server.Tools family
 
-Remove these eight modules, their 81 callable signatures and four types.
+These eight modules, their 81 callable signatures and four types are removed
+from the v2 candidate. The replacement consumer and compiled absence cases are
+qualified on both supported toolchains; see `V2_TOOLS_RETIREMENT_SLICE.md`.
 Compiler hooks, hidden helpers, generated struct constructors and GenServer
 callbacks are included because they appear in the compiled baseline. Modules
 generated in a consumer by `use` are not a closed set of baseline modules:

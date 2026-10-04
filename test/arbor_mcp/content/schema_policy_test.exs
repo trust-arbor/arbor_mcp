@@ -2,7 +2,6 @@ defmodule Arbor.MCP.Content.SchemaPolicyTest do
   use ExUnit.Case, async: false
 
   alias Arbor.MCP.Content.{SchemaPolicy, SchemaValidator, Validation}
-  alias Arbor.MCP.Server.Tools
 
   describe "local and external references" do
     test "supports local fragment references" do
@@ -182,7 +181,20 @@ defmodule Arbor.MCP.Content.SchemaPolicyTest do
     test "tool output schema compilation fails closed" do
       schema = %{"$ref" => "https://schemas.example.test/tool-output.json"}
 
-      assert_raise CompileError, ~r/cross-document/, fn -> Tools.compile_schema(schema) end
+      module = "FailClosedTool#{System.unique_integer([:positive])}"
+
+      source = """
+      defmodule #{module} do
+        use Arbor.MCP.Server.Handler
+        use Arbor.MCP.Server.DSL
+        tool "invalid_output" do
+          output_schema #{inspect(schema)}
+          run fn _args, state -> {:ok, "unused", state} end
+        end
+      end
+      """
+
+      assert_raise ArgumentError, ~r/cross-document/, fn -> Code.compile_string(source) end
     end
   end
 
