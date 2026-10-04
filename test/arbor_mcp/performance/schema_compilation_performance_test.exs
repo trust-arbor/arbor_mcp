@@ -4,7 +4,7 @@ defmodule Arbor.MCP.Performance.SchemaCompilationPerformanceTest do
   """
   use ExUnit.Case
 
-  alias Arbor.MCP.Server.Tools
+  alias Arbor.MCP.Content.SchemaPolicy
 
   @moduletag :performance
 
@@ -40,26 +40,25 @@ defmodule Arbor.MCP.Performance.SchemaCompilationPerformanceTest do
   }
 
   describe "compile-time schema caching performance" do
-    test "compile_schema/1 succeeds and produces valid schema" do
-      compiled_schema = Tools.compile_schema(@test_schema)
+    test "compile/1 produces a reusable validator" do
+      assert {:ok, compiled_schema} = SchemaPolicy.compile(@test_schema)
+      assert :ok = SchemaPolicy.validate(@test_data, compiled_schema)
 
-      assert compiled_schema != nil
-      assert is_struct(compiled_schema, ExJsonSchema.Schema.Root)
+      assert {:error, _errors} =
+               SchemaPolicy.validate(%{@test_data | "result" => "invalid"}, compiled_schema)
 
-      # Verify the compiled schema can be used for validation
-      result = Tools.validate_with_schema(@test_data, compiled_schema)
-      assert result == :ok
+      assert :ok = SchemaPolicy.validate(@test_data, compiled_schema)
     end
 
-    test "validate_with_schema performance with pre-compiled schema" do
+    test "validation performance with pre-compiled schema" do
       # Pre-compile the schema (this happens at compile time in real usage)
-      compiled_schema = Tools.compile_schema(@test_schema)
+      assert {:ok, compiled_schema} = SchemaPolicy.compile(@test_schema)
 
       # Measure validation performance (this happens at runtime)
       {time_microseconds, results} =
         :timer.tc(fn ->
           for _ <- 1..100 do
-            Tools.validate_with_schema(@test_data, compiled_schema)
+            SchemaPolicy.validate(@test_data, compiled_schema)
           end
         end)
 
@@ -83,13 +82,14 @@ defmodule Arbor.MCP.Performance.SchemaCompilationPerformanceTest do
       # Measure compilation time (happens once at compile time)
       {compilation_time, compiled_schema} =
         :timer.tc(fn ->
-          Tools.compile_schema(@test_schema)
+          {:ok, compiled_schema} = SchemaPolicy.compile(@test_schema)
+          compiled_schema
         end)
 
       # Measure validation time (happens many times at runtime)
       {validation_time, _} =
         :timer.tc(fn ->
-          Tools.validate_with_schema(@test_data, compiled_schema)
+          SchemaPolicy.validate(@test_data, compiled_schema)
         end)
 
       compilation_ms = compilation_time / 1000

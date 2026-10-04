@@ -135,8 +135,13 @@ Instance validation checks native plain JSON terms before invoking a backend.
 Structs, PIDs, references, functions, improper lists, invalid UTF-8, unsupported
 keys and conflicting atom/string aliases reject with a fixed safe message.
 No application Jason, Inspect or Enumerable implementation is invoked. Modern
-validation failures use a fixed error list without exposing backend objects;
-explicit legacy validation retains the existing backend error list.
+validation failures retain bounded property names and JSON Pointer paths without
+exposing backend objects or rejected values. The projection uses JSV's public
+normalization API inside the finite worker, keeps at most 16 diagnostics, and
+caps each message and path at 256 bytes. Missing-property names remain useful;
+other messages identify the failed keyword without echoing instance values,
+constants or enum members. Oversized text uses a fixed fallback. Explicit
+legacy validation retains the existing backend error list.
 
 The new defaults are `max_instance_bytes: 1_048_576` and
 `max_instance_depth: 64`, applied inside the finite validation worker. Byte
