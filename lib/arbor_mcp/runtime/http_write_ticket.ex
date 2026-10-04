@@ -56,4 +56,18 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriteTicket do
 
   @spec receipt(t()) :: 0 | 1 | 2 | 3
   def receipt(%__MODULE__{receipt: receipt}), do: :atomics.get(receipt, 1)
+
+  # A read-only, payload-free view. It cannot record a return or grant IO credit.
+  @opaque observation ::
+            {:http_io_observation, Arbor.MCP.Server.Runtime.HTTPWriterRegistry.t(), reference(),
+             :atomics.atomics_ref()}
+
+  @spec observation(t()) :: observation()
+  def observation(%__MODULE__{domain: domain, token: token, receipt: receipt}),
+    do: {:http_io_observation, domain, token, receipt}
+
+  @spec observation_status(observation()) ::
+          :pending | :in_flight | :returned | :failed | :uncertain | :retired | :unconfirmed
+  def observation_status({:http_io_observation, domain, token, receipt}),
+    do: Arbor.MCP.Server.Runtime.HTTPWriterRegistry.observation_status(domain, token, receipt)
 end

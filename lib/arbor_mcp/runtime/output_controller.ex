@@ -6,7 +6,19 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
   def format_status(status),
     do: Arbor.MCP.Server.Runtime.Diagnostics.format_status(status, __MODULE__)
 
-  alias Arbor.MCP.Server.Runtime.{Admission, Failure, Initialization, OutputLedger, OutputTicket}
+  alias Arbor.MCP.Server.Runtime.{
+    Admission,
+    Failure,
+    HTTPOutput,
+    HTTPWriterBinding,
+    HTTPWriterRegistry,
+    HTTPWriteTicket,
+    Initialization,
+    OutputLedger,
+    OutputTicket,
+    Ref
+  }
+
   alias Arbor.MCP.Server.Subscriptions.Origin
 
   def start_link(opts),
@@ -22,12 +34,41 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
   def register(table, token, output \\ nil, owner \\ self()),
     do: call(table, {:register, token, output, owner})
 
+  def edge_result(table, token, output, value) do
+    with {:ok, context} <- register(table, token, output, controller(table)),
+         {:ok, ticket} <- prepare(context, value),
+         do: call(table, {:edge_prepared, token, ticket})
+  end
+
   def result(table, ticket), do: call(table, {:result, ticket})
   def deliver(table, token, ticket), do: call(table, {:deliver, token, ticket})
   def held(table, token, ticket), do: call(table, {:held, token, ticket})
   def finish(table, token), do: call(table, {:finish, token})
   def retire(table, token, reason), do: call(table, {:retire, token, reason})
   def failed(table, token, reason), do: call(table, {:failed, token, reason})
+
+  def http_failure(table, token, binding, format),
+    do: http_control_call(table, {:http_failure, token, binding, format})
+
+  def http_observation(table, token), do: http_control_call(table, {:http_observation, token})
+
+  defp http_control_call(table, request) do
+    GenServer.call(controller(table), request, 50)
+  catch
+    :exit, _reason -> {:error, :output_unavailable}
+  end
+
+  def http_notification(table, source, binding, deadline),
+    do: call_until(table, {:http_notification, make_ref(), source, binding}, deadline)
+
+  def http_notification_prepared(table, token, ticket, deadline),
+    do: call_until(table, {:http_notification_prepared, token, ticket}, deadline)
+
+  defp call_until(table, request, deadline) do
+    GenServer.call(controller(table), request, max(1, min(5000, deadline - now())))
+  catch
+    :exit, _reason -> {:error, :output_expired}
+  end
 
   def connect(table, connection, peer, transport, event_context \\ nil),
     do: call(table, {:connect, connection, peer, transport, event_context})
@@ -72,7 +113,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
     # It fixes source success independently from later peer delivery or failure.
     Admission.complete_output_phase(table, token)
     :ets.insert(table, {{:output_commit, token}, ticket})
-    :ok
+    HTTPOutput.mark_committed(ticket)
   end
 
   def mark_failure(table, token, reason) do
@@ -82,6 +123,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
         generation: reservation.generation,
         scope: reservation.scope,
         caller: reservation.caller,
+        request_id: reservation.request_id,
         deadline: now() + timeout,
         reason: reason
       }
@@ -96,16 +138,34 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
   end
 
   def prepare(context, value) do
-    with {:ok, ticket} <-
-           OutputLedger.prepare(context.ledger, value,
-             scope: context.scope,
-             owner: context.owner,
-             deadline: context.deadline,
-             codec: context.codec,
-             group: context.group
-           ),
-         :ok <- OutputLedger.handoff(ticket),
-         do: {:ok, ticket}
+    case OutputLedger.prepare(context.ledger, value,
+           scope: context.scope,
+           owner: context.owner,
+           deadline: context.deadline,
+           codec: context.codec,
+           group: context.group
+         ) do
+      {:ok, ticket} -> prepare_effect(context, ticket)
+      error -> error
+    end
+  end
+
+  defp prepare_effect(context, ticket) do
+    case HTTPOutput.prepare(context, ticket) do
+      {:ok, paired} ->
+        with :ok <- HTTPOutput.handoff(paired),
+             :ok <- OutputLedger.handoff(paired) do
+          {:ok, paired}
+        else
+          error ->
+            HTTPOutput.release_all(paired)
+            error
+        end
+
+      error ->
+        OutputLedger.release(ticket)
+        error
+    end
   end
 
   # Edge-authored validation replies have no handler proposal to commit. They
@@ -208,6 +268,108 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
     if Initialization.ready?(state.table),
       do: handle_ready_call(request, from, state),
       else: {:reply, {:error, :output_unavailable}, state}
+  end
+
+  def handle_call({:http_notification, token, source, binding}, {caller, _}, state) do
+    with true <- Initialization.ready?(state.table),
+         {:ok, reservation} <- Admission.current(state.table, source),
+         true <-
+           not reservation.terminal and reservation.deadline > now() and Process.alive?(caller),
+         true <- :ets.member(state.table, {:runtime_owned, caller}),
+         true <- HTTPWriterRegistry.source_valid?(binding, source),
+         scope = {:http_control, reservation.generation, token},
+         :ok <- OutputLedger.open_scope(state.ledger, scope, reservation.deadline),
+         :ok <- OutputLedger.subscribe(state.ledger, scope, self()) do
+      output = %{
+        edge: caller,
+        connection: binding,
+        batch?: false,
+        notification?: true,
+        source_token: source,
+        http: %{binding: binding, format: :sse}
+      }
+
+      context = %{
+        ledger: state.ledger,
+        scope: scope,
+        owner: self(),
+        group: false,
+        codec: :protocol,
+        deadline: reservation.deadline,
+        http: %{binding: binding, format: :sse, owner: self(), notification: true}
+      }
+
+      job = %{
+        scope: scope,
+        scheduler: nil,
+        output: output,
+        deadline: reservation.deadline,
+        committed?: true,
+        stdio?: false,
+        producer: caller,
+        http_ticket: nil,
+        edge_ticket: nil
+      }
+
+      {:reply, {:ok, token, context},
+       %{
+         state
+         | jobs: Map.put(state.jobs, token, job),
+           scopes: Map.put(state.scopes, scope, token)
+       }}
+    else
+      _closed -> {:reply, {:error, :output_expired}, state}
+    end
+  end
+
+  def handle_call({:http_notification_prepared, token, ticket}, {caller, _}, state) do
+    case state.jobs[token] do
+      %{producer: ^caller, output: %{notification?: true}} = job ->
+        with true <- active_peer?(job.output, state),
+             :ok <- OutputLedger.publish(ticket) do
+          state = put_in(state.jobs[token].edge_ticket, ticket)
+          {reply, state} = deliver_peer(ticket, job, state)
+
+          if reply == :pending,
+            do: {:reply, :ok, state},
+            else: {:reply, reply, remove_scope(job.scope, state)}
+        else
+          error -> {:reply, error, remove_scope(job.scope, state)}
+        end
+
+      _missing ->
+        {:reply, {:error, :invalid_output_owner}, state}
+    end
+  end
+
+  def handle_call({:http_failure, token, binding, format}, {caller, _}, state) do
+    with [{:http_gateway, ^caller}] <- :ets.lookup(state.table, :http_gateway),
+         [{_, proof}] <- :ets.lookup(state.table, {:output_failure, token}),
+         {:ok, deadline} <- HTTPWriterRegistry.failure_deadline(binding, token),
+         true <- format in [:json, :sse] do
+      prepare_http_failure(
+        token,
+        binding,
+        format,
+        caller,
+        proof,
+        deadline,
+        retire_job(token, state)
+      )
+    else
+      _invalid -> {:reply, {:error, :http_failure_expired}, state}
+    end
+  end
+
+  def handle_call({:http_observation, token}, {caller, _}, state) do
+    case state.jobs[token] do
+      %{output: %{edge: ^caller, http: _}, http_ticket: ticket} when not is_nil(ticket) ->
+        observation = HTTPWriteTicket.observation(OutputTicket.http(ticket))
+        {:reply, {:ok, observation}, state}
+
+      _missing ->
+        {:reply, {:error, :http_output_unavailable}, state}
+    end
   end
 
   def handle_call({:result, ticket}, {caller, _}, state) do
@@ -387,7 +549,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
 
   @impl true
   def handle_info(:reap, state) do
-    state = expire_write(state)
+    state = state |> settle_http_returns() |> expire_write()
     expired = Enum.filter(state.jobs, fn {_token, job} -> job.deadline <= now() end)
 
     state =
@@ -439,6 +601,68 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
 
   def handle_info(_message, state), do: {:noreply, state}
 
+  defp prepare_http_failure(token, binding, format, caller, proof, deadline, state) do
+    scope = {:terminal, proof.generation, token}
+
+    with :ok <- OutputLedger.open_scope(state.ledger, scope, deadline),
+         :ok <- OutputLedger.subscribe(state.ledger, scope, self()),
+         context = %{
+           ledger: state.ledger,
+           scope: scope,
+           owner: self(),
+           group: false,
+           codec: :protocol,
+           deadline: deadline,
+           http: %{binding: binding, format: format, owner: self(), terminal: token}
+         },
+         response = failure_response(proof),
+         {:ok, ticket} <- prepare(context, response),
+         :ok <- OutputLedger.publish(ticket) do
+      output = %{
+        edge: caller,
+        connection: binding,
+        batch?: false,
+        terminal?: true,
+        http: %{binding: binding, format: format}
+      }
+
+      job = %{
+        scope: scope,
+        scheduler: nil,
+        output: output,
+        deadline: deadline,
+        committed?: true,
+        stdio?: false,
+        http_ticket: nil,
+        edge_ticket: ticket
+      }
+
+      state = %{
+        state
+        | jobs: Map.put(state.jobs, token, job),
+          scopes: Map.put(state.scopes, scope, token)
+      }
+
+      {reply, state} = deliver_peer(ticket, job, state)
+
+      case reply do
+        :pending -> {:reply, :ok, state}
+        error -> {:reply, error, remove_scope(scope, state)}
+      end
+    else
+      _invalid ->
+        OutputLedger.retire_scope(state.ledger, scope, :terminal_output_failed)
+        {:reply, {:error, :http_failure_expired}, state}
+    end
+  end
+
+  defp retire_job(token, state) do
+    case state.jobs[token] do
+      nil -> state
+      job -> remove_scope(job.scope, state)
+    end
+  end
+
   defp connect_peer(connection, peer, transport, state, event_context \\ nil) do
     if state.monitor, do: Process.demonitor(state.monitor, [:flush])
     state = retire_all(state, :connection_closed)
@@ -468,12 +692,22 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
          scope = output_scope(reservation, output),
          :ok <- OutputLedger.open_scope(state.ledger, scope, deadline),
          :ok <- OutputLedger.subscribe(state.ledger, scope, self()) do
-      job = %{scope: scope, scheduler: owner, output: output, deadline: deadline}
+      job = %{
+        scope: scope,
+        scheduler: owner,
+        output: output,
+        deadline: deadline,
+        http_ticket: nil,
+        edge_ticket: nil
+      }
 
       job =
         job
         |> Map.put(:committed?, false)
-        |> Map.put(:stdio?, match?(%{transport: :stdio}, state.peer))
+        |> Map.put(
+          :stdio?,
+          is_nil(http_context(output, self())) and match?(%{transport: :stdio}, state.peer)
+        )
 
       context = %{
         ledger: state.ledger,
@@ -483,6 +717,12 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
         codec: if(reservation.kind == :call, do: :term, else: :protocol),
         deadline: deadline
       }
+
+      context =
+        case http_context(output, self()) do
+          nil -> context
+          http -> Map.put(context, :http, http)
+        end
 
       {:reply, {:ok, context},
        %{
@@ -523,10 +763,16 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
   defp handle_ready_call({:edge_prepared, token, ticket}, {caller, _}, state) do
     case state.jobs[token] do
       %{output: %{edge: ^caller, batch?: true}} ->
-        {:reply, OutputLedger.hold(ticket), state}
+        reply =
+          with :ok <- commit_edge_http(state.table, token, ticket), do: OutputLedger.hold(ticket)
+
+        {:reply, reply, state}
 
       %{output: %{edge: ^caller}} = job ->
-        case OutputLedger.publish(ticket) do
+        state = update_in(state.jobs[token], &Map.put(&1, :edge_ticket, ticket))
+
+        case with :ok <- commit_edge_http(state.table, token, ticket),
+                  do: OutputLedger.publish(ticket) do
           :ok ->
             {reply, state} = deliver_peer(ticket, job, state)
             complete_delivery(reply, token, job, state, false)
@@ -545,8 +791,14 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
       %{output: %{edge: ^caller, batch?: true}} = job ->
         case OutputLedger.finish_group(state.ledger, job.scope) do
           {:ok, ticket} ->
-            {reply, state} = deliver_peer(ticket, job, state)
-            complete_delivery(reply, token, job, state, false)
+            case final_http_ticket(job, token, ticket) do
+              {:ok, ticket} ->
+                {reply, state} = deliver_peer(ticket, job, state)
+                complete_delivery(reply, token, job, state, false)
+
+              error ->
+                {:reply, error, remove_scope(job.scope, state)}
+            end
 
           error ->
             {:reply, error, remove_scope(job.scope, state)}
@@ -558,6 +810,10 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
       _ ->
         {:reply, {:error, :invalid_output_owner}, state}
     end
+  end
+
+  defp commit_edge_http(table, token, ticket) do
+    if is_nil(OutputTicket.http(ticket)), do: :ok, else: mark_committed(table, token, ticket)
   end
 
   defp output_deadline(reservation, %{terminal?: true}, state) do
@@ -577,6 +833,20 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
   defp output_deadline(reservation, _output, _state), do: {:ok, reservation.deadline}
   defp terminal_output?(%{terminal?: true}), do: true
   defp terminal_output?(_output), do: false
+
+  defp active_peer?(
+         %{notification?: true, source_token: source, edge: producer, http: %{binding: binding}},
+         _state
+       ),
+       do: Process.alive?(producer) and HTTPWriterRegistry.source_valid?(binding, source)
+
+  defp active_peer?(%{edge: edge, http: %{binding: binding}}, state) do
+    root = :ets.info(state.table, :owner)
+
+    match?({:ok, _}, HTTPWriterBinding.validate(binding, Ref.new(root, state.table))) and
+      :ets.lookup(state.table, :http_gateway) == [{:http_gateway, edge}] and Process.alive?(edge)
+  end
+
   defp active_peer?(nil, _state), do: true
 
   defp active_peer?(%{connection: connection, edge: edge}, state) do
@@ -584,8 +854,13 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
       :ets.lookup(state.table, :edge_connection) == [{:edge_connection, edge, connection}]
   end
 
+  defp http_context(%{http: %{binding: binding, format: format}}, owner),
+    do: %{binding: binding, format: format, owner: owner}
+
+  defp http_context(_output, _owner), do: nil
+
   defp deliver_ready(token, job, state) do
-    if Map.has_key?(job, :write_deadline),
+    if Map.has_key?(job, :write_deadline) or not is_nil(Map.get(job, :http_ticket)),
       do: state,
       else: checkout_ready(token, job, state)
   end
@@ -593,6 +868,8 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
   defp checkout_ready(token, job, state) do
     case OutputLedger.checkout(state.ledger, job.scope) do
       {:ok, ticket, term, _wire} ->
+        ticket = complete_ticket(token, ticket, job, state)
+
         if job.output do
           Admission.terminal(state.table, token, descriptor(ticket, term))
           put_in(state.jobs[token].committed?, true)
@@ -607,6 +884,19 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
         reason = delivery_failure(error, job)
         settle_failure(token, job, reason, state)
         remove_scope(job.scope, state)
+    end
+  end
+
+  defp deliver_peer(ticket, %{output: %{http: _}} = job, state) do
+    with true <- http_delivery_current?(job, ticket, state),
+         true <- job.deadline > now(),
+         {:ok, _current, _term, _wire} <- checkout_or_current(ticket, job.scope, state),
+         :ok <- HTTPOutput.publish(ticket) do
+      token = state.scopes[job.scope]
+      {:pending, put_in(state.jobs[token].http_ticket, ticket)}
+    else
+      false -> {{:error, :output_expired}, state}
+      error -> {error, state}
     end
   end
 
@@ -627,6 +917,11 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
       error -> {error, state}
     end
   end
+
+  defp http_delivery_current?(%{output: %{terminal?: true}}, ticket, _state),
+    do: HTTPOutput.valid?(ticket)
+
+  defp http_delivery_current?(job, _ticket, state), do: active_peer?(job.output, state)
 
   defp complete_delivery(:pending, _token, _job, state, _settle?), do: {:reply, :ok, state}
 
@@ -779,7 +1074,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
     state =
       Enum.reduce(Map.keys(state.jobs), state, fn token, state ->
         case state.jobs[token] do
-          %{output: output} = job when not is_nil(output) ->
+          %{output: output} = job when not is_nil(output) and not is_map_key(output, :http) ->
             settle_failure(token, job, reason, state)
             notify_stdio(job, token, {:error, reason})
             remove_scope(job.scope, state)
@@ -804,6 +1099,48 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
       {:error, :output_credit_exhausted} -> OutputLedger.payload(ticket)
       result -> result
     end
+  end
+
+  defp complete_ticket(token, ticket, job, state) do
+    paired =
+      case :ets.lookup(state.table, {:output_commit, token}) do
+        [{_, paired}] -> paired
+        _ -> Map.get(job, :edge_ticket, ticket)
+      end
+
+    if OutputTicket.same?(ticket, paired), do: paired, else: ticket
+  end
+
+  defp final_http_ticket(%{output: %{http: %{binding: binding}}}, token, ticket) do
+    with :ok <- HTTPWriterRegistry.finalize_batch(binding, token, ticket),
+         do: HTTPOutput.finish_group(binding, ticket)
+  end
+
+  defp final_http_ticket(_job, _token, ticket), do: {:ok, ticket}
+
+  defp settle_http_returns(state) do
+    Enum.reduce(state.jobs, state, fn {token, job}, state ->
+      case Map.get(job, :http_ticket) do
+        nil ->
+          state
+
+        ticket ->
+          case HTTPWriteTicket.receipt(OutputTicket.http(ticket)) do
+            0 ->
+              state
+
+            result ->
+              reply =
+                if result == 1,
+                  do: OutputLedger.ack(ticket),
+                  else: {:error, :http_write_uncertain}
+
+              settle(job.scheduler, token, reply)
+              send(job.output.edge, {:http_output_settled, token, reply})
+              remove_scope(job.scope, state)
+          end
+      end
+    end)
   end
 
   defp descriptor(ticket, %{"error" => _}) do
@@ -834,6 +1171,13 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
   defp output_scope(reservation, _output), do: {:work, reservation.generation, reservation.token}
 
   defp remove_scope(scope, state) do
+    for {_token, job} <- state.jobs, job.scope == scope do
+      case Map.get(job, :http_ticket) || Map.get(job, :edge_ticket) do
+        nil -> :ok
+        ticket -> HTTPOutput.release(ticket)
+      end
+    end
+
     OutputLedger.retire_scope(state.ledger, scope, :output_settled)
 
     for {token, job} <- state.jobs,
@@ -873,7 +1217,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
         nil ->
           state
 
-        %{output: output} = job when not is_nil(output) ->
+        %{output: output} = job when not is_nil(output) and not is_map_key(output, :http) ->
           settle(job.scheduler, token, {:error, reason})
           OutputLedger.retire_scope(state.ledger, job.scope, reason)
           remove_scope(job.scope, state)
@@ -884,18 +1228,22 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
     end)
   end
 
+  defp settle(nil, _token, _result), do: :ok
   defp settle(pid, token, result), do: send(pid, {:runtime_output_settled, token, result})
 
   defp settle_failure(token, job, reason, state) do
     committed = committed?(token, job, state)
 
+    if committed or match?(%{batch?: true}, job.output),
+      do: mark_failure(state.table, token, reason)
+
     case Admission.current(state.table, token) do
       {:ok, %{terminal: false} = reservation} when committed ->
-        mark_failure(state.table, token, reason)
         Admission.terminal(state.table, token, Failure.result(reservation, reason))
 
       _ ->
-        if committed or match?(%{batch?: true}, job.output), do: notify_peer(job, reason, state)
+        if committed or match?(%{batch?: true}, job.output),
+          do: notify_failure(token, job, reason, state)
     end
 
     settle(job.scheduler, token, {:error, reason})
@@ -913,6 +1261,29 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
     do: if(job.deadline <= now(), do: :output_expired, else: reason)
 
   defp delivery_failure(_result, _job), do: :output_released
+
+  defp failure_response(proof) do
+    reason =
+      if proof.reason in [:request_cancelled, :handler_timeout],
+        do: proof.reason,
+        else: :output_failed
+
+    code = if reason == :request_cancelled, do: -32001, else: -32603
+
+    message =
+      case reason do
+        :request_cancelled -> "Request cancelled"
+        :handler_timeout -> "Request timeout"
+        _failure -> "Internal server error"
+      end
+
+    Arbor.RPC.JSONRPC.error(proof.request_id, code, message, %{"type" => Atom.to_string(reason)})
+  end
+
+  defp notify_failure(token, %{output: %{http: _http, edge: edge}}, reason, _state),
+    do: send(edge, {:arbor_mcp_runtime, token, {:error, reason}})
+
+  defp notify_failure(_token, job, reason, state), do: notify_peer(job, reason, state)
 
   defp notify_peer(%{output: %{connection: connection}}, reason, %{
          peer: %{connection: connection, pid: peer}

@@ -91,7 +91,7 @@ defmodule Arbor.MCP.Client.RedactionTest do
 
       case msg do
         {:report, report} ->
-          assert %{state: %Client{}} = report
+          assert %{state: %{component: Client, payloads: :redacted}} = report
           refute_secrets(IO.iodata_to_binary(:io_lib.format(~c"~p", [report])))
 
         # On OTP 27 Elixir's translator turns the report into text before any

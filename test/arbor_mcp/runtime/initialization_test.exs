@@ -660,6 +660,15 @@ defmodule Arbor.MCP.Server.RuntimeInitializationTest do
     {:ok, ref} = Runtime.ref(root)
     table = Ref.table(ref)
     {:ok, first} = Initialization.current(table)
+    eventually(fn -> not Process.alive?(first.observer) end)
+
+    eventually(fn ->
+      Enum.all?(:ets.match_object(table, {{:runtime_owned, :_}, :_}), fn
+        {{:runtime_owned, pid}, _role} -> Process.alive?(pid)
+      end)
+    end)
+
+    baseline_owned_count = length(:ets.match_object(table, {{:runtime_owned, :_}, :_}))
 
     for _cycle <- 1..2 do
       {:ok, old} = Initialization.current(table)
@@ -684,7 +693,12 @@ defmodule Arbor.MCP.Server.RuntimeInitializationTest do
       assert {:error, :runtime_init_timeout} = Admission.publish_ready(table, old)
       assert Initialization.ready?(table)
       eventually(fn -> not Process.alive?(replacement.observer) end)
-      assert length(:ets.match_object(table, {{:runtime_owned, :_}, :_})) < 16
+
+      eventually(fn ->
+        length(:ets.match_object(table, {{:runtime_owned, :_}, :_})) == baseline_owned_count
+      end)
+
+      assert length(:ets.match_object(table, {{:runtime_owned, :_}, :_})) == baseline_owned_count
       assert length(:ets.match_object(table, {{:initialization_complete, :_, :_}, :_})) == 2
     end
 

@@ -3,8 +3,8 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
 
   use GenServer
 
-  alias Arbor.MCP.Client.{ConnectionScope, Deadline, Lifetime}
-  alias Arbor.MCP.Internal.{Headers, Redaction, SSE}
+  alias Arbor.MCP.Client.{ConnectionScope, Deadline, Diagnostics, Lifetime}
+  alias Arbor.MCP.Internal.{Headers, SSE}
   alias Arbor.MCP.Transport.HTTP.BoundedStream
 
   @httpc_profiles [
@@ -78,8 +78,14 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
   @spec handshake_timer_active?(pid()) :: boolean()
   def handshake_timer_active?(pid), do: GenServer.call(pid, :handshake_timer_active?)
 
+  def child_spec(opts), do: Diagnostics.child_spec(super(opts))
+
   @impl true
-  def init(opts) do
+  def init(constructor) when is_function(constructor, 0), do: init(constructor.())
+
+  def init(opts), do: Diagnostics.initialize(fn -> initialize_owner(opts) end)
+
+  defp initialize_owner(opts) do
     :ok =
       ConnectionScope.register_process(
         Keyword.get(opts, :_connection_scope),
@@ -252,21 +258,7 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
   end
 
   @impl true
-  def format_status(status) do
-    Redaction.status(status, fn
-      %__MODULE__{} = state ->
-        %{
-          state
-          | headers: Redaction.headers(state.headers),
-            body: Redaction.secret(state.body),
-            http_options: Redaction.secret(state.http_options),
-            auth_provider_state: Redaction.secret(state.auth_provider_state)
-        }
-
-      state ->
-        state
-    end)
-  end
+  def format_status(status), do: Diagnostics.format_status(status, __MODULE__)
 
   @impl true
   def terminate(_reason, state) do

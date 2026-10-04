@@ -111,6 +111,43 @@ defmodule Arbor.MCP.Server.Runtime.PrivacyTest do
     refute log =~ secret
   end
 
+  test "mounted Gateway native diagnostics omit retained requests and debug events" do
+    alias Arbor.MCP.Server.Runtime.{HTTPGateway, HTTPWriterProxy}
+
+    {root, runtime, secret} = start_runtime()
+    assert {:ok, gateway} = HTTPGateway.address(runtime)
+    assert native_parent(gateway) == root
+    assert :ok = :sys.log(gateway, true)
+    assert {:ok, binding} = HTTPWriterProxy.capture(runtime)
+
+    assert {:ok, _token} =
+             HTTPGateway.submit(runtime, binding, %{
+               "jsonrpc" => "2.0",
+               "id" => 1,
+               "method" => secret
+             })
+
+    assert_receive {:held_callback, _worker}, 1_000
+    send(gateway, {:private_gateway_diagnostic, secret})
+
+    {:status, ^gateway, _module, [_dictionary, _state, _parent, debug, formatted]} =
+      :sys.get_status(gateway)
+
+    # Raw debug inspection remains a trusted host boundary; native reports use
+    # the formatter and must omit both retained payloads and event-log values.
+    assert inspect(debug, limit: :infinity, printable_limit: :infinity) =~ secret
+    refute inspect(formatted, limit: :infinity, printable_limit: :infinity) =~ secret
+    monitor = Process.monitor(gateway)
+
+    log =
+      capture_log(fn ->
+        assert :ok = :sys.terminate(gateway, :privacy_probe, 1_000)
+        assert_receive {:DOWN, ^monitor, :process, ^gateway, :privacy_probe}, 1_000
+      end)
+
+    refute log =~ secret
+  end
+
   test "native handler initialization failure reports omit exception values and options" do
     secret = "arbor-runtime-init-secret-#{System.unique_integer([:positive])}"
 

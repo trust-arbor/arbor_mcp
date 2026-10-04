@@ -85,6 +85,12 @@ defmodule Arbor.MCP.Server.Dispatch do
                ),
              :ok <- RequestContext.validate_method(request_context),
              {:ok, request_context} <- MRTR.prepare_context(request_context, params, opts) do
+          request_context = %{
+            request_context
+            | application_context: Keyword.get(opts, :application_context),
+              notification_target: Keyword.get(opts, :request_notification_target)
+          }
+
           ctx = %{
             method: method,
             id: Map.get(request, "id"),

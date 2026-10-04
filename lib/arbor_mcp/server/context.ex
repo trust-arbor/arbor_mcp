@@ -11,7 +11,7 @@ defmodule Arbor.MCP.Server.Context do
 
   alias Arbor.MCP.Internal.Protocol
   alias Arbor.MCP.Server.{Cancellation, RequestContext}
-  alias Arbor.MCP.Server.Runtime.CallbackContext
+  alias Arbor.MCP.Server.Runtime.{CallbackContext, HTTPNotificationTarget}
 
   @key {__MODULE__, :current}
   @log_levels ~w(debug info notice warning error critical alert emergency)
@@ -110,11 +110,10 @@ defmodule Arbor.MCP.Server.Context do
       %RequestContext{progress_token: nil} ->
         {:error, :progress_not_requested}
 
-      %RequestContext{notification_target: target, progress_token: token} when is_pid(target) ->
-        deliver(target, Protocol.encode_progress(token, progress, total, message))
-
-      %RequestContext{} ->
-        {:error, :request_not_streaming}
+      %RequestContext{notification_target: target, progress_token: token} ->
+        if is_pid(target) or HTTPNotificationTarget.target?(target),
+          do: deliver(target, Protocol.encode_progress(token, progress, total, message)),
+          else: {:error, :request_not_streaming}
 
       nil ->
         {:error, :no_request_context}
@@ -149,37 +148,41 @@ defmodule Arbor.MCP.Server.Context do
         {:error, :logging_not_requested}
 
       %RequestContext{log_level: requested, notification_target: target} ->
-        cond do
-          level not in @log_levels or requested not in @log_levels ->
-            {:error, :invalid_log_level}
-
-          not log_level_enabled?(level, requested) ->
-            :ok
-
-          not is_pid(target) ->
-            {:error, :request_not_streaming}
-
-          true ->
-            data =
-              if map_size(data) == 0,
-                do: message,
-                else: Map.put_new(data, "message", message)
-
-            notification = %{
-              "jsonrpc" => "2.0",
-              "method" => "notifications/message",
-              "params" => %{
-                "level" => level,
-                "logger" => "Arbor.MCP.Server",
-                "data" => data
-              }
-            }
-
-            deliver(target, notification)
-        end
+        deliver_requested_log(level, requested, target, message, data)
 
       nil ->
         {:error, :no_request_context}
+    end
+  end
+
+  defp deliver_requested_log(level, requested, target, message, data) do
+    cond do
+      level not in @log_levels or requested not in @log_levels ->
+        {:error, :invalid_log_level}
+
+      not log_level_enabled?(level, requested) ->
+        :ok
+
+      not (is_pid(target) or HTTPNotificationTarget.target?(target)) ->
+        {:error, :request_not_streaming}
+
+      true ->
+        data =
+          if map_size(data) == 0,
+            do: message,
+            else: Map.put_new(data, "message", message)
+
+        notification = %{
+          "jsonrpc" => "2.0",
+          "method" => "notifications/message",
+          "params" => %{
+            "level" => level,
+            "logger" => "Arbor.MCP.Server",
+            "data" => data
+          }
+        }
+
+        deliver(target, notification)
     end
   end
 
@@ -201,6 +204,12 @@ defmodule Arbor.MCP.Server.Context do
   end
 
   defp deliver(target, notification) do
+    if HTTPNotificationTarget.target?(target),
+      do: HTTPNotificationTarget.deliver(target, notification),
+      else: deliver_pid(target, notification)
+  end
+
+  defp deliver_pid(target, notification) do
     ref = make_ref()
     monitor = Process.monitor(target)
     send(target, {:ex_mcp_request_notification, self(), ref, notification})

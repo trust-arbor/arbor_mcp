@@ -174,12 +174,15 @@ defmodule Arbor.MCP.Server.StdioRuntimeTest do
   end
 
   test "notification-only batch releases its envelope barrier without producing output" do
-    {root, _runtime, input_device, _output} = pair()
+    request_budget = 2_000
+    {root, _runtime, input_device, _output} = pair(request_timeout_ms: request_budget)
     monitor = Process.monitor(root)
     notification = %{"jsonrpc" => "2.0", "method" => "notifications/silent", "params" => %{}}
+    deadline = System.monotonic_time(:millisecond) + request_budget
     input(input_device, line([notification, notification]) <> line(request(3, "inc")), true)
-    assert_receive {:invoked, 3}
-    assert_receive {:written, bytes}
+    # Both observations share the original request budget; neither renews it.
+    assert_receive {:invoked, 3}, max(0, deadline - System.monotonic_time(:millisecond))
+    assert_receive {:written, bytes}, max(0, deadline - System.monotonic_time(:millisecond))
 
     assert %{"id" => 3, "result" => %{"structuredContent" => %{"count" => 3}}} =
              Jason.decode!(String.trim(bytes))

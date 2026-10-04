@@ -82,7 +82,7 @@ defmodule Arbor.MCP.Client.MRTR do
     |> Enum.sort_by(fn {id, _request} -> id end)
     |> Lifetime.async_stream(
       fn {id, request} ->
-        {id, dispatch(request, handler, handler_state, capabilities)}
+        {id, dispatch_captured(request, handler, handler_state, capabilities)}
       end,
       max_concurrency: concurrency,
       ordered: true,
@@ -108,6 +108,19 @@ defmodule Arbor.MCP.Client.MRTR do
          {:error, error("Concurrent MRTR input callback exited", %{"reason" => inspect(reason)}),
           original_state}}
     end)
+  end
+
+  # Capture callback failures before Task.Supervised emits a native report.
+  # The private result retains the original detail for the trusted fulfillment
+  # owner; RequestHandler continues returning its fixed public protocol error.
+  # A converted failure completes this native Task normally, with the same
+  # parent, callback process, pre-effect reservation and async-stream bound.
+  defp dispatch_captured(request, handler, handler_state, capabilities) do
+    dispatch(request, handler, handler_state, capabilities)
+  rescue
+    error -> {:error, {:client_handler_raised, error, __STACKTRACE__}, handler_state}
+  catch
+    kind, value -> {:error, {:client_handler_caught, {kind, value}}, handler_state}
   end
 
   defp dispatch(request, handler, handler_state, capabilities) do

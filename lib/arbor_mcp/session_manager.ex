@@ -371,19 +371,31 @@ defmodule Arbor.MCP.SessionManager do
   end
 
   @doc "Creates an addressed runtime session and returns an opaque lease. Standalone create_session/1 retains its legacy result."
-  def create_session(%ServiceRef{} = service, metadata, opts),
+  @spec create_session(ServiceRef.t(), map(), keyword()) ::
+          {:ok, Arbor.MCP.SessionManager.SessionLease.t()} | {:error, term()}
+  def create_session(service, metadata, opts),
     do: Addressed.create(service, metadata, opts)
 
   @doc "Validates an addressed session's identity and returns its current lease."
-  def ensure_session(%ServiceRef{} = service, id, metadata, opts),
+  @spec ensure_session(ServiceRef.t(), binary(), map(), keyword()) ::
+          {:ok, Arbor.MCP.SessionManager.SessionLease.t()} | {:error, term()}
+  def ensure_session(service, id, metadata, opts),
     do: Addressed.ensure(service, id, metadata, false, opts)
 
   @doc "Validates addressed identity and completed initialization."
-  def ensure_initialized_session(%ServiceRef{} = service, id, metadata, opts),
+  @spec ensure_initialized_session(ServiceRef.t(), binary(), map(), keyword()) ::
+          {:ok, Arbor.MCP.SessionManager.SessionLease.t()} | {:error, term()}
+  def ensure_initialized_session(service, id, metadata, opts),
     do: Addressed.ensure(service, id, metadata, true, opts)
 
   @doc "Claims a typed wire request ID for an addressed session epoch."
-  def claim_request_id(%ServiceRef{} = service, lease, id, opts),
+  @spec claim_request_id(
+          ServiceRef.t(),
+          Arbor.MCP.SessionManager.SessionLease.t(),
+          binary() | integer(),
+          keyword()
+        ) :: :ok | {:error, term()}
+  def claim_request_id(service, lease, id, opts),
     do: Addressed.leased(service, lease, :claim_id, [id], opts)
 
   @doc """
@@ -396,7 +408,9 @@ defmodule Arbor.MCP.SessionManager do
   uses the finite service-operation cutoff. Unauthenticated future deadline
   integers cannot create a longer request lifetime.
   """
-  def claim_initialization(%ServiceRef{} = service, lease, opts),
+  @spec claim_initialization(ServiceRef.t(), Arbor.MCP.SessionManager.SessionLease.t(), keyword()) ::
+          {:ok, Arbor.MCP.SessionManager.InitializationClaim.t()} | {:error, term()}
+  def claim_initialization(service, lease, opts),
     do: Addressed.claim_initialization(service, lease, opts)
 
   @doc """

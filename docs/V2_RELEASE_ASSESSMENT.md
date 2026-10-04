@@ -320,6 +320,39 @@ request bytes, unbounded standalone Replay retention and permanent atom growth
 across DETS open/close cycles. These are concrete remaining store/admission
 release defects; the host logging checkpoint does not resolve them.
 
+The mounted POST/request-SSE Gateway now shares the initialized Runtime handler
+and reserves primary output plus fully framed HTTP IO before state commit.
+Its canonical 329-case runtime/startup/stdio/privacy selection passes both
+supported toolchains. Integration retains the existing Registry terminal-receipt
+recheck, opaque constructors, Client event context and startup guard. The combined
+tests caught an optional HTTP field update crashing stdio control jobs; the
+generic authenticated job update now preserves jobs without that field, with
+all original stdio/subscription bounds unchanged. GET/replay/DELETE and the
+remaining full HTTP cutover are separate gates. See [Gateway slice](./V2_HTTP_GATEWAY_SLICE.md).
+
+The separate fourteen-path Client/HTTP diagnostics checkpoint passes 228 affected
+cases on both canonical toolchains. Built-in native constructors and closed
+status summaries omit private payloads, while original typed startup/cleanup
+results and native parent/module identity remain. Concurrent MRTR raise/throw/exit
+is captured before Task reporting; the public error remains `-32603`, while the
+private converted Task completes normally. Actual host Supervisor returned-error
+logging is an explicit trusted boundary. See [Client diagnostics](./V2_CLIENT_DIAGNOSTICS.md).
+The combined Gateway/Client checkpoint passes **5,115 executed tests, 20 doctests
+and 34 properties on each supported toolchain**, zero failures (82 excluded;
+minimum reports 5,197 inventory). The actual Cowboy Gateway selection passes
+40 cases on each. Production compilation, formatting and strict static checks
+pass; minimum Dialyzer retains 66 existing filtered findings with no new filters.
+The final graph and full retained HTTP cutover remain required.
+
+[CI at `9f47f38`](https://github.com/trust-arbor/arbor_mcp/actions/runs/37236519538)
+passes eleven of twelve jobs. Its minimum integration failure is a notification
+batch fixture waiting 100 ms for a callback with a configured 2,000 ms request
+budget. Callback and output observations now share one original 2,000 ms cutoff;
+the callback, exact final response, normal EOF and no-extra-output assertions
+remain. Both supported toolchains pass the stdio regression selection at its
+failing seed. Documentation publication also replaces a hidden OTP-module link
+with a description of the native Task worker. Fresh combined CI remains required.
+
 | Slice | Reviewable evidence | Remaining work |
 |---|---|---|
 | Installed HTTP writer authority | The exact 13-path slice passes canonical minimum/current full selections, all 27 pinned SDK cases and production warnings-as-errors compilation. Runtime starts an owned proxy under the original initialization epoch/cutoff, retaining a separate IO domain across proxy/Admission/execution replacement. Entry bindings derive actual writer identity and original deadline; session claims verify addressed lease/epoch. Root stop reports unresolved borrowed IO explicitly. | Gateway/Controller routing, complete legacy batch authority and actual Bandit/Cowboy delivery remain; the integrated 41 focused and 84 retained cases do not clear those routing/physical transport gates. |

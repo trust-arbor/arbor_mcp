@@ -122,7 +122,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterProxy do
       max_writer_metadata_bytes: config.max_http_writer_metadata_bytes,
       max_io_frames: config.max_http_io_frames,
       max_io_bytes: config.max_http_io_bytes,
-      max_io_frame_bytes: config.max_http_io_frame_bytes
+      max_io_frame_bytes: config.max_http_io_frame_bytes,
+      failure_timeout_ms: config.output_timeout_ms
     ]
   end
 

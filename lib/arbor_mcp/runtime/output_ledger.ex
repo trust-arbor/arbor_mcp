@@ -135,6 +135,8 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
   def hold(ticket), do: ticket_operation(ticket, :hold)
   @spec value(OutputTicket.t()) :: {:ok, term()} | error()
   def value(ticket), do: ticket_operation(ticket, :value)
+  @spec prepared_wire(OutputTicket.t()) :: {:ok, binary()} | error()
+  def prepared_wire(ticket), do: ticket_operation(ticket, :prepared_wire)
   @spec payload(OutputTicket.t()) :: {:ok, OutputTicket.t(), term(), binary() | nil} | error()
   def payload(ticket), do: ticket_operation(ticket, :payload)
 
@@ -465,6 +467,20 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
       {{:ok, entry.payload.term}, state}
     else
       false -> {{:error, :invalid_output_owner}, state}
+      error -> {error, state}
+    end
+  end
+
+  defp operate({:prepared_wire, token}, caller, state) do
+    with {:ok, entry} <- entry(state.ref, token),
+         true <- entry.stage in [:prepared, :held],
+         true <- caller in [entry.producer, entry.owner, state.ref.owner],
+         :ok <- live_entry(entry),
+         wire when is_binary(wire) <- entry.payload.wire do
+      {{:ok, wire}, state}
+    else
+      false -> {{:error, :invalid_output_owner}, state}
+      nil -> {{:error, :invalid_output_codec}, state}
       error -> {error, state}
     end
   end
@@ -866,7 +882,8 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
     with {:ok, ref, token} <- ticket_ref(ticket) do
       deadline =
         case operation do
-          operation when operation in [:publish, :handoff, :hold, :value, :payload] ->
+          operation
+          when operation in [:publish, :handoff, :hold, :value, :payload, :prepared_wire] ->
             case entry(ref, token) do
               {:ok, entry} -> entry.deadline
               _ -> nil

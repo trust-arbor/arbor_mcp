@@ -12,6 +12,7 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
     Admission,
     CallbackContext,
     Failure,
+    HTTPOutput,
     Initialization,
     Lifecycle,
     OutputController,
@@ -425,20 +426,21 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
   end
 
   defp release_ticket(nil), do: :ok
-  defp release_ticket(ticket), do: OutputLedger.release(ticket)
+  defp release_ticket(ticket), do: HTTPOutput.release_all(ticket)
 
   defp publish_committed(state, token, ticket) do
     work = state.work[token]
-    :ok = OutputController.mark_committed(state.table, token, ticket)
     state = put_in(state.work[token].terminal, true)
     state = put_in(state.work[token].delivery_pending, true)
 
     result =
-      if work.output.group do
-        with :ok <- OutputLedger.hold(ticket),
-             do: OutputController.held(state.table, token, ticket)
-      else
-        OutputLedger.publish(ticket)
+      with :ok <- OutputController.mark_committed(state.table, token, ticket) do
+        if work.output.group do
+          with :ok <- OutputLedger.hold(ticket),
+               do: OutputController.held(state.table, token, ticket)
+        else
+          OutputLedger.publish(ticket)
+        end
       end
 
     case result do
@@ -446,6 +448,7 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
         state
 
       {:error, reason} ->
+        OutputController.mark_failure(state.table, token, reason)
         Admission.terminal(state.table, token, Failure.result(work.reservation, reason))
         OutputController.retire(state.table, token, reason)
         put_in(state.work[token].delivery_pending, false)
@@ -453,9 +456,13 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
   end
 
   defp restore_proposal({:prepared, kind, next_state, ticket}) do
-    case OutputLedger.value(ticket) do
-      {:ok, value} -> {{kind, value, next_state}, ticket}
-      {:error, reason} -> {{:output_failure, reason}, ticket}
+    if HTTPOutput.valid?(ticket) do
+      case OutputLedger.value(ticket) do
+        {:ok, value} -> {{kind, value, next_state}, ticket}
+        {:error, reason} -> {{:output_failure, reason}, ticket}
+      end
+    else
+      {{:output_failure, :http_output_expired}, ticket}
     end
   end
 

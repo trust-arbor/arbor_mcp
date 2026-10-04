@@ -35,11 +35,14 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   def reserve(runtime, request, opts) do
     table = Ref.table(runtime)
 
-    with :ok <- Deadline.validate(Keyword.get(opts, :admission_deadline, :infinity)),
+    with {:ok, invocation_deadline} <- invocation_deadline(opts),
+         :ok <- invocation_open(invocation_deadline),
+         :ok <- Deadline.validate(Keyword.get(opts, :admission_deadline, :infinity)),
          :ok <- input_open(table, opts),
          {:ok, route} <- route(table),
          {:ok, bytes} <- request_size(request, opts, route.config),
-         {:ok, reservation} <- claim_slot(runtime, route, request, bytes, opts) do
+         {:ok, reservation} <-
+           claim_slot(runtime, route, request, bytes, opts, invocation_deadline) do
       confirm_candidate(table, route, reservation)
     end
   end
@@ -837,17 +840,20 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   end
 
   defp retained_option_bytes(opts) do
-    Enum.reduce([:wire_ids, :origin, :uncancellable_ids, :scope, :admission_deadline], 0, fn key,
-                                                                                             bytes ->
-      case Keyword.fetch(opts, key) do
-        {:ok, nil} -> bytes
-        {:ok, value} -> bytes + :erlang.external_size(value)
-        :error -> bytes
+    Enum.reduce(
+      [:wire_ids, :origin, :uncancellable_ids, :scope, :admission_deadline, :invocation_deadline],
+      0,
+      fn key, bytes ->
+        case Keyword.fetch(opts, key) do
+          {:ok, nil} -> bytes
+          {:ok, value} -> bytes + :erlang.external_size(value)
+          :error -> bytes
+        end
       end
-    end)
+    )
   end
 
-  defp claim_slot(runtime, route, request, bytes, opts) do
+  defp claim_slot(runtime, route, request, bytes, opts, invocation_deadline) do
     token = make_ref()
     producer = self()
     caller = Keyword.get(opts, :caller, producer)
@@ -879,7 +885,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
       true ->
         count = work_count(request, opts)
         timeout = min(timeout, route.config.request_timeout_ms)
-        deadline = System.monotonic_time(:millisecond) + timeout
+        deadline = min(System.monotonic_time(:millisecond) + timeout, invocation_deadline)
         admission_deadline = Keyword.get(opts, :admission_deadline, :infinity)
 
         limit =
@@ -928,6 +934,35 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     end
   rescue
     ArgumentError -> {:error, :runtime_unavailable}
+  end
+
+  # Private HTTP ingress shortening only. Validate the signed64 value before
+  # serialization, slots or payload publication; an omitted value preserves
+  # the existing configured work deadline and the independent caller wait.
+  defp invocation_deadline(opts), do: invocation_deadline(opts, :absent)
+  defp invocation_deadline([], :absent), do: {:ok, :infinity}
+  defp invocation_deadline([], deadline), do: {:ok, deadline}
+
+  defp invocation_deadline([{:invocation_deadline, deadline} | rest], :absent)
+       when is_integer(deadline) do
+    case Deadline.validate(deadline) do
+      :ok -> invocation_deadline(rest, deadline)
+      _invalid -> {:error, :invalid_invocation_deadline}
+    end
+  end
+
+  defp invocation_deadline([{:invocation_deadline, _value} | _rest], _seen),
+    do: {:error, :invalid_invocation_deadline}
+
+  defp invocation_deadline([{key, _value} | rest], seen) when is_atom(key),
+    do: invocation_deadline(rest, seen)
+
+  defp invocation_deadline(_invalid, _seen), do: {:error, :invalid_invocation_deadline}
+
+  defp invocation_open(:infinity), do: :ok
+
+  defp invocation_open(deadline) do
+    if Deadline.now() < deadline, do: :ok, else: {:error, :handler_timeout}
   end
 
   defp participant_error(owner, caller) do

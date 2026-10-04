@@ -18,8 +18,8 @@ defmodule Arbor.MCP.Transport.SSEClient do
   use GenServer
   require Logger
 
-  alias Arbor.MCP.Client.{ConnectionScope, Deadline, Lifetime}
-  alias Arbor.MCP.Internal.{Headers, Redaction, SSE}
+  alias Arbor.MCP.Client.{ConnectionScope, Deadline, Diagnostics, Lifetime}
+  alias Arbor.MCP.Internal.{Headers, SSE}
   alias Arbor.MCP.Transport.HTTP.BoundedStream
   alias Arbor.RPC.LogSummary
 
@@ -146,8 +146,14 @@ defmodule Arbor.MCP.Transport.SSEClient do
 
   # GenServer callbacks
 
+  def child_spec(opts), do: Diagnostics.child_spec(super(opts))
+
   @impl true
-  def init(opts) do
+  def init(constructor) when is_function(constructor, 0), do: init(constructor.())
+
+  def init(opts), do: Diagnostics.initialize(fn -> initialize_owner(opts) end)
+
+  defp initialize_owner(opts) do
     :ok =
       ConnectionScope.register_process(
         Keyword.get(opts, :_connection_scope),
@@ -434,20 +440,7 @@ defmodule Arbor.MCP.Transport.SSEClient do
   end
 
   @impl true
-  def format_status(status) do
-    Redaction.status(status, fn
-      %__MODULE__{} = state ->
-        %{
-          state
-          | headers: Redaction.headers(state.headers),
-            ssl_opts: Redaction.secret(state.ssl_opts),
-            url: Redaction.url(state.url)
-        }
-
-      state ->
-        state
-    end)
-  end
+  def format_status(status), do: Diagnostics.format_status(status, __MODULE__)
 
   @impl true
   def terminate(_reason, state) do
@@ -531,7 +524,7 @@ defmodule Arbor.MCP.Transport.SSEClient do
     id = Map.get(event, "id")
 
     Logger.debug("SSE Client processing event",
-      event_type: event_type,
+      event_type: LogSummary.describe(event_type),
       event_id_hash: if(id, do: LogSummary.fingerprint(id)),
       data_size: byte_size(data)
     )

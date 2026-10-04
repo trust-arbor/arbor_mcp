@@ -94,6 +94,7 @@ defmodule Arbor.MCP.Server.Runtime do
     Deadline,
     Diagnostics,
     ExecutionSupervisor,
+    HTTPGateway,
     HTTPWriterProxy,
     Initialization,
     Ref,
@@ -168,7 +169,8 @@ defmodule Arbor.MCP.Server.Runtime do
         {Arbor.MCP.Server.Runtime.StoreSupervisor, runtime_opts}
       ] ++
         [
-          {ExecutionSupervisor, runtime_opts}
+          {ExecutionSupervisor, runtime_opts},
+          {HTTPGateway, runtime_opts}
         ] ++
         case Keyword.get(opts, :edge) do
           nil ->

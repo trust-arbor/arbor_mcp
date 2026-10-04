@@ -43,6 +43,7 @@ defmodule Arbor.MCP.Client do
     ConnectionManager,
     ConnectionScope,
     Deadline,
+    Diagnostics,
     EraCache,
     Lifetime,
     MRTR,
@@ -58,7 +59,6 @@ defmodule Arbor.MCP.Client do
   alias Arbor.MCP.Internal.{
     Headers,
     Protocol,
-    Redaction,
     RequestParams,
     VersionInfo,
     VersionRegistry
@@ -68,6 +68,7 @@ defmodule Arbor.MCP.Client do
   alias Arbor.MCP.Response
   alias Arbor.MCP.Server.Discover
   alias Arbor.MCP.Transport.{HTTP, ReliabilityWrapper, Stdio}
+  alias Arbor.RPC.LogSummary
 
   # Reconnection defaults ported from the former state machine implementation:
   # exponential backoff starting at 1s, doubling per attempt, capped at 60s,
@@ -320,8 +321,13 @@ defmodule Arbor.MCP.Client do
     {name_opts, start_opts} = Keyword.split(opts, [:name])
 
     start_opts = Keyword.put(start_opts, :_lifetime_parent, self())
-    normalize_start_result(GenServer.start_link(__MODULE__, start_opts, name_opts))
+
+    normalize_start_result(
+      GenServer.start_link(__MODULE__, Diagnostics.argument(__MODULE__, start_opts), name_opts)
+    )
   end
+
+  def child_spec(opts), do: Diagnostics.child_spec(super(opts))
 
   defp normalize_start_result(result) do
     case result do
@@ -431,7 +437,7 @@ defmodule Arbor.MCP.Client do
     normalize_start_result(
       GenServer.start_link(
         __MODULE__,
-        start_opts,
+        Diagnostics.argument(__MODULE__, start_opts),
         Keyword.put(name_opts, :timeout, Deadline.remaining(deadline))
       )
     )
@@ -1159,7 +1165,11 @@ defmodule Arbor.MCP.Client do
   # GenServer callbacks
 
   @impl GenServer
-  def init(opts) do
+  def init(constructor) when is_function(constructor, 0), do: init(constructor.())
+
+  def init(opts), do: Diagnostics.initialize(fn -> initialize_client(opts) end)
+
+  defp initialize_client(opts) do
     # Set up process
     Process.flag(:trap_exit, true)
     Process.put({__MODULE__, :client}, true)
@@ -1261,7 +1271,7 @@ defmodule Arbor.MCP.Client do
 
   # Handle connection errors with proper normalization
   defp handle_connection_error(reason) do
-    Logger.error("Failed to initialize MCP client: #{inspect(reason)}")
+    Logger.error("Failed to initialize MCP client", reason: LogSummary.describe(reason))
     {:stop, normalize_connection_error(reason)}
   end
 
@@ -1970,7 +1980,7 @@ defmodule Arbor.MCP.Client do
     if reason == :normal do
       {:noreply, state}
     else
-      Logger.error("Async POST task exited: #{inspect(reason)}")
+      Logger.error("Async POST task exited", reason: LogSummary.describe(reason))
       {:noreply, fail_async_post_request(state, request_id, reason)}
     end
   end
@@ -2027,7 +2037,7 @@ defmodule Arbor.MCP.Client do
 
   # Push model: transport error
   def handle_info({:transport_error, reason}, state) do
-    Logger.warning("Transport error (push): #{inspect(reason)}")
+    Logger.warning("Transport error (push)", reason: LogSummary.describe(reason))
     {:noreply, state}
   end
 
@@ -2063,7 +2073,7 @@ defmodule Arbor.MCP.Client do
   # still up: close that before moving on.
   def handle_info({:EXIT, pid, reason}, %{receiver_task: %Task{pid: task_pid}} = state)
       when pid == task_pid do
-    Logger.error("Receiver task died: #{inspect(reason)}")
+    Logger.error("Receiver task died", reason: LogSummary.describe(reason))
     state = abandon_transport(state)
     {:noreply, handle_transport_down({:receiver_task_died, reason}, state)}
   end
@@ -2091,7 +2101,7 @@ defmodule Arbor.MCP.Client do
   end
 
   def handle_info({:transport_closed, reason}, state) do
-    Logger.error("Transport closed: #{inspect(reason)}")
+    Logger.error("Transport closed", reason: LogSummary.describe(reason))
 
     state = %{
       state
@@ -2188,7 +2198,7 @@ defmodule Arbor.MCP.Client do
   end
 
   defp handle_async_post_result({:error, reason}, request_id, state) do
-    Logger.error("Async POST failed: #{inspect(reason)}")
+    Logger.error("Async POST failed", reason: LogSummary.describe(reason))
     {:noreply, fail_async_post_request(state, request_id, reason)}
   end
 
@@ -2291,7 +2301,7 @@ defmodule Arbor.MCP.Client do
   defp handle_transport_link_exit(_from, :normal, state), do: {:noreply, state}
 
   defp handle_transport_link_exit(_from, reason, state) do
-    Logger.error("Transport forwarder died: #{inspect(reason)}")
+    Logger.error("Transport forwarder died", reason: LogSummary.describe(reason))
     state = abandon_transport(state)
     {:noreply, handle_transport_down({:transport_forwarder_died, reason}, state)}
   end
@@ -2684,10 +2694,7 @@ defmodule Arbor.MCP.Client do
   # credentials replaced (headers, tokens, secrets, the server's env), for
   # every log formatter, not only Elixir's Inspect.
   @impl GenServer
-  def format_status(status), do: Redaction.status(status, &redact_state/1)
-
-  defp redact_state(%__MODULE__{} = state), do: Redaction.client(state)
-  defp redact_state(state), do: state
+  def format_status(status), do: Diagnostics.format_status(status, __MODULE__)
 
   @impl true
   def terminate(reason, state) do
@@ -2847,9 +2854,8 @@ defmodule Arbor.MCP.Client do
         }
       )
 
-      Logger.error(
-        "Giving up on reconnection after #{state.reconnect_attempts} attempts: " <>
-          inspect(reason)
+      Logger.error("Giving up on reconnection after #{state.reconnect_attempts} attempts",
+        reason: LogSummary.describe(reason)
       )
 
       close_notification_listeners(
@@ -2926,7 +2932,10 @@ defmodule Arbor.MCP.Client do
         %{new_state | health_check_id: request_id}
 
       {:error, reason} ->
-        Logger.debug("MCP health check ping could not be sent: #{inspect(reason)}")
+        Logger.debug("MCP health check ping could not be sent",
+          reason: LogSummary.describe(reason)
+        )
+
         %{state | health_check_id: nil}
     end
   end

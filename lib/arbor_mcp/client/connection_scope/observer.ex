@@ -5,18 +5,22 @@ defmodule Arbor.MCP.Client.ConnectionScope.Observer do
   alias Arbor.MCP.Client
   alias Arbor.MCP.Client.ConnectionScope
   alias Arbor.MCP.Client.ConnectionScope.Ref
-  alias Arbor.MCP.Client.Deadline
+  alias Arbor.MCP.Client.{Deadline, Diagnostics}
   alias Arbor.MCP.Transport.{HTTP, ReliabilityWrapper, Stdio}
   alias Arbor.RPC.Subprocess
   alias Arbor.RPC.Subprocess.Receipt
 
   def start(owner, opts, deadline, cleanup, workers, token) do
-    GenServer.start(__MODULE__, {owner, opts, deadline, cleanup, workers, token},
+    GenServer.start(
+      __MODULE__,
+      Diagnostics.argument(__MODULE__, {owner, opts, deadline, cleanup, workers, token}),
       timeout: Deadline.remaining(deadline)
     )
   end
 
   @impl true
+  def init(constructor) when is_function(constructor, 0), do: init(constructor.())
+
   def init({owner, opts, deadline, cleanup, workers, token}) do
     scope = Ref.new(self(), token, deadline, cleanup)
     observer = self()
@@ -448,11 +452,5 @@ defmodule Arbor.MCP.Client.ConnectionScope.Observer do
   defp kill(pid), do: Process.exit(pid, :kill)
 
   @impl true
-  def format_status(status) do
-    status
-    |> Map.put(:state, %{scope: :connection_lifecycle})
-    |> Map.put(:message, :redacted)
-    |> Map.put(:reason, :redacted)
-    |> Map.put(:log, [])
-  end
+  def format_status(status), do: Diagnostics.format_status(status, __MODULE__)
 end

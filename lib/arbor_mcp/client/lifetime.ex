@@ -2,7 +2,7 @@ defmodule Arbor.MCP.Client.Lifetime do
   @moduledoc false
   use GenServer
 
-  alias Arbor.MCP.Client.Deadline
+  alias Arbor.MCP.Client.{Deadline, Diagnostics}
 
   @key {__MODULE__, :context}
   @marker {__MODULE__, :identity}
@@ -17,7 +17,10 @@ defmodule Arbor.MCP.Client.Lifetime do
          {:ok, observer} <-
            GenServer.start(
              __MODULE__,
-             {self(), opts[:_lifetime_parent], token, epoch, limit, cleanup},
+             Diagnostics.argument(
+               __MODULE__,
+               {self(), opts[:_lifetime_parent], token, epoch, limit, cleanup}
+             ),
              timeout: @registration_ms
            ) do
       context = {observer, token, epoch}
@@ -182,17 +185,22 @@ defmodule Arbor.MCP.Client.Lifetime do
 
       context ->
         items
-        |> Stream.map(fn item -> {item, reserve(context, :worker, :ordinary)} end)
+        |> Stream.map(fn item ->
+          reservation = reserve(context, :worker, :ordinary)
+          fn -> {item, reservation} end
+        end)
         |> Task.async_stream(
-          fn
-            {item, {:ok, reservation}} ->
-              case register_process(reservation) do
-                :ok -> fun.(item)
-                {:error, reason} -> exit(reason)
-              end
+          fn constructor ->
+            case constructor.() do
+              {item, {:ok, reservation}} ->
+                case register_process(reservation) do
+                  :ok -> fun.(item)
+                  {:error, reason} -> exit(reason)
+                end
 
-            {_item, {:error, reason}} ->
-              exit(reason)
+              {_item, {:error, reason}} ->
+                exit(reason)
+            end
           end,
           opts
         )
@@ -259,10 +267,10 @@ defmodule Arbor.MCP.Client.Lifetime do
   end
 
   defp native_start(module, opts, :linked, timeout),
-    do: GenServer.start_link(module, opts, timeout: timeout)
+    do: GenServer.start_link(module, Diagnostics.argument(module, opts), timeout: timeout)
 
   defp native_start(module, opts, :unlinked, timeout),
-    do: GenServer.start(module, opts, timeout: timeout)
+    do: GenServer.start(module, Diagnostics.argument(module, opts), timeout: timeout)
 
   defp start_worker(fun, mode, kind \\ :ordinary) do
     context = current()
@@ -328,6 +336,11 @@ defmodule Arbor.MCP.Client.Lifetime do
   end
 
   @impl true
+  def format_status(status), do: Diagnostics.format_status(status, __MODULE__)
+
+  @impl true
+  def init(constructor) when is_function(constructor, 0), do: init(constructor.())
+
   def init({owner, parent, token, epoch, limit, cleanup}) do
     Process.put(@marker, token)
     owner_monitor = Process.monitor(owner)

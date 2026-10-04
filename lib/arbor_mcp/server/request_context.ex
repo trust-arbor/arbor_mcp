@@ -35,6 +35,7 @@ defmodule Arbor.MCP.Server.RequestContext do
     :tenant_id,
     :endpoint,
     :notification_target,
+    :application_context,
     meta: %{},
     trace_context: %{}
   ]
@@ -58,7 +59,8 @@ defmodule Arbor.MCP.Server.RequestContext do
           principal_id: String.t() | nil,
           tenant_id: String.t() | nil,
           endpoint: String.t() | nil,
-          notification_target: pid() | nil,
+          notification_target: term(),
+          application_context: term(),
           meta: map(),
           trace_context: map()
         }

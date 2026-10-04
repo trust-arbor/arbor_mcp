@@ -231,6 +231,8 @@ defmodule Arbor.MCP.MixProject do
         "docs/V2_STDIO_OUTPUT_LIABILITY.md",
         "docs/V2_RUNTIME_DIAGNOSTICS.md",
         "docs/V2_ORDINARY_CLIENT_LIFETIME.md",
+        "docs/V2_CLIENT_DIAGNOSTICS.md",
+        "docs/V2_HTTP_GATEWAY_SLICE.md",
         "docs/V2_API_MIGRATION.md",
         "docs/V2_NON_SYMBOL_MIGRATION.md",
         "docs/TRANSPORT_GUIDE.md",

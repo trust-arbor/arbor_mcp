@@ -14,7 +14,7 @@ defmodule Arbor.MCP.Client.Subscription do
 
   use GenServer
 
-  alias Arbor.MCP.Client.{ConnectionScope, Deadline, Lifetime}
+  alias Arbor.MCP.Client.{ConnectionScope, Deadline, Diagnostics, Lifetime}
   alias Arbor.MCP.SubscriptionFilter
 
   @subscription_id_key "io.modelcontextprotocol/subscriptionId"
@@ -106,7 +106,16 @@ defmodule Arbor.MCP.Client.Subscription do
   end
 
   @impl true
-  def init(opts) do
+  def format_status(status), do: Diagnostics.format_status(status, __MODULE__)
+
+  def child_spec(opts), do: Diagnostics.child_spec(super(opts))
+
+  @impl true
+  def init(constructor) when is_function(constructor, 0), do: init(constructor.())
+
+  def init(opts), do: Diagnostics.initialize(fn -> initialize_owner(opts) end)
+
+  defp initialize_owner(opts) do
     :ok =
       ConnectionScope.register_process(
         Keyword.get(opts, :_connection_scope),

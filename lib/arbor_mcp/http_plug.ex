@@ -126,7 +126,7 @@ defmodule Arbor.MCP.HttpPlug do
 
   @behaviour Plug
 
-  import Plug.Conn
+  import Plug.Conn, except: [send_resp: 3, send_chunked: 2, chunk: 2]
   require Logger
 
   alias Arbor.MCP.Authorization.AuthorizationServerMetadata
@@ -137,12 +137,15 @@ defmodule Arbor.MCP.HttpPlug do
   alias Arbor.MCP.HttpPlug.Core
   alias Arbor.MCP.HttpPlug.ModernStream
   alias Arbor.MCP.HttpPlug.RequestStream
+  alias Arbor.MCP.HttpPlug.RuntimeSession
+  alias Arbor.MCP.HttpPlug.RuntimeWriter
   alias Arbor.MCP.HttpPlug.SessionRegistry
   alias Arbor.MCP.HttpPlug.SSEHandler
   alias Arbor.MCP.Internal.{MessageValidator, VersionRegistry}
   alias Arbor.MCP.Plugs.ProtectedResourceMetadata
   alias Arbor.MCP.Protocol.{ErrorCodes, Methods}
   alias Arbor.MCP.Server.{RequestContext, Subscriptions}
+  alias Arbor.MCP.Server.Runtime.{HTTPGateway, HTTPWriterBinding, HTTPWriterRegistry, OutputCodec}
   alias Arbor.MCP.Transport.HTTP.RequestHeaders
   alias Arbor.RPC.{JSONRPC, LogSummary}
 
@@ -169,6 +172,7 @@ defmodule Arbor.MCP.HttpPlug do
       Keyword.get(opts, :legacy_http_sse, Keyword.get(opts, :sse_enabled, false))
 
     %{
+      runtime: Keyword.get(opts, :runtime),
       handler: Keyword.get(opts, :handler),
       handler_opts: Keyword.get(opts, :handler_opts, []),
       handler_call_timeout: Keyword.get(opts, :handler_call_timeout, 10_000),
@@ -306,6 +310,16 @@ defmodule Arbor.MCP.HttpPlug do
   """
   @impl Plug
   def call(conn, opts) do
+    conn = RuntimeWriter.capture(conn, Map.get(opts, :runtime))
+
+    try do
+      call_captured(conn, opts)
+    after
+      RuntimeWriter.retire(conn)
+    end
+  end
+
+  defp call_captured(conn, opts) do
     conn =
       if request_host_allowed?(conn, opts) do
         dispatch(conn, opts)
@@ -328,6 +342,14 @@ defmodule Arbor.MCP.HttpPlug do
         |> put_resp_content_type("application/json")
         |> send_resp(405, Jason.encode!(%{"error" => "Method not allowed"}))
 
+      mounted_session_method?(conn, opts) ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(
+          501,
+          Jason.encode!(%{"error" => "Runtime session stream routing unavailable"})
+        )
+
       conn.method == "GET" and legacy_http_sse_path?(conn, opts) ->
         if legacy_http_sse_enabled?(opts) do
           handle_sse_connection(conn, legacy_sse_opts(conn, opts))
@@ -345,6 +367,14 @@ defmodule Arbor.MCP.HttpPlug do
   end
 
   defp modern_only_disallowed_method?(_conn, _opts), do: false
+
+  defp mounted_session_method?(conn, %{runtime: runtime} = opts) when not is_nil(runtime),
+    do:
+      conn.method == "DELETE" or
+        (conn.method == "GET" and
+           (mcp_endpoint_path?(conn, opts) or legacy_http_sse_path?(conn, opts)))
+
+  defp mounted_session_method?(_conn, _opts), do: false
 
   # The MCP endpoint is the plug's mount root. `path_info` is relative to the
   # mount (Phoenix and Plug.Router `forward` strip the prefix into
@@ -548,6 +578,10 @@ defmodule Arbor.MCP.HttpPlug do
         |> maybe_add_cors_headers(opts)
         |> send_resp(403, "Origin not allowed")
     end
+  end
+
+  defp select_mcp_era(conn, %{runtime: runtime} = opts) when not is_nil(runtime) do
+    do_handle_runtime_mcp_request(conn, opts)
   end
 
   defp select_mcp_era(conn, opts) do
@@ -766,175 +800,608 @@ defmodule Arbor.MCP.HttpPlug do
           |> send_resp(500, Jason.encode!(error_response))
       end
     else
-      {:error, {:header_mismatch, request_id, message}} ->
-        error_response =
-          JSONRPC.error(request_id, ErrorCodes.header_mismatch(), message)
-
-        conn
-        |> maybe_add_cors_headers(opts)
-        |> add_protocol_version_header()
-        |> put_resp_content_type("application/json")
-        |> send_resp(400, Jason.encode!(error_response))
-
-      {:error, {:invalid_modern_metadata, request_id, field}} ->
-        error_response =
-          JSONRPC.error(
-            request_id,
-            ErrorCodes.invalid_params(),
-            "Invalid request metadata",
-            %{"field" => field, "reason" => "missing_required_field"}
-          )
-
-        conn
-        |> maybe_add_cors_headers(opts)
-        |> add_protocol_version_header()
-        |> put_resp_content_type("application/json")
-        |> send_resp(400, Jason.encode!(error_response))
-
-      {:error, {:unsupported_protocol_version, request_id, version}} ->
-        supported = VersionRegistry.known_versions()
-
-        error_response =
-          JSONRPC.error(
-            request_id,
-            ErrorCodes.unsupported_protocol_version(),
-            "Unsupported MCP protocol version",
-            %{"requested" => version, "supported" => supported}
-          )
-
-        conn
-        |> maybe_add_cors_headers(opts)
-        |> add_protocol_version_header()
-        |> put_resp_content_type("application/json")
-        |> send_resp(400, Jason.encode!(error_response))
-
-      {:error, {:modern_method_not_found, request_id}} ->
-        error_response =
-          JSONRPC.error(request_id, ErrorCodes.method_not_found(), "Method not found")
-
-        conn
-        |> maybe_add_cors_headers(opts)
-        |> add_protocol_version_header()
-        |> put_resp_content_type("application/json")
-        |> send_resp(404, Jason.encode!(error_response))
-
-      {:error, {:protocol_version_mismatch, message, expected_version}} ->
-        error_response =
-          JSONRPC.error(
-            nil,
-            ErrorCodes.invalid_request(),
-            message,
-            %{"expectedVersion" => expected_version}
-          )
-
-        conn
-        |> assign(:request_protocol_version, expected_version)
-        |> maybe_add_cors_headers(opts)
-        |> add_protocol_version_header()
-        |> maybe_put_session_header(session_id)
-        |> put_resp_content_type("application/json")
-        |> send_resp(400, Jason.encode!(error_response))
-
-      {:error, {:auth_error, {status, www_auth_header, body}}} ->
-        conn
-        |> maybe_add_cors_headers(opts)
-        |> put_resp_header("www-authenticate", www_auth_header)
-        |> send_resp(status, body)
-
-      {:error, :oauth_guard_disabled} ->
-        conn
-        |> maybe_add_cors_headers(opts)
-        |> put_resp_content_type("application/json")
-        |> send_resp(500, Jason.encode!(Core.oauth_guard_disabled_error()))
-
-      {:error, :scope_policy_missing} ->
-        scope_policy_error_response(conn, opts)
-
-      {:error, {:invalid_method_params, request_id, error}} ->
-        conn
-        |> maybe_add_cors_headers(opts)
-        |> add_protocol_version_header()
-        |> put_resp_content_type("application/json")
-        |> send_resp(400, Jason.encode!(JSONRPC.error(request_id, error)))
-
-      {:error, reason} when reason in [:session_not_found, :session_identity_mismatch] ->
-        reject_unknown_session(conn, opts)
-
-      {:error, :session_not_initialized} ->
-        session_lifecycle_rejection_response(
-          conn,
-          opts,
-          session_reference_id(session_reference),
-          nil,
-          :session_not_initialized
-        )
-
-      {:error, :session_limit_exceeded} ->
-        session_limit_response(conn, opts)
-
-      {:error, {:request_id_rejected, failed_session_id, request_id, reason, method}} ->
-        handle_request_id_rejection(
-          conn,
-          opts,
-          session_manager,
-          failed_session_id,
-          request_id,
-          reason,
-          method
-        )
-
-      {:error, {:session_lifecycle_rejected, request_id, reason}} ->
-        session_lifecycle_rejection_response(conn, opts, session_id, request_id, reason)
-
-      {:error, :session_required} ->
-        reject_missing_session(conn, opts)
-
-      {:error, :session_manager_unavailable} ->
-        session_manager_unavailable_response(conn, opts)
-
-      {:error, :origin_not_allowed} ->
-        conn
-        |> maybe_add_cors_headers(opts)
-        |> send_resp(403, "Origin not allowed")
-
-      {:error, :parse_error} ->
-        error_response = JSONRPC.error(nil, ErrorCodes.parse_error(), "Parse error")
-
-        conn
-        |> maybe_add_cors_headers(opts)
-        |> add_protocol_version_header()
-        |> maybe_put_session_header(session_id)
-        |> put_resp_content_type("application/json")
-        |> send_resp(400, Jason.encode!(error_response))
-
-      {:error, :invalid_json_rpc_envelope} ->
-        error_response = JSONRPC.error(nil, ErrorCodes.invalid_request(), "Invalid Request")
-
-        conn
-        |> maybe_add_cors_headers(opts)
-        |> add_protocol_version_header()
-        |> maybe_put_session_header(session_id)
-        |> put_resp_content_type("application/json")
-        |> send_resp(400, Jason.encode!(error_response))
-
-      {:error, :body_too_large} ->
-        conn
-        |> maybe_add_cors_headers(opts)
-        |> send_resp(413, "Request body too large")
-
-      {:error, reason} ->
-        Logger.error("MCP request processing failed", reason: LogSummary.describe(reason))
-
-        error_response = JSONRPC.error(nil, ErrorCodes.internal_error(), "Internal error")
-
-        conn
-        |> maybe_add_cors_headers(opts)
-        |> add_protocol_version_header()
-        |> maybe_put_session_header(session_id)
-        |> put_resp_content_type("application/json")
-        |> send_resp(500, Jason.encode!(error_response))
+      error ->
+        reject_mcp_request(error, conn, opts, session_manager, session_id, session_reference)
     end
   end
+
+  defp reject_mcp_request(
+         {:error, {:header_mismatch, request_id, message}},
+         conn,
+         opts,
+         _session_manager,
+         _session_id,
+         _session_reference
+       ) do
+    error_response =
+      JSONRPC.error(request_id, ErrorCodes.header_mismatch(), message)
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> add_protocol_version_header()
+    |> put_resp_content_type("application/json")
+    |> send_resp(400, Jason.encode!(error_response))
+  end
+
+  defp reject_mcp_request(
+         {:error, {:invalid_modern_metadata, request_id, field}},
+         conn,
+         opts,
+         _session_manager,
+         _session_id,
+         _session_reference
+       ) do
+    error_response =
+      JSONRPC.error(
+        request_id,
+        ErrorCodes.invalid_params(),
+        "Invalid request metadata",
+        %{"field" => field, "reason" => "missing_required_field"}
+      )
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> add_protocol_version_header()
+    |> put_resp_content_type("application/json")
+    |> send_resp(400, Jason.encode!(error_response))
+  end
+
+  defp reject_mcp_request(
+         {:error, {:unsupported_protocol_version, request_id, version}},
+         conn,
+         opts,
+         _session_manager,
+         _session_id,
+         _session_reference
+       ) do
+    supported = VersionRegistry.known_versions()
+
+    error_response =
+      JSONRPC.error(
+        request_id,
+        ErrorCodes.unsupported_protocol_version(),
+        "Unsupported MCP protocol version",
+        %{"requested" => version, "supported" => supported}
+      )
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> add_protocol_version_header()
+    |> put_resp_content_type("application/json")
+    |> send_resp(400, Jason.encode!(error_response))
+  end
+
+  defp reject_mcp_request(
+         {:error, {:modern_method_not_found, request_id}},
+         conn,
+         opts,
+         _session_manager,
+         _session_id,
+         _session_reference
+       ) do
+    error_response =
+      JSONRPC.error(request_id, ErrorCodes.method_not_found(), "Method not found")
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> add_protocol_version_header()
+    |> put_resp_content_type("application/json")
+    |> send_resp(404, Jason.encode!(error_response))
+  end
+
+  defp reject_mcp_request(
+         {:error, {:protocol_version_mismatch, message, expected_version}},
+         conn,
+         opts,
+         _session_manager,
+         session_id,
+         _session_reference
+       ) do
+    error_response =
+      JSONRPC.error(
+        nil,
+        ErrorCodes.invalid_request(),
+        message,
+        %{"expectedVersion" => expected_version}
+      )
+
+    conn
+    |> assign(:request_protocol_version, expected_version)
+    |> maybe_add_cors_headers(opts)
+    |> add_protocol_version_header()
+    |> maybe_put_session_header(session_id)
+    |> put_resp_content_type("application/json")
+    |> send_resp(400, Jason.encode!(error_response))
+  end
+
+  defp reject_mcp_request(
+         {:error, {:auth_error, {status, www_auth_header, body}}},
+         conn,
+         opts,
+         _session_manager,
+         _session_id,
+         _session_reference
+       ) do
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> put_resp_header("www-authenticate", www_auth_header)
+    |> send_resp(status, body)
+  end
+
+  defp reject_mcp_request(
+         {:error, :oauth_guard_disabled},
+         conn,
+         opts,
+         _session_manager,
+         _session_id,
+         _session_reference
+       ) do
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> put_resp_content_type("application/json")
+    |> send_resp(500, Jason.encode!(Core.oauth_guard_disabled_error()))
+  end
+
+  defp reject_mcp_request(
+         {:error, :scope_policy_missing},
+         conn,
+         opts,
+         _session_manager,
+         _session_id,
+         _session_reference
+       ) do
+    scope_policy_error_response(conn, opts)
+  end
+
+  defp reject_mcp_request(
+         {:error, {:invalid_method_params, request_id, error}},
+         conn,
+         opts,
+         _session_manager,
+         _session_id,
+         _session_reference
+       ) do
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> add_protocol_version_header()
+    |> put_resp_content_type("application/json")
+    |> send_resp(400, Jason.encode!(JSONRPC.error(request_id, error)))
+  end
+
+  defp reject_mcp_request(
+         {:error, reason},
+         conn,
+         opts,
+         _session_manager,
+         _session_id,
+         _session_reference
+       )
+       when reason in [:session_not_found, :session_identity_mismatch] do
+    reject_unknown_session(conn, opts)
+  end
+
+  defp reject_mcp_request(
+         {:error, :session_not_initialized},
+         conn,
+         opts,
+         _session_manager,
+         _session_id,
+         session_reference
+       ) do
+    session_lifecycle_rejection_response(
+      conn,
+      opts,
+      session_reference_id(session_reference),
+      nil,
+      :session_not_initialized
+    )
+  end
+
+  defp reject_mcp_request(
+         {:error, :session_limit_exceeded},
+         conn,
+         opts,
+         _session_manager,
+         _session_id,
+         _session_reference
+       ) do
+    session_limit_response(conn, opts)
+  end
+
+  defp reject_mcp_request(
+         {:error, {:request_id_rejected, failed_session_id, request_id, reason, method}},
+         conn,
+         opts,
+         session_manager,
+         _session_id,
+         _session_reference
+       ) do
+    handle_request_id_rejection(
+      conn,
+      opts,
+      session_manager,
+      failed_session_id,
+      request_id,
+      reason,
+      method
+    )
+  end
+
+  defp reject_mcp_request(
+         {:error, {:session_lifecycle_rejected, request_id, reason}},
+         conn,
+         opts,
+         _session_manager,
+         session_id,
+         _session_reference
+       ) do
+    session_lifecycle_rejection_response(conn, opts, session_id, request_id, reason)
+  end
+
+  defp reject_mcp_request(
+         {:error, :session_required},
+         conn,
+         opts,
+         _session_manager,
+         _session_id,
+         _session_reference
+       ) do
+    reject_missing_session(conn, opts)
+  end
+
+  defp reject_mcp_request(
+         {:error, :session_manager_unavailable},
+         conn,
+         opts,
+         _session_manager,
+         _session_id,
+         _session_reference
+       ) do
+    session_manager_unavailable_response(conn, opts)
+  end
+
+  defp reject_mcp_request(
+         {:error, :origin_not_allowed},
+         conn,
+         opts,
+         _session_manager,
+         _session_id,
+         _session_reference
+       ) do
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> send_resp(403, "Origin not allowed")
+  end
+
+  defp reject_mcp_request(
+         {:error, :parse_error},
+         conn,
+         opts,
+         _session_manager,
+         session_id,
+         _session_reference
+       ) do
+    error_response = JSONRPC.error(nil, ErrorCodes.parse_error(), "Parse error")
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> add_protocol_version_header()
+    |> maybe_put_session_header(session_id)
+    |> put_resp_content_type("application/json")
+    |> send_resp(400, Jason.encode!(error_response))
+  end
+
+  defp reject_mcp_request(
+         {:error, :invalid_json_rpc_envelope},
+         conn,
+         opts,
+         _session_manager,
+         session_id,
+         _session_reference
+       ) do
+    error_response = JSONRPC.error(nil, ErrorCodes.invalid_request(), "Invalid Request")
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> add_protocol_version_header()
+    |> maybe_put_session_header(session_id)
+    |> put_resp_content_type("application/json")
+    |> send_resp(400, Jason.encode!(error_response))
+  end
+
+  defp reject_mcp_request(
+         {:error, :body_too_large},
+         conn,
+         opts,
+         _session_manager,
+         _session_id,
+         _session_reference
+       ) do
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> send_resp(413, "Request body too large")
+  end
+
+  defp reject_mcp_request(
+         {:error, reason},
+         conn,
+         opts,
+         _session_manager,
+         session_id,
+         _session_reference
+       ) do
+    Logger.error("MCP request processing failed", reason: LogSummary.describe(reason))
+
+    error_response = JSONRPC.error(nil, ErrorCodes.internal_error(), "Internal error")
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> add_protocol_version_header()
+    |> maybe_put_session_header(session_id)
+    |> put_resp_content_type("application/json")
+    |> send_resp(500, Jason.encode!(error_response))
+  end
+
+  defp do_handle_runtime_mcp_request(conn, opts) do
+    runtime = RuntimeWriter.runtime(conn)
+    binding = RuntimeWriter.binding(conn)
+
+    with :ok <- RuntimeWriter.current(conn),
+         {:ok, body, conn} <- read_or_cached_body(conn, opts),
+         {:ok, request} <- runtime_json(body),
+         conn = assign_request_protocol_version_runtime(conn, request),
+         :ok <- runtime_array_policy(conn, request, opts),
+         :ok <- runtime_validate_methods(request),
+         {:ok, token_info} <- authorize_request_runtime(conn, request, opts),
+         :ok <- RuntimeWriter.current(conn),
+         {:ok, resolved} <- resolve_handler_opts(conn, request, opts),
+         :ok <- RuntimeWriter.current(conn),
+         {:ok, resolved} <- resolve_mrtr_identity(conn, request, token_info, resolved),
+         {:ok, reference} <- runtime_session_reference(conn, request),
+         {:ok, session} <-
+           RuntimeSession.prepare(
+             runtime,
+             binding,
+             reference,
+             request,
+             session_metadata(resolved, token_info, :http)
+           ),
+         {:ok, conn} <- runtime_protocol_version(conn, request, session),
+         :ok <- RuntimeWriter.current(conn),
+         format = if(request_stream?(conn, request), do: :sse, else: :json),
+         {:ok, _token} <-
+           HTTPGateway.submit(runtime, binding, request,
+             format: format,
+             dispatch_opts:
+               runtime_dispatch_opts(Map.put(resolved, :runtime_format, format), conn)
+           ),
+         {:ok, effect, wire} <- RuntimeWriter.await(conn) do
+      conn =
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> add_protocol_version_header()
+        |> maybe_put_session_header(RuntimeSession.id(session))
+
+      write_runtime_output(conn, effect, wire, format, session, request)
+    else
+      {:error, reason} = error
+      when reason in [
+             :http_invocation_closed,
+             :http_output_busy,
+             :http_frame_too_large,
+             :server_busy,
+             :handler_timeout,
+             :runtime_unavailable,
+             :request_too_large,
+             :http_metadata_busy,
+             :http_writer_unavailable
+           ] ->
+        _ = error
+        raise RuntimeWriter.AdmissionError
+
+      error ->
+        reject_mcp_request(error, conn, opts, nil, nil, nil)
+    end
+  end
+
+  defp runtime_json(body) do
+    case Jason.decode(body) do
+      {:ok, request} when is_map(request) or is_list(request) -> {:ok, request}
+      {:ok, _value} -> {:error, :invalid_json_rpc_envelope}
+      {:error, _reason} -> {:error, :parse_error}
+    end
+  end
+
+  defp runtime_array_policy(conn, request, opts) when is_list(request) do
+    if request == [] or opts.protocol_mode == :modern_only or modern_protocol_header?(conn) or
+         Enum.any?(request, &modern_request_metadata?/1),
+       do: {:error, :invalid_json_rpc_envelope},
+       else: :ok
+  end
+
+  defp runtime_array_policy(_conn, _request, _opts), do: :ok
+
+  defp runtime_validate_methods(request) when is_list(request), do: :ok
+
+  defp runtime_validate_methods(request) do
+    with :ok <- validate_modern_method(request), do: validate_request_method_params(request)
+  end
+
+  defp authorize_request_runtime(conn, request, opts) when is_list(request) do
+    Enum.reduce_while(request, {:ok, nil}, fn
+      member, {:ok, _previous} when is_map(member) ->
+        case authorize_request(conn, member, opts) do
+          {:ok, token} -> {:cont, {:ok, token}}
+          error -> {:halt, error}
+        end
+
+      _invalid, result ->
+        {:cont, result}
+    end)
+  end
+
+  defp authorize_request_runtime(conn, request, opts), do: authorize_request(conn, request, opts)
+
+  defp assign_request_protocol_version_runtime(conn, request) when is_map(request),
+    do: assign_request_protocol_version(conn, request)
+
+  defp assign_request_protocol_version_runtime(conn, _batch), do: conn
+
+  defp runtime_session_reference(conn, request) do
+    if modern_http_request?(conn, request),
+      do: {:ok, nil},
+      else: get_or_create_session_id(conn, request)
+  end
+
+  defp runtime_protocol_version(conn, request, session) do
+    if is_list(request) do
+      validate_runtime_legacy_version(conn, request, session)
+    else
+      if modern_http_request?(conn, request) or request["method"] == "initialize",
+        do: validate_protocol_version(conn, request, nil, nil),
+        else: validate_runtime_legacy_version(conn, request, session)
+    end
+  end
+
+  defp validate_runtime_legacy_version(conn, _request, session) do
+    expected = RuntimeSession.version(session) || VersionRegistry.latest_version()
+
+    case get_req_header(conn, "mcp-protocol-version") do
+      [version] when is_binary(version) ->
+        if VersionRegistry.supported?(version) and version == expected,
+          do: {:ok, assign(conn, :request_protocol_version, expected)},
+          else:
+            protocol_version_error(
+              "MCP-Protocol-Version does not match the negotiated version.",
+              expected
+            )
+
+      [] ->
+        if FeatureFlags.enabled?(:protocol_version_header),
+          do: protocol_version_error("Missing MCP-Protocol-Version header.", expected),
+          else: {:ok, assign(conn, :request_protocol_version, expected)}
+
+      _duplicate ->
+        protocol_version_error("MCP-Protocol-Version header must occur exactly once.", expected)
+    end
+  end
+
+  defp runtime_dispatch_opts(opts, conn) do
+    keys = [
+      :protocol_mode,
+      :instructions,
+      :request_state,
+      :endpoint,
+      :max_input_requests,
+      :max_mrtr_bytes,
+      :require_replay_protection,
+      :principal_id,
+      :tenant_id
+    ]
+
+    Enum.map(keys, &{&1, Map.get(opts, &1)}) ++
+      [
+        application_context: opts.handler_opts,
+        request_headers: conn.req_headers,
+        replay_cache: runtime_replay_cache(conn),
+        request_notification_target: runtime_notification_target(opts, conn)
+      ]
+  end
+
+  defp runtime_notification_target(%{runtime_format: :json}, _conn), do: nil
+
+  defp runtime_notification_target(_opts, conn) do
+    case Arbor.MCP.Server.Runtime.HTTPNotificationTarget.new(
+           RuntimeWriter.runtime(conn),
+           RuntimeWriter.binding(conn)
+         ) do
+      {:ok, target} -> target
+      _closed -> nil
+    end
+  end
+
+  defp runtime_replay_cache(conn) do
+    case Arbor.MCP.Server.Runtime.service(RuntimeWriter.runtime(conn), :replay_cache) do
+      {:ok, service} -> service
+      _unavailable -> nil
+    end
+  end
+
+  defp finalize_runtime_session(session, request, wire, conn) do
+    response = if wire == "", do: nil, else: decode_runtime_wire(wire)
+    RuntimeSession.finalize(session, request, response, conn.assigns[:request_protocol_version])
+  end
+
+  defp decode_runtime_wire("data: " <> framed),
+    do: Jason.decode!(String.trim_trailing(framed, "\r\n\r\n"))
+
+  defp decode_runtime_wire(wire), do: Jason.decode!(wire)
+
+  defp write_runtime_output(conn, effect, wire, format, session, request) do
+    kind = HTTPWriterRegistry.kind(effect)
+
+    if kind != :notification and finalize_runtime_session(session, request, wire, conn) != :ok,
+      do: raise(RuntimeWriter.AdmissionError)
+
+    initialization_error? = kind == :response and initialization_error?(request, wire)
+
+    conn =
+      if initialization_error?,
+        do:
+          conn |> assign(:suppress_session_header, true) |> delete_resp_header("mcp-session-id"),
+        else: conn
+
+    conn = write_runtime_response(conn, effect, wire, format)
+
+    if kind == :notification do
+      case RuntimeWriter.await(conn) do
+        {:ok, effect, wire} -> write_runtime_output(conn, effect, wire, format, session, request)
+        _closed -> raise RuntimeWriter.AdmissionError
+      end
+    else
+      if initialization_error?, do: RuntimeSession.terminate(session)
+
+      conn
+    end
+  end
+
+  defp initialization_error?(%{"method" => "initialize"}, wire) when wire != "",
+    do: Map.has_key?(decode_runtime_wire(wire), "error")
+
+  defp initialization_error?(_request, _wire), do: false
+
+  defp write_runtime_response(conn, effect, "", _format),
+    do: RuntimeWriter.perform(conn, effect, "", &Plug.Conn.send_resp(&1, 202, &2))
+
+  defp write_runtime_response(conn, effect, wire, :json) do
+    conn = put_resp_content_type(conn, "application/json")
+    RuntimeWriter.perform(conn, effect, wire, &Plug.Conn.send_resp(&1, 200, &2))
+  end
+
+  defp write_runtime_response(conn, effect, wire, :sse) do
+    conn =
+      if conn.state == :chunked do
+        conn
+      else
+        conn
+        |> put_resp_header("content-type", "text/event-stream")
+        |> put_resp_header("x-accel-buffering", "no")
+        |> put_resp_header("cache-control", "no-cache")
+      end
+
+    RuntimeWriter.perform(conn, effect, wire, fn conn, wire ->
+      conn = if conn.state == :chunked, do: conn, else: Plug.Conn.send_chunked(conn, 200)
+
+      case Plug.Conn.chunk(conn, wire) do
+        {:ok, conn} -> conn
+        error -> error
+      end
+    end)
+  end
+
+  defp send_resp(conn, status, body), do: RuntimeWriter.send_resp(conn, status, body)
+  defp send_chunked(conn, status), do: RuntimeWriter.send_chunked(conn, status)
+  defp chunk(conn, body), do: RuntimeWriter.chunk(conn, body)
 
   defp session_reference_id({:existing_session, session_id}), do: session_id
   defp session_reference_id(_new_or_stateless), do: nil
@@ -982,13 +1449,40 @@ defmodule Arbor.MCP.HttpPlug do
   defp read_or_cached_body(conn, opts) do
     body_limit = Map.get(opts, :body_limit, 1_000_000)
 
-    case read_body(conn, length: body_limit, read_length: body_limit) do
-      {:ok, "", conn} -> parsed_json_body(conn, body_limit)
-      {:ok, body, conn} -> {:ok, body, conn}
-      {:more, _partial, _conn} -> {:error, :body_too_large}
-      {:error, reason} -> {:error, reason}
+    with {:ok, read_opts} <- runtime_read_options(conn, body_limit) do
+      case read_body(conn, read_opts) do
+        {:ok, "", conn} -> parsed_json_body(conn, body_limit)
+        {:ok, body, conn} -> {:ok, body, conn}
+        {:more, _partial, _conn} -> {:error, :body_too_large}
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
+
+  defp runtime_read_options(
+         %Plug.Conn{private: %{arbor_mcp_http_binding: binding, arbor_mcp_runtime: runtime}},
+         limit
+       ) do
+    with {:ok, proof} <- HTTPWriterBinding.validate(binding, runtime),
+         remaining = proof.deadline - System.monotonic_time(:millisecond),
+         true <- remaining > 0 do
+      {:ok, [length: limit, read_length: limit, read_timeout: remaining]}
+    else
+      _expired -> {:error, :http_invocation_closed}
+    end
+  end
+
+  defp runtime_read_options(_conn, limit), do: {:ok, [length: limit, read_length: limit]}
+
+  defp parsed_json_body(
+         %Plug.Conn{
+           private: %{arbor_mcp_http_binding: _binding},
+           body_params: %{"_json" => value} = params
+         } = conn,
+         limit
+       )
+       when map_size(params) == 1,
+       do: encode_parsed_body(value, conn, limit)
 
   defp parsed_json_body(
          %Plug.Conn{body_params: %{"_json" => _value} = params} = conn,
@@ -1008,6 +1502,30 @@ defmodule Arbor.MCP.HttpPlug do
   end
 
   defp parsed_json_body(conn, _body_limit), do: {:ok, "", conn}
+
+  defp encode_parsed_body(
+         params,
+         %Plug.Conn{private: %{arbor_mcp_http_binding: binding, arbor_mcp_runtime: runtime}} =
+           conn,
+         body_limit
+       ) do
+    with {:ok, proof} <- HTTPWriterBinding.validate(binding, runtime),
+         {:ok, %{wire: body}} <-
+           OutputCodec.prepare(params,
+             codec: :json,
+             deadline: proof.deadline,
+             max_frame_bytes: body_limit + 1,
+             max_term_bytes: body_limit + 1
+           ) do
+      {:ok, body, conn}
+    else
+      {:error, reason} when reason in [:output_frame_too_large, :output_term_too_large] ->
+        {:error, :body_too_large}
+
+      _invalid ->
+        {:error, :invalid_json_rpc_envelope}
+    end
+  end
 
   defp encode_parsed_body(params, conn, body_limit) do
     json_library = Application.get_env(:phoenix, :json_library, Jason)
@@ -1055,9 +1573,11 @@ defmodule Arbor.MCP.HttpPlug do
 
     {:ok, Map.put(opts, :handler_opts, resolved)}
   rescue
-    exception ->
-      Logger.error("Failed to resolve MCP handler_opts: #{Exception.message(exception)}")
+    _exception ->
+      Logger.error("Failed to resolve MCP handler_opts")
       {:error, :handler_opts_failed}
+  catch
+    _kind, _reason -> {:error, :handler_opts_failed}
   end
 
   defp resolve_mrtr_identity(conn, request, token_info, opts) do
@@ -1093,8 +1613,8 @@ defmodule Arbor.MCP.HttpPlug do
       false -> {:error, :invalid_mrtr_identity}
     end
   rescue
-    exception ->
-      Logger.error("Failed to resolve MRTR identity: #{Exception.message(exception)}")
+    _exception ->
+      Logger.error("Failed to resolve MRTR identity")
       {:error, :invalid_mrtr_identity}
   end
 
@@ -1929,6 +2449,18 @@ defmodule Arbor.MCP.HttpPlug do
     conn = if status in [429, 503], do: put_resp_header(conn, "retry-after", "1"), else: conn
     send_resp(conn, status, Jason.encode!(error_response))
   end
+
+  defp handle_request_id_rejection(
+         conn,
+         %{runtime: runtime} = opts,
+         _session_manager,
+         _session_id,
+         request_id,
+         reason,
+         "initialize"
+       )
+       when not is_nil(runtime),
+       do: request_id_rejection_response(conn, opts, nil, request_id, reason)
 
   defp handle_request_id_rejection(
          conn,

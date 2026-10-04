@@ -14,6 +14,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   alias Arbor.MCP.Testing.MockTransport
   alias Arbor.MCP.Transport.{HTTP, Local, ReliabilityWrapper, Stdio, Test}
   alias Arbor.MCP.Transport.HTTP.LegacySSE
+  alias Arbor.RPC.LogSummary
 
   @default_handshake_timeout 10_000
 
@@ -501,7 +502,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
         receive_loop(parent, transport_mod, transport_state)
 
       {:error, reason} ->
-        Logger.error("Transport error in receive loop: #{inspect(reason)}")
+        Logger.error("Transport error in receive loop", reason: LogSummary.describe(reason))
         Lifetime.deliver(parent, {:transport_closed, reason})
         :ok
     end
@@ -846,7 +847,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
         {:ok, result, transport_state}
 
       {:error, error_details, _id} ->
-        Logger.debug("Handshake error details: #{inspect(error_details)}")
+        Logger.debug("Handshake failed", reason: LogSummary.describe(error_details))
 
         # Extract error code for cleaner error reporting
         error_code = error_details["code"]

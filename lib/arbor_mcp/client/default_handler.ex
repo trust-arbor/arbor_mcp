@@ -29,6 +29,7 @@ defmodule Arbor.MCP.Client.DefaultHandler do
   @behaviour Arbor.MCP.Client.Handler
 
   require Logger
+  alias Arbor.RPC.LogSummary
 
   @impl true
   def init(opts) do
@@ -113,7 +114,7 @@ defmodule Arbor.MCP.Client.DefaultHandler do
     end
   rescue
     error ->
-      Logger.error("Error in handle_create_message: #{inspect(error)}")
+      Logger.error("Error in handle_create_message", reason: LogSummary.describe(error))
 
       {:error,
        %{

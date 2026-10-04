@@ -16,6 +16,8 @@ candidate; the final compiled graph, HTTP cutover and RC gates remain open.
 | Ordinary Client lifetime freeze, combined manifest `4b2707ffc4fe597293b764ccbea3e10420dd6fa49a9fbb72e201ca0820b2d6bf`; integration `289f02138783698205186c2b8294989753e3d2cf` | Separate nineteen-path lifetime and seven-path peer-event patches on `f4d8534` plus the exact scoped-helper prerequisite; 201 affected cases on each supported toolchain, zero failures. The combined Client/guard checkpoint passes 5,048 executed cases plus doctests/properties on both. Final graph comparison remains required. |
 | Runtime privacy freeze, manifest `24eeccc6bb017d98a20ef313bf44c9dda86c23e9838b986e9312bda9337e0970`; integration `40f65d14b437c8da1cb1b0ac55f761980ca1fa70` | Thirty-path diagnostics patch plus separate clean stdio-domain retirement correction. Frozen privacy cases: 245/toolchain; combined integration: 248/toolchain, zero failures. It remains supplementary to the original census and does not establish whole-library Client/HTTP diagnostic privacy. |
 | Host logging freezes: MCP manifest `4496515f751d22dc946b166e75014ddacc6ce5e1ab5f6dbe5e9ee9299c170050`, ACP manifest `47b9ced480a79726ba64e16a28de66e6db8a26d9d7096f09a94c570db2905d45` | Ten MCP and eight ACP paths remove automatic global logger changes. Canonical MCP passes 46 native stdio cases and 5,052 executed full cases on both supported toolchains; ACP passes 359 core cases on both. ACP integration is `cc8b2078855148f390e899c7122fa56c8275da17`. These do not establish arbitrary host-handler privacy. |
+| Mounted Gateway freeze, manifest `2b6fcb4fe34a705993316a555d182d9a93573f6d651a0baf9f56a33b3ca0c9e3` | Twenty-six HTTP POST/request-SSE paths, merged with current privacy, stdio and Client context. A separate topology fixture and native Gateway report correction accompany it. Canonical combined runtime/stdIO/privacy selection passes 329 cases on both. Full HTTP lifecycle cutover remains open. |
+| Client diagnostics freeze, manifest `135a1a25ba69ea80315b8a5fc2a1ce146025e49d375d5c4fa1e969b97d0aa8da` | Fourteen Client/HTTP diagnostic paths; canonical affected selection passes 228 cases on both. Exact typed startup errors remain available to callers and trusted host logging; private MRTR callback failure now completes its Task normally. This does not establish arbitrary custom callback report privacy. |
 
 The historical census is retained under
 `tmp/v2-semantic-census-69b0a39/{SEMANTIC_CENSUS.md,semantic-inventory.json,REVIEW_NOTES.md}`.
@@ -415,8 +417,20 @@ checkpoint is distinct from host-global logging migration and from old census
 counts. Its [diagnostics record](https://github.com/trust-arbor/arbor_mcp/blob/40f65d14b437c8da1cb1b0ac55f761980ca1fa70/docs/V2_RUNTIME_DIAGNOSTICS.md)
 is integrated at `40f65d1`.
 Whole-library Client/HTTP error-log and native client-child-spec diagnostics
-still require broad privacy qualification; runtime report formatting is not
-proof of that larger claim.
+were outside the earlier Runtime freeze. The separate Client diagnostics
+checkpoint now qualifies closed status summaries, opaque built-in native
+startup arguments, fixed connection/error logs and actual callback reports.
+It preserves original typed startup/cleanup results and native parents. A host
+Supervisor can still report a returned private error; that is an explicit
+trusted caller boundary, exercised by the native failed-child probe.
+
+Concurrent MRTR callbacks now capture raise/throw/exit inside their private
+Task, preserving public `-32603`, `"MRTR input handler failed"` and handler state.
+The converted private Task DOWN is deliberately `:normal`. Generic managed
+stream value/exit results retain their existing semantics; external hard exits
+remain outside that conversion. See [Client diagnostics](./V2_CLIENT_DIAGNOSTICS.md).
+Custom implementations, trusted inspection and whole-library report privacy
+remain separate boundaries; formatter coverage alone cannot prove them.
 
 Before RC, rebuild immutable MCP/ACP/adapters/RPC manifests and reconcile every
 unexpected callable, callback, type and struct change, including the seven

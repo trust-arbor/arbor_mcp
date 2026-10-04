@@ -1,7 +1,7 @@
 defmodule Arbor.MCP.Server.Runtime.OutputTicket do
   @moduledoc false
   @enforce_keys [:ledger, :table, :generation, :token, :scope]
-  defstruct [:ledger, :table, :generation, :token, :scope]
+  defstruct [:ledger, :table, :generation, :token, :scope, :http_effect]
   @scope_limit 4_096
 
   @opaque t :: %__MODULE__{
@@ -9,7 +9,8 @@ defmodule Arbor.MCP.Server.Runtime.OutputTicket do
             table: :ets.tid(),
             generation: reference(),
             token: reference(),
-            scope: term()
+            scope: term(),
+            http_effect: Arbor.MCP.Server.Runtime.HTTPWriteTicket.t() | nil
           }
 
   @type error :: {:error, atom()}
@@ -18,6 +19,26 @@ defmodule Arbor.MCP.Server.Runtime.OutputTicket do
   def new(ledger, table, generation, token, scope) do
     %__MODULE__{ledger: ledger, table: table, generation: generation, token: token, scope: scope}
   end
+
+  @spec with_http(t(), Arbor.MCP.Server.Runtime.HTTPWriteTicket.t()) :: t()
+  def with_http(%__MODULE__{http_effect: nil} = ticket, effect),
+    do: %{ticket | http_effect: effect}
+
+  @spec http(t()) :: Arbor.MCP.Server.Runtime.HTTPWriteTicket.t() | nil
+  def http(%__MODULE__{http_effect: effect}), do: effect
+
+  @spec same?(t(), t()) :: boolean()
+  def same?(%__MODULE__{} = left, %__MODULE__{} = right) do
+    left.ledger == right.ledger and left.table == right.table and
+      left.generation == right.generation and left.token == right.token and
+      left.scope == right.scope
+  end
+
+  def same?(_left, _right), do: false
+
+  @spec identity(t()) :: {pid(), :ets.tid(), reference(), reference(), term()}
+  def identity(%__MODULE__{} = ticket),
+    do: {ticket.ledger, ticket.table, ticket.generation, ticket.token, ticket.scope}
 
   @spec address(t()) :: {:ok, {pid(), reference()}} | error()
   def address(%__MODULE__{} = ticket) do

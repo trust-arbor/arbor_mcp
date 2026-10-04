@@ -16,6 +16,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
     ServiceRef
   }
 
+  alias Arbor.MCP.Server.Runtime.OutputTicket
+
   alias Arbor.MCP.SessionManager.SessionLease
 
   @enforce_keys [:pid, :table, :root, :identity, :limits]
@@ -41,7 +43,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
     max_io_frame_bytes: 1_048_576,
     max_proof_bytes: 4_096,
     control_timeout_ms: 50,
-    idle_exit_ms: 100
+    idle_exit_ms: 100,
+    failure_timeout_ms: 5_000
   ]
 
   # Deliberately unlinked. A supervised root-owned proxy will retain this domain
@@ -168,7 +171,19 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
         deadline: deadline
       }
 
-      authority = %{phase: :entered, lease_bound: false, work: nil}
+      authority = %{
+        phase: :entered,
+        lease_bound: false,
+        work: nil,
+        failure: %{
+          deadline: deadline + domain.limits.failure_timeout_ms,
+          state: :available,
+          token: make_ref(),
+          effect: make_ref(),
+          controller: self()
+        }
+      }
+
       register_entry(domain, self(), proof, proxy, authority)
     else
       _invalid -> {:error, :http_invocation_closed}
@@ -191,6 +206,15 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
         _invalid -> {:error, :invalid_http_session_lease}
       end
     end)
+  end
+
+  def source_valid?(binding, source) do
+    with {:ok, {domain, id}} <- HTTPWriterBinding.address(binding),
+         {:ok, gate} <- read(domain),
+         %{authority: %{work: %{token: ^source}}} = info <- gate.bindings[id],
+         true <- source_current?(domain, info),
+         do: true,
+         else: (_ -> false)
   end
 
   @spec bind_work(HTTPWriterBinding.t(), reference()) :: :ok | error()
@@ -218,6 +242,72 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
   end
 
   def bind_work(_binding, _token), do: {:error, :invalid_http_work_origin}
+
+  # The root-installed gateway binds the phase after promotion. The actual
+  # socket cannot author a future callback phase or an aggregate outcome.
+  def bind_dispatched(binding, token) when is_reference(token) do
+    mutate_capture(
+      binding,
+      fn domain, info ->
+        with true <- info.authority.work == nil,
+             {:ok, reservation} <- Admission.current(Ref.table(domain.runtime), token),
+             true <-
+               reservation.generation == info.proof.generation and
+                 reservation.scope == info.proof.scope and reservation.owner == self() and
+                 not reservation.terminal do
+          work = dispatched_proof(domain, info, reservation)
+          {:ok, %{info | authority: %{info.authority | work: work, phase: :bound}}}
+        else
+          _invalid -> {:error, :invalid_http_work_origin}
+        end
+      end,
+      :gateway
+    )
+  end
+
+  def bind_dispatched(_binding, _token), do: {:error, :invalid_http_work_origin}
+
+  defp dispatched_proof(domain, info, reservation) do
+    base = %{
+      token: reservation.token,
+      generation: reservation.generation,
+      scope: reservation.scope,
+      deadline: min(reservation.deadline, info.proof.deadline),
+      gateway: self()
+    }
+
+    if reservation.batch? do
+      Map.merge(base, %{
+        kind: :batch,
+        final:
+          {:pending,
+           {self(), domain.table, make_ref(), make_ref(),
+            {:batch, reservation.generation, reservation.token}}}
+      })
+    else
+      Map.put(base, :phase, reservation.output_phase)
+    end
+  end
+
+  def finalize_batch(binding, token, primary) do
+    mutate_capture(
+      binding,
+      fn domain, info ->
+        with %{kind: :batch, token: ^token, final: {:pending, _reserved}} = work <-
+               info.authority.work,
+             :ok <- OutputTicket.validate_scope(primary, {:batch, work.generation, work.token}),
+             {:ok, values} when is_list(values) <-
+               Arbor.MCP.Server.Runtime.OutputLedger.value(primary),
+             true <- work_current?(domain, work) do
+          final = %{work | final: {:done, OutputTicket.identity(primary)}}
+          {:ok, %{info | authority: %{info.authority | work: final}}}
+        else
+          _invalid -> {:error, :invalid_http_batch_outcome}
+        end
+      end,
+      :controller
+    )
+  end
 
   @spec cleanup_status(t()) ::
           :ok | {:error, atom() | {:http_io_unsettled, pos_integer(), non_neg_integer()}}
@@ -247,14 +337,14 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
 
   def cleanup_status(_domain), do: {:error, :http_io_cleanup_unconfirmed}
 
-  defp mutate_capture(binding, operation) do
+  defp mutate_capture(binding, operation, actor \\ :writer) do
     with {:ok, {domain, token}} <- HTTPWriterBinding.address(binding),
          {:ok, gate} <- read(domain),
          {:ok, info} <- open_binding(gate, token),
-         true <- info.writer == self() and captured_current?(domain, info) do
+         true <- capture_actor?(actor, domain, info) and captured_current?(domain, info) do
       update(domain, info.proof.deadline, fn current ->
         with {:ok, info} <- open_binding(current, token),
-             true <- info.writer == self() and captured_current?(domain, info),
+             true <- capture_actor?(actor, domain, info) and captured_current?(domain, info),
              {:ok, next} <- operation.(domain, info) do
           next = %{next | bytes: 0}
           next = %{next | bytes: :erlang.external_size(next) + 256}
@@ -277,6 +367,20 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
     end
   end
 
+  defp capture_actor?(:writer, _domain, info), do: info.writer == self()
+
+  defp capture_actor?(:gateway, domain, _info),
+    do: registered_actor?(domain, :http_gateway, self())
+
+  defp capture_actor?(:controller, domain, _info),
+    do: registered_actor?(domain, :output_controller, self())
+
+  defp registered_actor?(domain, key, pid) do
+    :ets.lookup(Ref.table(domain.runtime), key) == [{key, pid}] and Process.alive?(pid)
+  rescue
+    ArgumentError -> false
+  end
+
   defp captured_current?(domain, %{authority: authority} = info) when is_map(authority) do
     authority.phase in [:entered, :bound] and installed_proxy?(domain, info.owner) and
       lease_current?(domain, info.proof.lease) and work_current?(domain, authority.work)
@@ -293,6 +397,35 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
       )
 
   defp work_current?(_domain, nil), do: true
+
+  defp work_current?(domain, %{kind: :batch} = work) do
+    table = Ref.table(domain.runtime)
+
+    with {:ok, %{generation: generation}} <- Admission.route(table),
+         true <- generation == work.generation and work.deadline > Deadline.now(),
+         true <- registered_actor?(domain, :http_gateway, work.gateway),
+         false <- :ets.member(table, {:cancelled, work.token}) do
+      case work.final do
+        {:pending, _reserved} ->
+          case Admission.current(table, work.token) do
+            {:ok, %{generation: ^generation, scope: scope, batch?: true}} -> scope == work.scope
+            _invalid -> false
+          end
+
+        {:done, {_ledger, _table, _generation, _token, {:batch, ^generation, token}}} ->
+          token == work.token
+      end
+    else
+      _invalid -> false
+    end
+  rescue
+    ArgumentError -> false
+  end
+
+  defp work_current?(domain, %{gateway: gateway} = proof),
+    do:
+      registered_actor?(domain, :http_gateway, gateway) and
+        Admission.output_origin_valid?(Ref.table(domain.runtime), proof)
 
   defp work_current?(domain, proof),
     do: Admission.output_origin_valid?(Ref.table(domain.runtime), proof)
@@ -342,24 +475,128 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
           {:ok, HTTPWriteTicket.t()} | error()
   def prepare(binding, wire, opts \\ []) do
     owner = Keyword.get(opts, :owner, self())
+    release_owner = Keyword.get(opts, :release_owner, owner)
 
     with {:ok, {domain, binding_token}} <- HTTPWriterBinding.address(binding),
          {:ok, domain} <- valid(domain),
          :ok <- local_pid(owner),
+         :ok <- local_pid(release_owner),
          {:ok, gate} <- read(domain),
          true <- Process.alive?(domain.root) || {:error, :http_writer_closed},
          {:ok, info} <- open_binding(gate, binding_token),
          true <- source_current?(domain, info) || {:error, :http_invocation_closed},
          {:ok, deadline} <- output_deadline(info, opts),
          :ok <- wire_valid(wire, domain.limits),
+         {:ok, metadata, handles} <- output_metadata(opts, domain.limits),
          :ok <- before_deadline(deadline),
          token = make_ref(),
-         entry = candidate(token, binding_token, owner, deadline, wire),
+         entry =
+           candidate(
+             token,
+             binding_token,
+             owner,
+             release_owner,
+             deadline,
+             wire,
+             metadata,
+             handles
+           ),
          :ok <- update(domain, deadline, &claim(&1, entry, domain)) do
       finish_prepare(domain, entry, info.writer, wire)
     else
       error -> error
     end
+  end
+
+  def failure_deadline(binding, token) do
+    with {:ok, {domain, id}} <- HTTPWriterBinding.address(binding),
+         true <- registered_actor?(domain, :output_controller, self()),
+         {:ok, gate} <- read(domain),
+         %{} = info <- gate.bindings[id] do
+      failure_authority(domain, info, token)
+    else
+      _invalid -> {:error, :http_failure_expired}
+    end
+  end
+
+  def prepare_failure(binding, reservation_token, wire, opts) do
+    with {:ok, {domain, binding_token}} <- HTTPWriterBinding.address(binding),
+         {:ok, gate} <- read(domain),
+         %{authority: %{failure: %{state: :available}}} = info <- gate.bindings[binding_token],
+         true <- registered_actor?(domain, :output_controller, self()),
+         {:ok, deadline} <- failure_authority(domain, info, reservation_token),
+         :ok <- wire_valid(wire, domain.limits),
+         {:ok, metadata, handles} <- output_metadata(opts, domain.limits),
+         token = make_ref(),
+         entry =
+           candidate(
+             token,
+             binding_token,
+             self(),
+             self(),
+             deadline,
+             wire,
+             Map.put(metadata, :failure_token, reservation_token),
+             handles
+           ),
+         :ok <- update(domain, deadline, &claim(&1, entry, domain)) do
+      finish_prepare(domain, entry, info.writer, wire)
+    else
+      false -> {:error, :invalid_http_failure_authority}
+      _invalid -> {:error, :http_failure_expired}
+    end
+  end
+
+  defp failure_authority(domain, info, token) do
+    with %{
+           work: %{token: ^token, gateway: gateway},
+           failure: %{state: :available, deadline: tail}
+         } <- info.authority,
+         true <- registered_actor?(domain, :http_gateway, gateway),
+         :ok <- generation_valid(domain, info.proof.generation),
+         true <- binding_parties_alive?(info) and lease_current?(domain, info.proof.lease),
+         [{_, %{generation: generation, scope: scope, caller: caller, deadline: deadline}}] <-
+           :ets.lookup(Ref.table(domain.runtime), {:output_failure, token}),
+         true <-
+           generation == info.proof.generation and scope == info.proof.scope and
+             caller == info.writer,
+         deadline = min(deadline, tail),
+         true <- deadline > Deadline.now() do
+      {:ok, deadline}
+    else
+      _invalid -> {:error, :http_failure_expired}
+    end
+  rescue
+    ArgumentError -> {:error, :http_failure_expired}
+  end
+
+  @spec prepared?(HTTPWriteTicket.t()) :: boolean()
+  def prepared?(ticket) do
+    with {:ok, {domain, token, binding}} <- HTTPWriteTicket.address(ticket),
+         {:ok, gate} <- read(domain),
+         %{binding: ^binding, stage: stage} = entry <- gate.claims[token],
+         true <- stage in [:prepared, :held],
+         true <-
+           entry.deadline > Deadline.now() and active_producer?(entry) and
+             Process.alive?(entry.owner),
+         true <- :atomics.get(entry.receipt, 2) == 0,
+         {:ok, info} <- io_binding(gate, binding),
+         true <- entry_current?(domain, info, entry),
+         :ok <- generation_valid(domain, info.proof.generation) do
+      HTTPWriteTicket.receipt_matches?(ticket, entry.receipt)
+    else
+      _invalid -> false
+    end
+  end
+
+  defp output_metadata(opts, limits) do
+    metadata = Keyword.get(opts, :metadata)
+    handles = Keyword.get(opts, :handle_bytes, 0)
+
+    if :erlang.external_size(metadata) <= limits.max_proof_bytes and is_integer(handles) and
+         handles >= 0 and handles <= limits.max_proof_bytes * 3,
+       do: {:ok, metadata, handles},
+       else: {:error, :http_output_metadata_too_large}
   end
 
   # The producer transfers to the recorded persistent owner before returning;
@@ -370,14 +607,233 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
   @spec publish(HTTPWriteTicket.t()) :: :ok | error()
   def publish(ticket), do: change_ticket(ticket, :publish)
 
+  @spec commit_member(HTTPWriteTicket.t(), OutputTicket.t()) :: :ok | error()
+  def commit_member(ticket, primary) do
+    with {:ok, {domain, token, binding}} <- HTTPWriteTicket.address(ticket),
+         {:ok, gate} <- read(domain),
+         %{binding: ^binding} = entry <- gate.claims[token] do
+      update(domain, entry.deadline, fn current ->
+        with %{binding: ^binding, stage: :held} = entry <- current.claims[token],
+             true <- self() == entry.release_owner,
+             true <- OutputTicket.same?(entry.metadata.primary, primary),
+             true <- source_current?(domain, current.bindings[binding]) do
+          put_entry(current, %{entry | committed?: true})
+        else
+          _invalid -> {:error, :invalid_http_output_phase}
+        end
+      end)
+    else
+      _invalid -> {:error, :invalid_http_write_ticket}
+    end
+  end
+
+  @spec finish_group(HTTPWriterBinding.t(), OutputTicket.t()) ::
+          {:ok, HTTPWriteTicket.t()} | error()
+  def finish_group(binding, primary) do
+    with {:ok, {domain, binding_token}} <- HTTPWriterBinding.address(binding),
+         {:ok, gate} <- read(domain),
+         {:ok, info} <- open_binding(gate, binding_token),
+         true <- aggregate_authorized?(domain, info, primary),
+         entries =
+           gate.claims
+           |> Map.values()
+           |> Enum.filter(&(&1.binding == binding_token and group_member?(&1)))
+           |> Enum.sort_by(& &1.sequence),
+         true <- entries != [],
+         true <-
+           Enum.all?(entries, fn entry ->
+             entry.stage == :held and entry.owner == self() and entry.committed? and
+               entry.deadline > Deadline.now() and :atomics.get(entry.receipt, 2) == 0
+           end),
+         {:ok, aggregate} <- aggregate_entry(entries, primary, domain),
+         :ok <- replace_group(domain, entries, aggregate) do
+      {:ok, ticket(domain, aggregate, info.writer)}
+    else
+      false -> {:error, :http_group_incomplete}
+      error -> error
+    end
+  end
+
+  defp aggregate_authorized?(%__MODULE__{runtime: nil}, _info, _primary), do: true
+
+  defp aggregate_authorized?(
+         domain,
+         %{authority: %{work: %{kind: :batch} = work}} = info,
+         primary
+       ),
+       do:
+         work.final == {:done, OutputTicket.identity(primary)} and
+           captured_current?(domain, info)
+
+  defp aggregate_authorized?(_domain, _info, _primary), do: false
+
+  defp aggregate_entry(entries, primary, domain) do
+    first = hd(entries)
+    json = "[" <> Enum.map_join(entries, ",", & &1.payload) <> "]"
+    wire = if(first.metadata.format == :sse, do: "data: " <> json <> "\r\n\r\n", else: json)
+    charge = Enum.reduce(entries, 0, &(&1.bytes + &2))
+
+    aggregate = %{
+      first
+      | metadata: %{primary: primary, group: false, final_group: true},
+        payload: wire,
+        wire_bytes: byte_size(wire),
+        deadline: Enum.min(Enum.map(entries, & &1.deadline)),
+        bytes: charge
+    }
+
+    minimum =
+      byte_size(wire) + :erlang.external_size(wire) + :erlang.external_size(aggregate) + 256
+
+    if byte_size(wire) <= domain.limits.max_io_frame_bytes and minimum <= charge,
+      do: {:ok, aggregate},
+      else: {:error, :http_frame_too_large}
+  end
+
+  defp replace_group(domain, entries, aggregate) do
+    update(domain, aggregate.deadline, fn gate ->
+      if Enum.all?(entries, &(gate.claims[&1.token] == &1)) and
+           source_current?(domain, gate.bindings[aggregate.binding]) do
+        claims = Enum.reduce(entries, gate.claims, &Map.delete(&2, &1.token))
+        {:ok, %{gate | claims: Map.put(claims, aggregate.token, aggregate)}, :ok}
+      else
+        {:error, :http_group_incomplete}
+      end
+    end)
+  end
+
+  def peek(binding) do
+    with {:ok, {domain, id}} <- HTTPWriterBinding.address(binding),
+         {:ok, gate} <- read(domain),
+         true <- Process.alive?(domain.root) || {:error, :http_writer_closed},
+         :ok <- peekable_binding(gate, id),
+         {:ok, info} <- io_binding(gate, id),
+         true <- info.writer == self(),
+         :ok <- generation_valid(domain, info.proof.generation) do
+      entries = Enum.filter(Map.values(gate.claims), &(&1.binding == id))
+
+      if Enum.any?(entries, &(&1.stage == :in_flight)) do
+        {:error, :http_write_in_flight}
+      else
+        entry =
+          entries
+          |> Enum.filter(&(&1.stage == :queued))
+          |> Enum.min_by(& &1.sequence, fn -> nil end)
+
+        case entry do
+          nil ->
+            :empty
+
+          entry ->
+            if entry.deadline > Deadline.now() and Process.alive?(entry.owner) and
+                 entry_current?(domain, info, entry),
+               do: {:ok, ticket(domain, entry, info.writer), entry.payload},
+               else: {:error, :http_invocation_closed}
+        end
+      end
+    else
+      {:error, :http_writer_closed} = error -> error
+      _closed -> {:error, :http_invocation_closed}
+    end
+  end
+
+  defp peekable_binding(gate, id) do
+    case gate.bindings[id] do
+      nil -> {:error, :http_writer_closed}
+      %{mode: :retired} -> {:error, :http_writer_closed}
+      _live -> :ok
+    end
+  end
+
+  def kind(effect) do
+    with {:ok, {domain, token, binding}} <- HTTPWriteTicket.address(effect),
+         true <- HTTPWriteTicket.writer?(effect, self()),
+         {:ok, gate} <- read(domain),
+         %{binding: ^binding, metadata: metadata} <- gate.claims[token] do
+      cond do
+        Map.get(metadata || %{}, :notification, false) -> :notification
+        Map.get(metadata || %{}, :accepted, false) -> :accepted
+        true -> :response
+      end
+    else
+      _missing -> :closed
+    end
+  end
+
+  # Read-only receipt observation remains usable after the logical output scope
+  # is gone. A missing claim is settled only after the guardian's atomic removal;
+  # in-flight claims cannot be removed while their writer remains alive.
+  @spec in_flight_observation(HTTPWriterBinding.t()) ::
+          {:ok, HTTPWriteTicket.observation()} | error()
+  def in_flight_observation(binding) do
+    with {:ok, {domain, binding_token}} <- HTTPWriterBinding.address(binding),
+         true <- registered_actor?(domain, :http_gateway, self()),
+         {:ok, gate} <- read(domain),
+         %{writer: writer} <- gate.bindings[binding_token],
+         {_token, entry} <-
+           Enum.find(gate.claims, fn {_token, entry} ->
+             entry.binding == binding_token and entry.stage == :in_flight
+           end) do
+      {:ok, HTTPWriteTicket.observation(ticket(domain, entry, writer))}
+    else
+      _not_writing -> {:error, :http_output_not_writing}
+    end
+  end
+
+  def observation_status(domain, token, receipt) do
+    case :atomics.get(receipt, 1) do
+      1 ->
+        :returned
+
+      2 ->
+        :failed
+
+      3 ->
+        :uncertain
+
+      0 ->
+        case read(domain) do
+          {:ok, %{claims: claims}} ->
+            case claims[token] do
+              %{receipt: ^receipt, stage: :in_flight} -> :in_flight
+              %{receipt: ^receipt} -> :pending
+              _settled -> :retired
+            end
+
+          _unavailable ->
+            if :atomics.get(domain.lifetime, 1) == 1, do: :retired, else: :unconfirmed
+        end
+    end
+  rescue
+    ArgumentError -> :unconfirmed
+  end
+
+  # Waiting may observe a fixed failure-only tail, but this accessor grants no
+  # work, store, publication or socket-write authority.
+  def wait_deadline(binding) do
+    with {:ok, {domain, token}} <- HTTPWriterBinding.address(binding),
+         {:ok, gate} <- read(domain),
+         %{writer: writer} = info <- gate.bindings[token],
+         true <- writer == self() do
+      {:ok, info.authority.failure.deadline}
+    else
+      _closed -> {:error, :http_invocation_closed}
+    end
+  end
+
   @spec checkout(HTTPWriterBinding.t()) :: :empty | {:ok, HTTPWriteTicket.t(), binary()} | error()
   def checkout(binding) do
     with {:ok, {domain, token}} <- HTTPWriterBinding.address(binding),
          {:ok, gate} <- read(domain),
          true <- Process.alive?(domain.root) || {:error, :http_writer_closed},
-         {:ok, info} <- open_binding(gate, token),
+         {:ok, info} <- io_binding(gate, token),
          true <- info.writer == self() || {:error, :invalid_http_writer} do
-      update(domain, info.proof.deadline, &take(&1, token, domain))
+      limit =
+        if info.mode == :failure_only,
+          do: info.authority.failure.deadline,
+          else: info.proof.deadline
+
+      update(domain, limit, &take(&1, token, domain))
     end
   end
 
@@ -623,6 +1079,11 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
   end
 
   defp register_binding(gate, binding, domain) do
+    # A sequential call on the same socket owner need not wait for the guardian
+    # timer after an actual return. Keep any outstanding wake nonce across the
+    # binding handoff, and never reap a still-running physical write here.
+    gate = reap_returned_claims(gate)
+
     existing = gate.writers[binding.writer]
     writer = existing || writer_slot(binding.writer)
     extra = if existing, do: 0, else: writer.bytes
@@ -655,6 +1116,16 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
     end
   end
 
+  defp reap_returned_claims(gate) do
+    gate.claims
+    |> Enum.reduce(gate, fn {token, entry}, gate ->
+      if entry.stage == :in_flight and :atomics.get(entry.receipt, 1) != 0,
+        do: drop(gate, token),
+        else: gate
+    end)
+    |> remove_empty_retired()
+  end
+
   defp binding_parties_alive?(binding),
     do: Process.alive?(binding.writer) and Process.alive?(binding.owner)
 
@@ -663,30 +1134,41 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
     %{slot | bytes: :erlang.external_size(slot) + 256}
   end
 
-  defp candidate(token, binding, owner, deadline, wire) do
+  defp candidate(token, binding, owner, release_owner, deadline, wire, metadata, handles) do
     entry = %{
       token: token,
       binding: binding,
       producer: self(),
       owner: owner,
+      release_owner: release_owner,
       deadline: deadline,
       stage: :candidate,
-      sequence: nil,
+      sequence: System.unique_integer([:positive, :monotonic]),
       payload: nil,
+      metadata: metadata,
+      handle_bytes: handles,
+      wire_bytes: byte_size(wire),
+      committed?: false,
       receipt: :atomics.new(2, []),
       bytes: 0
     }
 
     %{
       entry
-      | bytes: byte_size(wire) + :erlang.external_size(wire) + :erlang.external_size(entry) + 256
+      | bytes:
+          byte_size(wire) + :erlang.external_size(wire) + :erlang.external_size(entry) + handles +
+            256 + if(group_member?(entry), do: 20, else: 0)
     }
   end
 
   defp claim(gate, entry, domain) do
-    with {:ok, info} <- open_binding(gate, entry.binding),
-         :ok <- generation_valid(domain, info.proof.generation),
-         true <- source_current?(domain, info) || {:error, :http_invocation_closed} do
+    with {:ok, info} <- claim_binding(gate, entry, domain),
+         :ok <- generation_valid(domain, info.proof.generation) do
+      gate =
+        if Map.has_key?(entry.metadata || %{}, :failure_token),
+          do: failure_only(gate, info, domain),
+          else: gate
+
       cond do
         not Process.alive?(domain.root) ->
           {:error, :http_writer_closed}
@@ -697,14 +1179,97 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
         gate.bytes + entry.bytes > domain.limits.max_io_bytes ->
           {:error, :http_output_busy}
 
+        not prospective_group_valid?(gate, entry, domain) ->
+          {:error, :http_frame_too_large}
+
         true ->
           {:ok,
            %{
              gate
              | claims: Map.put(gate.claims, entry.token, entry),
+               bindings: Map.put(gate.bindings, info.token, info),
                bytes: gate.bytes + entry.bytes
            }, :ok}
       end
+    end
+  end
+
+  defp claim_binding(gate, %{metadata: %{failure_token: token}} = entry, domain) do
+    with %{authority: %{failure: %{state: :available} = failure}} = info <-
+           gate.bindings[entry.binding],
+         true <- registered_actor?(domain, :output_controller, self()),
+         {:ok, deadline} <- failure_authority(domain, info, token),
+         true <- entry.deadline <= deadline do
+      failure = %{
+        failure
+        | state: :claimed,
+          token: token,
+          effect: entry.token,
+          controller: self()
+      }
+
+      {:ok, %{info | mode: :failure_only, authority: %{info.authority | failure: failure}}}
+    else
+      _invalid -> {:error, :http_failure_expired}
+    end
+  end
+
+  defp claim_binding(gate, entry, domain) do
+    with {:ok, info} <- open_binding(gate, entry.binding),
+         true <- source_current?(domain, info) || {:error, :http_invocation_closed},
+         do: {:ok, info}
+  end
+
+  defp entry_current?(domain, %{authority: %{work: %{gateway: gateway}}} = info, %{
+         owner: gateway,
+         wire_bytes: 0,
+         metadata: %{accepted: true}
+       }) do
+    registered_actor?(domain, :http_gateway, gateway) and
+      info.proof.deadline > Deadline.now() and binding_parties_alive?(info) and
+      lease_current?(domain, info.proof.lease) and
+      generation_valid(domain, info.proof.generation) == :ok
+  end
+
+  defp entry_current?(domain, %{authority: %{failure: failure}} = info, %{
+         token: effect,
+         metadata: %{failure_token: token}
+       }) do
+    failure.state == :claimed and failure.token == token and failure.effect == effect and
+      failure.deadline > Deadline.now() and binding_parties_alive?(info) and
+      lease_current?(domain, info.proof.lease) and
+      registered_actor?(domain, :output_controller, failure.controller) and
+      generation_valid(domain, info.proof.generation) == :ok
+  end
+
+  defp entry_current?(domain, info, _entry), do: source_current?(domain, info)
+
+  defp io_binding(gate, token) do
+    case gate.bindings[token] do
+      %{mode: :failure_only, authority: %{failure: %{deadline: tail}}} = info ->
+        if tail > Deadline.now(), do: {:ok, info}, else: {:error, :http_failure_expired}
+
+      _ordinary ->
+        open_binding(gate, token)
+    end
+  end
+
+  defp group_member?(%{metadata: %{group: true}}), do: true
+  defp group_member?(_entry), do: false
+
+  defp prospective_group_valid?(gate, entry, domain) do
+    if group_member?(entry) do
+      others =
+        gate.claims
+        |> Map.values()
+        |> Enum.filter(&(&1.binding == entry.binding and group_member?(&1)))
+
+      count = length(others) + 1
+      framing = if(entry.metadata.format == :sse, do: 10, else: 0)
+      wire_bytes = Enum.reduce(others, entry.wire_bytes, &(&1.wire_bytes + &2))
+      wire_bytes + count + 1 + framing <= domain.limits.max_io_frame_bytes
+    else
+      true
     end
   end
 
@@ -712,8 +1277,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
     entry = gate.claims[token]
 
     with true <- Process.alive?(domain.root),
-         {:ok, info} <- open_binding(gate, binding),
-         true <- source_current?(domain, info),
+         {:ok, info} <- io_binding(gate, binding),
+         true <- entry_current?(domain, info, entry),
          :ok <- generation_valid(domain, info.proof.generation),
          %{stage: :candidate, binding: ^binding, producer: producer} <- entry,
          true <- producer == self() do
@@ -744,7 +1309,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
       entry.stage == :in_flight ->
         {:error, :http_write_in_flight}
 
-      self() not in [entry.owner, entry.producer] ->
+      self() not in [entry.owner, entry.producer, entry.release_owner] ->
         {:error, :invalid_http_output_owner}
 
       true ->
@@ -767,9 +1332,10 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
       result =
         update(domain, deadline, fn current ->
           with true <- Process.alive?(domain.root) || {:error, :http_writer_closed},
-               {:ok, info} <- open_binding(current, binding),
+               {:ok, info} <- io_binding(current, binding),
+               %{binding: ^binding} = entry <- current.claims[token],
                :ok <- generation_valid(domain, info.proof.generation),
-               true <- source_current?(domain, info) || {:error, :http_invocation_closed},
+               true <- entry_current?(domain, info, entry) || {:error, :http_invocation_closed},
                do: change(current, token, binding, operation)
         end)
 
@@ -786,13 +1352,14 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
   end
 
   defp change_present(gate, entry, operation) do
-    with {:ok, _} <- open_binding(gate, entry.binding),
+    with {:ok, _} <- io_binding(gate, entry.binding),
          true <- :atomics.get(entry.receipt, 2) == 0 || {:error, :http_output_expired},
          true <-
            active_producer?(entry) ||
              {:error, :http_output_expired},
          true <-
            authorized_output_caller?(entry, operation) || {:error, :invalid_http_output_owner},
+         true <- publish_allowed?(entry, operation) || {:error, :http_group_incomplete},
          true <- Process.alive?(entry.owner) || {:error, :http_output_expired} do
       case {operation, entry.stage} do
         {:handoff, stage} when stage in [:prepared, :held] ->
@@ -813,6 +1380,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
 
   defp authorized_output_caller?(entry, :handoff), do: self() in [entry.owner, entry.producer]
   defp authorized_output_caller?(entry, :publish), do: self() == entry.owner
+
+  defp publish_allowed?(entry, :publish), do: not group_member?(entry)
+  defp publish_allowed?(_entry, _operation), do: true
 
   defp next_sequence(%{sequence: 0xFFFFFFFF} = gate) do
     ordered =
@@ -836,8 +1406,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
     do: {:ok, %{gate | claims: Map.put(gate.claims, entry.token, entry)}, :ok}
 
   defp take(gate, token, domain) do
-    with {:ok, info} <- open_binding(gate, token),
-         true <- source_current?(domain, info) || {:error, :http_invocation_closed},
+    with {:ok, info} <- io_binding(gate, token),
          :ok <- generation_valid(domain, info.proof.generation),
          true <- info.writer == self() || {:error, :invalid_http_writer} do
       entries = Enum.filter(Map.values(gate.claims), &(&1.binding == token))
@@ -858,7 +1427,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
         {:ok, gate, :empty}
 
       entry ->
-        if entry.deadline > Deadline.now() and Process.alive?(entry.owner) do
+        if entry.deadline > Deadline.now() and Process.alive?(entry.owner) and
+             entry_current?(domain, info, entry) do
           next = %{entry | stage: :in_flight}
           info = %{info | notice: false}
 
@@ -918,7 +1488,39 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
         true -> nil
       end
 
-    if reason, do: elem(retire_binding(gate, token, reason), 1), else: gate
+    cond do
+      reason in [:source_retired, :invocation_expired] and failure_tail_live?(domain, info) ->
+        failure_only(gate, info, domain)
+
+      reason ->
+        elem(retire_binding(gate, token, reason), 1)
+
+      true ->
+        gate
+    end
+  end
+
+  defp failure_tail_live?(domain, %{authority: %{failure: failure}} = info),
+    do:
+      failure.deadline > Deadline.now() and binding_parties_alive?(info) and
+        lease_current?(domain, info.proof.lease)
+
+  defp failure_tail_live?(_domain, _info), do: false
+
+  defp failure_only(gate, info, domain) do
+    gate =
+      Enum.reduce(gate.claims, gate, fn {token, entry}, gate ->
+        if entry.binding == info.token and entry.stage != :in_flight and
+             not Map.has_key?(entry.metadata || %{}, :failure_token) and
+             not (Map.get(entry.metadata || %{}, :accepted, false) and
+                    entry_current?(domain, info, entry)) do
+          drop(gate, token)
+        else
+          gate
+        end
+      end)
+
+    %{gate | bindings: Map.put(gate.bindings, info.token, %{info | mode: :failure_only})}
   end
 
   defp reap_claim({token, %{stage: :in_flight} = entry}, gate) do
@@ -1043,7 +1645,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
           %{mode: :retired, closed_notice: false, closed_ack: false} = info ->
             queue_wake(gate, %{info | closed_notice: true})
 
-          %{mode: :open, notice: false} = info ->
+          %{mode: mode, notice: false} = info when mode in [:open, :failure_only] ->
             entries = Enum.filter(Map.values(gate.claims), &(&1.binding == token))
 
             if Enum.any?(entries, &(&1.stage == :queued)) and
@@ -1085,8 +1687,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
   defp return_code(info, entry, result, domain) do
     cond do
       is_nil(info) or not Process.alive?(domain.root) or
-        generation_valid(domain, info.proof.generation) != :ok or info.mode != :open or
-        not source_current?(domain, info) or
+        generation_valid(domain, info.proof.generation) != :ok or
+        info.mode not in [:open, :failure_only] or
+        not entry_current?(domain, info, entry) or
         not binding_parties_alive?(info) or entry.deadline <= Deadline.now() ->
         3
 

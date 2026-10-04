@@ -87,8 +87,8 @@ defmodule Arbor.MCP.Transport.HTTP do
   @behaviour Arbor.MCP.Transport
   require Logger
 
+  alias Arbor.MCP.Authorization.FullOAuthFlow
   alias Arbor.MCP.Client.{ConnectionScope, Deadline, Lifetime}
-  alias Arbor.MCP.Authorization.{FullOAuthFlow, LogSanitizer}
 
   alias Arbor.MCP.Internal.{CACerts, DNSResolver, Headers, Options, Security, SecurityConfig, SSE}
   alias Arbor.RPC.LogSummary
@@ -635,7 +635,7 @@ defmodule Arbor.MCP.Transport.HTTP do
         end
 
       {:error, reason} ->
-        Logger.warning("OAuth discovery flow failed: #{LogSanitizer.format(reason)}")
+        Logger.warning("OAuth discovery flow failed", reason: LogSummary.describe(reason))
         {:error, {:oauth_failed, reason}}
     end
   end
@@ -672,7 +672,7 @@ defmodule Arbor.MCP.Transport.HTTP do
         end
 
       {:error, reason} ->
-        Logger.warning("Full OAuth flow failed: #{LogSanitizer.format(reason)}")
+        Logger.warning("Full OAuth flow failed", reason: LogSummary.describe(reason))
         {:error, {:oauth_failed, reason}}
     end
   end
