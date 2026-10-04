@@ -118,6 +118,7 @@ defmodule Arbor.MCP.MixProject do
       external_dep(:fuse, "~> 2.4", optional: true),
       # MCP protocol support
       external_dep(:ex_json_schema, "~> 0.10"),
+      external_dep(:jsv, "~> 0.25.0"),
       external_dep(:html_entities, "~> 0.5", only: [:dev, :test]),
       external_dep(:propcheck, "~> 1.4", only: :test),
       external_dep(:benchee, "~> 1.0", only: [:dev, :test]),

@@ -192,9 +192,15 @@ validation and real DSL declaration checks. Its 34 focused cases pass on both
 supported toolchains; both combined minimum/current selections pass 4,008 executed tests, 20 doctests
 and 34 properties with no failures (82 excluded; 4,090-test inventory). Normal
 commit hooks pass with 35 existing dev warnings filtered and no new filters. No accepted API retirement is removed.
-The current validator's draft-7 default does not implement modern MCP's default
-2020-12 semantics; full dialect and scalar structured-result compatibility remain
-explicit release gates.
+That named snapshot still used the draft-7 default. The subsequently integrated
+2020-12 dialect candidate uses JSV for omitted/explicit 2020-12 declarations and
+retains ExJsonSchema for explicit drafts 4, 6 and 7. Four new dependency locks
+leave all 44 prior resolutions unchanged. Its immutable source passes 880 pure
+checks on minimum/current/newest: 73 focused cases and 807 pinned official corpus
+cases (803 semantic checks and four explicit retained-policy rejections).
+Compilation, full formatting, strict Credo and normal minimum/current Dialyzer
+pass without new filters. Combined application, scalar output, conformance,
+security and archive qualification of this source remain release gates.
 
 The shared `Server.Result` and scalar-value candidate adds one canonical
 constructor/normalization implementation, forwarding the existing `DSL.Result`

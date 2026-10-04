@@ -19,22 +19,30 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   @spec resolve(map() | boolean(), keyword(), preflight()) ::
           {:ok, Root.t()} | {:error, term()}
   def resolve(schema, policy_opts, preflight) when is_function(preflight, 2) do
+    with {:ok, {normalized_schema, documents}} <- fetch_documents(schema, policy_opts, preflight),
+         {:ok, resolved_documents} <- resolve_documents(documents) do
+      resolve_root(normalized_schema, resolved_documents)
+    end
+  end
+
+  @doc false
+  @spec fetch_documents(map() | boolean(), keyword(), preflight()) ::
+          {:ok, {map() | boolean(), map()}} | {:error, term()}
+  def fetch_documents(schema, policy_opts, preflight) do
     network_opts = policy_opts[:network_refs]
     state = %{documents: %{}, fetched: %{}, aggregate_bytes: 0, document_count: 0}
 
     with {:ok, normalized_schema} <- normalize_references(schema, nil),
          :ok <- preflight.(normalized_schema, policy_opts),
          {:ok, references} <- referenced_documents(normalized_schema, nil),
-         {:ok, state} <- fetch_references(references, state, [], 0, policy_opts, preflight),
-         {:ok, resolved_documents} <- resolve_documents(state.documents),
-         {:ok, root} <- resolve_root(normalized_schema, resolved_documents) do
+         {:ok, state} <- fetch_references(references, state, [], 0, policy_opts, preflight) do
       Logger.info(
         "Resolved remote JSON Schema documents count=#{state.document_count} " <>
           "bytes=#{state.aggregate_bytes} " <>
           "trust_partition_sha256=#{hash_term(network_opts[:trust_partition])}"
       )
 
-      {:ok, root}
+      {:ok, {normalized_schema, state.documents}}
     else
       {:error, {:network_schema_error, reason}} = error ->
         Logger.warning(
@@ -277,7 +285,7 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
           MapSet.member?(@literal_keywords, key) or key in ["$id", "id"] ->
             {:cont, {:ok, Map.put(acc, key, value)}}
 
-          key == "$ref" ->
+          key in ["$ref", "$dynamicRef"] ->
             case normalize_reference(value, scope) do
               {:ok, normalized} -> {:cont, {:ok, Map.put(acc, key, normalized)}}
               {:error, _reason} = error -> {:halt, error}
@@ -328,7 +336,7 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
           MapSet.member?(@literal_keywords, key) or key in ["$id", "id"] ->
             {:cont, {:ok, acc}}
 
-          key == "$ref" ->
+          key in ["$ref", "$dynamicRef"] ->
             case reference_document(value, scope) do
               {:ok, nil} -> {:cont, {:ok, acc}}
               {:ok, document} -> {:cont, {:ok, [document | acc]}}

@@ -8,7 +8,7 @@ defmodule Arbor.MCP.Content.SchemaValidator do
   > `output_schema` on `Arbor.MCP.Server.DSL` for structured tool results.
 
   Field/size/MIME helpers are implemented. `validate_schema/3` uses
-  `ExJsonSchema` behind `Arbor.MCP.Content.SchemaPolicy`, which rejects remote
+  the selected dialect backend behind `Arbor.MCP.Content.SchemaPolicy`, which rejects remote
   references and bounds schema complexity and execution time.
   """
 
@@ -25,41 +25,26 @@ defmodule Arbor.MCP.Content.SchemaValidator do
   @type validation_result :: :ok | {:error, [validation_error()]}
 
   @doc """
-  Validates content against a JSON Schema using ExJsonSchema.
+  Validates content against a JSON Schema under the bounded dialect policy.
 
   Content maps are converted to JSON-compatible string-keyed maps (atoms
   become strings) before validation.
   """
-  @spec validate_schema(Protocol.content() | map(), map() | boolean(), keyword()) ::
+  @spec validate_schema(term(), map() | boolean() | SchemaPolicy.compiled(), keyword()) ::
           validation_result()
   def validate_schema(content, schema, opts \\ [])
 
   def validate_schema(content, schema, opts)
-      when is_map(content) and (is_map(schema) or is_boolean(schema)) do
-    if Code.ensure_loaded?(ExJsonSchema) do
-      data = SchemaPolicy.json_compatible(content)
+      when is_map(schema) or is_boolean(schema) do
+    case SchemaPolicy.validate_compatible(content, schema, opts) do
+      :ok ->
+        :ok
 
-      case SchemaPolicy.validate(data, schema, opts) do
-        :ok ->
-          :ok
+      {:error, reason} when is_tuple(reason) or is_atom(reason) ->
+        {:error, [policy_error(reason)]}
 
-        {:error, reason} when is_tuple(reason) or is_atom(reason) ->
-          {:error, [policy_error(reason)]}
-
-        {:error, errors} ->
-          {:error, Enum.map(List.wrap(errors), &schema_error/1)}
-      end
-    else
-      {:error,
-       [
-         %{
-           rule: :json_schema,
-           message: "ExJsonSchema is not available",
-           field: nil,
-           value: nil,
-           severity: :error
-         }
-       ]}
+      {:error, errors} ->
+        {:error, Enum.map(List.wrap(errors), &schema_error/1)}
     end
   end
 

@@ -40,7 +40,7 @@ defmodule Arbor.MCP.Content.SchemaReplacementTest do
     assert {:ok, nil} = SchemaPolicy.compile_optional(nil)
     assert :ok = SchemaPolicy.validate_optional(self(), nil)
     assert {:ok, false_schema} = SchemaPolicy.compile_optional(false)
-    assert is_struct(false_schema, ExJsonSchema.Schema.Root)
+    refute is_nil(false_schema)
     assert {:error, _} = SchemaPolicy.validate_optional(%{}, false_schema)
     assert {:error, _} = SchemaPolicy.validate_optional(%{}, false)
     assert {:ok, true_schema} = SchemaPolicy.compile(true)
@@ -48,7 +48,12 @@ defmodule Arbor.MCP.Content.SchemaReplacementTest do
   end
 
   test "compiled roots keep valid schema and validation has no transformation semantics" do
-    schema = %{type: :object, properties: %{count: %{type: :integer, default: 7}}}
+    schema = %{
+      "$schema" => "http://json-schema.org/draft-07/schema#",
+      type: :object,
+      properties: %{count: %{type: :integer, default: 7}}
+    }
+
     assert {:ok, compiled} = SchemaPolicy.compile(schema)
     assert compiled.schema["properties"]["count"]["default"] == 7
     args = %{}
@@ -130,9 +135,9 @@ defmodule Arbor.MCP.Content.SchemaReplacementTest do
     end
   end
 
-  test "unsupported dialect fails explicitly without claiming draft 2020-12 semantics" do
+  test "unsupported dialect fails explicitly without fallback" do
     assert {:error, {:invalid_schema, "schema declaration is invalid or unsupported"}} =
-             SchemaPolicy.compile(%{"$schema" => "https://json-schema.org/draft/2020-12/schema"})
+             SchemaPolicy.compile(%{"$schema" => "https://json-schema.org/draft/2019-09/schema"})
 
     for draft <- ["04", "06", "07"] do
       assert {:ok, _} =

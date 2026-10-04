@@ -6,6 +6,12 @@ It adds standalone optional schema operations and checks DSL declarations at
 module compilation. It removes no public exports and leaves the frozen 1.x
 baseline and supported main source unchanged. Tools retirement is still pending.
 
+The subsequently integrated [dialect replacement](V2_SCHEMA_DIALECT.md)
+supersedes the legacy-only default and Root-cache descriptions below: omitted
+or explicit 2020-12 schemas now use an opaque compiled artifact, while explicit
+drafts 4, 6 and 7 retain ExJsonSchema Roots. Cache either artifact unchanged.
+The tagged operations and optional-`nil` behavior remain.
+
 ## Public contract
 
 All signatures belong to `Arbor.MCP.Content.SchemaPolicy`.

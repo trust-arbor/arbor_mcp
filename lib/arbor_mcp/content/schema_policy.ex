@@ -2,13 +2,17 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   @moduledoc """
   Fail-closed resource policy for JSON Schema compilation and validation.
 
-  Cross-document `$ref` resolution is disabled by default before `ExJsonSchema`
+  Cross-document references are disabled by default before either validator
   sees a schema, even if the host application configured ExJsonSchema's global
   remote resolver. Local fragment references remain supported. Network
   references can be enabled only through Arbor.MCP's allowlisted, IP-pinned resolver.
 
+  Omitted or explicit draft 2020-12 declarations use JSV. Explicit drafts 4,
+  6 and 7 use ExJsonSchema. Unknown dialects reject. Modern compiled artifacts
+  are opaque; unchanged ExJsonSchema Roots retain their trusted-cache behavior.
+
   Schema size, structural depth, composition depth, total subschema count,
-  resolution time, and validation time are bounded. Defaults can be adjusted
+  instance bytes/depth, resolution time, and validation time are bounded. Defaults can be adjusted
   with `config :arbor_mcp, :json_schema, ...` or per call.
 
   The opt-in resolver revalidates every redirect and DNS result, rejects
@@ -19,6 +23,7 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   """
 
   alias Arbor.MCP.Content.{SchemaDNS, SchemaHTTPClient, SchemaRemoteResolver}
+  alias Arbor.MCP.Content.SchemaPolicy.{Compiled, Instance, Modern}
 
   @composition_keywords MapSet.new(~w(allOf anyOf oneOf not if then else))
   @literal_keywords MapSet.new(~w(const default enum examples))
@@ -26,6 +31,8 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
 
   @defaults [
     max_schema_bytes: 262_144,
+    max_instance_bytes: 1_048_576,
+    max_instance_depth: 64,
     max_schema_depth: 64,
     max_subschemas: 1_000,
     max_composition_depth: 16,
@@ -74,7 +81,7 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
           | {:schema_validation_failed, String.t()}
           | {:network_schema_error, atom()}
 
-  @type compiled :: ExJsonSchema.Schema.Root.t()
+  @type compiled :: Compiled.t() | ExJsonSchema.Schema.Root.t()
   @type compile_result :: {:ok, compiled()} | {:error, policy_error()}
   @type optional_compile_result :: {:ok, compiled() | nil} | {:error, policy_error()}
   @type validation_result :: :ok | {:error, term()}
@@ -120,17 +127,18 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   `nil` is invalid; use `compile_optional/2` when absence deliberately disables
   validation. Atom keys/values normalize to JSON strings. Conflicting normalized
   keys and non-JSON schema terms reject before any application encoder runs.
-  The current validator supports drafts 4, 6 and 7; an omitted `$schema` selects
-  draft 7. This does not implement MCP's default draft 2020-12 semantics.
+  An omitted `$schema` or explicit draft 2020-12 uses JSV. Explicit drafts 4,
+  6 and 7 retain ExJsonSchema semantics. Unknown dialects fail compilation.
 
-  Retain the returned Root unchanged for repeated validation. Caller-created or
-  mutated Roots are trusted compiled artifacts, not raw schema declarations.
+  Retain the returned compiled artifact unchanged for repeated validation.
+  Caller-created or mutated artifacts are trusted caches, not raw declarations.
   """
   @spec compile(map() | boolean(), keyword()) :: compile_result()
   def compile(schema, opts \\ []) do
     with {:ok, opts} <- policy_options(opts),
          {:ok, schema} <- normalize_schema(schema, opts),
-         :ok <- preflight_normalized(schema, opts) do
+         :ok <- preflight_normalized(schema, opts),
+         :ok <- ensure_backend(schema) do
       run_bounded(
         fn ->
           try do
@@ -164,17 +172,28 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   Validates data against a raw or unchanged compiled schema within a deadline.
 
   Returns `:ok` or `{:error, reason}`; it does not insert defaults, coerce types,
-  normalize instance keys or return transformed data. `nil` is invalid. Instance
-  validation failures retain ExJsonSchema's error list; policy failures are tagged.
+  normalize instance keys or return transformed data. `nil` is invalid. Modern
+  instance failures use a fixed safe error list; explicit legacy schemas retain
+  ExJsonSchema's error list. Policy failures are tagged.
   """
   @spec validate(term(), map() | boolean() | compiled(), keyword()) :: validation_result()
-  def validate(data, schema, opts \\ []) do
+  def validate(data, schema, opts \\ []), do: validate_instance(data, schema, opts, false)
+
+  @doc false
+  @spec validate_compatible(term(), map() | boolean() | compiled(), keyword()) ::
+          validation_result()
+  def validate_compatible(data, schema, opts), do: validate_instance(data, schema, opts, true)
+
+  defp validate_instance(data, schema, opts, compatible?) do
     with {:ok, opts} <- policy_options(opts),
          {:ok, resolved} <- ensure_compiled(schema, opts) do
       run_bounded(
         fn ->
           try do
-            ExJsonSchema.Validator.validate(resolved, data)
+            with :ok <- Instance.check(data, opts, compatible?) do
+              data = if compatible?, do: json_compatible(data), else: data
+              validate_compiled(resolved, data)
+            end
           rescue
             _exception -> {:error, {:schema_validation_failed, "schema validation failed"}}
           catch
@@ -309,43 +328,76 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   # ExJsonSchema skips its meta-schema check when $id resembles a meta-schema
   # identifier. Validate every raw object explicitly so declarations cannot use
   # that implementation shortcut to accept an invalid schema silently.
-  defp validate_schema_shape(schema) when is_boolean(schema), do: :ok
+  defp ensure_backend(schema) do
+    case schema_draft(schema) do
+      {:ok, :modern} -> ensure_modern_modules()
+      {:ok, _legacy} -> :ok
+      _error -> invalid_schema_declaration()
+    end
+  end
+
+  defp ensure_modern_modules do
+    modules = [Modern, Compiled, Arbor.MCP.Content.SchemaPolicy.ModernResolver]
+
+    Enum.reduce_while(modules, :ok, fn module, :ok ->
+      case Code.ensure_compiled(module) do
+        {:module, ^module} -> {:cont, :ok}
+        _other -> {:halt, invalid_schema_declaration()}
+      end
+    end)
+  end
 
   defp validate_schema_shape(schema) do
-    with {:ok, draft} <- schema_draft(schema),
-         :ok <-
-           ExJsonSchema.Validator.validate(ExJsonSchema.Schema.resolve(draft.schema()), schema) do
-      :ok
-    else
-      {:error, _errors} ->
-        {:error, {:invalid_schema, "schema declaration is invalid or unsupported"}}
+    case schema_draft(schema) do
+      {:ok, :modern} -> Modern.validate_shape(schema)
+      {:ok, legacy} -> validate_legacy_shape(schema, legacy)
+      _error -> invalid_schema_declaration()
     end
   end
+
+  defp validate_legacy_shape(schema, draft) do
+    case ExJsonSchema.Validator.validate(ExJsonSchema.Schema.resolve(draft.schema()), schema) do
+      :ok -> :ok
+      _error -> invalid_schema_declaration()
+    end
+  end
+
+  defp schema_draft(schema) when is_boolean(schema), do: {:ok, :modern}
 
   defp schema_draft(schema) do
-    case schema["$schema"] do
-      nil ->
-        {:ok, ExJsonSchema.Schema.Draft7}
-
-      uri when uri in ["http://json-schema.org/schema#", "http://json-schema.org/schema"] ->
-        {:ok, ExJsonSchema.Schema.Draft7}
-
-      uri when is_binary(uri) ->
-        supported_draft(uri)
-
-      _ ->
-        {:error, :unsupported_schema_draft}
+    case Map.fetch(schema, "$schema") do
+      :error -> {:ok, :modern}
+      {:ok, uri} when is_binary(uri) -> supported_draft(uri)
+      _other -> {:error, :unsupported_schema_draft}
     end
   end
+
+  defp supported_draft(uri)
+       when uri in [
+              "https://json-schema.org/draft/2020-12/schema",
+              "https://json-schema.org/draft/2020-12/schema#"
+            ],
+       do: {:ok, :modern}
 
   defp supported_draft(uri) do
+    uri = if String.ends_with?(uri, "#"), do: String.slice(uri, 0, byte_size(uri) - 1), else: uri
+
     case String.replace_prefix(uri, "https://", "http://") do
-      "http://json-schema.org/draft-04/schema" <> _ -> {:ok, ExJsonSchema.Schema.Draft4}
-      "http://json-schema.org/draft-06/schema" <> _ -> {:ok, ExJsonSchema.Schema.Draft6}
-      "http://json-schema.org/draft-07/schema" <> _ -> {:ok, ExJsonSchema.Schema.Draft7}
-      _ -> {:error, :unsupported_schema_draft}
+      "http://json-schema.org/schema" -> {:ok, ExJsonSchema.Schema.Draft7}
+      "http://json-schema.org/draft-04/schema" -> {:ok, ExJsonSchema.Schema.Draft4}
+      "http://json-schema.org/draft-06/schema" -> {:ok, ExJsonSchema.Schema.Draft6}
+      "http://json-schema.org/draft-07/schema" -> {:ok, ExJsonSchema.Schema.Draft7}
+      _other -> {:error, :unsupported_schema_draft}
     end
   end
+
+  defp invalid_schema_declaration,
+    do: {:error, {:invalid_schema, "schema declaration is invalid or unsupported"}}
+
+  defp validate_compiled(%ExJsonSchema.Schema.Root{} = root, data),
+    do: ExJsonSchema.Validator.validate(root, data)
+
+  defp validate_compiled(compiled, data), do: Compiled.validate(compiled, data)
 
   @doc "Formats a policy failure without including remote-reference values."
   @spec format_error(policy_error()) :: String.t()
@@ -373,7 +425,13 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
     do: "remote JSON Schema resolution failed: #{network_error_message(reason)}"
 
   defp ensure_compiled(%ExJsonSchema.Schema.Root{} = root, _opts), do: {:ok, root}
-  defp ensure_compiled(schema, opts), do: compile(schema, opts)
+
+  defp ensure_compiled(schema, opts) do
+    case Compiled.fetch(schema) do
+      {:ok, compiled} -> {:ok, compiled}
+      :error -> compile(schema, opts)
+    end
+  end
 
   defp validate_options(opts) do
     with :ok <- validate_integer_options(opts, Keyword.keys(@defaults)) do
@@ -440,7 +498,7 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
           {:cont, {:ok, current_count}}
 
         MapSet.member?(@reference_keywords, key) and external_ref?(child) ->
-          if key == "$ref" and network_refs_enabled?(opts),
+          if key in ["$ref", "$dynamicRef"] and network_refs_enabled?(opts),
             do: {:cont, {:ok, current_count}},
             else: {:halt, {:error, :network_ref_forbidden}}
 
@@ -462,6 +520,26 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   defp external_ref?(_ref), do: true
 
   defp resolve_schema(schema, opts) do
+    with {:ok, draft} <- schema_draft(schema) do
+      case draft do
+        :modern -> resolve_modern_schema(schema, opts)
+        _legacy -> resolve_legacy_schema(schema, opts)
+      end
+    end
+  end
+
+  defp resolve_modern_schema(schema, opts) do
+    if network_refs_enabled?(opts) do
+      with {:ok, {schema, documents}} <-
+             SchemaRemoteResolver.fetch_documents(schema, opts, &preflight_document/2) do
+        Modern.compile(schema, documents)
+      end
+    else
+      Modern.compile(schema, %{})
+    end
+  end
+
+  defp resolve_legacy_schema(schema, opts) do
     if network_refs_enabled?(opts),
       do: SchemaRemoteResolver.resolve(schema, opts, &preflight_document/2),
       else: {:ok, ExJsonSchema.Schema.resolve(schema)}

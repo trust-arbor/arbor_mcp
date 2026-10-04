@@ -39,6 +39,10 @@ defmodule CombinedArchiveConsumer.MixProject do
                 :plug_crypto,
                 :mime,
                 :ex_json_schema,
+                :jsv,
+                :abnf_parsec,
+                :idna,
+                :texture,
                 :decimal,
                 :jose
               ],

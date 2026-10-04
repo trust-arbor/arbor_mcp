@@ -98,10 +98,9 @@ defmodule Arbor.MCP.Server.Tools.Registry do
     new_tools = Map.put(state.tools, name, {tool_def, handler})
 
     new_schemas =
-      if compiled_schema do
-        Map.put(state.compiled_schemas, name, compiled_schema)
-      else
-        state.compiled_schemas
+      case compiled_schema do
+        nil -> state.compiled_schemas
+        compiled -> Map.put(state.compiled_schemas, name, compiled)
       end
 
     {:reply, :ok, %{state | tools: new_tools, compiled_schemas: new_schemas}}
@@ -116,10 +115,9 @@ defmodule Arbor.MCP.Server.Tools.Registry do
         new_tools = Map.put(acc.tools, name, {tool_def, handler})
 
         new_schemas =
-          if compiled_schema do
-            Map.put(acc.compiled_schemas, name, compiled_schema)
-          else
-            acc.compiled_schemas
+          case compiled_schema do
+            nil -> acc.compiled_schemas
+            compiled -> Map.put(acc.compiled_schemas, name, compiled)
           end
 
         %{acc | tools: new_tools, compiled_schemas: new_schemas}

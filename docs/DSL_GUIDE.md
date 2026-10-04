@@ -76,12 +76,12 @@ valid MCP Tool descriptor and is rejected rather than replaced by a generated
 schema. An omitted or `nil` output schema deliberately disables output validation.
 Malformed declarations fail while the handler module compiles.
 
-The pinned MCP 2026-07-28 schema specifies JSON Schema 2020-12, including its
-default dialect. The current local validator, ExJsonSchema, implements drafts 4,
-6 and 7 and defaults to draft 7 when `$schema` is omitted. Explicit 2020-12
-compilation fails; 2020-12-only keyword semantics are not implemented by this
-validator. Full modern-dialect validation is an open release gate, not a supported
-feature inferred from descriptor pass-through.
+The pinned MCP 2026-07-28 schema defaults to JSON Schema 2020-12.
+`SchemaPolicy` uses JSV for omitted or explicit 2020-12 declarations and
+ExJsonSchema for explicit drafts 4, 6 and 7. Unknown dialects reject. Validation
+returns no transformed data; defaults and coercion remain application decisions.
+See [the dialect contract](V2_SCHEMA_DIALECT.md) for reference restrictions,
+format semantics and qualification.
 
 Declared params retain existing atom-key convenience and missing-value defaults.
 Literal `input_schema` is checked at module compilation but does not add automatic
@@ -91,15 +91,19 @@ requires standalone validation.
 
 ### Response helpers and normalization
 
-`ToolResult` is an **alias** for `Arbor.MCP.Server.DSL.Result`, injected only inside
+`ToolResult` is an **alias** for `Arbor.MCP.Server.Result`, injected only inside
 modules that `use Arbor.MCP.Server.DSL`. Outside those modules, use the fully
 qualified module:
 
 ```elixir
-Arbor.MCP.Server.DSL.Result.structured("done", %{count: 1})
+Arbor.MCP.Server.Result.structured("done", %{count: 1})
 ```
 
-`ToolResult` provides `text/1`, `error/1`, and `structured/2`. The DSL also
+`ToolResult` provides complete-result constructors: `text/1`, `error/1,2`,
+`content/1`, `image/2`, `audio/2`, `resource/1` and `structured/2,3`.
+Modern structured values can be objects, arrays, strings, numbers, booleans or
+null; retained legacy tool results require a structured object. Existing
+`Arbor.MCP.Server.DSL.Result` calls forward to the same implementation. The DSL also
 normalizes several plain return shapes from `run` / `read` / `render`:
 
 | Return from handler | Normalized result |
@@ -107,7 +111,7 @@ normalizes several plain return shapes from `run` / `read` / `render`:
 | `"hello"` | text content |
 | `%{text: "hello"}` | text content |
 | `%{content: [...]}` | used as-is (plus structured key cleanup) |
-| `ToolResult.structured(text, map)` | text + `structuredContent` |
+| `ToolResult.structured(text, value)` | text + `structuredContent` |
 | `{:error, reason}` | tool/resource/prompt error shape |
 | `{:ok, result}` or `{:ok, result, state}` | both accepted |
 
@@ -121,6 +125,7 @@ tool "preview", "Return a thumbnail, clip, and attached spec" do
   run fn _args, state ->
     image = File.read!("priv/preview.png") |> Base.encode64()
     audio = File.read!("priv/clip.mp3") |> Base.encode64()
+    spec = File.read!("priv/spec.pdf") |> Base.encode64()
 
     {:ok,
      %{
@@ -129,8 +134,8 @@ tool "preview", "Return a thumbnail, clip, and attached spec" do
          Arbor.MCP.Content.audio(audio, "audio/mp3"),
          Arbor.MCP.Content.resource(%{
            uri: "file:///spec.pdf",
-           name: "Spec",
-           mimeType: "application/pdf"
+           mimeType: "application/pdf",
+           blob: spec
          })
        ]
      }, state}
