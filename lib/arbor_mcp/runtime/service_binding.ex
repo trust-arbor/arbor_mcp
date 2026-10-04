@@ -28,8 +28,15 @@ defmodule Arbor.MCP.Server.Runtime.ServiceBinding do
       {:ok, pid} = result ->
         if :ets.member(table, {:service_owner, pid}) do
           :ets.delete(table, {:service_owner, pid})
-          publish(descriptor, pid, opts)
-          result
+
+          case publish(descriptor, pid, opts) do
+            :ok ->
+              result
+
+            {:error, reason} ->
+              Process.exit(pid, :kill)
+              {:error, reason}
+          end
         else
           Process.exit(pid, :kill)
           {:error, :owned_start_contract_violated}
@@ -52,8 +59,11 @@ defmodule Arbor.MCP.Server.Runtime.ServiceBinding do
     with pid when is_pid(pid) <- GenServer.whereis(descriptor.server),
          true <- node(pid) == node() and Process.alive?(pid) do
       monitor = Process.monitor(pid)
-      publish(descriptor, pid, opts)
-      {:ok, %{monitor: monitor}}
+
+      case publish(descriptor, pid, opts) do
+        :ok -> {:ok, %{monitor: monitor}}
+        {:error, reason} -> {:stop, reason}
+      end
     else
       _invalid -> {:stop, :borrowed_service_unavailable}
     end
@@ -67,6 +77,35 @@ defmodule Arbor.MCP.Server.Runtime.ServiceBinding do
 
   defp publish(descriptor, pid, opts) do
     binding = Map.merge(descriptor, %{server: pid, generation: Keyword.fetch!(opts, :generation)})
-    :ets.insert(Keyword.fetch!(opts, :table), {{:service, descriptor.kind}, binding})
+
+    native =
+      if descriptor.kind in [:sessions, :resource_subscriptions] do
+        remaining = Keyword.fetch!(opts, :deadline) - System.monotonic_time(:millisecond)
+
+        if remaining > 0,
+          do: descriptor.adapter.runtime_service_binding(pid, remaining),
+          else: {:error, :service_start_timeout}
+      else
+        %{}
+      end
+
+    case native do
+      %{address: address, read_address: _read_address} when is_map(address) ->
+        :ets.insert(
+          Keyword.fetch!(opts, :table),
+          {{:service, descriptor.kind}, Map.merge(binding, native)}
+        )
+
+        :ok
+
+      map when is_map(map) and map_size(map) == 0 ->
+        :ets.insert(Keyword.fetch!(opts, :table), {{:service, descriptor.kind}, binding})
+        :ok
+
+      _invalid ->
+        {:error, :invalid_service_address}
+    end
+  catch
+    :exit, _reason -> {:error, :service_start_timeout}
   end
 end

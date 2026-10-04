@@ -2,9 +2,17 @@ defmodule Arbor.MCP.Server.Runtime.ServiceConfig do
   @moduledoc false
 
   alias Arbor.MCP.Server.{ReplayCache, Subscriptions}
+  alias Arbor.MCP.SessionManager.RuntimeStore, as: SessionStore
+  alias Arbor.MCP.SubscriptionRegistry.RuntimeStore, as: ResourceStore
   alias Arbor.MCP.Tasks.Store
 
-  @defaults [tasks: Store.ETS, replay_cache: ReplayCache.ETS, subscriptions: Subscriptions]
+  @defaults [
+    tasks: Store.ETS,
+    replay_cache: ReplayCache.ETS,
+    subscriptions: Subscriptions,
+    sessions: SessionStore,
+    resource_subscriptions: ResourceStore
+  ]
 
   def new(opts) do
     services = Keyword.get(opts, :services, [])
@@ -13,7 +21,12 @@ defmodule Arbor.MCP.Server.Runtime.ServiceConfig do
          Enum.all?(Keyword.keys(services), &(&1 in Keyword.keys(@defaults))) and
          length(Keyword.keys(services)) == length(Enum.uniq(Keyword.keys(services))) do
       Enum.reduce_while(@defaults, {:ok, %{}}, fn {kind, adapter}, {:ok, result} ->
-        descriptor = Keyword.get(services, kind, if(kind == :replay_cache, do: nil, else: []))
+        descriptor =
+          Keyword.get(
+            services,
+            kind,
+            if(kind in [:replay_cache, :sessions, :resource_subscriptions], do: nil, else: [])
+          )
 
         case normalize(kind, adapter, descriptor, opts) do
           {:ok, value} -> {:cont, {:ok, Map.put(result, kind, value)}}
@@ -41,8 +54,10 @@ defmodule Arbor.MCP.Server.Runtime.ServiceConfig do
       with :ok <- validate_adapter(kind, adapter),
            true <- Keyword.keyword?(options),
            :ok <- validate_options(options),
+           :ok <- validate_domain(kind, options),
            {:ok, namespace} <- namespace(ownership, descriptor, opts),
-           :ok <- validate_capabilities(adapter, ownership) do
+           :ok <- validate_capabilities(adapter, ownership),
+           :ok <- validate_operation_capability(kind, adapter) do
         {:ok,
          %{
            kind: kind,
@@ -66,6 +81,12 @@ defmodule Arbor.MCP.Server.Runtime.ServiceConfig do
   defp validate_adapter(kind, adapter) when is_atom(adapter) and not is_nil(adapter) do
     functions =
       case kind do
+        :sessions ->
+          [operate: 4, runtime_service_binding: 2, lease_active?: 3]
+
+        :resource_subscriptions ->
+          [operate: 4, runtime_service_binding: 2]
+
         :tasks ->
           [
             create: 3,
@@ -100,6 +121,14 @@ defmodule Arbor.MCP.Server.Runtime.ServiceConfig do
 
   defp validate_adapter(_kind, _adapter), do: {:error, :invalid_adapter}
 
+  defp validate_domain(:sessions, options) do
+    if Keyword.get(options, :storage_backend, :ets) == :ets,
+      do: :ok,
+      else: {:error, :runtime_durable_sessions_unqualified}
+  end
+
+  defp validate_domain(_kind, _options), do: :ok
+
   defp validate_options(options) do
     reserved = [
       :name,
@@ -132,6 +161,17 @@ defmodule Arbor.MCP.Server.Runtime.ServiceConfig do
   end
 
   defp namespace(_ownership, _descriptor, _opts), do: {:error, :invalid_ownership}
+
+  defp validate_operation_capability(kind, adapter)
+       when kind in [:sessions, :resource_subscriptions] do
+    if adapter.runtime_service_capabilities()[:bounded_operations] == 1,
+      do: :ok,
+      else: {:error, :bounded_operations_required}
+  rescue
+    _error -> {:error, :invalid_capability_declaration}
+  end
+
+  defp validate_operation_capability(_kind, _adapter), do: :ok
 
   defp validate_capabilities(adapter, ownership) do
     capabilities =

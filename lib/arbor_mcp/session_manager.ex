@@ -90,6 +90,8 @@ defmodule Arbor.MCP.SessionManager do
   require Logger
 
   alias Arbor.MCP.Internal.SessionStore
+  alias Arbor.MCP.Server.Runtime.ServiceRef
+  alias Arbor.MCP.SessionManager.Addressed
   alias Arbor.RPC.LogSummary
 
   # Default configuration
@@ -362,6 +364,57 @@ defmodule Arbor.MCP.SessionManager do
   def get_stats do
     GenServer.call(__MODULE__, :get_stats)
   end
+
+  @doc "Creates an addressed runtime session and returns an opaque lease. Standalone create_session/1 retains its legacy result."
+  def create_session(%ServiceRef{} = service, metadata, opts),
+    do: Addressed.create(service, metadata, opts)
+
+  @doc "Validates an addressed session's identity and returns its current lease."
+  def ensure_session(%ServiceRef{} = service, id, metadata, opts),
+    do: Addressed.ensure(service, id, metadata, false, opts)
+
+  @doc "Validates addressed identity and completed initialization."
+  def ensure_initialized_session(%ServiceRef{} = service, id, metadata, opts),
+    do: Addressed.ensure(service, id, metadata, true, opts)
+
+  @doc "Claims a typed wire request ID for an addressed session epoch."
+  def claim_request_id(%ServiceRef{} = service, lease, id, opts),
+    do: Addressed.leased(service, lease, :claim_id, [id], opts)
+
+  @doc "Claims addressed initialization with an explicit owner and absolute deadline."
+  def claim_initialization(%ServiceRef{} = service, lease, opts),
+    do: Addressed.claim_initialization(service, lease, opts)
+
+  @doc "Completes an addressed claim from a scheduled callback while its original owner is alive."
+  def complete_initialization(%ServiceRef{} = service, claim, version, opts),
+    do: Addressed.complete_initialization(service, claim, version, opts)
+
+  @doc "Appends a bounded replay event before any downstream delivery."
+  def append_event(%ServiceRef{} = service, lease, type, data, opts),
+    do: Addressed.leased(service, lease, :append, [type, data], opts)
+
+  @doc "Reads a bounded replay page with tagged evicted, foreign and unknown cursor outcomes."
+  def replay_page(%ServiceRef{} = service, lease, cursor, opts),
+    do:
+      Addressed.leased(
+        service,
+        lease,
+        :replay,
+        [cursor, Keyword.get(opts, :max_events, 32), Keyword.get(opts, :max_bytes, 65_536)],
+        opts
+      )
+
+  @doc "Closes one addressed session epoch; stale leases cannot close its replacement."
+  def terminate_session(%ServiceRef{} = service, lease, opts),
+    do: Addressed.leased(service, lease, :terminate, [], opts)
+
+  @doc "Reads an active addressed session."
+  def get_session(%ServiceRef{} = service, lease, opts),
+    do: Addressed.leased(service, lease, :get, [], opts)
+
+  @doc "Reads aggregate addressed session service accounting."
+  def get_stats(%ServiceRef{} = service, opts),
+    do: Addressed.call(service, :stats, [], opts)
 
   ## GenServer Callbacks
 

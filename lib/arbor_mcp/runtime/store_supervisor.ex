@@ -39,10 +39,11 @@ defmodule Arbor.MCP.Server.Runtime.StoreSupervisor do
       :ets.insert(table, {{:service_configured, kind}, descriptor != nil})
     end
 
-    for kind <- [:tasks, :replay_cache, :subscriptions], do: :ets.delete(table, {:service, kind})
+    for kind <- [:tasks, :replay_cache, :subscriptions, :resource_subscriptions, :sessions],
+        do: :ets.delete(table, {:service, kind})
 
     children =
-      for kind <- [:tasks, :replay_cache],
+      for kind <- [:tasks, :replay_cache, :resource_subscriptions, :sessions],
           descriptor = config.services[kind],
           descriptor != nil do
         service_spec(descriptor, opts)

@@ -12,7 +12,10 @@ defmodule Arbor.MCP.Server.Runtime.ServiceRef do
   @enforce_keys [:runtime, :kind]
   defstruct [:runtime, :kind]
 
-  @opaque t :: %__MODULE__{runtime: Ref.t(), kind: :tasks | :replay_cache | :subscriptions}
+  @opaque t :: %__MODULE__{
+            runtime: Ref.t(),
+            kind: :tasks | :replay_cache | :subscriptions | :sessions | :resource_subscriptions
+          }
 
   @doc false
   @spec new(Ref.t(), atom()) :: t()

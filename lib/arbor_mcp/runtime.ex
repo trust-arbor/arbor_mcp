@@ -121,11 +121,15 @@ defmodule Arbor.MCP.Server.Runtime do
   @doc """
   Returns an opaque logical reference to this runtime's configured service.
 
-  Supported kinds are `:tasks`, `:replay_cache` and `:subscriptions`. References
+  Supported kinds are `:tasks`, `:replay_cache`, `:subscriptions`, `:sessions` and
+  `:resource_subscriptions`. References
   survive service-child restarts but do not follow a whole-runtime replacement.
   An unavailable explicit reference never falls back to an application service.
   """
-  @spec service(server(), :tasks | :replay_cache | :subscriptions) ::
+  @spec service(
+          server(),
+          :tasks | :replay_cache | :subscriptions | :sessions | :resource_subscriptions
+        ) ::
           {:ok, Arbor.MCP.Server.Runtime.ServiceRef.t()} | {:error, atom()}
   def service(server, kind), do: Arbor.MCP.Server.Runtime.Services.reference(server, kind)
 
@@ -136,7 +140,7 @@ defmodule Arbor.MCP.Server.Runtime do
   service operations. Callback context is not inherited by spawned processes.
   Tasks workers must also retain `Arbor.MCP.Tasks.owner/1` for authorization.
   """
-  @spec service(:tasks | :replay_cache | :subscriptions) ::
+  @spec service(:tasks | :replay_cache | :subscriptions | :sessions | :resource_subscriptions) ::
           {:ok, Arbor.MCP.Server.Runtime.ServiceRef.t()} | {:error, atom()}
   def service(kind) do
     case CallbackContext.current() do

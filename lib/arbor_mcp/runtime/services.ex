@@ -39,7 +39,8 @@ defmodule Arbor.MCP.Server.Runtime.Services do
       [{{:service_configured, ^kind}, false}] ->
         {:error, :service_not_configured}
 
-      _missing when kind in [:tasks, :replay_cache, :subscriptions] ->
+      _missing
+      when kind in [:tasks, :replay_cache, :subscriptions, :sessions, :resource_subscriptions] ->
         {:error, :service_unavailable}
 
       _invalid ->

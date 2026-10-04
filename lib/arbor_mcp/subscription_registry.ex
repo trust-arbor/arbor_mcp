@@ -9,6 +9,9 @@ defmodule Arbor.MCP.SubscriptionRegistry do
 
   use GenServer
 
+  alias Arbor.MCP.Server.Runtime.{ServiceOperation, ServiceRef}
+  alias Arbor.MCP.SessionManager.SessionLease
+
   @by_uri_table :ex_mcp_subscriptions_by_uri
   @by_session_table :ex_mcp_subscriptions_by_session
 
@@ -73,6 +76,53 @@ defmodule Arbor.MCP.SubscriptionRegistry do
   rescue
     ArgumentError -> []
   end
+
+  @doc "Subscribes one addressed runtime session epoch to a bounded resource URI."
+  def subscribe(%ServiceRef{} = service, lease, uri, opts),
+    do:
+      ServiceOperation.call(
+        service,
+        :resource_subscriptions,
+        :subscribe,
+        [service, lease, uri],
+        opts
+      )
+
+  @doc "Removes an addressed session's resource subscription."
+  def unsubscribe(%ServiceRef{} = service, lease, uri, opts),
+    do:
+      ServiceOperation.call(
+        service,
+        :resource_subscriptions,
+        :unsubscribe,
+        [service, lease, uri],
+        opts
+      )
+
+  @doc "Lists a bounded set of addressed session-epoch keys for a resource URI."
+  def sessions(%ServiceRef{} = service, uri, opts),
+    do: ServiceOperation.call(service, :resource_subscriptions, :sessions, [uri], opts)
+
+  @doc "Lists bounded resource subscriptions for an addressed session lease."
+  def subscriptions(%ServiceRef{} = service, lease, opts),
+    do:
+      ServiceOperation.call(
+        service,
+        :resource_subscriptions,
+        :subscriptions,
+        [service, lease],
+        opts
+      )
+
+  @doc "Removes resource entries for one validated addressed session epoch."
+  def remove_session(%ServiceRef{} = service, lease, opts) do
+    with {:ok, key} <- SessionLease.validate(lease, service, :resource_subscriptions),
+         do: ServiceOperation.call(service, :resource_subscriptions, :remove_session, [key], opts)
+  end
+
+  @doc "Reads aggregate addressed resource-subscription accounting."
+  def get_stats(%ServiceRef{} = service, opts),
+    do: ServiceOperation.call(service, :resource_subscriptions, :stats, [], opts)
 
   @impl true
   def init(_opts) do
