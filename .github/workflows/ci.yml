@@ -33,6 +33,55 @@ env:
   ARBOR_RPC_PATH: ${{ github.workspace }}/.arbor-v2/acp/packages/arbor_rpc
 
 jobs:
+  archive_consumer:
+    name: Four-package archive consumer / Elixir ${{ matrix.toolchain.elixir }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      MIX_ENV: prod
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain:
+          - {elixir: '1.17.3', otp: '27.0'}
+          - {elixir: '1.19.5', otp: '28.3.1'}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+    - name: Check out unpublished ACP packages
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        repository: trust-arbor/arbor_acp
+        ref: 0e4cfd1efdb7437eb6cf4c944ed6fa04553da7bb
+        path: .arbor-v2/acp
+        persist-credentials: false
+    - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+      with:
+        otp-version: ${{ matrix.toolchain.otp }}
+        elixir-version: ${{ matrix.toolchain.elixir }}
+    - name: Check consumer formatting
+      run: mix format --check-formatted fixtures/archive_consumer/mix.exs fixtures/archive_consumer/lib/combined_archive_consumer.ex
+    - name: Build publishable source archives
+      run: |
+        mkdir -p archive-consumer-input
+        mix deps.get --only prod
+        env -u ARBOR_RPC_PATH mix hex.build --output archive-consumer-input/arbor_mcp-2.0.0-dev.tar
+        for package in arbor_rpc arbor_acp arbor_acp_adapters; do
+          (
+            cd ".arbor-v2/acp/packages/$package"
+            ARBOR_V2_LOCAL=1 mix deps.get --only prod
+            ARBOR_V2_LOCAL=0 mix hex.build --output "$GITHUB_WORKSPACE/archive-consumer-input/$package-2.0.0-dev.tar"
+          )
+        done
+    - name: Install archives and probe a compiler-free release
+      run: python3 scripts/check_archive_consumer.py archive-consumer-input
+    - name: Preserve qualified source archives
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: four-package-source-archives-${{ matrix.toolchain.elixir }}
+        path: archive-consumer-input/*.tar
+
   test:
     name: Test on OTP ${{matrix.otp}} / Elixir ${{matrix.elixir}}
     runs-on: ubuntu-latest
