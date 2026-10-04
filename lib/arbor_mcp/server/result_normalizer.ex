@@ -83,6 +83,8 @@ defmodule Arbor.MCP.Server.ResultNormalizer do
   """
   @spec protocol_result(map(), map(), keyword()) :: map()
   def protocol_result(result, request_context, opts \\ []) when is_map(result) do
+    validate_structured_era!(result, request_context)
+
     if Map.get(request_context, :era) == :modern do
       result = result |> stringify_keys() |> normalize_tools_list(request_context)
       server_info = Keyword.get(opts, :server_info) || default_server_info()
@@ -110,6 +112,17 @@ defmodule Arbor.MCP.Server.ResultNormalizer do
       result
     end
   end
+
+  defp validate_structured_era!(result, %{method: "tools/call", era: :legacy}) do
+    for key <- [:structuredContent, "structuredContent"], Map.has_key?(result, key) do
+      value = Map.fetch!(result, key)
+
+      unless is_map(value) and not is_struct(value),
+        do: raise(ArgumentError, "Legacy structured tool content must be an object")
+    end
+  end
+
+  defp validate_structured_era!(_result, _context), do: :ok
 
   defp normalize_tools_list(%{"tools" => tools} = result, %{method: "tools/list"})
        when is_list(tools) do

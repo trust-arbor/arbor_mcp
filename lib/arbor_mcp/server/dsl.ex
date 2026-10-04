@@ -25,7 +25,7 @@ defmodule Arbor.MCP.Server.DSL do
   Invalid declarations fail at compile time with file/line and fix hints
   (missing handlers, duplicate names, wrong instructions per kind, etc.).
 
-  Inside DSL modules, `ToolResult` is an alias for `Arbor.MCP.Server.DSL.Result`.
+  Inside DSL modules, `ToolResult` is an alias for `Arbor.MCP.Server.Result`.
   See the project DSL guide for full details.
   """
 
@@ -40,7 +40,7 @@ defmodule Arbor.MCP.Server.DSL do
   defmacro __using__(opts) do
     quote do
       import Arbor.MCP.Server.DSL
-      alias Arbor.MCP.Server.DSL.Result, as: ToolResult
+      alias Arbor.MCP.Server.Result, as: ToolResult
 
       @ex_mcp_dsl_opts unquote(Macro.escape(opts))
       Module.register_attribute(__MODULE__, :ex_mcp_dsl_tools, accumulate: true)
@@ -169,21 +169,20 @@ defmodule Arbor.MCP.Server.DSL do
   def validate_tool_response(response, nil), do: {:ok, response}
 
   def validate_tool_response(response, output_schema) do
-    structured_content =
-      Map.get(response, :structuredContent) || Map.get(response, "structuredContent")
+    normalized = Arbor.MCP.Server.ResultNormalizer.stringify_keys(response)
 
-    if is_nil(structured_content) do
-      {:ok, response}
-    else
-      data = atom_keys_to_strings(structured_content)
+    case Map.fetch(normalized, "structuredContent") do
+      :error ->
+        {:ok, response}
 
-      case validate_with_schema(data, output_schema) do
-        :ok ->
-          {:ok, response}
+      {:ok, data} ->
+        case validate_with_schema(data, output_schema) do
+          :ok ->
+            {:ok, response}
 
-        {:error, errors} ->
-          {:error, "Output validation failed: #{format_validation_errors(errors)}"}
-      end
+          {:error, errors} ->
+            {:error, "Output validation failed: #{format_validation_errors(errors)}"}
+        end
     end
   end
 
@@ -696,7 +695,8 @@ defmodule Arbor.MCP.Server.DSL do
       end)
 
     quote do
-      alias Arbor.MCP.Server.DSL.{Builder, Result}
+      alias Arbor.MCP.Server.DSL.Builder
+      alias Arbor.MCP.Server.Result
 
       @impl Arbor.MCP.Server.Handler
       def handle_list_tools(_cursor, state) do
@@ -772,7 +772,8 @@ defmodule Arbor.MCP.Server.DSL do
       end)
 
     quote do
-      alias Arbor.MCP.Server.DSL.{Builder, Matcher, Result}
+      alias Arbor.MCP.Server.DSL.{Builder, Matcher}
+      alias Arbor.MCP.Server.Result
 
       unquote(resource_overridables(resources, resource_templates))
       unquote(generate_list_resources(resource_definitions))
@@ -887,7 +888,8 @@ defmodule Arbor.MCP.Server.DSL do
       end)
 
     quote do
-      alias Arbor.MCP.Server.DSL.{Builder, Result}
+      alias Arbor.MCP.Server.DSL.Builder
+      alias Arbor.MCP.Server.Result
 
       defoverridable handle_list_prompts: 2, handle_get_prompt: 3
 
@@ -953,18 +955,13 @@ defmodule Arbor.MCP.Server.DSL do
     end
   end
 
-  defp atom_keys_to_strings(map) when is_map(map) do
-    Map.new(map, fn
-      {key, value} when is_atom(key) -> {Atom.to_string(key), atom_keys_to_strings(value)}
-      {key, value} -> {key, atom_keys_to_strings(value)}
+  defp format_validation_errors(errors) when is_list(errors) do
+    Enum.map_join(errors, ", ", fn
+      message when is_binary(message) -> message
+      {message, _path} when is_binary(message) -> message
+      _other -> "Invalid structured output"
     end)
   end
-
-  defp atom_keys_to_strings(list) when is_list(list), do: Enum.map(list, &atom_keys_to_strings/1)
-  defp atom_keys_to_strings(value), do: value
-
-  defp format_validation_errors(errors) when is_list(errors),
-    do: Enum.map_join(errors, ", ", &inspect/1)
 
   defp maybe_add_callback(callbacks, true, callback), do: [callback | callbacks]
   defp maybe_add_callback(callbacks, false, _callback), do: callbacks

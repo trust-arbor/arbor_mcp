@@ -173,15 +173,15 @@ defmodule Arbor.MCP.Server.DSL.ResultReplacementTest do
     end
 
     for opts <- [
-          [structured_content: nil],
-          [structured_content: []],
+          [structured_content: self()],
+          [structured_content: {:private, "value"}],
           [structured_content: %PrivateReason{}],
           [is_error: false]
         ] do
       assert_invalid(fn -> Result.error("authored", opts) end)
     end
 
-    assert_invalid(fn -> Result.structured("done", [], []) end)
+    assert_invalid(fn -> Result.structured("done", [1 | :tail], []) end)
     assert_invalid(fn -> Result.structured(nil, %{}, []) end)
   end
 

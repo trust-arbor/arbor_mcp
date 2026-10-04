@@ -252,6 +252,7 @@ defmodule Arbor.MCP.MixProject do
           Arbor.MCP.Server.Handler,
           Arbor.MCP.Server.DSL,
           Arbor.MCP.Server.DSL.Result,
+          Arbor.MCP.Server.Result,
           Arbor.MCP.Server.MRTR.InputRequired,
           Arbor.MCP.HttpPlug,
           Arbor.MCP.Types,

@@ -16,6 +16,7 @@ defmodule Arbor.MCP do
   - `Arbor.MCP.Server` - MCP server helper functions
   - `Arbor.MCP.Server.Handler` - Callback behaviour for MCP servers
   - `Arbor.MCP.Server.DSL` - Declarative tool/resource/prompt definitions
+  - `Arbor.MCP.Server.Result` - Complete results shared by Handler and DSL callbacks
   - `Arbor.MCP.Transport` - Transport behaviour definition
 
   ### Optional Features

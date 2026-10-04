@@ -248,7 +248,10 @@ defmodule Arbor.MCP.Server.RuntimeServicesTest do
       match?({:ok, %{server: pid}} when pid != binding.server, Services.resolve(service, :tasks))
     end)
 
-    eventually(fn -> Runtime.stats(runtime).generation != old_generation end)
+    eventually(fn ->
+      match?(%{generation: generation} when generation != old_generation, Runtime.stats(runtime))
+    end)
+
     assert {:error, :not_found_or_unauthorized} = Tasks.get("restart-id", service: service)
     assert {:ok, _task} = Tasks.create("after", %{}, service: service, id: "restart-id")
     assert :ok = Runtime.stop(runtime)

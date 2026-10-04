@@ -172,9 +172,7 @@ defmodule Arbor.MCP.Response do
       ttlMs: Map.get(raw_response, "ttlMs"),
       cacheScope: Map.get(raw_response, "cacheScope"),
       # 2025-06-18 features
-      structuredOutput:
-        Map.get(raw_response, "structuredOutput") || Map.get(raw_response, "structuredContent") ||
-          if(Map.has_key?(raw_response, "completion"), do: raw_response, else: nil),
+      structuredOutput: structured_output(raw_response),
       resourceLinks: Map.get(raw_response, "resourceLinks"),
       # List response fields - normalize for struct access while keeping strings
       tools: normalize_list_items(Map.get(raw_response, "tools")),
@@ -193,6 +191,30 @@ defmodule Arbor.MCP.Response do
       completion: extract_completion(raw_response)
     }
   end
+
+  # Field presence gives the canonical spelling precedence even for false/null.
+  defp structured_output(raw) do
+    case Map.fetch(raw, "structuredContent") do
+      {:ok, value} ->
+        value
+
+      :error ->
+        case Map.fetch(raw, "structuredOutput") do
+          {:ok, value} -> value
+          :error -> if(Map.has_key?(raw, "completion"), do: raw, else: nil)
+        end
+    end
+  end
+
+  @doc """
+  Returns structured tool data, including scalar, array, false and null values.
+
+  The retained `structuredOutput` struct field stores canonical
+  `structuredContent`. A struct uses `nil` for both absent and explicit null;
+  use the client's raw map format when field presence matters.
+  """
+  @spec structured_content(t()) :: term()
+  def structured_content(%__MODULE__{structuredOutput: value}), do: value
 
   @doc """
   Creates an error response.

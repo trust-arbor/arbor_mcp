@@ -196,6 +196,22 @@ The current validator's draft-7 default does not implement modern MCP's default
 2020-12 semantics; full dialect and scalar structured-result compatibility remain
 explicit release gates.
 
+The shared `Server.Result` and scalar-value candidate adds one canonical
+constructor/normalization implementation, forwarding the existing `DSL.Result`
+functions. DSL validation now treats false/null by presence and rejects
+normalized collisions; Response preserves canonical values over aliases.
+Modern scalar/null/array runtime delivery commits valid state; legacy nonobjects
+and malformed nested data reject before commit. The combined focused result,
+response, output and service selection passes 108 cases on minimum/current.
+
+The subsequent schema CI at `068e8d0` passed eleven of twelve jobs, including all
+package consumers, toolchains, Dialyzer and external interop/conformance. Its
+performance job exposed an existing service-restart fixture dereferencing
+`:runtime_unavailable` before the replacement execution cohort was ready. The
+fixture now waits for an available changed generation, preserving its store
+and stale-reference assertions; the 108-case selection includes that correction.
+This correction needs a fresh complete remote run.
+
 Test counts describe their named snapshots and slices; they are not an aggregate
 release certificate. No RC, stable Hex artifact or final API/default freeze has
 occurred. The accepted full runtime/scheduler scope, store/result/API work,
@@ -302,7 +318,7 @@ is specified in [V2_PACKAGE_CONTRACT.md](./V2_PACKAGE_CONTRACT.md).
 | 2: runtime | Extend the implemented Test/BEAM supervisor/reference and scoped cancellation to server stdio and HTTP. Replace application-singleton session/subscription/replay/task owners; qualify store lifecycle and cross-runtime crash/restart/stop isolation. |
 | 3: dispatch/scheduler | Test/BEAM and custom calls now prepare bounded output before serialized state commit, with grouped batch accounting. Server stdio/EOF and HTTP still need runtime dispatch, actual writer ACK and complete cross-transport qualification. |
 | 4: stores | Deliberate public contracts, runtime-owned adapter lifecycle and payload-safe store telemetry. The internal ETS/DETS seam is groundwork, not the whole target. |
-| 5: public API | Additive complete-result constructors and collision rejection are qualified without removals. Unified `Server.Result`, modern scalar structured content, default 2020-12 schema semantics, selected DSL composition and bracketed client ownership remain. No `with_connection` helper or unified result facade exists. |
+| 5: public API | Shared `Server.Result` and modern scalar structured-value candidate passes focused boundaries, with compatibility forwarding and no removals. Default 2020-12 validation, selected DSL composition, media/options migration and bracketed client ownership remain. No `with_connection` helper exists. |
 | 6–7: migration/release | Accepted removals, final API diff/guide, cross-transport equivalence, runtime pressure/isolation/upgrade evidence and v2 RC/soak. |
 
 The accepted runtime contract specifies callback PID/links, state order,

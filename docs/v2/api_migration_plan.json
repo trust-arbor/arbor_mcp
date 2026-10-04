@@ -312,12 +312,12 @@
       "example_reference": "docs/V2_API_MIGRATION.md"
     },
     "tools_results": {
-      "replacement": "Server.DSL.Result.text/1, error/1, structured/2, normalize_tool/2, normalize_tool_result/1 or valid raw MCP content/result maps",
+      "replacement": "Server.Result complete-result constructors and normalizers; Server.DSL.Result forwards its existing function surface",
       "source_evidence": [
-        "lib/ex_mcp/server/dsl/result.ex",
-        "lib/ex_mcp/server/dsl.ex"
+        "tmp/arbor-mcp-v2/lib/arbor_mcp/server/result.ex",
+        "tmp/arbor-mcp-v2/docs/V2_RESULT_VALUE_SLICE.md"
       ],
-      "prerequisites": "Account for complete result vs content-list shape, structuredContent normalization and revision-valid image/resource blocks.",
+      "prerequisites": "Complete result vs content-list migration, explicit resource contents and media options, modern any-JSON structuredContent vs legacy object behavior; default2020 schema and full consumer migration remain.",
       "example_reference": "docs/V2_API_MIGRATION.md"
     },
     "tools_schema": {
@@ -1556,15 +1556,29 @@
     "normalization_collision_source": "fd11532",
     "archive_consumer_source": "b2404634fa2780b8524fd9e0ecaeaadb69494a6a",
     "latest_ci": {
-      "run": 37201745057,
-      "source": "b2404634fa2780b8524fd9e0ecaeaadb69494a6a",
+      "run": 37202542338,
+      "source": "068e8d09bc7b344325214d9387930c4afc1fd6e3",
       "status": "completed",
+      "conclusion": "failure",
+      "passed_jobs": 11,
       "archive_consumer_jobs_passed": 2,
-      "conclusion": "success",
-      "passed_jobs": 12
+      "failed_job": "Performance & stress suite",
+      "cause": "services_test replacement-generation poll dereferenced transient runtime_unavailable",
+      "correction": "wait for an available changed generation;108focused cases minimum/current pass",
+      "previous_all_green_run": 37201745057
     },
     "current_full_before_unreachable_private_guard_removal": false,
     "final_codec_current_focused_tests": 39,
     "schema_replacement_source": "cc1f4cba733a3c56b4bf3b7386d3eb26f27af3d2"
+  },
+  "unified_result_candidate": {
+    "implementation": "Arbor.MCP.Server.Result",
+    "compatibility_forwarder": "Arbor.MCP.Server.DSL.Result",
+    "modern_structured_values": "any plain JSON value; nil is explicit null",
+    "legacy_structured_values": "plain object; unsupported values reject before state commit",
+    "response_accessor": "Arbor.MCP.Response.structured_content/1",
+    "response_struct_presence_limit": "nil represents either absent or explicit null; use raw map for presence",
+    "api_removals_performed": 0,
+    "release": false
   }
 }
