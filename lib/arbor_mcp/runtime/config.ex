@@ -4,12 +4,15 @@ defmodule Arbor.MCP.Server.Runtime.Config do
   defstruct handler: nil,
             handler_args: [],
             dispatcher: Arbor.MCP.Server.Dispatch,
+            cancellation_tracker: nil,
             dispatch_opts: [],
             execution: :stateful,
             max_concurrency: 1,
             max_queue: 128,
             max_request_bytes: 1_000_000,
             max_pending_bytes: 8_000_000,
+            max_control_queue: 32,
+            max_control_bytes: 65_536,
             request_timeout_ms: 10_000,
             cancel_grace_ms: 100,
             init_timeout_ms: 10_000,
@@ -44,12 +47,13 @@ defmodule Arbor.MCP.Server.Runtime.Config do
     positive = [
       :max_request_bytes,
       :max_pending_bytes,
+      :max_control_bytes,
       :request_timeout_ms,
       :init_timeout_ms,
       :shutdown_timeout_ms
     ]
 
-    nonnegative = [:max_queue, :cancel_grace_ms]
+    nonnegative = [:max_queue, :max_control_queue, :cancel_grace_ms]
 
     case Enum.find(positive, &(not positive_integer?(Map.fetch!(config, &1)))) ||
            Enum.find(nonnegative, &(not nonnegative_integer?(Map.fetch!(config, &1)))) do

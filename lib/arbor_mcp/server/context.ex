@@ -11,6 +11,7 @@ defmodule Arbor.MCP.Server.Context do
 
   alias Arbor.MCP.Internal.Protocol
   alias Arbor.MCP.Server.{Cancellation, RequestContext}
+  alias Arbor.MCP.Server.Runtime.CallbackContext
 
   @key {__MODULE__, :current}
   @log_levels ~w(debug info notice warning error critical alert emergency)
@@ -19,24 +20,47 @@ defmodule Arbor.MCP.Server.Context do
   def current, do: Process.get(@key)
 
   @doc """
+  Returns the opaque connection/session scope of the active runtime callback.
+
+  Custom cancellation trackers can pair this value with a request ID to keep
+  handler-owned cancellation state isolated. Treat the scope as an opaque
+  identity: its representation belongs to the transport/runtime. Returns `nil`
+  outside runtime callback work, including legacy handler-process callbacks.
+  Like `current/0`, the value is not inherited by a spawned process.
+  """
+  @spec scope() :: term()
+  def scope do
+    case CallbackContext.current() do
+      %{scope: scope} -> scope
+      nil -> nil
+    end
+  end
+
+  @doc """
   Returns true if the current request id has been cancelled.
 
   Safe to call from inside a running handler: cancel is recorded out of
   band when `notifications/cancelled` is accepted, so this does not wait
   for the server GenServer to finish the current callback.
 
-  Returns `false` when there is no request context or the current id has
-  not been cancelled. The server MAY stop work when this is true; Arbor.MCP
-  does not automatically abort the JSON-RPC request.
+  Returns `false` when there is no active invocation or it has not been
+  cancelled. Runtime-backed servers scope this signal to the runtime,
+  connection/session, direction and invocation token. Cancellation prevents
+  that invocation from committing state and the runtime stops unresponsive
+  callback tasks after the configured grace period.
   """
   @spec cancelled?() :: boolean()
   def cancelled? do
-    case current() do
-      %RequestContext{request_id: request_id} when not is_nil(request_id) ->
-        Cancellation.cancelled?(request_id)
+    if CallbackContext.current() do
+      CallbackContext.cancelled?()
+    else
+      case current() do
+        %RequestContext{request_id: request_id} when not is_nil(request_id) ->
+          Cancellation.cancelled?(request_id)
 
-      _other ->
-        false
+        _other ->
+          false
+      end
     end
   end
 
@@ -172,7 +196,7 @@ defmodule Arbor.MCP.Server.Context do
       fun.()
     after
       restore(previous)
-      Cancellation.clear(context.request_id)
+      unless CallbackContext.current(), do: Cancellation.clear(context.request_id)
     end
   end
 

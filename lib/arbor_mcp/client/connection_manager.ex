@@ -11,6 +11,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   alias Arbor.MCP.Client.{Deadline, EraCache, EraProbe}
   alias Arbor.MCP.Internal.{Protocol, VersionInfo, VersionRegistry}
   alias Arbor.MCP.Reliability.Retry
+  alias Arbor.MCP.Testing.MockTransport
   alias Arbor.MCP.Transport.{HTTP, Local, ReliabilityWrapper, Stdio, Test}
   alias Arbor.MCP.Transport.HTTP.LegacySSE
 
@@ -585,7 +586,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
         {Test, opts}
 
       :mock ->
-        {Test, opts}
+        {MockTransport, opts}
 
       mod when is_atom(mod) ->
         {mod, opts}
@@ -625,9 +626,10 @@ defmodule Arbor.MCP.Client.ConnectionManager do
         # Use the :type key to determine the transport module
         transport_spec_without_type = Keyword.delete(transport_spec, :type)
 
-        # Convert :server_pid to :server for Test transport
+        # Only the runtime-backed Test transport uses :server. MockTransport
+        # retains its own :server_pid option and synchronous mock protocol.
         transport_spec_normalized =
-          if (transport_type == :mock or transport_type == :test) and
+          if transport_type == :test and
                Keyword.has_key?(transport_spec_without_type, :server_pid) do
             server_pid = Keyword.get(transport_spec_without_type, :server_pid)
 
@@ -862,6 +864,11 @@ defmodule Arbor.MCP.Client.ConnectionManager do
     cond do
       # HTTP non-SSE: no receiver needed (responses come from send_message)
       transport_mod == Arbor.MCP.Transport.HTTP and not transport_state.use_sse ->
+        {:ok, nil}
+
+      # MockServer replies in the sending caller. No polling process or
+      # response mailbox is needed for this synchronous testing transport.
+      transport_mod == MockTransport ->
         {:ok, nil}
 
       # Push mode: subscribe instead of polling

@@ -15,6 +15,12 @@ def deps do
 end
 ```
 
+Standalone HTTP servers additionally need `{:plug_cowboy, "~> 2.7"}` or
+`{:bandit, "~> 1.12 and >= 1.12.5"}` in the host dependencies. Select Bandit
+with `http_adapter: :bandit`; Cowboy remains the default. HTTP clients and
+mounting `Arbor.MCP.HttpPlug` in an existing host need no additional listener.
+See the [HTTP listener guide](HTTP_LISTENERS.md).
+
 Set `ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc` while the shared dependency is
 unpublished. The released 1.x package remains `ex_mcp`; its earlier
 `1.0.0-rc.5` release is the legacy-only characterization baseline.

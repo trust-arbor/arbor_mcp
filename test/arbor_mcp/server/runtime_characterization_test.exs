@@ -1,10 +1,8 @@
 defmodule Arbor.MCP.Server.RuntimeCharacterizationTest do
   @moduledoc """
-  Phase 1 characterization of 1.x HandlerServer callback execution.
-
-  These tests pin current behaviour so a later runtime/scheduler can be
-  compared against a known contract. They do not introduce a concurrent
-  scheduler, a server runtime, or a new public API.
+  Runtime migration tests preserve 1.x wire/state behavior while checking the
+  v2 contract: handlers execute in supervised callback tasks, and a responsive
+  protocol edge remains distinct from its runtime supervisor.
   """
   use ExUnit.Case, async: false
 
@@ -15,6 +13,7 @@ defmodule Arbor.MCP.Server.RuntimeCharacterizationTest do
   alias Arbor.MCP.Server.Context
   alias Arbor.MCP.Server.Handler
   alias Arbor.MCP.Server.HandlerServer
+  alias Arbor.MCP.Server.Runtime
 
   defmodule RuntimeHandler do
     @moduledoc false
@@ -152,31 +151,27 @@ defmodule Arbor.MCP.Server.RuntimeCharacterizationTest do
   end
 
   describe "callback process identity" do
-    test "Handler handle_call_tool runs in the unnamed HandlerServer process" do
+    test "Handler callback runs outside its unnamed runtime and protocol edge" do
       {server, client} = start_pair(RuntimeHandler, test_pid: self())
 
       try do
         assert {:ok, _result} = Client.call_tool(client, "identity", %{})
         assert_receive {:callback_identity, snapshot}, 1_000
 
-        # 1.x contract: HandlerServer applies handle_call_tool/3 in its own
-        # GenServer process (Dispatch.call + apply/3). It does not start a
-        # Task, a temporary handler GenServer, or an unlinked worker.
-        assert snapshot.pid == server
-        assert self() in snapshot.links
-        assert {:registered_name, []} = Process.info(server, :registered_name)
-
-        # start_link/1 links the server to the test process. The test
-        # transport uses send/2 and does not add a client-server link.
-        {:links, server_links} = Process.info(server, :links)
-        assert snapshot.links == server_links
+        {:ok, edge} = Runtime.edge(server)
+        refute snapshot.pid in [server, edge]
+        refute self() in snapshot.links
         refute client in snapshot.links
+        assert snapshot.links != []
+        assert {:registered_name, []} = Process.info(server, :registered_name)
+        {:links, root_links} = Process.info(server, :links)
+        assert self() in root_links
       after
         stop_pair(server, client)
       end
     end
 
-    test "DSL handle_call_tool uses the same HandlerServer process contract" do
+    test "DSL callback uses the same supervised runtime contract" do
       {:ok, server} =
         RuntimeDSL.start_link(
           transport: :test,
@@ -198,12 +193,11 @@ defmodule Arbor.MCP.Server.RuntimeCharacterizationTest do
         assert {:ok, _result} = Client.call_tool(client, "identity", %{})
         assert_receive {:callback_identity, snapshot}, 1_000
 
-        # DSL start_link(transport: :test) is HandlerServer.start_link/1, so
-        # the generated handle_call_tool/3 also runs in the server process
-        # and inherits that process's links (the starter from start_link).
-        assert snapshot.pid == server
-        assert self() in snapshot.links
+        {:ok, edge} = Runtime.edge(server)
+        refute snapshot.pid in [server, edge]
+        refute self() in snapshot.links
         refute client in snapshot.links
+        assert snapshot.links != []
       after
         stop_pair(server, client)
       end
@@ -225,11 +219,8 @@ defmodule Arbor.MCP.Server.RuntimeCharacterizationTest do
 
         wait_until(fn -> request_id in Client.get_pending_requests(client) end, timeout: 5_000)
 
-        # 1.x: HandlerServer is busy inside handle_call_tool, so the
-        # cancelled notification cannot update GenServer state until the
-        # callback returns. Transport.Test marks the request in the
-        # Cancellation ETS table on send; Context.cancelled?/0 reads that
-        # table from inside the running callback.
+        # Cancellation reaches the invocation-scoped runtime control path
+        # while the callback is running, without a global request-ID table.
         :ok = Client.send_cancelled(client, request_id, "User cancelled")
 
         assert_receive {:observed_cancel, true}, 3_000
@@ -252,17 +243,14 @@ defmodule Arbor.MCP.Server.RuntimeCharacterizationTest do
           end)
 
         assert_receive {:blocked, snapshot}, 2_000
-        assert snapshot.pid == server
+        refute snapshot.pid == server
 
         assert {:error, %Arbor.MCP.Error.ProtocolError{} = error} = Task.await(task, 2_000)
         assert error.code == -32603
         assert error.message == "Request timeout"
 
-        # 1.x contract: there is no HandlerServer handler_call_timeout. A
-        # Client.call_tool timeout becomes ProtocolError -32603 "Request
-        # timeout" but leaves the callback running in the server process.
-        # Contrast MessageProcessor, which times out a temporary handler
-        # GenServer and returns data.type handler_timeout.
+        # A client wait timeout leaves accepted server work running until
+        # its independent runtime deadline or an explicit cancellation.
         assert Process.alive?(server)
         assert Process.alive?(client)
 
@@ -283,9 +271,8 @@ defmodule Arbor.MCP.Server.RuntimeCharacterizationTest do
       {server, client} = start_pair(RuntimeHandler, token: "seq")
 
       try do
-        # 1.x default: stateful handlers are serialized because callbacks
-        # run inside one HandlerServer GenServer. Two sequential inc calls
-        # therefore observe 1 then 2, never a concurrent interleaving.
+        # The default scheduler serializes stateful proposals and commits
+        # each before the following callback takes its state snapshot.
         assert {:ok, first} = Client.call_tool(client, "inc", %{})
         assert {:ok, second} = Client.call_tool(client, "inc", %{})
 
@@ -329,7 +316,7 @@ defmodule Arbor.MCP.Server.RuntimeCharacterizationTest do
         assert {:ok, a2} = Client.call_tool(client_a, "inc", %{})
         assert {:ok, b1} = Client.call_tool(client_b, "inc", %{})
 
-        # 1.x isolation: each HandlerServer owns its handler_state. Two
+        # Each runtime owns its handler state. Two
         # transport: :test servers in one VM do not leak counters, and
         # stopping one does not take the other down.
         assert Response.text_content(a1) == "a:1"
@@ -337,7 +324,7 @@ defmodule Arbor.MCP.Server.RuntimeCharacterizationTest do
         assert Response.text_content(b1) == "b:1"
 
         if Process.alive?(client_a), do: GenServer.stop(client_a)
-        if Process.alive?(server_a), do: GenServer.stop(server_a)
+        if Process.alive?(server_a), do: Runtime.stop(server_a)
 
         refute Process.alive?(server_a)
         assert Process.alive?(server_b)
@@ -375,6 +362,6 @@ defmodule Arbor.MCP.Server.RuntimeCharacterizationTest do
 
   defp stop_pair(server, client) do
     if is_pid(client) and Process.alive?(client), do: GenServer.stop(client)
-    if is_pid(server) and Process.alive?(server), do: GenServer.stop(server)
+    if is_pid(server) and Process.alive?(server), do: Runtime.stop(server)
   end
 end

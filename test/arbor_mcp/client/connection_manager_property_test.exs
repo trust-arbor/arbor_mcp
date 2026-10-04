@@ -10,6 +10,7 @@ defmodule Arbor.MCP.Client.ConnectionManagerPropertyTest do
   use PropCheck
 
   alias Arbor.MCP.Client.ConnectionManager
+  alias Arbor.MCP.Testing.MockTransport
   alias Arbor.MCP.Transport.{HTTP, Stdio, Test}
   alias Arbor.MCP.Transport.HTTP.LegacySSE
 
@@ -128,15 +129,13 @@ defmodule Arbor.MCP.Client.ConnectionManagerPropertyTest do
       end
     end
 
-    property "server_pid to server conversion works correctly" do
+    property "mock transport preserves its server_pid option" do
       forall server_pid <- make_ref() do
         transport_spec = [type: :mock, server_pid: server_pid]
 
         case TestWrapper.normalize_transport_spec(transport_spec, []) do
-          {Test, opts} ->
-            # Should convert :server_pid to :server
-            server_value = Keyword.get(opts, :server)
-            server_value == server_pid and not Keyword.has_key?(opts, :server_pid)
+          {MockTransport, opts} ->
+            Keyword.get(opts, :server_pid) == server_pid and not Keyword.has_key?(opts, :server)
 
           {:error, _reason} ->
             true
@@ -227,9 +226,9 @@ defmodule Arbor.MCP.Client.ConnectionManagerPropertyTest do
       server_pid = spawn(fn -> :ok end)
       transport_spec = [type: :mock, server_pid: server_pid]
 
-      assert {Test, opts} = TestWrapper.normalize_transport_spec(transport_spec, [])
-      assert Keyword.get(opts, :server) == server_pid
-      assert not Keyword.has_key?(opts, :server_pid)
+      assert {MockTransport, opts} = TestWrapper.normalize_transport_spec(transport_spec, [])
+      assert Keyword.get(opts, :server_pid) == server_pid
+      assert not Keyword.has_key?(opts, :server)
     end
 
     test "handles test transport without explicit type" do

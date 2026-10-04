@@ -8,6 +8,18 @@ defmodule Arbor.MCP.Server.Runtime do
 
   Runtime references survive child restarts. Requests are reserved against
   count and byte budgets before their payload enters the scheduler mailbox.
+  The test/BEAM protocol edge uses an ETS payload handoff and a coalesced wake:
+  accepted ingress never queues its full payload in the edge mailbox.
+
+  Data admission permits `max_concurrency + max_queue` envelopes and
+  `max_pending_bytes` serialized input/context bytes. Outgoing helper controls
+  and incoming reverse-request responses have independent admission lanes,
+  each permitting `max_control_queue` envelopes and `max_control_bytes` bytes.
+  The aggregate control limit is twice each configured control limit. A
+  reverse request retains its outgoing reservation until reply or expiry;
+  its response can still enter when that outgoing lane is full. These limits
+  cover supported ingress and helper APIs, not arbitrary Erlang sends, handler
+  state, arbitrary callback output, or the accumulated responses of a batch.
 
   `request/3` uses a temporary process alias: a finite `await_timeout` stops
   waiting without leaving late replies in the caller mailbox. It does not
@@ -80,7 +92,19 @@ defmodule Arbor.MCP.Server.Runtime do
         Enum.map(Keyword.get(opts, :store_children, []), &ShutdownGuard.owned_spec(&1, table)) ++
         [
           {ExecutionSupervisor, runtime_opts}
-        ]
+        ] ++
+        case Keyword.get(opts, :edge) do
+          nil ->
+            []
+
+          {module, edge_opts} ->
+            [
+              ShutdownGuard.owned_spec(
+                {module, [runtime: Ref.new(self(), table)] ++ edge_opts},
+                table
+              )
+            ]
+        end
 
     Supervisor.init(children, strategy: :rest_for_one)
   end
@@ -109,6 +133,57 @@ defmodule Arbor.MCP.Server.Runtime do
     :exit, _reason -> {:error, :runtime_unavailable}
   end
 
+  @doc "Returns the live protocol edge owned by this runtime."
+  @spec edge(server()) :: {:ok, pid()} | {:error, :runtime_unavailable}
+  def edge(server) do
+    with {:ok, runtime} <- ref(server),
+         [{:edge, edge}] <- :ets.lookup(Ref.table(runtime), :edge),
+         true <- is_pid(edge) and node(edge) == node() and Process.alive?(edge) do
+      {:ok, edge}
+    else
+      _ -> {:error, :runtime_unavailable}
+    end
+  rescue
+    ArgumentError -> {:error, :runtime_unavailable}
+  end
+
+  @doc false
+  def reserve_ingress(server, message, opts) do
+    with {:ok, runtime} <- ref(server) do
+      opts = opts |> Keyword.put_new(:kind, :ingress) |> Keyword.put(:via_edge, true)
+      Admission.reserve(runtime, %{"payload" => message}, opts)
+    end
+  end
+
+  @doc false
+  def publish_ingress(server, route, reservation, payload, edge) do
+    with {:ok, runtime} <- ref(server),
+         do: Admission.publish(Ref.table(runtime), route, reservation, payload, edge)
+  end
+
+  @doc false
+  def dispatch_reserved(server, token, request, opts \\ []) do
+    with {:ok, runtime} <- ref(server),
+         {:ok, route} <- Admission.route(Ref.table(runtime)),
+         {:ok, _reservation} <- Admission.promote(Ref.table(runtime), token, request, opts) do
+      work_opts = [
+        runtime: runtime,
+        dispatch_opts: Keyword.get(opts, :dispatch_opts, []),
+        retain_reservation: Keyword.get(opts, :retain_reservation, false)
+      ]
+
+      send(route.scheduler, {:submit, route.generation, token, request, work_opts})
+      {:ok, token}
+    end
+  end
+
+  @doc false
+  def discard_ingress(server, token) do
+    with {:ok, runtime} <- ref(server) do
+      Admission.release(Ref.table(runtime), token)
+    end
+  end
+
   @spec stop(server(), term()) :: :ok | {:error, :runtime_unavailable}
   def stop(server, reason \\ :normal) do
     with {:ok, runtime} <- ref(server) do
@@ -119,11 +194,28 @@ defmodule Arbor.MCP.Server.Runtime do
 
   @doc false
   def submit(server, request, opts \\ []) when is_map(request) do
-    with {:ok, runtime} <- ref(server),
-         {:ok, route, reservation} <- Admission.reserve(runtime, request, opts) do
-      opts = [runtime: runtime, dispatch_opts: Keyword.get(opts, :dispatch_opts, [])]
-      send(route.scheduler, {:submit, route.generation, reservation.token, request, opts})
-      {:ok, reservation.token}
+    with {:ok, runtime} <- ref(server) do
+      if Keyword.get(opts, :via_edge, false) do
+        with {:ok, edge} <- edge(runtime),
+             opts = Keyword.merge(opts, owner: edge, edge: edge),
+             {:ok, route, reservation} <- Admission.reserve(runtime, request, opts),
+             :ok <-
+               Admission.publish(
+                 Ref.table(runtime),
+                 route,
+                 reservation,
+                 {:custom, request, Keyword.get(opts, :kind, :call),
+                  [dispatch_opts: Keyword.get(opts, :dispatch_opts, [])]},
+                 edge
+               ),
+             do: {:ok, reservation.token}
+      else
+        with {:ok, route, reservation} <- Admission.reserve(runtime, request, opts) do
+          opts = [runtime: runtime, dispatch_opts: Keyword.get(opts, :dispatch_opts, [])]
+          send(route.scheduler, {:submit, route.generation, reservation.token, request, opts})
+          {:ok, reservation.token}
+        end
+      end
     end
   end
 
@@ -159,7 +251,7 @@ defmodule Arbor.MCP.Server.Runtime do
       key = Admission.key(scope, request_id, Keyword.get(opts, :direction, :inbound))
       control = {{:cancel_control, key}, self()}
 
-      if :ets.member(Ref.table(runtime), {:request, key}) and
+      if Admission.pending_key?(Ref.table(runtime), key) and
            :ets.insert_new(Ref.table(runtime), control) do
         try do
           GenServer.call(route.scheduler, {:cancel, route.generation, key}, 5_000)
@@ -174,6 +266,25 @@ defmodule Arbor.MCP.Server.Runtime do
     ArgumentError -> {:error, :runtime_unavailable}
   catch
     :exit, _reason -> {:error, :runtime_unavailable}
+  end
+
+  @doc false
+  def cancel_scope(server, scope) do
+    with {:ok, runtime} <- ref(server) do
+      Ref.table(runtime)
+      |> :ets.tab2list()
+      |> Enum.flat_map(fn
+        {{:request, {^scope, direction, id}}, _token} -> [{direction, id}]
+        {{:wire_request, ^scope, id, _token}, _active} -> [{:inbound, id}]
+        _object -> []
+      end)
+      |> Enum.uniq()
+      |> Enum.each(fn {direction, id} -> cancel(runtime, scope, id, direction: direction) end)
+
+      :ok
+    end
+  rescue
+    ArgumentError -> {:error, :runtime_unavailable}
   end
 
   @doc false

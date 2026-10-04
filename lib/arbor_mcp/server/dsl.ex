@@ -53,9 +53,13 @@ defmodule Arbor.MCP.Server.DSL do
         %{
           id: Keyword.get(opts, :id, __MODULE__),
           start: {__MODULE__, :start_link, [opts]},
-          type: :worker,
+          type:
+            if(Keyword.get(opts, :transport, :beam) in [:test, :beam],
+              do: :supervisor,
+              else: :worker
+            ),
           restart: :permanent,
-          shutdown: 500
+          shutdown: Keyword.get(opts, :shutdown_timeout_ms, 5_000)
         }
       end
 

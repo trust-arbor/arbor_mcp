@@ -2,9 +2,8 @@ defmodule Arbor.MCP.Server.CancellationTracker do
   @moduledoc """
   Strategy for propagating `notifications/cancelled` into handler state.
 
-  `Arbor.MCP.Server.HandlerServer` marks the request cancelled in its own state
-  and then hands the notification to a tracker module so that servers can
-  observe cancellation the way their handler is written. The module is chosen
+  The runtime marks an active invocation cancelled, then invokes a tracker as
+  ordered callback work against the latest committed handler state. The module is chosen
   at start-up with the `:cancellation_tracker` option:
 
       Arbor.MCP.Server.HandlerServer.start_link(
@@ -22,7 +21,9 @@ defmodule Arbor.MCP.Server.CancellationTracker do
   Records `request_id` as cancelled and returns the (possibly updated) handler
   state.
 
-  Implementations run inside the server process, so they must not block.
+  Implementations run in supervised callback tasks. They can inspect the
+  invocation's opaque scope with `Arbor.MCP.Server.Context.scope/0`.
+  Prefer `Arbor.MCP.Server.Context.cancelled?/0` for active callback polling.
   """
   @callback mark_cancelled(request_id :: term(), handler_state :: term()) ::
               handler_state :: term()
@@ -33,18 +34,25 @@ defmodule Arbor.MCP.Server.CancellationTracker do
 
     Supports the two conventions Arbor.MCP handlers use to observe cancellation:
 
-    * a `:cancelled_requests` `MapSet` in the handler state, which is updated
-      in place, and
-    * an `:active_requests` map of `request_id => pid`, whose worker process is
+    * a `:cancelled_requests` `MapSet` in the handler state, which stores
+      `{scope, request_id}` for runtime callbacks, and
+    * an `:active_requests` map of `{scope, request_id} => pid`, whose worker process is
       sent `{:cancelled, request_id}` so long-running work can stop early.
 
     Handler states that use neither are returned untouched.
     """
 
     @behaviour Arbor.MCP.Server.CancellationTracker
+    alias Arbor.MCP.Server.Runtime.CallbackContext
 
     @impl true
     def mark_cancelled(request_id, handler_state) when is_map(handler_state) do
+      request_id =
+        case CallbackContext.current() do
+          %{scope: scope} -> {scope, request_id}
+          nil -> request_id
+        end
+
       handler_state
       |> update_cancelled_requests(request_id)
       |> notify_worker(request_id)

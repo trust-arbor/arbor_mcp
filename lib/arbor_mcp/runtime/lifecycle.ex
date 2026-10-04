@@ -8,7 +8,14 @@ defmodule Arbor.MCP.Server.Runtime.Lifecycle do
   def complete(%{deadline: deadline}, _proposal, now) when now >= deadline,
     do: {:cancel, :handler_timeout}
 
-  def complete(context, {:response, response, next_state}, _now) when is_map(response) do
+  def complete(%{kind: :call} = context, {:reply, reply, next_state}, _now),
+    do: commit(context, {:ok, reply}, next_state)
+
+  def complete(%{kind: :cast} = context, {:noreply, next_state}, _now),
+    do: commit(context, :notification, next_state)
+
+  def complete(%{kind: :rpc} = context, {:response, response, next_state}, _now)
+      when is_map(response) do
     if valid_response?(response, context.request_id) do
       result = if is_nil(context.request_id), do: :notification, else: {:ok, response}
       commit(context, result, next_state)
@@ -17,7 +24,7 @@ defmodule Arbor.MCP.Server.Runtime.Lifecycle do
     end
   end
 
-  def complete(%{request_id: nil} = context, {:notification, next_state}, _now),
+  def complete(%{kind: :rpc, request_id: nil} = context, {:notification, next_state}, _now),
     do: commit(context, :notification, next_state)
 
   def complete(_context, {:runtime_failure, :handler_crash}, _now),

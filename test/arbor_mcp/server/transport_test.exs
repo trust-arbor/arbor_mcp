@@ -1,7 +1,8 @@
 defmodule Arbor.MCP.Server.TransportTest do
   use ExUnit.Case, async: false
 
-  alias Arbor.MCP.Server.Transport
+  alias Arbor.MCP.Server.{HandlerServer, Runtime, Transport}
+  alias Arbor.MCP.Server.Runtime.Ref
 
   setup do
     # Save original configuration before any tests that might use STDIO transport
@@ -36,6 +37,90 @@ defmodule Arbor.MCP.Server.TransportTest do
     end
   end
 
+  defmodule BlockingShutdownHandler do
+    use Arbor.MCP.Server.Handler
+
+    @impl true
+    def init(opts), do: {:ok, %{test_pid: opts[:test_pid]}}
+
+    @impl true
+    def terminate(_reason, state) do
+      send(state.test_pid, {:blocked_handler_terminate, self()})
+
+      receive do
+        :release_terminate -> :ok
+      end
+    end
+  end
+
+  defmodule BlockingStore do
+    use GenServer
+
+    def start_link(test_pid), do: GenServer.start_link(__MODULE__, test_pid)
+
+    @impl true
+    def init(test_pid) do
+      Process.flag(:trap_exit, true)
+      send(test_pid, {:blocking_store, self()})
+      {:ok, test_pid}
+    end
+
+    @impl true
+    def terminate(_reason, test_pid) do
+      send(test_pid, {:blocked_store_terminate, self()})
+
+      receive do
+        :release_terminate -> :ok
+      end
+    end
+  end
+
+  test "stop_server applies one runtime deadline across blocked handler and owned store termination" do
+    root =
+      start_supervised!(
+        Supervisor.child_spec(
+          {HandlerServer,
+           [
+             transport: :test,
+             handler: BlockingShutdownHandler,
+             handler_args: [test_pid: self()],
+             shutdown_timeout_ms: 80,
+             store_children: [{BlockingStore, self()}]
+           ]},
+          id: :bounded_stop,
+          restart: :temporary
+        )
+      )
+
+    sibling =
+      start_supervised!(
+        Supervisor.child_spec({TestServer, [transport: :test]}, restart: :temporary)
+      )
+
+    assert_receive {:blocking_store, store}
+    {:ok, runtime} = Runtime.ref(root)
+    {:ok, edge} = Runtime.edge(runtime)
+    [{:shutdown_guard, guard}] = :ets.lookup(Ref.table(runtime), :shutdown_guard)
+    monitors = Enum.map([root, edge, store, guard], &{&1, Process.monitor(&1)})
+    started = System.monotonic_time(:millisecond)
+    stop = Task.async(fn -> Transport.stop_server(root) end)
+    assert_receive {:blocked_handler_terminate, _scheduler}, 1_000
+    assert :ok = Task.await(stop, 1_000)
+    assert System.monotonic_time(:millisecond) - started < 500
+
+    for {pid, monitor} <- monitors,
+        do: assert_receive({:DOWN, ^monitor, :process, ^pid, _reason}, 1_000)
+
+    assert Process.alive?(sibling)
+
+    assert {:ok, %{"id" => 1, "result" => %{}}} =
+             Runtime.request(sibling, %{"jsonrpc" => "2.0", "id" => 1, "method" => "ping"})
+
+    {:ok, sibling_ref} = Runtime.ref(sibling)
+    assert :ok = Transport.stop_server(sibling_ref)
+    refute Process.alive?(sibling)
+  end
+
   describe "start_server/4" do
     test "starts BEAM transport" do
       {:ok, pid} =
@@ -65,7 +150,7 @@ defmodule Arbor.MCP.Server.TransportTest do
           )
 
         assert is_pid(pid)
-        Plug.Cowboy.shutdown(pid)
+        Transport.stop_http_server(pid)
       else
         # Skip if Cowboy not available
         :skip
@@ -83,7 +168,7 @@ defmodule Arbor.MCP.Server.TransportTest do
           )
 
         assert is_pid(pid)
-        Plug.Cowboy.shutdown(pid)
+        Transport.stop_http_server(pid)
       else
         :skip
       end
@@ -125,7 +210,7 @@ defmodule Arbor.MCP.Server.TransportTest do
           Transport.start_http_server(TestServer, %{name: "test", version: "1.0.0"}, [], port: 0)
 
         assert is_pid(pid)
-        Plug.Cowboy.shutdown(pid)
+        Transport.stop_http_server(pid)
       else
         :skip
       end
@@ -202,7 +287,7 @@ defmodule Arbor.MCP.Server.TransportTest do
         {:ok, pid} = TestServer.start_link(transport: :http, port: 0)
 
         assert is_pid(pid)
-        Plug.Cowboy.shutdown(pid)
+        Transport.stop_http_server(pid)
       else
         :skip
       end
@@ -220,9 +305,9 @@ defmodule Arbor.MCP.Server.TransportTest do
 
       assert spec.id == TestServer
       assert spec.start == {TestServer, :start_link, [[transport: :beam]]}
-      assert spec.type == :worker
+      assert spec.type == :supervisor
       assert spec.restart == :permanent
-      assert spec.shutdown == 500
+      assert spec.shutdown == 5_000
     end
   end
 end

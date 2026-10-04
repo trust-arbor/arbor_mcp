@@ -9,7 +9,7 @@ defmodule Arbor.MCP.MessageProcessor do
   alias Arbor.MCP.Error
   alias Arbor.MCP.Internal.MessageValidator
   alias Arbor.MCP.Protocol.{ErrorCodes, Methods, ResponseBuilder}
-  alias Arbor.MCP.Server.{Cancellation, MRTR, RequestContext, ResultNormalizer}
+  alias Arbor.MCP.Server.{Cancellation, MRTR, RequestContext, ResultNormalizer, Runtime}
   alias Arbor.MCP.Tasks.Extension, as: TasksExtension
   alias Arbor.RPC.{JSONRPC, LogSummary}
 
@@ -171,6 +171,13 @@ defmodule Arbor.MCP.MessageProcessor do
   defp normalize_protocol_result(conn), do: conn
 
   defp process_request_with_context(%Conn{} = conn, opts) do
+    case Runtime.ref(Map.get(opts, :server)) do
+      {:ok, runtime} -> process_runtime_request(conn, runtime, opts)
+      {:error, _reason} -> process_legacy_request_with_context(conn, opts)
+    end
+  end
+
+  defp process_legacy_request_with_context(%Conn{} = conn, opts) do
     params = Map.get(conn.request, "params") || %{}
     mrtr_opts = mrtr_opts(conn, opts)
 
@@ -229,7 +236,7 @@ defmodule Arbor.MCP.MessageProcessor do
          :ok <- RequestContext.validate_method(request_context) do
       conn
       |> assign(:request_context, request_context)
-      |> process_validated_notification(opts)
+      |> route_validated_notification(opts)
     else
       {:error, reason} ->
         Logger.warning("Invalid notification metadata",
@@ -238,6 +245,35 @@ defmodule Arbor.MCP.MessageProcessor do
 
         conn
     end
+  end
+
+  defp route_validated_notification(conn, opts) do
+    case Runtime.ref(Map.get(opts, :server)) do
+      {:ok, runtime} -> process_runtime_notification(conn, runtime, opts)
+      {:error, _reason} -> process_validated_notification(conn, opts)
+    end
+  end
+
+  defp process_runtime_notification(conn, runtime, opts) do
+    scope = runtime_scope(conn)
+
+    case conn.request do
+      %{"method" => "notifications/cancelled", "params" => %{"requestId" => request_id}} ->
+        Runtime.cancel(runtime, scope, request_id)
+
+      request ->
+        with {:ok, edge} <- Runtime.edge(runtime) do
+          Runtime.submit(runtime, request,
+            kind: :rpc,
+            via_edge: true,
+            scope: scope,
+            reply_to: edge,
+            dispatch_opts: [protocol_mode: Map.get(opts, :protocol_mode)]
+          )
+        end
+    end
+
+    conn
   end
 
   defp process_validated_request(%Conn{} = conn, opts) do
@@ -289,6 +325,42 @@ defmodule Arbor.MCP.MessageProcessor do
         put_response(conn, error_response)
     end
   end
+
+  defp process_runtime_request(conn, runtime, opts) do
+    timeout = Map.get(opts, :handler_call_timeout, 10_000)
+
+    case Runtime.request(runtime, conn.request,
+           kind: :rpc,
+           via_edge: true,
+           scope: runtime_scope(conn),
+           timeout: timeout,
+           await_timeout: timeout,
+           dispatch_opts:
+             Keyword.merge(mrtr_opts(conn, opts),
+               protocol_mode: Map.get(opts, :protocol_mode),
+               instructions: Map.get(opts, :instructions)
+             )
+         ) do
+      {:ok, response} ->
+        put_response(conn, ResultNormalizer.stringify_keys(response))
+
+      {:error, response} when is_map(response) ->
+        put_response(conn, response)
+
+      {:error, reason} ->
+        put_response(
+          conn,
+          JSONRPC.error(
+            get_request_id(conn.request),
+            ErrorCodes.internal_error(),
+            "Request interrupted",
+            %{"type" => to_string(reason)}
+          )
+        )
+    end
+  end
+
+  defp runtime_scope(conn), do: {:message_processor, conn.session_id || self()}
 
   # Process request using a temporary per-request handler GenServer.
   #

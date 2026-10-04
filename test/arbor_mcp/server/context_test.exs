@@ -64,4 +64,12 @@ defmodule Arbor.MCP.Server.ContextTest do
       end)
     end
   end
+
+  test "scope is absent outside runtime work, including legacy request context" do
+    assert Context.scope() == nil
+
+    Context.with_context(context("legacy"), fn ->
+      assert Context.scope() == nil
+    end)
+  end
 end

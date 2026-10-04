@@ -24,7 +24,8 @@ defmodule Arbor.MCP.Server.Transport do
   require Logger
 
   alias Arbor.MCP.Internal.StdioLoggerConfig
-  alias Arbor.MCP.Server.StdioServer
+  alias Arbor.MCP.Server.{Runtime, StdioServer}
+  alias Arbor.MCP.Server.HTTP.{Bandit, Cowboy}
 
   @doc """
   Starts a server with the specified transport configuration.
@@ -34,6 +35,11 @@ defmodule Arbor.MCP.Server.Transport do
   * `:transport` - The transport type (`:stdio`, `:http`, `:beam`, `:test`)
   * `:port` - Port number for HTTP transports (default: 4000)
   * `:host` - Host for HTTP transports (default: "localhost")
+  * `:http_adapter` - Explicit standalone listener, `:cowboy` (default) or
+    `:bandit`. The selected listener package must be installed by the host
+  * `:http_listener_options` - Backend-specific listener options. The top-level
+    `:port`, `:host`, and `:ranch_ref` keep precedence
+  * `:ranch_ref` - Cowboy listener reference; rejected by the Bandit adapter
   * `:cors_enabled` - Enable CORS for HTTP transports (default: `false`, the
     same default `Arbor.MCP.HttpPlug` uses)
   * `:legacy_http_sse` - Enable the deprecated MCP 2024-11-05 HTTP+SSE
@@ -105,7 +111,12 @@ defmodule Arbor.MCP.Server.Transport do
   end
 
   @doc """
-  Starts an HTTP-based MCP server using Cowboy.
+  Starts an HTTP-based MCP server using the selected optional listener.
+
+  Cowboy remains the default. Missing listener dependencies return
+  `{:error, {:missing_http_listener_dependency, backend, package}}`.
+  Mounting `Arbor.MCP.HttpPlug` in an existing host requires no standalone
+  listener dependency.
 
   The HTTP transport allows integration with web applications and provides
   REST-like access to MCP functionality.
@@ -126,7 +137,6 @@ defmodule Arbor.MCP.Server.Transport do
 
     # Matches Arbor.MCP.HttpPlug's own default; CORS must be opted into (audit L10).
     cors_enabled = Keyword.get(opts, :cors_enabled, false)
-    ranch_ref = Keyword.get(opts, :ranch_ref)
 
     # Localhost-bound servers are the prime target for DNS rebinding, so
     # they get a Host allow-list (and matching localhost Origin allow-list)
@@ -168,40 +178,13 @@ defmodule Arbor.MCP.Server.Transport do
     end
 
     Logger.info(
-      "Starting MCP HTTP server on #{host}:#{port} " <>
+      "Starting MCP HTTP server on #{inspect(host)}:#{port} " <>
         "(deprecated HTTP+SSE: #{legacy_http_sse})"
     )
 
-    # If a custom ranch_ref is provided, use it for test isolation
-    if ranch_ref do
-      # Use Plug.Cowboy with the custom ref option
-      cowboy_opts = [
-        port: port,
-        ip: parse_host(host),
-        ref: ranch_ref
-      ]
-
-      case Plug.Cowboy.http(Arbor.MCP.HttpPlug, plug_opts, cowboy_opts) do
-        {:ok, pid} ->
-          Logger.info("MCP HTTP server started successfully with ref #{inspect(ranch_ref)}")
-          {:ok, pid}
-
-        {:error, {:already_started, pid}} ->
-          Logger.info("MCP HTTP server already running with ref #{inspect(ranch_ref)}")
-          {:ok, pid}
-
-        {:error, reason} ->
-          Logger.error("Failed to start MCP HTTP server: #{inspect(reason)}")
-          {:error, reason}
-      end
-    else
-      # Use default Plug.Cowboy approach for production
-      cowboy_opts = [
-        port: port,
-        ip: parse_host(host)
-      ]
-
-      case Plug.Cowboy.http(Arbor.MCP.HttpPlug, plug_opts, cowboy_opts) do
+    with {:ok, adapter} <- http_adapter(opts),
+         {:ok, listener_opts} <- http_listener_options(adapter, opts, host, port) do
+      case adapter.start(Arbor.MCP.HttpPlug, plug_opts, listener_opts) do
         {:ok, pid} ->
           Logger.info("MCP HTTP server started successfully")
           {:ok, pid}
@@ -214,6 +197,57 @@ defmodule Arbor.MCP.Server.Transport do
           Logger.error("Failed to start MCP HTTP server: #{inspect(reason)}")
           {:error, reason}
       end
+    end
+  end
+
+  @doc """
+  Stops a standalone HTTP listener using its selected backend.
+
+  Cowboy accepts the returned PID or its Ranch reference. Bandit accepts its
+  returned PID. This closes only that listener; a mounted HTTP host must stop
+  its own listener through its existing supervision tree.
+
+  `:http_shutdown_timeout` is a positive finite budget in milliseconds (default
+  `5_000`). A timeout returns an error; the host should retain the listener
+  identity and check or complete cleanup rather than assume it has stopped.
+  """
+  @spec stop_http_server(term(), keyword()) :: :ok | {:error, term()}
+  def stop_http_server(listener, opts \\ []) do
+    with {:ok, adapter} <- http_adapter(opts),
+         do: adapter.stop(listener, Keyword.get(opts, :http_shutdown_timeout, 5_000))
+  end
+
+  defp http_adapter(opts) do
+    case Keyword.get(opts, :http_adapter, :cowboy) do
+      :cowboy -> {:ok, Cowboy}
+      :bandit -> {:ok, Bandit}
+      adapter -> {:error, {:unsupported_http_adapter, adapter}}
+    end
+  end
+
+  defp http_listener_options(adapter, opts, host, port) do
+    listener_opts = Keyword.get(opts, :http_listener_options, [])
+
+    cond do
+      not Keyword.keyword?(listener_opts) ->
+        {:error, :invalid_http_listener_options}
+
+      adapter == Bandit and not is_nil(Keyword.get(opts, :ranch_ref)) ->
+        {:error, {:unsupported_http_option, :bandit, :ranch_ref}}
+
+      true ->
+        listener_opts = Keyword.merge(listener_opts, port: port, ip: parse_host(host))
+
+        case adapter do
+          Cowboy ->
+            case Keyword.get(opts, :ranch_ref) do
+              ref when ref in [nil, false] -> {:ok, listener_opts}
+              ref -> {:ok, Keyword.put(listener_opts, :ref, ref)}
+            end
+
+          Bandit ->
+            {:ok, Keyword.put(listener_opts, :scheme, :http)}
+        end
     end
   end
 
@@ -273,25 +307,48 @@ defmodule Arbor.MCP.Server.Transport do
 
   @doc """
   Stops a running MCP server.
-  """
-  @spec stop_server(pid() | atom()) :: :ok
-  def stop_server(server) when is_pid(server) do
-    GenServer.stop(server)
-  end
 
-  def stop_server(server) when is_atom(server) do
-    case Process.whereis(server) do
-      nil -> :ok
-      pid -> GenServer.stop(pid)
+  Runtime roots, registered names and references use the runtime's overall
+  shutdown budget and cleanup of explicitly owned descendants. A parent still
+  applies its restart policy; terminate a managed child through its parent when
+  the endpoint should remain stopped. Legacy GenServers keep their stop behavior.
+  """
+  @spec stop_server(Runtime.server()) :: :ok | {:error, term()}
+  def stop_server(server) do
+    case Runtime.ref(server) do
+      {:ok, runtime} -> Runtime.stop(runtime)
+      {:error, _reason} -> stop_transport_server(server)
     end
   end
+
+  defp stop_transport_server(server) when is_pid(server) do
+    case Cowboy.reference(server) do
+      {:ok, ref} ->
+        Cowboy.stop(ref)
+
+      {:error, :not_found} ->
+        if Bandit.listener?(server), do: Bandit.stop(server), else: GenServer.stop(server)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp stop_transport_server(server) when is_atom(server) do
+    case Process.whereis(server) do
+      nil -> :ok
+      pid -> stop_server(pid)
+    end
+  end
+
+  defp stop_transport_server(_unavailable), do: {:error, :runtime_unavailable}
 
   @doc """
   Gets information about a running server.
   """
-  @spec server_info(pid() | atom()) :: {:ok, map()} | {:error, term()}
+  @spec server_info(Runtime.server()) :: {:ok, map()} | {:error, term()}
   def server_info(server) do
-    case GenServer.call(server, :get_server_info, 5000) do
+    case Arbor.MCP.Server.call(server, :get_server_info, 5000) do
       info when is_map(info) -> {:ok, info}
       _ -> {:error, :no_server_info}
     end
@@ -312,8 +369,9 @@ defmodule Arbor.MCP.Server.Transport do
         description: "Standard input/output transport for CLI tools"
       },
       http: %{
-        available: Code.ensure_loaded?(Plug.Cowboy),
-        description: "HTTP transport with REST-like API"
+        available: Cowboy.available?() or Bandit.available?(),
+        adapters: %{cowboy: Cowboy.available?(), bandit: Bandit.available?()},
+        description: "HTTP transport through an optional listener or mounted Plug"
       },
       beam: %{
         available: true,

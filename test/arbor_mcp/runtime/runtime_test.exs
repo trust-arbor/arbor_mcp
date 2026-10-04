@@ -2,7 +2,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
   use ExUnit.Case, async: true
 
   alias Arbor.MCP.Server.Runtime
-  alias Arbor.MCP.Server.Runtime.{Admission, CallbackContext, Ref}
+  alias Arbor.MCP.Server.Runtime.{Admission, ByteBudget, CallbackContext, Ref}
 
   defmodule Handler do
     def init(args) do
@@ -459,6 +459,123 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     refute_receive {:arbor_mcp_runtime, ^token, _}, 20
   end
 
+  test "owner death prevents a queued completion from committing before its DOWN is handled" do
+    runtime = start_runtime(label: :owner_completion)
+
+    owner =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    assert {:ok, token} = Runtime.submit(runtime, message(1, "hold"), owner: owner)
+    assert_receive {:started, :owner_completion, 1, worker, 0}
+    {:ok, route} = Admission.route(Ref.table(runtime))
+    :sys.suspend(route.scheduler)
+    send(worker, :mutate)
+    wait_for(fn -> not Process.alive?(worker) end)
+    monitor = Process.monitor(owner)
+    Process.exit(owner, :kill)
+    assert_receive {:DOWN, ^monitor, :process, ^owner, :killed}
+    :sys.resume(route.scheduler)
+
+    assert {:error, %{"error" => %{"data" => %{"type" => "owner_down"}}}} =
+             Runtime.await(token, 1_000)
+
+    assert {:ok, %{"result" => 0}} = Runtime.request(runtime, message(2, "read"))
+    refute_receive {:arbor_mcp_runtime, ^token, _}, 20
+  end
+
+  test "batch ID metadata never enters a suspended admission mailbox and abandoned candidates are cleaned" do
+    runtime = start_runtime(label: :metadata_handoff, max_queue: 0)
+    {:ok, route} = Admission.route(Ref.table(runtime))
+    :sys.suspend(route.admission)
+    on_exit(fn -> if Process.alive?(route.admission), do: :sys.resume(route.admission) end)
+    parent = self()
+    ids = for id <- 1..250, do: "#{id}-" <> String.duplicate("x", 128)
+
+    producer =
+      spawn(fn ->
+        Runtime.submit(runtime, message(1, "inc"), wire_ids: ids, owner: parent, reply_to: parent)
+      end)
+
+    on_exit(fn -> if Process.alive?(producer), do: Process.exit(producer, :kill) end)
+
+    wait_for(fn ->
+      case :ets.match_object(Ref.table(runtime), {{:slot, :_}, :_, producer}) do
+        [{_key, token, ^producer}] -> not is_nil(ByteBudget.candidate(Ref.table(runtime), token))
+        _ -> false
+      end
+    end)
+
+    [{_slot, token, ^producer}] =
+      :ets.match_object(Ref.table(runtime), {{:slot, :_}, :_, producer})
+
+    candidate = ByteBudget.candidate(Ref.table(runtime), token)
+    assert candidate.wire_ids == ids
+    {:messages, messages} = Process.info(route.admission, :messages)
+
+    assert [{:"$gen_call", _from, {:confirm, token}} = confirmation] =
+             Enum.filter(messages, &match?({:"$gen_call", _, {:confirm, _}}, &1))
+
+    assert token == candidate.token
+    assert :erlang.external_size(confirmation) < 256
+    monitor = Process.monitor(producer)
+    Process.exit(producer, :kill)
+    assert_receive {:DOWN, ^monitor, :process, ^producer, :killed}
+    :sys.resume(route.admission)
+    wait_for(fn -> Runtime.stats(runtime).reserved == 0 end)
+    assert ByteBudget.candidate(Ref.table(runtime), token) == nil
+    assert %{data: 0, outgoing: 0, incoming: 0} = ByteBudget.used(Ref.table(runtime))
+    refute_receive {:started, :metadata_handoff, _, _, _}, 20
+    assert {:ok, %{"result" => 1}} = Runtime.request(runtime, message(2, "inc"))
+  end
+
+  test "aggregate candidate bytes stay within the lane budget while admission is suspended" do
+    runtime = start_runtime(label: :candidate_bytes, max_pending_bytes: 6_000)
+    {:ok, route} = Admission.route(Ref.table(runtime))
+    :sys.suspend(route.admission)
+    on_exit(fn -> if Process.alive?(route.admission), do: :sys.resume(route.admission) end)
+    parent = self()
+    ids = for id <- 1..12, do: "#{id}-" <> String.duplicate("x", 250)
+
+    producers =
+      for id <- 1..20 do
+        spawn(fn ->
+          result =
+            Runtime.submit(runtime, message(id, "inc"),
+              wire_ids: ids,
+              owner: parent,
+              reply_to: parent
+            )
+
+          send(parent, {:candidate_result, self(), result})
+        end)
+      end
+
+    on_exit(fn -> for pid <- producers, Process.alive?(pid), do: Process.exit(pid, :kill) end)
+
+    for _index <- 1..19,
+        do: assert_receive({:candidate_result, _pid, {:error, :server_busy}}, 1_000)
+
+    assert %{data: retained} = ByteBudget.used(Ref.table(runtime))
+    assert retained > 3_000 and retained <= 6_000
+
+    assert [{_slot, token, producer}] =
+             :ets.match_object(Ref.table(runtime), {{:slot, :_}, :_, :_})
+
+    assert ByteBudget.candidate(Ref.table(runtime), token).wire_ids == ids
+    monitor = Process.monitor(producer)
+    Process.exit(producer, :kill)
+    assert_receive {:DOWN, ^monitor, :process, ^producer, :killed}
+    :sys.resume(route.admission)
+    wait_for(fn -> Runtime.stats(runtime).reserved == 0 end)
+    assert %{data: 0, outgoing: 0, incoming: 0} = ByteBudget.used(Ref.table(runtime))
+    refute_receive {:started, :candidate_bytes, _, _, _}, 20
+    assert {:ok, %{"result" => 1}} = Runtime.request(runtime, message(100, "inc"))
+  end
+
   test "producer killed before scheduler handoff releases admission capacity" do
     runtime = start_runtime(label: :producer, max_queue: 0)
     parent = self()
@@ -488,6 +605,71 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     refute_receive {:started, :producer, 1, _, _}, 20
   end
 
+  test "an earlier edge wake takes ownership before a later publisher-ready cast" do
+    runtime = start_runtime(label: :early_checkout)
+    table = Ref.table(runtime)
+    {:ok, route} = Admission.route(table)
+    owner = self()
+
+    producer =
+      spawn(fn ->
+        {:ok, route, reservation} =
+          Admission.reserve(runtime, %{"payload" => :reverse_control},
+            owner: owner,
+            reply_to: owner,
+            edge: owner,
+            kind: :edge_control,
+            via_edge: true
+          )
+
+        send(owner, {:control_reserved, reservation.token})
+
+        receive do
+          :publish ->
+            result = Admission.publish(table, route, reservation, :reverse_control, owner)
+            send(owner, {:control_published, result})
+        end
+
+        receive do
+          :exit -> :ok
+        end
+      end)
+
+    on_exit(fn -> if Process.alive?(producer), do: Process.exit(producer, :kill) end)
+    assert_receive {:control_reserved, token}
+    :sys.suspend(route.admission)
+    on_exit(fn -> if Process.alive?(route.admission), do: :sys.resume(route.admission) end)
+
+    # Queue the checkout as if it came from an earlier coalesced edge wake;
+    # publish atomically places the payload before its ready cast is enqueued.
+    checkout = Task.async(fn -> Admission.checkout(table, token) end)
+
+    wait_for(fn ->
+      {:messages, messages} = Process.info(route.admission, :messages)
+      Enum.any?(messages, &match?({:"$gen_call", _, {:checkout, ^token}}, &1))
+    end)
+
+    send(producer, :publish)
+    assert_receive {:control_published, :ok}
+    :sys.resume(route.admission)
+    assert {:ok, %{stage: :processing}, :reverse_control} = Task.await(checkout)
+    assert %{reserved: 1, confirmed: 1} = Admission.stats(table)
+
+    monitor = Process.monitor(producer)
+    send(producer, :exit)
+    assert_receive {:DOWN, ^monitor, :process, ^producer, :normal}
+    refute_receive {:arbor_mcp_runtime, ^token, _premature_terminal}, 30
+    assert {:ok, %{terminal: false}} = Admission.current(table, token)
+    assert %{reserved: 1} = Admission.stats(table)
+
+    # Native reverse controls hold their credit without Scheduler.bind/2.
+    assert :ok = Admission.terminal(table, token, {:ok, :delivered})
+    assert {:ok, :delivered} = Runtime.await(token, 1_000)
+    assert :ok = Admission.release(table, token)
+    assert %{reserved: 0, pending_bytes: 0} = Admission.stats(table)
+    assert {:ok, %{"result" => 1}} = Runtime.request(runtime, message(1, "inc"))
+  end
+
   test "cancel before scheduler handoff has the same terminal outcome as a running cancellation" do
     runtime = start_runtime(label: :before_handoff, max_queue: 0)
     scope = {:session, "handoff"}
@@ -505,6 +687,11 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     assert {:error, :server_busy} =
              Runtime.submit(runtime, message(1, "inc"),
                dispatch_opts: [application_data: String.duplicate("x", 500)]
+             )
+
+    assert {:error, :server_busy} =
+             Runtime.submit(runtime, message(2, "inc"),
+               scope: {:session, String.duplicate("s", 500)}
              )
 
     assert %{reserved: 0, pending_bytes: 0} = Runtime.stats(runtime)

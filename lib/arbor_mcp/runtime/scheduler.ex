@@ -70,7 +70,9 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
             deadline_timer: deadline_timer,
             kill_timer: nil,
             task: nil,
-            terminal: false
+            terminal: false,
+            phase: :callback,
+            tracker_pending: false
           }
 
           state = %{
@@ -102,11 +104,23 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
       Map.has_key?(state.tasks, ref) ->
         token = Map.fetch!(state.tasks, ref)
         state = if state.work[token].terminal, do: state, else: fail(state, token, :handler_crash)
-        {:noreply, state |> remove_work(token) |> start_available()}
+
+        state =
+          if state.work[token].tracker_pending,
+            do: queue_tracker(state, token),
+            else: remove_work(state, token)
+
+        {:noreply, start_available(state)}
 
       Map.has_key?(state.owners, ref) ->
         token = Map.fetch!(state.owners, ref)
-        {:noreply, cancel_work(state, token, :owner_down)}
+
+        if state.work[token].phase == :tracker and state.work[token].task do
+          Process.exit(state.work[token].task.pid, :kill)
+          {:noreply, state}
+        else
+          {:noreply, cancel_work(state, token, :owner_down)}
+        end
 
       true ->
         {:noreply, state}
@@ -114,9 +128,18 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
   end
 
   def handle_info({:deadline, generation, token}, state) do
-    if generation == state.generation,
-      do: {:noreply, cancel_work(state, token, :handler_timeout)},
-      else: {:noreply, state}
+    if generation == state.generation do
+      case Map.get(state.work, token) do
+        %{phase: :tracker, task: %Task{pid: pid}} ->
+          Process.exit(pid, :kill)
+          {:noreply, state}
+
+        _ ->
+          {:noreply, cancel_work(state, token, :handler_timeout)}
+      end
+    else
+      {:noreply, state}
+    end
   end
 
   def handle_info({:kill, generation, token}, state) do
@@ -136,19 +159,8 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
   def handle_call({:cancel, generation, key}, _from, state) do
     if generation == state.generation do
       case Admission.find(state.table, key) do
-        %{token: token} = reservation ->
-          if Map.has_key?(state.work, token) do
-            {:reply, :ok, cancel_work(state, token, :request_cancelled)}
-          else
-            Admission.terminal(
-              state.table,
-              token,
-              Failure.result(reservation, :request_cancelled)
-            )
-
-            Admission.release(state.table, token)
-            {:reply, :ok, state}
-          end
+        %{token: _token} = reservation ->
+          {:reply, :ok, cancel_key(state, reservation, key)}
 
         _ ->
           {:reply, :ok, state}
@@ -165,6 +177,28 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
        queued: :queue.len(state.queue),
        generation: state.generation
      }, state}
+  end
+
+  defp cancel_key(state, reservation, key) do
+    token = reservation.token
+
+    case Map.get(state.work, token) do
+      %{reservation: %{key: ^key}, request: %{"method" => "initialize"}} ->
+        state
+
+      %{reservation: %{key: ^key}} ->
+        cancel_work(state, token, :request_cancelled)
+
+      _work when reservation.stage != :direct ->
+        {_scope, _direction, id} = key
+        Admission.cancel_ingress(state.table, token, id)
+        state
+
+      _work ->
+        Admission.terminal(state.table, token, Failure.result(reservation, :request_cancelled))
+        Admission.release(state.table, token)
+        state
+    end
   end
 
   @impl true
@@ -200,8 +234,14 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
           work = Map.fetch!(state.work, token)
 
           case start_failure(state, work) do
-            nil -> state |> start_task(token, work) |> start_available()
-            reason -> state |> fail(token, reason) |> remove_work(token) |> start_available()
+            nil ->
+              state |> start_task(token, work) |> start_available()
+
+            :request_cancelled ->
+              state |> cancel_work(token, :request_cancelled) |> start_available()
+
+            reason ->
+              state |> fail(token, reason) |> remove_work(token) |> start_available()
           end
       end
     else
@@ -247,17 +287,20 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
     work = Map.fetch!(state.work, token)
 
     context = %{
-      terminal: work.terminal,
+      terminal: if(work.phase == :tracker, do: false, else: work.terminal),
       deadline: work.reservation.deadline,
       request_id: work.reservation.request_id,
+      kind: if(work.phase == :tracker, do: :cast, else: work.reservation.kind),
       execution: state.config.execution,
       state: state.handler_state
     }
 
     decision =
-      if ShutdownGuard.closing?(state.table),
-        do: {:cancel, :runtime_stopped},
-        else: Lifecycle.complete(context, proposal, now())
+      cond do
+        ShutdownGuard.closing?(state.table) -> {:cancel, :runtime_stopped}
+        not Process.alive?(work.reservation.owner) -> {:cancel, :owner_down}
+        true -> Lifecycle.complete(context, proposal, now())
+      end
 
     case decision do
       :ignore ->
@@ -270,7 +313,8 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
         fail(state, token, reason)
 
       {:commit, result, next_state} ->
-        state |> Map.put(:handler_state, next_state) |> mark_terminal(token, result)
+        state = Map.put(state, :handler_state, next_state)
+        if work.phase == :tracker, do: state, else: mark_terminal(state, token, result)
     end
   end
 
@@ -283,7 +327,14 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
         state
 
       %{task: nil} ->
-        state |> fail(token, reason) |> remove_work(token) |> start_available()
+        state = fail(state, token, reason)
+
+        state =
+          if tracker_needed?(state, reason),
+            do: queue_tracker(state, token),
+            else: remove_work(state, token)
+
+        start_available(state)
 
       work ->
         :ets.insert(state.table, {{:cancelled, token}, true})
@@ -297,6 +348,7 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
           )
 
         state = put_in(state.work[token].kill_timer, timer)
+        state = put_in(state.work[token].tracker_pending, tracker_needed?(state, reason))
         fail(state, token, reason)
     end
   end
@@ -323,7 +375,13 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
         if work.deadline_timer, do: Process.cancel_timer(work.deadline_timer)
         if work.kill_timer, do: Process.cancel_timer(work.kill_timer)
         if work.task, do: Process.demonitor(work.task.ref, [:flush])
-        Admission.release(state.table, token)
+
+        if Keyword.get(work.opts, :retain_reservation, false) do
+          Admission.release_step(state.table, token)
+        else
+          Admission.release(state.table, token)
+        end
+
         tasks = if work.task, do: Map.delete(state.tasks, work.task.ref), else: state.tasks
         queue = :queue.filter(&(&1 != token), state.queue)
 
@@ -347,7 +405,26 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
         Keyword.merge(config.dispatch_opts, Keyword.get(work.opts, :dispatch_opts, []))
 
       dispatcher = config.dispatcher
-      dispatcher.dispatch(work.request, config.handler, snapshot, dispatch_opts)
+
+      case {work.phase, work.reservation.kind} do
+        {:tracker, _kind} ->
+          {:noreply,
+           config.cancellation_tracker.mark_cancelled(work.reservation.request_id, snapshot)}
+
+        {:callback, :call} ->
+          if function_exported?(config.handler, :handle_call, 3),
+            do:
+              config.handler.handle_call(work.request["payload"], {self(), make_ref()}, snapshot),
+            else: {:reply, {:error, {:unknown_call, work.request["payload"]}}, snapshot}
+
+        {:callback, :cast} ->
+          if function_exported?(config.handler, :handle_cast, 2),
+            do: config.handler.handle_cast(work.request["payload"], snapshot),
+            else: {:noreply, snapshot}
+
+        {:callback, :rpc} ->
+          dispatcher.dispatch(work.request, config.handler, snapshot, dispatch_opts)
+      end
     end)
   rescue
     _exception -> {:runtime_failure, :handler_crash}
@@ -357,10 +434,51 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
 
   defp start_failure(state, work) do
     cond do
-      ShutdownGuard.closing?(state.table) -> :runtime_stopped
-      not Process.alive?(work.reservation.owner) -> :owner_down
-      now() >= work.reservation.deadline -> :handler_timeout
-      true -> nil
+      ShutdownGuard.closing?(state.table) ->
+        :runtime_stopped
+
+      not Process.alive?(work.reservation.owner) ->
+        :owner_down
+
+      work.phase != :tracker and :ets.member(state.table, {:cancelled, work.reservation.token}) ->
+        :request_cancelled
+
+      now() >= work.reservation.deadline ->
+        :handler_timeout
+
+      true ->
+        nil
     end
+  end
+
+  defp tracker_needed?(state, reason),
+    do: reason == :request_cancelled and not is_nil(state.config.cancellation_tracker)
+
+  defp queue_tracker(state, token) do
+    work = Map.fetch!(state.work, token)
+    if work.task, do: Process.demonitor(work.task.ref, [:flush])
+    if work.kill_timer, do: Process.cancel_timer(work.kill_timer)
+    tasks = if work.task, do: Map.delete(state.tasks, work.task.ref), else: state.tasks
+    deadline = now() + state.config.request_timeout_ms
+
+    timer =
+      Process.send_after(
+        self(),
+        {:deadline, state.generation, token},
+        state.config.request_timeout_ms
+      )
+
+    work = %{
+      work
+      | task: nil,
+        phase: :tracker,
+        tracker_pending: false,
+        kill_timer: nil,
+        deadline_timer: timer,
+        reservation: %{work.reservation | deadline: deadline}
+    }
+
+    queue = :queue.filter(&(&1 != token), state.queue) |> then(&:queue.in(token, &1))
+    %{state | tasks: tasks, work: Map.put(state.work, token, work), queue: queue}
   end
 end

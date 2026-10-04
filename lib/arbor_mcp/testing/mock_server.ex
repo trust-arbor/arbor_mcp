@@ -599,103 +599,120 @@ end
 # Mock Transport Implementation
 defmodule Arbor.MCP.Testing.MockTransport do
   @moduledoc """
-  Mock transport implementation that connects to MockServer.
+  Synchronous transport for `Arbor.MCP.Testing.MockServer`.
 
-  This transport sends messages directly to a mock server process
-  instead of using network communication, enabling fast and reliable
-  testing of MCP protocol interactions.
+  Select it with `transport: [type: :mock, server_pid: server]`. Encoded MCP
+  requests are decoded before calling the mock server, and replies are returned
+  directly to the sending caller. Each exchange is bounded by the positive
+  `:timeout` option (default 5,000 ms). This transport owns no receiver process
+  or response mailbox; separate clients may share a mock server safely.
+
+  The legacy `send/2` and `recv/2` helpers retain replies in their caller-owned
+  transport state. They do not consume unrelated process messages.
   """
 
   @behaviour Arbor.MCP.Transport
 
-  defstruct [:server_pid, :timeout, :request_responses]
+  alias Arbor.MCP.Client.Deadline
+
+  defstruct [:server_pid, :timeout, :request_responses, :deadline]
 
   @impl Arbor.MCP.Transport
   def connect(opts) do
-    server_pid = Keyword.fetch!(opts, :server_pid)
+    server_pid = Keyword.get(opts, :server_pid)
     timeout = Keyword.get(opts, :timeout, 5000)
 
-    transport = %__MODULE__{
-      server_pid: server_pid,
-      timeout: timeout,
-      request_responses: %{}
-    }
+    cond do
+      not (is_integer(timeout) and timeout > 0) ->
+        {:error, {:invalid_mock_timeout, timeout}}
 
-    {:ok, transport}
-  end
+      not (is_pid(server_pid) and node(server_pid) == node() and Process.alive?(server_pid)) ->
+        {:error, :server_not_available}
 
-  @impl Arbor.MCP.Transport
-  def send_message(message, transport) do
-    case GenServer.call(transport.server_pid, {:mcp_request, message}, transport.timeout) do
-      {:error, error_response} -> {:error, error_response}
-      _response -> {:ok, transport}
-    end
-  rescue
-    error -> {:error, %{"error" => %{"code" => -1, "message" => inspect(error)}}}
-  end
-
-  # Compatibility method for Client
-  def send(transport, message) when is_binary(message) do
-    case Jason.decode(message) do
-      {:ok, decoded} ->
-        case GenServer.call(transport.server_pid, {:mcp_request, decoded}, transport.timeout) do
-          {:ok, response} ->
-            # Store the response in transport state instead of process dictionary
-            request_id = decoded["id"]
-            updated_responses = Map.put(transport.request_responses, request_id, response)
-            updated_transport = %{transport | request_responses: updated_responses}
-            {:ok, updated_transport}
-
-          {:error, error_response} ->
-            # For error responses, still store them for recv to return
-            request_id = decoded["id"]
-            updated_responses = Map.put(transport.request_responses, request_id, error_response)
-            updated_transport = %{transport | request_responses: updated_responses}
-            {:ok, updated_transport}
-        end
-
-      {:error, _} = error ->
-        error
+      true ->
+        {:ok, %__MODULE__{server_pid: server_pid, timeout: timeout, request_responses: %{}}}
     end
   end
 
   @impl Arbor.MCP.Transport
-  def receive_message(_transport) do
-    # Mock transport doesn't support receiving messages - it's synchronous
-    {:error, "Mock transport doesn't support async receiving"}
+  def send_message(message, %__MODULE__{} = transport) do
+    with {:ok, _request, response} <- exchange(message, transport) do
+      case response do
+        nil -> {:ok, transport}
+        response -> {:ok, transport, Jason.encode!(response)}
+      end
+    end
   end
 
-  # Compatibility method for Client
-  def receive(transport, _timeout \\ 5000) do
-    # Try to get the stored response from transport state
-    receive do
-      _ -> :ok
-    after
-      0 -> :ok
-    end
+  # Compatibility method: preserve the caller-owned response queue.
+  def send(%__MODULE__{} = transport, message) when is_binary(message) do
+    with {:ok, request, response} <- exchange(message, transport) do
+      responses =
+        if response == nil,
+          do: transport.request_responses,
+          else: Map.put(transport.request_responses, request["id"], response)
 
-    # Check transport state for stored responses
-    case transport.request_responses do
-      responses when map_size(responses) == 0 ->
+      {:ok, %{transport | request_responses: responses}}
+    end
+  end
+
+  @impl Arbor.MCP.Transport
+  def receive_message(_transport), do: {:error, :not_supported_in_sync_mode}
+
+  # Compatibility method: this state contains only completed synchronous replies.
+  def receive(%__MODULE__{} = transport, _timeout \\ 5000) do
+    case Enum.at(transport.request_responses, 0) do
+      nil ->
         {:error, :no_response}
 
-      responses ->
-        # Get the first available response
-        {request_id, response} = Enum.at(responses, 0)
-        # Remove the response from state for next time
-        updated_responses = Map.delete(responses, request_id)
-        updated_transport = %{transport | request_responses: updated_responses}
-        {:ok, Jason.encode!(response), updated_transport}
+      {request_id, response} ->
+        responses = Map.delete(transport.request_responses, request_id)
+        {:ok, Jason.encode!(response), %{transport | request_responses: responses}}
     end
   end
 
-  # Alias for receive used by Client
-  def recv(transport, timeout) do
-    receive(transport, timeout)
-  end
+  def recv(transport, timeout), do: receive(transport, timeout)
 
   @impl Arbor.MCP.Transport
-  def close(_transport) do
-    :ok
+  def close(_transport), do: :ok
+
+  @impl Arbor.MCP.Transport
+  def connected?(%__MODULE__{server_pid: server_pid}) when is_pid(server_pid),
+    do: node(server_pid) == node() and Process.alive?(server_pid)
+
+  def connected?(_transport), do: false
+
+  defp exchange(message, transport) do
+    with {:ok, request} <- decode_request(message),
+         true <- connected?(transport),
+         timeout when timeout > 0 <- Deadline.cap(transport.timeout, transport.deadline) do
+      reply = GenServer.call(transport.server_pid, {:mcp_request, request}, timeout)
+
+      if Deadline.expired?(transport.deadline),
+        do: {:error, :timeout},
+        else: normalize_reply(reply, request)
+    else
+      false -> {:error, :closed}
+      0 -> {:error, :timeout}
+      {:error, _reason} = error -> error
+    end
+  rescue
+    error -> {:error, {:mock_transport_error, error}}
+  catch
+    :exit, {:timeout, _call} -> {:error, :timeout}
+    :exit, {:noproc, _call} -> {:error, :closed}
+    :exit, reason -> {:error, {:mock_server_exit, reason}}
   end
+
+  defp normalize_reply({status, response}, request) when status in [:ok, :error],
+    do: {:ok, request, response}
+
+  defp decode_request(message) when is_binary(message) do
+    with {:ok, decoded} <- Jason.decode(message), do: decode_request(decoded)
+  end
+
+  defp decode_request(%{"method" => method} = request) when is_binary(method),
+    do: {:ok, request}
+
+  defp decode_request(_message), do: {:error, :invalid_mock_request}
 end

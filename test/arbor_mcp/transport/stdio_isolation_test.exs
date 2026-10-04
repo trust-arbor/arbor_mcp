@@ -399,12 +399,8 @@ defmodule Arbor.MCP.Transport.StdioIsolationTest do
       eol_data = {:eol, json_message}
 
       # Simulate what process_data does with :eol tuples
-      binary_data =
-        case eol_data do
-          {:eol, line} -> line <> "\n"
-          binary when is_binary(binary) -> binary
-          _ -> ""
-        end
+      {:eol, line} = eol_data
+      binary_data = line <> "\n"
 
       assert binary_data == json_message <> "\n"
     end

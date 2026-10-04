@@ -30,6 +30,12 @@ def deps do
 end
 ```
 
+Standalone HTTP servers additionally need `{:plug_cowboy, "~> 2.7"}` or
+`{:bandit, "~> 1.12 and >= 1.12.5"}` in the host dependencies. Select Bandit
+with `http_adapter: :bandit`; Cowboy remains the default. HTTP clients and
+mounting `Arbor.MCP.HttpPlug` in an existing host need no additional listener.
+See the [HTTP listener guide](../HTTP_LISTENERS.md).
+
 ## Server DSL
 
 Use `Arbor.MCP.Server.Handler` with `Arbor.MCP.Server.DSL` for most servers:

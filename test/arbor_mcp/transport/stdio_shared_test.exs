@@ -45,14 +45,13 @@ defmodule Arbor.MCP.Transport.StdioSharedTest do
   end
 
   test "a timed out banner filter leaves a later JSON frame for the next reader" do
-    state = start("printf 'banner\\n'; sleep 0.08; printf '{}\\n'; exec sleep 10")
+    state = start("printf 'banner\\n'; read -r trigger; printf '{}\\n'; exec sleep 10")
     assert {:error, :handshake_timeout} = Stdio.receive_message(state, 20)
 
-    TestHelpers.wait_until(fn -> Subprocess.stats(state.subprocess).queued == 1 end,
-      timeout: 1_000
-    )
-
-    assert {:ok, "{}", _state} = Stdio.receive_message(state, 0)
+    # The JSON frame cannot exist until the first reader has timed out. A slow
+    # initial actor turn may leave the banner buffered for the next reader.
+    assert {:ok, state} = Stdio.send_message(~s({"jsonrpc":"2.0","method":"ping","id":99}), state)
+    assert {:ok, "{}", _state} = Stdio.receive_message(state, 1_000)
   end
 
   test "zero timeout skips already buffered banners without waiting for more input" do

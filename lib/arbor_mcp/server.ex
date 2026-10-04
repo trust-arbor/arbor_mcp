@@ -19,7 +19,11 @@ defmodule Arbor.MCP.Server do
       end
 
   Use `Arbor.MCP.Server.HandlerServer.start_link/1` when you need a transport-aware
-  process for a handler module.
+  process for a handler module. It returns a runtime supervisor; these helpers
+  accept that supervisor, its registered name or its opaque runtime reference.
+  Runtime-backed helpers return `{:error, :server_busy}` when their admission
+  lane is full. Controls issued inside a callback carry its invocation scope,
+  so cancelled callbacks cannot send controls to a replacement peer.
 
   > #### Deprecated API {: .warning}
   >
@@ -36,6 +40,11 @@ defmodule Arbor.MCP.Server do
   > directly; and use stderr or OpenTelemetry for operational logs.
   """
 
+  alias Arbor.MCP.Server.Runtime
+  alias Arbor.MCP.Server.Runtime.{CallbackContext, Ref}
+
+  @type server :: Runtime.server()
+
   @doc """
   Sends a log message through the server.
 
@@ -43,17 +52,18 @@ defmodule Arbor.MCP.Server do
   available throughout Arbor.MCP 1.x for compatibility. Prefer stderr on stdio or
   OpenTelemetry for new observability integrations.
   """
-  @spec send_log_message(GenServer.server(), atom() | String.t(), String.t(), map()) :: :ok
+  @spec send_log_message(server(), atom() | String.t(), String.t(), map()) ::
+          :ok | {:error, atom()}
   def send_log_message(server, level, message, data) do
-    GenServer.cast(server, {:send_log_message, level, message, data})
+    cast_control(server, {:send_log_message, level, message, data})
   end
 
   @doc """
   Sends a ping request to the connected client.
   """
-  @spec ping(GenServer.server(), timeout()) :: {:ok, map()} | {:error, any()}
+  @spec ping(server(), timeout()) :: {:ok, map()} | {:error, any()}
   def ping(server, timeout \\ 5000) do
-    GenServer.call(server, :ping, timeout)
+    call_control(server, :ping, timeout)
   end
 
   @doc """
@@ -64,9 +74,9 @@ defmodule Arbor.MCP.Server do
   directories or files via tool parameters, resource URIs, or server
   configuration.
   """
-  @spec list_roots(GenServer.server(), timeout()) :: {:ok, %{roots: [map()]}} | {:error, any()}
+  @spec list_roots(server(), timeout()) :: {:ok, %{roots: [map()]}} | {:error, any()}
   def list_roots(server, timeout \\ 5000) do
-    GenServer.call(server, {:list_roots, timeout}, timeout)
+    call_control(server, {:list_roots, timeout}, timeout)
   end
 
   @doc """
@@ -76,33 +86,33 @@ defmodule Arbor.MCP.Server do
   Prefer explicit tool parameters, resource URIs, or server configuration for
   new implementations.
   """
-  @spec notify_roots_changed(GenServer.server()) :: :ok
+  @spec notify_roots_changed(server()) :: :ok | {:error, atom()}
   def notify_roots_changed(server) do
-    GenServer.cast(server, :notify_roots_changed)
+    cast_control(server, :notify_roots_changed)
   end
 
   @doc """
   Sends a progress notification to the client.
   """
-  @spec notify_progress(GenServer.server(), any(), number()) :: :ok
+  @spec notify_progress(server(), any(), number()) :: :ok | {:error, atom()}
   def notify_progress(server, progress_token, progress) do
-    GenServer.cast(server, {:notify_progress, progress_token, progress, nil})
+    cast_control(server, {:notify_progress, progress_token, progress, nil})
   end
 
   @doc """
   Sends a progress notification with a total to the client.
   """
-  @spec notify_progress(GenServer.server(), any(), number(), number()) :: :ok
+  @spec notify_progress(server(), any(), number(), number()) :: :ok | {:error, atom()}
   def notify_progress(server, progress_token, progress, total) do
-    GenServer.cast(server, {:notify_progress, progress_token, progress, total})
+    cast_control(server, {:notify_progress, progress_token, progress, total})
   end
 
   @doc """
   Sends a resource update notification for subscribed clients.
   """
-  @spec notify_resource_update(GenServer.server(), String.t()) :: :ok
+  @spec notify_resource_update(server(), String.t()) :: :ok | {:error, atom()}
   def notify_resource_update(server, uri) do
-    GenServer.cast(server, {:notify_resource_update, uri})
+    cast_control(server, {:notify_resource_update, uri})
   end
 
   @doc """
@@ -119,43 +129,44 @@ defmodule Arbor.MCP.Server do
   @doc """
   Notifies subscribed clients that the resource list has changed.
   """
-  @spec notify_resources_changed(GenServer.server()) :: :ok
+  @spec notify_resources_changed(server()) :: :ok | {:error, atom()}
   def notify_resources_changed(server) do
-    GenServer.cast(server, {:notify_resources_changed})
+    cast_control(server, {:notify_resources_changed})
   end
 
   @doc """
   Notifies subscribed clients that the tools list has changed.
   """
-  @spec notify_tools_changed(GenServer.server()) :: :ok
+  @spec notify_tools_changed(server()) :: :ok | {:error, atom()}
   def notify_tools_changed(server) do
-    GenServer.cast(server, {:notify_tools_changed})
+    cast_control(server, {:notify_tools_changed})
   end
 
   @doc """
   Notifies subscribed clients that the prompts list has changed.
   """
-  @spec notify_prompts_changed(GenServer.server()) :: :ok
+  @spec notify_prompts_changed(server()) :: :ok | {:error, atom()}
   def notify_prompts_changed(server) do
-    GenServer.cast(server, {:notify_prompts_changed})
+    cast_control(server, {:notify_prompts_changed})
   end
 
   @doc """
   Gets the list of pending request IDs on the server.
   """
-  @spec get_pending_requests(GenServer.server()) :: [Arbor.MCP.Types.request_id()]
+  @spec get_pending_requests(server()) :: [Arbor.MCP.Types.request_id()]
   def get_pending_requests(server) do
-    GenServer.call(server, :get_pending_requests)
+    call_control(server, :get_pending_requests)
   end
 
   @doc """
   Sends a cancellation notification to the server.
   """
-  @spec cancel_request(GenServer.server(), Arbor.MCP.Types.request_id(), String.t() | nil) :: :ok
+  @spec cancel_request(server(), Arbor.MCP.Types.request_id(), String.t() | nil) ::
+          :ok | {:error, atom()}
   def cancel_request(server, request_id, reason \\ nil) do
     params = %{"requestId" => request_id}
     params = if reason, do: Map.put(params, "reason", reason), else: params
-    GenServer.cast(server, {:notification, "notifications/cancelled", params})
+    cast_control(server, {:notification, "notifications/cancelled", params})
   end
 
   @doc """
@@ -165,11 +176,118 @@ defmodule Arbor.MCP.Server do
   throughout Arbor.MCP 1.x for compatibility. New implementations should integrate
   directly with an LLM provider API.
   """
-  @spec create_message(GenServer.server(), map()) :: {:ok, map()} | {:error, term()}
+  @spec create_message(server(), map()) :: {:ok, map()} | {:error, term()}
   def create_message(server, params) do
-    case GenServer.call(server, {:create_message, params}) do
+    case call_control(server, {:create_message, params}) do
       {:error, {:unknown_call, _request}} -> {:error, :not_implemented}
       result -> result
+    end
+  end
+
+  @doc """
+  Calls a custom handler callback through the runtime's bounded scheduler.
+
+  The callback returns `{:reply, reply, next_state}`. Deferred `GenServer.reply/2`,
+  continuation and process-stop return forms are unsupported. A finite caller
+  timeout ends the wait without cancelling accepted work or leaking late replies.
+  """
+  def call(server, request, timeout \\ 5_000) do
+    case Runtime.ref(server) do
+      {:ok, runtime} ->
+        case Runtime.request(runtime, %{"payload" => request},
+               kind: :call,
+               via_edge: true,
+               await_timeout: timeout
+             ) do
+          {:ok, reply} -> reply
+          error -> error
+        end
+
+      {:error, _reason} ->
+        case Ref.address(server) do
+          {:ok, address} -> GenServer.call(address, request, timeout)
+          {:error, _reason} -> {:error, :runtime_unavailable}
+        end
+    end
+  end
+
+  @doc """
+  Queues a custom handler cast through the runtime's bounded scheduler.
+
+  The callback returns `{:noreply, next_state}`; its state commits in the same
+  order as accepted RPC and custom-call work.
+  """
+  def cast(server, request) do
+    case Runtime.edge(server) do
+      {:ok, edge} ->
+        case Runtime.submit(server, %{"payload" => request},
+               kind: :cast,
+               via_edge: true,
+               owner: edge,
+               reply_to: edge
+             ) do
+          {:ok, _token} -> :ok
+          error -> error
+        end
+
+      {:error, _reason} ->
+        case Ref.address(server) do
+          {:ok, address} -> GenServer.cast(address, request)
+          {:error, _reason} -> {:error, :runtime_unavailable}
+        end
+    end
+  end
+
+  defp call_control(server, request, timeout \\ 5_000) do
+    case Runtime.ref(server) do
+      {:ok, runtime} ->
+        payload = {:edge_call, request, control_origin()}
+
+        case Runtime.request(runtime, %{"payload" => payload},
+               kind: :edge_control,
+               origin: control_origin(),
+               via_edge: true,
+               await_timeout: timeout
+             ) do
+          {:ok, reply} -> reply
+          error -> error
+        end
+
+      {:error, _reason} ->
+        case Ref.address(server) do
+          {:ok, address} -> GenServer.call(address, request, timeout)
+          {:error, _reason} -> {:error, :runtime_unavailable}
+        end
+    end
+  end
+
+  defp cast_control(server, request) do
+    case Runtime.edge(server) do
+      {:ok, edge} ->
+        payload = {:edge_cast, request, control_origin()}
+
+        case Runtime.submit(server, %{"payload" => payload},
+               kind: :edge_control,
+               origin: control_origin(),
+               via_edge: true,
+               reply_to: edge
+             ) do
+          {:ok, _token} -> :ok
+          error -> error
+        end
+
+      {:error, _reason} ->
+        case Ref.address(server) do
+          {:ok, address} -> GenServer.cast(address, request)
+          {:error, _reason} -> {:error, :runtime_unavailable}
+        end
+    end
+  end
+
+  defp control_origin do
+    case CallbackContext.current() do
+      nil -> nil
+      invocation -> Map.take(invocation, [:scope, :token, :generation])
     end
   end
 

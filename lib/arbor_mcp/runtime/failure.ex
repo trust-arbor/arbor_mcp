@@ -4,6 +4,10 @@ defmodule Arbor.MCP.Server.Runtime.Failure do
   def result(_reservation, reason) when reason in [:runtime_restarted, :runtime_stopped],
     do: {:error, reason}
 
+  def result(%{kind: kind}, reason)
+      when kind in [:ingress, :edge_control, :edge_response, :call, :cast],
+      do: {:error, reason}
+
   def result(%{request_id: nil}, _reason), do: :notification
 
   def result(reservation, reason) do

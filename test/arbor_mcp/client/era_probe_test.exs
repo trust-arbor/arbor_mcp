@@ -262,7 +262,7 @@ defmodule Arbor.MCP.Client.EraProbeTest do
     assert {:ok, health_result} = Client.ping(client)
     assert health_result["supportedVersions"] == ["2026-07-28"]
 
-    server_state = :sys.get_state(server)
+    server_state = :sys.get_state(protocol_edge(server))
 
     # HandlerServer only sets protocol_version while processing initialize;
     # the independent era pin proves this process settled on modern instead.
@@ -289,7 +289,7 @@ defmodule Arbor.MCP.Client.EraProbeTest do
       )
 
     assert {:ok, "2026-07-28"} = Client.negotiated_version(client)
-    assert :sys.get_state(server).connection_era == :modern
+    assert :sys.get_state(protocol_edge(server)).connection_era == :modern
 
     :ok = Client.disconnect(client)
     GenServer.stop(server)
@@ -371,7 +371,7 @@ defmodule Arbor.MCP.Client.EraProbeTest do
       )
 
     assert {:ok, "2026-07-28"} = Client.negotiated_version(client)
-    assert :sys.get_state(server).connection_era == :modern
+    assert :sys.get_state(protocol_edge(server)).connection_era == :modern
     :ok = Client.disconnect(client)
     GenServer.stop(server)
   end
@@ -591,7 +591,7 @@ defmodule Arbor.MCP.Client.EraProbeTest do
       {:ok, client} = start_test_client(server, :legacy_only)
 
       assert {:ok, "2025-11-25"} = Client.negotiated_version(client)
-      assert :sys.get_state(server).connection_era == :legacy
+      assert :sys.get_state(protocol_edge(server)).connection_era == :legacy
       :ok = Client.disconnect(client)
       GenServer.stop(server)
     end
@@ -626,5 +626,10 @@ defmodule Arbor.MCP.Client.EraProbeTest do
       protocol_mode: protocol_mode,
       health_check_interval: nil
     )
+  end
+
+  defp protocol_edge(server) do
+    {:ok, edge} = Arbor.MCP.Server.Runtime.edge(server)
+    edge
   end
 end

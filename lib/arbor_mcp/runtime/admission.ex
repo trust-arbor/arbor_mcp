@@ -3,7 +3,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
 
   use GenServer
 
-  alias Arbor.MCP.Server.Runtime.{Failure, Ref, ShutdownGuard}
+  alias Arbor.MCP.Server.Runtime.{ByteBudget, Failure, Ref, ShutdownGuard}
 
   def start_link(opts) do
     with {:ok, pid} <- GenServer.start_link(__MODULE__, opts) do
@@ -22,7 +22,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
          {:ok, bytes} <- request_size(request, opts, route.config),
          {:ok, reservation} <- claim_slot(runtime, route, request, bytes, opts) do
       try do
-        case GenServer.call(route.admission, {:confirm, reservation}, 5_000) do
+        case GenServer.call(route.admission, {:confirm, reservation.token}, 5_000) do
           {:ok, confirmed} ->
             {:ok, route, confirmed}
 
@@ -35,7 +35,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
           # Confirmation may have succeeded before the caller timed out. Keep
           # the slot until the admission owner has released its ledger record;
           # otherwise another producer could reuse count capacity too soon.
-          GenServer.cast(route.admission, {:abandon, reservation})
+          GenServer.cast(route.admission, {:abandon, reservation.token})
           {:error, :runtime_unavailable}
       end
     end
@@ -64,6 +64,62 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   def release(table, token), do: call(table, {:release, token})
   def close(table, reason), do: call(table, {:close, reason})
   def stats(table), do: call(table, :stats)
+  def promote(table, token, request, opts), do: call(table, {:promote, token, request, opts})
+  def release_step(table, token), do: call(table, {:release_step, token})
+  def checkout(table, token), do: call(table, {:checkout, token})
+
+  def current(table, token) do
+    case :ets.lookup(table, {:reservation, token}) do
+      [{_key, reservation}] -> {:ok, Map.delete(reservation, :payload)}
+      _ -> {:error, :admission_lost}
+    end
+  end
+
+  def pending_ingress(table) do
+    for {{:reservation, token}, %{stage: :published} = reservation} <- :ets.tab2list(table),
+        do: {token, Map.delete(reservation, :payload)}
+  end
+
+  def publish(table, route, reservation, payload, edge) do
+    key = {:reservation, reservation.token}
+    stored = Map.merge(reservation, %{payload: payload, stage: :published, edge: edge})
+
+    match =
+      {{key, :"$1"}, [{:"=:=", :"$1", {:const, reservation}}],
+       [{{{:const, key}, {:const, stored}}}]}
+
+    if :ets.select_replace(table, [match]) == 1 do
+      GenServer.cast(route.admission, {:ingress_ready, reservation.token, edge})
+      :ok
+    else
+      {:error, :admission_lost}
+    end
+  rescue
+    ArgumentError -> {:error, :runtime_unavailable}
+  end
+
+  def pending_key?(table, {scope, :inbound, id} = key) do
+    :ets.member(table, {:request, key}) or
+      :ets.match_object(table, {{:wire_request, scope, id, :_}, :_}) != []
+  end
+
+  def pending_key?(table, key), do: :ets.member(table, {:request, key})
+
+  def cancel_ingress(table, token, id), do: call(table, {:cancel_ingress, token, id})
+
+  def origin_active?(table, %{token: token, generation: generation, scope: scope}) do
+    case current(table, token) do
+      {:ok, %{terminal: false, generation: ^generation, scope: ^scope} = reservation} ->
+        reservation.deadline > System.monotonic_time(:millisecond) and
+          Process.alive?(reservation.owner) and not :ets.member(table, {:cancelled, token})
+
+      _ ->
+        false
+    end
+  end
+
+  def origin_active?(_table, nil), do: true
+  def origin_active?(_table, _invalid), do: false
 
   def key(scope, request_id, direction), do: {scope, direction, request_id}
 
@@ -95,6 +151,8 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
        reservations: %{},
        monitors: %{},
        bytes: 0,
+       control_bytes: 0,
+       response_bytes: 0,
        scheduler_ref: nil,
        generation: nil,
        config: nil
@@ -120,69 +178,53 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     }
 
     :ets.insert(state.table, {:route, route})
+    :ok = ByteBudget.reset(state.table, generation, config)
 
     {:reply, {:ok, generation},
      %{state | scheduler_ref: monitor, generation: generation, config: config}}
   end
 
-  def handle_call({:confirm, reservation}, _from, state) do
-    cond do
-      ShutdownGuard.closing?(state.table) ->
-        {:reply, {:error, :runtime_stopped}, state}
-
-      reservation.generation != state.generation ->
-        {:reply, {:error, :runtime_unavailable}, state}
-
-      not slot_owned?(state.table, reservation) ->
-        {:reply, {:error, :admission_lost}, state}
-
-      not Process.alive?(reservation.producer) ->
-        release_slot(state.table, reservation)
-        {:reply, {:error, :owner_down}, state}
-
-      not Process.alive?(reservation.owner) ->
-        release_slot(state.table, reservation)
-        {:reply, {:error, :owner_down}, state}
-
-      state.bytes + reservation.bytes > state.config.max_pending_bytes ->
-        release_slot(state.table, reservation)
-        {:reply, {:error, :server_busy}, state}
-
-      Enum.any?(state.reservations, fn {_token, existing} -> existing.key == reservation.key end) ->
-        release_slot(state.table, reservation)
-        {:reply, {:error, :duplicate_request_id}, state}
-
-      true ->
-        monitor = Process.monitor(reservation.producer)
-
-        timer =
-          Process.send_after(
-            self(),
-            {:unbound_timeout, reservation.token},
-            max(0, reservation.deadline - System.monotonic_time(:millisecond))
-          )
-
-        reservation =
-          Map.merge(reservation, %{monitor: monitor, timer: timer, bound: false, terminal: false})
-
-        state = %{
-          state
-          | reservations: Map.put(state.reservations, reservation.token, reservation),
-            monitors: Map.put(state.monitors, monitor, reservation.token),
-            bytes: state.bytes + reservation.bytes
-        }
-
-        :ets.insert(state.table, {{:request, reservation.key}, reservation.token})
-        :ets.insert(state.table, {{:reservation, reservation.token}, reservation})
-
-        :telemetry.execute(
-          [:arbor_mcp, :server, :request, :admitted],
-          %{count: 1, request_bytes: reservation.bytes},
-          %{runtime: state.supervisor}
-        )
-
-        {:reply, {:ok, reservation}, state}
+  def handle_call({:confirm, token}, _from, state) do
+    case ByteBudget.candidate(state.table, token) do
+      reservation when is_map(reservation) -> confirm_reservation(reservation, state)
+      _ -> {:reply, {:error, :admission_lost}, state}
     end
+  end
+
+  def handle_call({:checkout, token}, _from, state) do
+    case :ets.lookup(state.table, {:reservation, token}) do
+      [{_key, %{stage: :published, terminal: false, payload: payload} = stored}] ->
+        if stored.deadline > System.monotonic_time(:millisecond) do
+          {stored, state} = monitor_ingress_owner(stored, state)
+          reservation = %{Map.delete(stored, :payload) | stage: :processing}
+          :ets.insert(state.table, {{:reservation, token}, reservation})
+          {:reply, {:ok, reservation, payload}, put_in(state.reservations[token], reservation)}
+        else
+          state = deliver_terminal(state, token, Failure.result(stored, :handler_timeout))
+          {:reply, {:error, :handler_timeout}, state}
+        end
+
+      _ ->
+        {:reply, {:error, :admission_lost}, state}
+    end
+  end
+
+  def handle_call({:cancel_ingress, token, id}, _from, state) do
+    case Map.get(state.reservations, token) do
+      reservation when is_map(reservation) ->
+        if id in reservation.wire_ids and id not in reservation.uncancellable_ids and
+             (not reservation.terminal or reservation.request_id != id) do
+          :ets.insert(state.table, {{:wire_cancel, token, id}, true})
+
+          if reservation.request_id == id and reservation.kind == :rpc,
+            do: :ets.insert(state.table, {{:cancelled, token}, true})
+        end
+
+      _ ->
+        :ok
+    end
+
+    {:reply, :ok, state}
   end
 
   def handle_call({:bind, token}, _from, state) do
@@ -206,9 +248,114 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     end
   end
 
+  def handle_call({:promote, token, request, opts}, _from, state) do
+    case Map.get(state.reservations, token) do
+      %{bound: false, terminal: false} = reservation ->
+        request_id = Map.get(request, "id")
+        key = key(reservation.scope, request_id || {:notification, token}, :inbound)
+
+        cond do
+          reservation.deadline <= System.monotonic_time(:millisecond) ->
+            {:reply, {:error, :handler_timeout}, state}
+
+          :erlang.external_size(key) > 4_096 ->
+            {:reply, {:error, :invalid_scope}, state}
+
+          Enum.any?(state.reservations, fn {other, entry} ->
+            other != token and entry.key == key
+          end) ->
+            {:reply, {:error, :duplicate_request_id}, state}
+
+          true ->
+            :ets.delete_object(state.table, {{:request, reservation.key}, token})
+
+            reservation = %{
+              reservation
+              | request_id: request_id,
+                key: key,
+                kind: Keyword.get(opts, :kind, :rpc)
+            }
+
+            :ets.insert(state.table, [
+              {{:request, key}, token},
+              {{:reservation, token}, reservation}
+            ])
+
+            if :ets.member(state.table, {:wire_cancel, token, request_id}),
+              do: :ets.insert(state.table, {{:cancelled, token}, true})
+
+            {:reply, {:ok, reservation}, put_in(state.reservations[token], reservation)}
+        end
+
+      _ ->
+        {:reply, {:error, :admission_lost}, state}
+    end
+  end
+
+  def handle_call({:release_step, token}, _from, state) do
+    case Map.get(state.reservations, token) do
+      %{terminal: true} = reservation ->
+        monitor = Process.monitor(reservation.owner)
+
+        timer =
+          Process.send_after(
+            self(),
+            {:unbound_timeout, token},
+            max(0, reservation.deadline - System.monotonic_time(:millisecond))
+          )
+
+        :ets.delete_object(state.table, {{:request, reservation.key}, token})
+
+        :ets.delete(
+          state.table,
+          {:wire_request, reservation.scope, reservation.request_id, token}
+        )
+
+        :ets.delete(state.table, {:wire_cancel, token, reservation.request_id})
+        key = key(reservation.scope, {:notification, token}, :inbound)
+
+        reservation = %{
+          reservation
+          | bound: false,
+            terminal: false,
+            monitor: monitor,
+            timer: timer,
+            request_id: nil,
+            wire_ids: List.delete(reservation.wire_ids, reservation.request_id),
+            kind: :ingress,
+            key: key,
+            stage: :holding,
+            monitoring_owner: true
+        }
+
+        :ets.insert(state.table, {{:reservation, token}, reservation})
+        :ets.delete(state.table, {:cancelled, token})
+        send(reservation.owner, {:arbor_mcp_step_ready, token})
+
+        {:reply, :ok,
+         %{
+           state
+           | reservations: Map.put(state.reservations, token, reservation),
+             monitors: Map.put(state.monitors, monitor, token)
+         }}
+
+      _ ->
+        {:reply, {:error, :admission_lost}, state}
+    end
+  end
+
   def handle_call({:find, key}, _from, state) do
-    result =
+    direct =
       Enum.find_value(state.reservations, fn {_token, entry} -> if entry.key == key, do: entry end)
+
+    result =
+      direct ||
+        earliest(
+          Enum.filter(Map.values(state.reservations), fn entry ->
+            {scope, direction, id} = key
+            direction == :inbound and entry.scope == scope and id in entry.wire_ids
+          end)
+        )
 
     {:reply, result, state}
   end
@@ -227,16 +374,42 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
 
   def handle_call(:stats, _from, state) do
     slots = :ets.select_count(state.table, [{{{:slot, :_}, :_, :_}, [], [true]}])
+    bytes = ByteBudget.used(state.table)
 
     {:reply,
-     %{reserved: slots, pending_bytes: state.bytes, confirmed: map_size(state.reservations)},
-     state}
+     %{
+       reserved: slots,
+       pending_bytes: bytes.data + bytes.outgoing + bytes.incoming,
+       control_bytes: bytes.outgoing + bytes.incoming,
+       response_bytes: bytes.incoming,
+       confirmed: map_size(state.reservations)
+     }, state}
   end
 
   @impl true
-  def handle_cast({:abandon, reservation}, state) do
-    release_slot(state.table, reservation)
-    {:noreply, release_reservation(state, reservation.token)}
+  def handle_cast({:ingress_ready, token, edge}, state) do
+    state =
+      case :ets.lookup(state.table, {:reservation, token}) do
+        [{_key, %{stage: stage, terminal: false, bound: false} = stored}]
+        when stage in [:published, :processing] ->
+          {_stored, state} = monitor_ingress_owner(stored, state)
+          state
+
+        _ ->
+          state
+      end
+
+    wake_edge(state.table, edge)
+    {:noreply, state}
+  end
+
+  def handle_cast({:abandon, token}, state) do
+    case ByteBudget.candidate(state.table, token) do
+      reservation when is_map(reservation) -> release_slot(state.table, reservation)
+      _ -> :ok
+    end
+
+    {:noreply, release_reservation(state, token)}
   end
 
   @impl true
@@ -258,7 +431,8 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
             Failure.result(state.reservations[token], :producer_down)
           )
 
-        {:noreply, release_reservation(state, token)}
+        {:noreply,
+         if(retain_ingress?(state, token), do: state, else: release_reservation(state, token))}
     end
   end
 
@@ -272,7 +446,8 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
             Failure.result(state.reservations[token], :handler_timeout)
           )
 
-        {:noreply, release_reservation(state, token)}
+        {:noreply,
+         if(retain_ingress?(state, token), do: state, else: release_reservation(state, token))}
 
       _ ->
         {:noreply, state}
@@ -286,6 +461,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
         not Map.has_key?(state.reservations, token),
         not Process.alive?(producer) do
       :ets.delete_object(state.table, object)
+      ByteBudget.release(state.table, token)
     end
 
     for {{:cancel_control, _key}, producer} = object <- :ets.tab2list(state.table),
@@ -297,15 +473,135 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     {:noreply, state}
   end
 
+  defp monitor_ingress_owner(%{monitoring_owner: true} = stored, state), do: {stored, state}
+
+  defp monitor_ingress_owner(stored, state) do
+    previous = state.reservations[stored.token]
+    Process.demonitor(previous.monitor, [:flush])
+    monitor = Process.monitor(stored.owner)
+    stored = %{stored | monitor: monitor, monitoring_owner: true}
+    :ets.insert(state.table, {{:reservation, stored.token}, stored})
+
+    state = %{
+      state
+      | reservations: Map.put(state.reservations, stored.token, Map.delete(stored, :payload)),
+        monitors: state.monitors |> Map.delete(previous.monitor) |> Map.put(monitor, stored.token)
+    }
+
+    {stored, state}
+  end
+
+  defp confirm_reservation(reservation, state) do
+    cond do
+      ShutdownGuard.closing?(state.table) ->
+        {:reply, {:error, :runtime_stopped}, state}
+
+      reservation.generation != state.generation ->
+        {:reply, {:error, :runtime_unavailable}, state}
+
+      not slot_owned?(state.table, reservation) ->
+        {:reply, {:error, :admission_lost}, state}
+
+      not origin_active?(state.table, reservation.origin) ->
+        release_slot(state.table, reservation)
+        {:reply, {:error, :request_cancelled}, state}
+
+      not Process.alive?(reservation.producer) ->
+        release_slot(state.table, reservation)
+        {:reply, {:error, :owner_down}, state}
+
+      not Process.alive?(reservation.owner) ->
+        release_slot(state.table, reservation)
+        {:reply, {:error, :owner_down}, state}
+
+      byte_budget_exhausted?(state, reservation) ->
+        release_slot(state.table, reservation)
+        {:reply, {:error, :server_busy}, state}
+
+      Enum.any?(state.reservations, fn {_token, existing} -> existing.key == reservation.key end) ->
+        release_slot(state.table, reservation)
+        {:reply, {:error, :duplicate_request_id}, state}
+
+      true ->
+        monitor = Process.monitor(reservation.producer)
+
+        timer =
+          Process.send_after(
+            self(),
+            {:unbound_timeout, reservation.token},
+            max(0, reservation.deadline - System.monotonic_time(:millisecond))
+          )
+
+        reservation =
+          Map.merge(reservation, %{
+            monitor: monitor,
+            timer: timer,
+            bound: false,
+            terminal: false,
+            monitoring_owner: false,
+            sequence: System.unique_integer([:monotonic, :positive])
+          })
+
+        state = %{
+          state
+          | reservations: Map.put(state.reservations, reservation.token, reservation),
+            monitors: Map.put(state.monitors, monitor, reservation.token),
+            bytes: state.bytes + data_bytes(reservation),
+            control_bytes:
+              state.control_bytes +
+                control_bytes(reservation),
+            response_bytes: state.response_bytes + response_bytes(reservation)
+        }
+
+        :ets.insert(state.table, {{:request, reservation.key}, reservation.token})
+        :ets.insert(state.table, {{:reservation, reservation.token}, reservation})
+        ByteBudget.confirm(state.table, reservation.token)
+
+        for id <- reservation.wire_ids,
+            do:
+              :ets.insert(
+                state.table,
+                {{:wire_request, reservation.scope, id, reservation.token}, true}
+              )
+
+        :telemetry.execute(
+          [:arbor_mcp, :server, :request, :admitted],
+          %{count: 1, request_bytes: reservation.bytes},
+          %{runtime: state.supervisor}
+        )
+
+        {:reply, {:ok, reservation}, state}
+    end
+  end
+
   defp request_size(request, opts, config) do
     request_bytes = :erlang.external_size(request)
     context_bytes = :erlang.external_size(Keyword.get(opts, :dispatch_opts, []))
 
-    if request_bytes <= config.max_request_bytes do
-      {:ok, request_bytes + context_bytes}
-    else
-      {:error, :request_too_large}
+    context_bytes = context_bytes + retained_option_bytes(opts)
+
+    bytes = request_bytes + context_bytes
+
+    budget =
+      if Keyword.get(opts, :kind) in [:edge_control, :edge_response],
+        do: config.max_control_bytes,
+        else: config.max_pending_bytes
+
+    cond do
+      request_bytes > config.max_request_bytes -> {:error, :request_too_large}
+      bytes > budget -> {:error, :server_busy}
+      true -> {:ok, bytes}
     end
+  end
+
+  defp retained_option_bytes(opts) do
+    Enum.reduce([:wire_ids, :origin, :uncancellable_ids, :scope], 0, fn key, bytes ->
+      case Keyword.fetch(opts, key) do
+        {:ok, nil} -> bytes
+        {:ok, value} -> bytes + :erlang.external_size(value)
+        :error -> bytes
+      end
+    end)
   end
 
   defp claim_slot(runtime, route, request, bytes, opts) do
@@ -332,38 +628,61 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
       :erlang.external_size(key) > 4_096 ->
         {:error, :invalid_scope}
 
+      not valid_origin?(Keyword.get(opts, :origin)) ->
+        {:error, :invalid_origin}
+
       true ->
-        capacity = route.config.max_concurrency + route.config.max_queue
+        slots = available_slots(route.config, Keyword.get(opts, :kind))
 
         slot =
-          Enum.find(1..capacity, fn index ->
+          Enum.find(slots, fn index ->
             :ets.insert_new(Ref.table(runtime), {{:slot, index}, token, producer})
           end)
 
         if slot do
           now = System.monotonic_time(:millisecond)
 
-          {:ok,
-           %{
-             token: token,
-             slot: slot,
-             producer: producer,
-             owner: owner,
-             reply_to: target,
-             bytes: bytes,
-             request_id: request_id,
-             key: key,
-             scope: scope,
-             generation: route.generation,
-             timeout: min(timeout, route.config.request_timeout_ms),
-             deadline: now + min(timeout, route.config.request_timeout_ms)
-           }}
+          reservation = %{
+            token: token,
+            slot: slot,
+            producer: producer,
+            owner: owner,
+            reply_to: target,
+            kind: Keyword.get(opts, :kind, :rpc),
+            stage: if(Keyword.get(opts, :via_edge, false), do: :waiting, else: :direct),
+            edge: Keyword.get(opts, :edge),
+            origin: Keyword.get(opts, :origin),
+            origin_status: :active,
+            wire_ids: Keyword.get(opts, :wire_ids, []),
+            uncancellable_ids: Keyword.get(opts, :uncancellable_ids, []),
+            batch?: Keyword.get(opts, :batch?, false),
+            bytes: bytes,
+            request_id: request_id,
+            key: key,
+            scope: scope,
+            generation: route.generation,
+            timeout: min(timeout, route.config.request_timeout_ms),
+            deadline: now + min(timeout, route.config.request_timeout_ms)
+          }
+
+          claim_candidate(Ref.table(runtime), route.generation, reservation)
         else
           {:error, :server_busy}
         end
     end
   rescue
     ArgumentError -> {:error, :runtime_unavailable}
+  end
+
+  defp claim_candidate(table, generation, reservation) do
+    case ByteBudget.claim(table, generation, reservation) do
+      :ok ->
+        {:ok, reservation}
+
+      {:error, _reason} = error ->
+        release_slot(table, reservation)
+        error
+    end
   end
 
   defp slot_owned?(table, reservation) do
@@ -377,13 +696,79 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
       table,
       {{:slot, reservation.slot}, reservation.token, reservation.producer}
     )
+
+    ByteBudget.release(table, reservation.token)
   rescue
     ArgumentError -> :ok
+  end
+
+  defp data_bytes(%{kind: kind}) when kind in [:edge_control, :edge_response], do: 0
+  defp data_bytes(reservation), do: reservation.bytes
+  defp control_bytes(%{kind: :edge_control} = reservation), do: reservation.bytes
+  defp control_bytes(_reservation), do: 0
+  defp response_bytes(%{kind: :edge_response} = reservation), do: reservation.bytes
+  defp response_bytes(_reservation), do: 0
+
+  defp available_slots(%{max_control_queue: 0}, kind)
+       when kind in [:edge_control, :edge_response] do
+    []
+  end
+
+  defp available_slots(config, :edge_control) do
+    capacity = config.max_concurrency + config.max_queue
+    (capacity + 1)..(capacity + config.max_control_queue)
+  end
+
+  defp available_slots(config, :edge_response) do
+    capacity = config.max_concurrency + config.max_queue + config.max_control_queue
+    (capacity + 1)..(capacity + config.max_control_queue)
+  end
+
+  defp available_slots(config, _kind), do: 1..(config.max_concurrency + config.max_queue)
+
+  defp valid_origin?(nil), do: true
+
+  defp valid_origin?(%{token: token, generation: generation, scope: scope} = origin),
+    do:
+      is_reference(token) and is_reference(generation) and map_size(origin) == 3 and
+        :erlang.external_size(scope) <= 4_096
+
+  defp valid_origin?(_origin), do: false
+
+  defp settle_origin_controls(state, token, result) do
+    status =
+      if match?({:ok, _response}, result) or result == :notification,
+        do: :completed,
+        else: :invalid
+
+    Enum.reduce(state.reservations, state, fn
+      {control, %{origin: %{token: ^token}}}, state ->
+        case :ets.lookup(state.table, {:reservation, control}) do
+          [{key, stored}] ->
+            stored = %{stored | origin_status: status}
+            :ets.insert(state.table, {key, stored})
+            put_in(state.reservations[control], Map.delete(stored, :payload))
+
+          _ ->
+            state
+        end
+
+      _entry, state ->
+        state
+    end)
   end
 
   defp deliver_terminal(state, token, result) do
     case Map.get(state.reservations, token) do
       %{terminal: false} = reservation ->
+        state = settle_origin_controls(state, token, result)
+
+        reservation =
+          case :ets.lookup(state.table, {:reservation, token}) do
+            [{_key, stored}] -> Map.delete(stored, :payload)
+            _ -> reservation
+          end
+
         :ets.insert(state.table, {{:reservation, token}, %{reservation | terminal: true}})
 
         :telemetry.execute(
@@ -400,6 +785,11 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
         )
 
         deliver_reply(reservation.reply_to, token, result)
+
+        if not reservation.bound and reservation.stage in [:published, :processing, :holding] and
+             is_pid(reservation.edge) and match?({:error, _reason}, result),
+           do: send(reservation.edge, {:runtime_ingress_expired, token})
+
         reservations = Map.put(state.reservations, token, %{reservation | terminal: true})
         %{state | reservations: reservations}
 
@@ -431,14 +821,53 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
         :ets.delete(state.table, {:reservation, token})
         :ets.delete(state.table, {:cancelled, token})
 
+        for id <- reservation.wire_ids do
+          :ets.delete(state.table, {:wire_request, reservation.scope, id, token})
+          :ets.delete(state.table, {:wire_cancel, token, id})
+        end
+
         %{
           state
           | reservations: reservations,
             monitors: Map.delete(state.monitors, reservation.monitor),
-            bytes: state.bytes - reservation.bytes
+            bytes: state.bytes - data_bytes(reservation),
+            control_bytes:
+              state.control_bytes -
+                control_bytes(reservation),
+            response_bytes: state.response_bytes - response_bytes(reservation)
         }
     end
   end
+
+  defp earliest([]), do: nil
+  defp earliest(entries), do: Enum.min_by(entries, & &1.sequence)
+
+  defp wake_edge(table, edge) when is_pid(edge) do
+    if :ets.insert_new(table, {{:ingress_wakeup, edge}, true}),
+      do: send(edge, :runtime_ingress_ready)
+
+    :ok
+  end
+
+  defp retain_ingress?(state, token) do
+    reservation = state.reservations[token]
+
+    if reservation.stage in [:published, :processing, :holding] do
+      if is_pid(reservation.edge), do: wake_edge(state.table, reservation.edge)
+      Process.alive?(reservation.owner)
+    else
+      false
+    end
+  end
+
+  defp byte_budget_exhausted?(state, %{kind: :edge_control} = reservation),
+    do: state.control_bytes + reservation.bytes > state.config.max_control_bytes
+
+  defp byte_budget_exhausted?(state, %{kind: :edge_response} = reservation),
+    do: state.response_bytes + reservation.bytes > state.config.max_control_bytes
+
+  defp byte_budget_exhausted?(state, reservation),
+    do: state.bytes + reservation.bytes > state.config.max_pending_bytes
 
   defp drain(state, reason) do
     state =
@@ -449,6 +878,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
       end)
 
     :ets.select_delete(state.table, [{{{:slot, :_}, :_, :_}, [], [true]}])
+    ByteBudget.clear(state.table)
     :ets.select_delete(state.table, [{{{:cancel_control, :_}, :_}, [], [true]}])
     state
   end

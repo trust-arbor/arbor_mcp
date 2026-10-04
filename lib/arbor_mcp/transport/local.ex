@@ -29,10 +29,19 @@ defmodule Arbor.MCP.Transport.Local do
 
   @behaviour Arbor.MCP.Transport
 
-  alias Arbor.MCP.Server.Cancellation
+  alias Arbor.MCP.Server.HandlerServer
   alias Arbor.MCP.Transport.Error
 
-  defstruct [:server_pid, :role, :connected, :timeout, :subscriber, :forwarder_pid]
+  defstruct [
+    :server_pid,
+    :role,
+    :connected,
+    :timeout,
+    :subscriber,
+    :forwarder_pid,
+    :runtime,
+    :connection
+  ]
 
   @type t :: %__MODULE__{
           server_pid: pid() | nil,
@@ -53,24 +62,25 @@ defmodule Arbor.MCP.Transport.Local do
       Keyword.has_key?(opts, :server) ->
         server_pid = Keyword.fetch!(opts, :server)
 
-        if is_pid(server_pid) && Process.alive?(server_pid) do
-          transport = %__MODULE__{
-            server_pid: server_pid,
-            role: :client,
-            connected: true,
-            timeout: timeout
-          }
+        case HandlerServer.connect(server_pid, self()) do
+          {:ok, edge, runtime, connection} ->
+            transport = %__MODULE__{
+              server_pid: edge,
+              role: :client,
+              connected: true,
+              timeout: timeout,
+              runtime: runtime,
+              connection: connection
+            }
 
-          # Notify server of connection
-          Kernel.send(server_pid, {:test_transport_connect, self()})
+            :telemetry.execute([:arbor_mcp, :transport, :connection, :opened], %{}, %{
+              transport: :beam
+            })
 
-          :telemetry.execute([:arbor_mcp, :transport, :connection, :opened], %{}, %{
-            transport: :beam
-          })
+            {:ok, transport}
 
-          {:ok, transport}
-        else
-          Error.connection_error(:server_not_available)
+          {:error, _reason} ->
+            Error.connection_error(:server_not_available)
         end
 
       # Client mode - using service_name (for backward compatibility)
@@ -139,9 +149,15 @@ defmodule Arbor.MCP.Transport.Local do
               role: transport.role
             })
 
-            Cancellation.mark_from_message(message)
-            Kernel.send(transport.server_pid, {:transport_message, message})
-            {:ok, transport}
+            case HandlerServer.ingress(
+                   transport.runtime,
+                   transport.server_pid,
+                   transport.connection,
+                   message
+                 ) do
+              :ok -> {:ok, transport}
+              {:error, reason} -> Error.transport_error(reason)
+            end
 
           :server ->
             # Server sending to client

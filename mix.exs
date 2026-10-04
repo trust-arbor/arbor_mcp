@@ -36,13 +36,13 @@ defmodule Arbor.MCP.MixProject do
       # #152, #166, #169), on the position that those encoders expect
       # RFC-valid input and Cowboy/Gun reject CR/LF at their own layer. The
       # advisory metadata is therefore correct and no Cowlib release will
-      # clear it. These exceptions stay for as long as Arbor.MCP requires Cowboy,
+      # clear it. These exceptions cover the optional Cowboy stack in this
+      # repository's development/test dependency set,
       # backed by: Plug/Cowboy response-header validation; Arbor.MCP does not
       # call cow_cookie:cookie/1; and the Arbor.MCP/Plug/Cowboy server stack does
       # not call cow_link:link/1. Those assumptions are locked by
-      # dependency_advisory_mitigation_test.exs. The exit is to make the HTTP
-      # server dependency optional (Cowboy optional, Bandit supported), which
-      # is a breaking change recorded in the 2.0 roadmap. Keep the
+      # dependency_advisory_mitigation_test.exs. Core consumers omit Cowboy and
+      # Cowlib; standalone hosts explicitly select Cowboy or Bandit. Keep the
       # exceptions exact so `mix hex.audit` still fails on every new advisory.
       hex: [
         ignore_advisories: [
@@ -106,11 +106,14 @@ defmodule Arbor.MCP.MixProject do
       external_dep(:sobelow, "~> 0.13", only: [:dev, :test], runtime: false),
       external_dep(:excoveralls, "~> 0.18", only: :test),
       external_dep(:git_hooks, "~> 0.7", only: [:dev], runtime: false),
-      external_dep(:plug_cowboy, "~> 2.7"),
+      external_dep(:plug_cowboy, "~> 2.7", optional: true),
+      # Keep the listener opt-in, and exclude Bandit releases before the
+      # HTTP/2 header validation and flow-control fixes in 1.12.5.
+      external_dep(:bandit, "~> 1.12 and >= 1.12.5", optional: true),
       # Not used directly; declared so consumers resolve a cowlib that fixes
       # EEF-CVE-2026-43971 (Link header directive smuggling in cow_link),
       # which plug_cowboy's own requirements still allow.
-      external_dep(:cowlib, "~> 2.20"),
+      external_dep(:cowlib, "~> 2.20", optional: true),
       external_dep(:plug, "~> 1.16"),
       external_dep(:fuse, "~> 2.4", optional: true),
       # MCP protocol support
@@ -176,6 +179,7 @@ defmodule Arbor.MCP.MixProject do
           docs/ACP_GUIDE.md
           docs/ARCHITECTURE.md
           docs/CONFIGURATION.md
+          docs/HTTP_LISTENERS.md
           docs/DEVELOPMENT.md
           docs/DSL_GUIDE.md
           docs/PROTOCOL_GUIDE.md
@@ -223,6 +227,7 @@ defmodule Arbor.MCP.MixProject do
         "docs/DSL_GUIDE.md",
         "docs/TRANSPORT_GUIDE.md",
         "docs/CONFIGURATION.md",
+        "docs/HTTP_LISTENERS.md",
         "docs/PROTOCOL_GUIDE.md",
         "docs/getting-started/MIGRATION.md",
         "docs/SECURITY.md",
@@ -236,7 +241,7 @@ defmodule Arbor.MCP.MixProject do
       groups_for_extras: [
         Introduction: ~r/README/,
         Guides:
-          ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|TRANSPORT_GUIDE|PROTOCOL_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
+          ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|TRANSPORT_GUIDE|HTTP_LISTENERS|PROTOCOL_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
         Changelog: ~r/CHANGELOG/
       ],
       groups_for_modules: [

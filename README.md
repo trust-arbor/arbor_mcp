@@ -42,7 +42,7 @@ The latest stable MCP revision is `2026-07-28`. `:prefer_modern` allows evidence
 
 Handlers use `Arbor.MCP.Server.Handler` and the declarative `Arbor.MCP.Server.DSL` to define tools, resources and prompts. Version 2 introduces a supervised runtime per server, a scheduler for handler work and explicit session/subscription storage contracts. HTTP, stdio and BEAM integration is being migrated to that runtime. Follow the [roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md) for the final contract and qualification status.
 
-HTTP applications can mount `Arbor.MCP.HttpPlug` inside an existing Plug/Phoenix server. Making the standalone HTTP listener optional is part of the v2 release scope. The [transport guide](docs/TRANSPORT_GUIDE.md) and [examples](https://github.com/trust-arbor/arbor_mcp/tree/master/examples) are being updated alongside the implementation.
+HTTP applications can mount `Arbor.MCP.HttpPlug` inside an existing Plug/Phoenix server. Standalone HTTP listeners are optional. Install the selected Cowboy or Bandit dependency and choose `http_adapter: :cowboy` or `:bandit`; Cowboy remains the default. See the [HTTP listener guide](docs/HTTP_LISTENERS.md) for startup, shutdown and mounted hosts. HTTP runtime integration remains v2 release work. The [transport guide](docs/TRANSPORT_GUIDE.md) and [examples](https://github.com/trust-arbor/arbor_mcp/tree/master/examples) are being updated alongside the implementation.
 
 ## Guides and examples
 

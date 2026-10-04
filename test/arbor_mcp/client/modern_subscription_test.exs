@@ -133,9 +133,11 @@ defmodule Arbor.MCP.Client.ModernSubscriptionTest do
     assert {:ok, subscription} =
              Client.listen(client, %{"toolsListChanged" => true}, timeout: 2_000)
 
+    {:ok, edge} = Arbor.MCP.Server.Runtime.edge(server)
+
     assert :ok =
              Subscriptions.close(
-               server,
+               edge,
                subscription.request_id,
                :server_shutdown,
                registry: registry

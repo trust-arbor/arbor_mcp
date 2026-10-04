@@ -25,11 +25,11 @@ defmodule Arbor.MCP.Transport.Test do
 
   @behaviour Arbor.MCP.Transport
 
-  alias Arbor.MCP.Server.Cancellation
+  alias Arbor.MCP.Server.HandlerServer
   alias Arbor.MCP.Transport.Error
 
   # State for server side (when acting as server transport)
-  defstruct [:peer_pid, :role, :subscriber, :forwarder_pid]
+  defstruct [:peer_pid, :role, :subscriber, :forwarder_pid, :runtime, :connection]
 
   @impl true
   def connect(opts) do
@@ -37,19 +37,20 @@ defmodule Arbor.MCP.Transport.Test do
 
     if server_pid do
       # Client connecting to server
-      if is_pid(server_pid) && Process.alive?(server_pid) do
-        state = %__MODULE__{
-          peer_pid: server_pid,
-          role: :client
-        }
+      case HandlerServer.connect(server_pid, self()) do
+        {:ok, edge, runtime, connection} ->
+          state = %__MODULE__{
+            peer_pid: edge,
+            role: :client,
+            runtime: runtime,
+            connection: connection
+          }
 
-        # Tell the server who this client is
-        Kernel.send(server_pid, {:test_transport_connect, self()})
+          {:ok, state}
 
-        {:ok, state}
-      else
-        # Server not available or not a valid PID
-        Error.connection_error(:server_not_available)
+        {:error, _reason} ->
+          # Server not available or not a valid PID
+          Error.connection_error(:server_not_available)
       end
     else
       # Server listening (no server option means this is the server)
@@ -101,9 +102,15 @@ defmodule Arbor.MCP.Transport.Test do
   def send_message(message, %__MODULE__{peer_pid: peer_pid} = state) when peer_pid != nil do
     case Error.validate_connection(state, &connected?/1) do
       :ok ->
-        maybe_mark_cancelled(state.role, message)
-        Kernel.send(peer_pid, {:transport_message, message})
-        {:ok, state}
+        if state.role == :client do
+          case HandlerServer.ingress(state.runtime, peer_pid, state.connection, message) do
+            :ok -> {:ok, state}
+            {:error, reason} -> Error.transport_error(reason)
+          end
+        else
+          Kernel.send(peer_pid, {:transport_message, message})
+          {:ok, state}
+        end
 
       error ->
         error
@@ -148,7 +155,4 @@ defmodule Arbor.MCP.Transport.Test do
   def receive(state) do
     receive_message(state, 5_000)
   end
-
-  defp maybe_mark_cancelled(:client, message), do: Cancellation.mark_from_message(message)
-  defp maybe_mark_cancelled(_role, _message), do: :ok
 end
