@@ -18,6 +18,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
   @reap_ms 20
   @defaults [
     max_frame_bytes: 1_048_576,
+    max_term_bytes: 1_048_576,
     max_output_bytes: 4_194_304,
     max_output_frames: 128,
     max_scope_bytes: 65_536,
@@ -45,11 +46,12 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
 
   def ref(_), do: {:error, :output_unavailable}
 
-  @spec open_scope(t(), term()) :: :ok | error()
-  def open_scope(ref, scope) do
+  @spec open_scope(t(), term(), integer() | nil) :: :ok | error()
+  def open_scope(ref, scope, deadline \\ nil) do
     with :ok <- owner_valid(ref),
          :ok <- scope_valid(scope),
-         do: invoke(ref, {:scope, scope}, {:open_scope, scope})
+         :ok <- scope_deadline_valid(deadline),
+         do: invoke(ref, {:scope, scope}, {:open_scope, scope, deadline}, deadline)
   end
 
   @spec prepare(t(), term(), keyword()) :: {:ok, OutputTicket.t()} | error()
@@ -65,7 +67,13 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
          :ok <- deadline_valid(deadline),
          {:ok, gate} <- read(ref),
          :ok <- preparable(gate.scopes[scope]),
-         {:ok, payload} <- OutputCodec.prepare(term, max_frame_bytes: ref.limits.max_frame_bytes),
+         {:ok, payload} <-
+           OutputCodec.prepare(term,
+             max_frame_bytes: ref.limits.max_frame_bytes,
+             max_term_bytes: ref.limits.max_term_bytes,
+             deadline: deadline,
+             codec: Keyword.get(opts, :codec, :json)
+           ),
          token = make_ref(),
          entry = %{
            token: token,
@@ -78,10 +86,15 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
            monitor: nil,
            consumer: nil,
            sequence: nil,
+           group: Keyword.get(opts, :group, false),
+           term_bytes: payload.term_bytes,
+           wire_bytes: payload.wire_bytes,
            bytes: payload.bytes,
            payload: nil
          },
-         bytes = payload.bytes + entry_metadata_bytes(entry),
+         bytes =
+           payload.bytes * if(entry.group, do: 2, else: 1) + if(entry.group, do: 64, else: 32) +
+             entry_metadata_bytes(entry),
          entry = %{entry | bytes: bytes},
          :ok <- claim(ref, entry) do
       case store_prepared(ref, token, payload) do
@@ -108,6 +121,28 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
 
   @spec publish(OutputTicket.t()) :: :ok | error()
   def publish(ticket), do: ticket_operation(ticket, :publish)
+  @spec handoff(OutputTicket.t()) :: :ok | error()
+  def handoff(ticket), do: ticket_operation(ticket, :handoff)
+  @spec hold(OutputTicket.t()) :: :ok | error()
+  def hold(ticket), do: ticket_operation(ticket, :hold)
+  @spec value(OutputTicket.t()) :: {:ok, term()} | error()
+  def value(ticket), do: ticket_operation(ticket, :value)
+  @spec payload(OutputTicket.t()) :: {:ok, OutputTicket.t(), term(), binary() | nil} | error()
+  def payload(ticket), do: ticket_operation(ticket, :payload)
+
+  def discard_hidden(ref, scope) do
+    with :ok <- owner_valid(ref),
+         :ok <- scope_valid(scope),
+         do: invoke(ref, {:scope, scope}, {:discard_hidden, scope})
+  end
+
+  @spec finish_group(t(), term()) :: {:ok, OutputTicket.t()} | error()
+  def finish_group(ref, scope) do
+    with :ok <- owner_valid(ref),
+         :ok <- scope_valid(scope),
+         do: invoke(ref, {:scope, scope}, {:finish_group, scope})
+  end
+
   @spec release(OutputTicket.t()) :: :ok | error()
   def release(ticket), do: ticket_operation(ticket, :release)
   @spec ack(OutputTicket.t()) :: :ok | error()
@@ -122,7 +157,8 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
          do: invoke(ref, {:scope, scope}, {:subscribe, scope, consumer})
   end
 
-  @spec checkout(t(), term()) :: :empty | {:ok, OutputTicket.t(), term(), binary()} | error()
+  @spec checkout(t(), term()) ::
+          :empty | {:ok, OutputTicket.t(), term(), binary() | nil} | error()
   def checkout(ref, scope) do
     with {:ok, _} <- validate(ref),
          :ok <- scope_valid(scope),
@@ -256,10 +292,17 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
 
     state =
       Enum.reduce(gate.scopes, state, fn {scope, info}, state ->
-        if info.mode in [:draining, :sealed] and is_integer(info.deadline) and
-             info.deadline <= now(),
-           do: elem(retire(scope, :drain_timeout, state), 1),
-           else: state
+        if is_integer(info.deadline) and info.deadline <= now(),
+          do:
+            elem(
+              retire(
+                scope,
+                if(info.mode == :open, do: :output_expired, else: :drain_timeout),
+                state
+              ),
+              1
+            ),
+          else: state
       end)
 
     update(state.ref, fn gate ->
@@ -285,7 +328,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
       case Map.get(state.monitors, monitor) do
         {:ticket, token} ->
           case entry(state.ref, token) do
-            {:ok, %{stage: stage, scope: scope}} when stage in [:queued, :in_flight] ->
+            {:ok, %{stage: stage, scope: scope}} when stage in [:held, :queued, :in_flight] ->
               elem(retire(scope, :output_owner_down, state), 1)
 
             _ ->
@@ -364,6 +407,161 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
     end
   end
 
+  defp operate({:handoff, token}, caller, state) do
+    with {:ok, entry} <- entry(state.ref, token),
+         true <- entry.producer == caller and entry.stage == :prepared and entry.confirmed,
+         :ok <- live_entry(entry) do
+      monitor = Process.monitor(entry.owner)
+      result = change_entry(state.ref, token, &%{&1 | producer: entry.owner, monitor: monitor})
+
+      if result == :ok do
+        state = demonitor(entry.monitor, state)
+        {:ok, %{state | monitors: Map.put(state.monitors, monitor, {:ticket, token})}}
+      else
+        Process.demonitor(monitor, [:flush])
+        {result, state}
+      end
+    else
+      false -> {{:error, :invalid_output_owner}, state}
+      error -> {error, state}
+    end
+  end
+
+  defp operate({:hold, token}, caller, state) do
+    with {:ok, entry} <- entry(state.ref, token),
+         true <- entry.owner == caller and entry.group and entry.stage == :prepared,
+         :ok <- live_entry(entry) do
+      {change_entry(
+         state.ref,
+         token,
+         &%{&1 | stage: :held, sequence: System.unique_integer([:positive, :monotonic])}
+       ), state}
+    else
+      false -> {{:error, :invalid_output_owner}, state}
+      error -> {error, state}
+    end
+  end
+
+  defp operate({:value, token}, caller, state) do
+    with {:ok, entry} <- entry(state.ref, token),
+         true <- caller in [entry.owner, state.ref.owner],
+         :ok <- live_entry(entry) do
+      {{:ok, entry.payload.term}, state}
+    else
+      false -> {{:error, :invalid_output_owner}, state}
+      error -> {error, state}
+    end
+  end
+
+  defp operate({:payload, token}, caller, state) do
+    with {:ok, entry} <- entry(state.ref, token),
+         true <- entry.stage == :in_flight and entry.consumer == caller,
+         :ok <- live_entry(entry) do
+      {{:ok, ticket(state.ref, token, entry.scope), entry.payload.term, entry.payload.wire},
+       state}
+    else
+      false -> {{:error, :invalid_output_owner}, state}
+      error -> {error, state}
+    end
+  end
+
+  defp operate({:finish_group, scope}, caller, state) do
+    with true <- caller == state.ref.owner,
+         {:ok, gate} <- read(state.ref),
+         :ok <- publishable(gate.scopes[scope]),
+         entries = gate.claims |> Map.values() |> Enum.filter(&(&1.scope == scope)),
+         true <- entries != [] and Enum.all?(entries, &(&1.stage == :held)),
+         true <- Enum.all?(entries, &(live_entry(&1) == :ok)) do
+      entries = Enum.sort_by(entries, & &1.sequence)
+      term = Enum.map(entries, & &1.payload.term)
+
+      wire =
+        IO.iodata_to_binary([
+          "[",
+          Enum.intersperse(Enum.map(entries, & &1.payload.wire), ","),
+          "]"
+        ])
+
+      term_bytes = :erlang.external_size(term)
+
+      payload = %{
+        term: term,
+        wire: wire,
+        term_bytes: term_bytes,
+        wire_bytes: byte_size(wire) + 1,
+        bytes: term_bytes + byte_size(wire) + 1
+      }
+
+      token = make_ref()
+      monitor = Process.monitor(caller)
+
+      aggregate = %{
+        hd(entries)
+        | token: token,
+          owner: caller,
+          producer: caller,
+          deadline: Enum.min(Enum.map(entries, & &1.deadline)),
+          stage: :queued,
+          monitor: monitor,
+          group: false,
+          payload: payload,
+          term_bytes: term_bytes,
+          wire_bytes: payload.wire_bytes,
+          bytes: payload.bytes + 32 + entry_metadata_bytes(hd(entries))
+      }
+
+      result =
+        update(
+          state.ref,
+          fn current ->
+            if Enum.all?(entries, &(current.claims[&1.token] == &1)) and
+                 aggregate.deadline > now() and
+                 aggregate.bytes <= Enum.sum(Enum.map(entries, & &1.bytes)) do
+              current = Enum.reduce(entries, current, &remove_claim(&2, &1.token))
+
+              {:ok,
+               %{
+                 current
+                 | frames: current.frames + 1,
+                   bytes: current.bytes + aggregate.bytes,
+                   claims: Map.put(current.claims, token, aggregate)
+               }, :ok}
+            else
+              {:error, :output_expired}
+            end
+          end,
+          aggregate.deadline
+        )
+
+      if result == :ok do
+        state = Enum.reduce(entries, state, &demonitor(&1.monitor, &2))
+        state = %{state | monitors: Map.put(state.monitors, monitor, {:ticket, token})}
+        {{:ok, ticket(state.ref, token, scope)}, wake(scope, state)}
+      else
+        Process.demonitor(monitor, [:flush])
+        {result, state}
+      end
+    else
+      false -> {{:error, :output_group_incomplete}, state}
+      error -> {error, state}
+    end
+  end
+
+  defp operate({:discard_hidden, scope}, caller, state) do
+    if caller == state.ref.owner do
+      {:ok, gate} = read(state.ref)
+
+      hidden =
+        gate.claims
+        |> Map.values()
+        |> Enum.filter(&(&1.scope == scope and &1.stage in [:candidate, :prepared]))
+
+      {:ok, Enum.reduce(hidden, state, &drop(&1.token, &2))}
+    else
+      {{:error, :invalid_output_owner}, state}
+    end
+  end
+
   defp operate({operation, token}, caller, state) when operation in [:release, :ack] do
     case entry(state.ref, token) do
       {:error, :output_released} ->
@@ -386,16 +584,17 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
     end
   end
 
-  defp operate({:open_scope, scope}, caller, state) do
+  defp operate({:open_scope, scope, deadline}, caller, state) do
     if caller == state.ref.owner do
       result =
         update(state.ref, fn gate ->
           case gate.scopes[scope] do
-            %{mode: :open} ->
-              {:ok, gate, :ok}
+            %{mode: :open} = info ->
+              info = %{info | deadline: earlier_deadline(info.deadline, deadline)}
+              {:ok, %{gate | scopes: Map.put(gate.scopes, scope, info)}, :ok}
 
             nil ->
-              info = %{mode: :open, deadline: nil, consumer: nil, monitor: nil, wake: false}
+              info = %{mode: :open, deadline: deadline, consumer: nil, monitor: nil, wake: false}
               {:ok, %{gate | scopes: Map.put(gate.scopes, scope, info)}, :ok}
 
             _ ->
@@ -593,6 +792,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
       ref,
       fn gate ->
         with :ok <- preparable(gate.scopes[entry.scope]),
+             :ok <- group_capacity(gate, entry, ref),
              true <- gate.frames < ref.limits.max_output_frames || {:error, :output_full},
              true <-
                gate.bytes + entry.bytes <= ref.limits.max_output_bytes || {:error, :output_full} do
@@ -607,6 +807,20 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
       end,
       min(entry.deadline, now() + ref.limits.call_timeout_ms)
     )
+  end
+
+  defp group_capacity(_gate, %{group: false}, _ref), do: :ok
+
+  defp group_capacity(gate, entry, ref) do
+    previous = gate.claims |> Map.values() |> Enum.filter(&(&1.scope == entry.scope))
+    wire = Enum.reduce(previous, entry.wire_bytes + 3, &(&1.wire_bytes + 1 + &2))
+    term = Enum.reduce(previous, entry.term_bytes + 7, &(&1.term_bytes + &2))
+
+    cond do
+      wire > ref.limits.max_frame_bytes -> {:error, :output_frame_too_large}
+      term > ref.limits.max_term_bytes -> {:error, :output_term_too_large}
+      true -> :ok
+    end
   end
 
   defp store_prepared(ref, token, payload) do
@@ -636,7 +850,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
     with {:ok, ref, token} <- ticket_ref(ticket) do
       deadline =
         case operation do
-          :publish ->
+          operation when operation in [:publish, :handoff, :hold, :value, :payload] ->
             case entry(ref, token) do
               {:ok, entry} -> entry.deadline
               _ -> nil
@@ -692,7 +906,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
     expired = entry.deadline <= now() or not Process.alive?(entry.owner)
 
     cond do
-      expired and entry.stage in [:queued, :in_flight] ->
+      expired and entry.stage in [:held, :queued, :in_flight] ->
         elem(retire(entry.scope, :output_expired, state), 1)
 
       expired ->
@@ -854,6 +1068,12 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
         do: :ok,
         else: {:error, :invalid_output_deadline}
       )
+
+  defp scope_deadline_valid(nil), do: :ok
+  defp scope_deadline_valid(deadline), do: deadline_valid(deadline)
+  defp earlier_deadline(nil, deadline), do: deadline
+  defp earlier_deadline(deadline, nil), do: deadline
+  defp earlier_deadline(left, right), do: min(left, right)
 
   defp pid_valid(pid),
     do:

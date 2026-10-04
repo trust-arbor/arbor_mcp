@@ -22,8 +22,18 @@ defmodule Arbor.MCP.Server.Runtime do
   The aggregate control limit is twice each configured control limit. A
   reverse request retains its outgoing reservation until reply or expiry;
   its response can still enter when that outgoing lane is full. These limits
-  cover supported ingress and helper APIs, not arbitrary Erlang sends, handler
-  state, arbitrary callback output, or the accumulated responses of a batch.
+  cover supported ingress and helper APIs, not arbitrary Erlang sends or handler
+  state.
+
+  Test/BEAM callback replies and synchronous custom calls prepare bounded output
+  before handler state commits. Combined hidden, queued and in-flight credit is
+  limited by `max_output_frames` and `max_output_bytes`; each retained term and
+  protocol wire also has its own cap. Legacy batches reserve prospective aggregate
+  credit before each member commit and publish one charged array. Earlier member
+  effects remain committed if a later output is rejected; the envelope fails
+  explicitly without partial output. Local delivery ACK means sending to the
+  peer mailbox returned, not that the peer processed the response. Peer mailboxes,
+  stdio/HTTP and helper/subscription output remain outside this slice's bounds.
 
   `request/3` uses a temporary process alias: a finite `await_timeout` covers
   admission and waiting from API entry, without leaving late replies in the
@@ -209,6 +219,7 @@ defmodule Arbor.MCP.Server.Runtime do
       work_opts = [
         runtime: runtime,
         dispatch_opts: Keyword.get(opts, :dispatch_opts, []),
+        output: Keyword.get(opts, :output),
         retain_reservation: Keyword.get(opts, :retain_reservation, false)
       ]
 

@@ -60,7 +60,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
     Subscriptions
   }
 
-  alias Arbor.MCP.Server.Runtime.{Admission, Ref, ShutdownGuard}
+  alias Arbor.MCP.Server.Runtime.{Admission, OutputController, Ref, ShutdownGuard}
 
   alias Arbor.MCP.Transport.{Local, Test}
 
@@ -623,25 +623,35 @@ defmodule Arbor.MCP.Server.HandlerServer do
   defp fail_published(token, reservation, state) do
     state =
       if reservation.scope == {:connection, state.connection} do
-        responses =
-          Enum.map(
-            reservation.wire_ids,
-            &JSONRPC.error(&1, ErrorCodes.internal_error(), "Request timeout", %{
-              "type" => "handler_timeout"
-            })
-          )
-
-        case responses do
-          [] -> state
-          [response] when not reservation.batch? -> send_response(response, state)
-          responses -> send_response(responses, state)
-        end
+        expire_published_output(token, reservation, state)
       else
         state
       end
 
     finish_ingress(token, state)
   end
+
+  defp expire_published_output(token, %{batch?: true}, state),
+    do: output_failed(token, :handler_timeout, state)
+
+  defp expire_published_output(token, %{wire_ids: [id | _]}, state) do
+    table = Ref.table(state.runtime)
+    OutputController.mark_failure(table, token, :handler_timeout)
+    output = %{edge: self(), connection: state.connection, batch?: false, terminal?: true}
+
+    case OutputController.prepare_edge(table, token, output, timeout_response(id)) do
+      {:ok, _ticket} -> state
+      {:error, reason} -> output_failed(token, reason, state)
+    end
+  end
+
+  defp expire_published_output(_token, _reservation, state), do: state
+
+  defp timeout_response(id),
+    do:
+      JSONRPC.error(id, ErrorCodes.internal_error(), "Request timeout", %{
+        "type" => "handler_timeout"
+      })
 
   defp accept_ingress(token, message, state) do
     case decode_transport_message(message) do
@@ -676,6 +686,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
     ingress = %{
       remaining: requests,
       responses: [],
+      output?: false,
       batch?: batch?,
       connection: state.connection,
       checked: false
@@ -709,12 +720,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
         check_batch(token, ingress, state)
 
       %{remaining: []} = ingress ->
-        responses = Enum.reverse(ingress.responses)
-
-        state =
-          if ingress.batch? and responses != [], do: send_response(responses, state), else: state
-
-        finish_ingress(token, state)
+        finish_ingress(token, finish_output(token, ingress, state))
 
       %{remaining: [request | remaining]} ->
         state = put_in(state.ingress[token].remaining, remaining)
@@ -739,6 +745,15 @@ defmodule Arbor.MCP.Server.HandlerServer do
     end
   end
 
+  defp finish_output(token, %{batch?: true, output?: true}, state) do
+    case OutputController.finish(Ref.table(state.runtime), token) do
+      :ok -> state
+      {:error, reason} -> output_failed(token, reason, state)
+    end
+  end
+
+  defp finish_output(_token, _ingress, state), do: state
+
   defp check_batch(token, ingress, state) do
     if ingress.remaining != [] and batch_allowed?(state, ingress.remaining) do
       advance_ingress(token, put_in(state.ingress[token].checked, true))
@@ -748,7 +763,11 @@ defmodule Arbor.MCP.Server.HandlerServer do
           do: "Invalid Request",
           else: "Batch requests are not supported in protocol version #{state.protocol_version}"
 
-      state = send_response(JSONRPC.error(nil, ErrorCodes.invalid_request(), message), state)
+      state = put_in(state.ingress[token].batch?, false)
+
+      state =
+        record_response(token, JSONRPC.error(nil, ErrorCodes.invalid_request(), message), state)
+
       finish_ingress(token, state)
     end
   end
@@ -806,14 +825,50 @@ defmodule Arbor.MCP.Server.HandlerServer do
   end
 
   defp complete_rpc(token, invocation, result, state) do
-    if invocation.connection == state.connection do
-      response = rpc_response(invocation, result)
+    if invocation.connection == state.connection,
+      do: accept_rpc_output(token, invocation, result, state),
+      else: state
+  end
+
+  defp accept_rpc_output(token, invocation, {:ok, %{"__runtime_output" => ticket}}, state) do
+    with {:ok, response} <- OutputController.result(Ref.table(state.runtime), ticket),
+         :ok <- OutputController.deliver(Ref.table(state.runtime), token, ticket) do
       state = observe_initialize(invocation.method, response, state)
-      if response, do: record_response(token, response, state), else: state
+
+      if Map.has_key?(state.ingress, token),
+        do: put_in(state.ingress[token].output?, true),
+        else: state
     else
-      state
+      {:error, reason} -> output_failed(token, reason, state)
     end
   end
+
+  defp accept_rpc_output(token, invocation, result, state) do
+    response = rpc_response(invocation, result)
+
+    if output_error?(response) do
+      output_failed(token, :output_failed, state)
+    else
+      state = observe_initialize(invocation.method, response, state)
+      record_completed_response(token, result, response, state)
+    end
+  end
+
+  defp record_completed_response(_token, _result, nil, state), do: state
+
+  defp record_completed_response(
+         token,
+         {:error, _},
+         %{"error" => %{"data" => %{"type" => "handler_timeout"}}} = response,
+         state
+       ) do
+    if state.ingress[token].batch?,
+      do: output_failed(token, :handler_timeout, state),
+      else: record_response(token, response, state, true)
+  end
+
+  defp record_completed_response(token, result, response, state),
+    do: record_response(token, response, state, match?({:error, _}, result))
 
   defp rpc_response(_invocation, {:ok, response}), do: response
   defp rpc_response(_invocation, {:error, response}) when is_map(response), do: response
@@ -840,27 +895,39 @@ defmodule Arbor.MCP.Server.HandlerServer do
 
   defp finish_initialize_barrier(_token, state), do: state
 
-  defp record_response(token, response, state) do
+  defp record_response(token, response, state, terminal? \\ false) do
     case Map.get(state.ingress, token) do
-      %{batch?: true} ->
-        update_in(state.ingress[token].responses, &[response | &1])
+      %{connection: connection} = ingress when connection == state.connection ->
+        output = %{
+          edge: self(),
+          connection: connection,
+          batch?: ingress.batch?,
+          terminal?: terminal?
+        }
 
-      %{connection: connection} when connection == state.connection ->
-        send_response(response, state)
+        case OutputController.prepare_edge(Ref.table(state.runtime), token, output, response) do
+          {:ok, _ticket} -> put_in(state.ingress[token].output?, true)
+          {:error, reason} -> output_failed(token, reason, state)
+        end
 
       _ ->
         state
     end
   end
 
-  defp send_response(response, state) do
-    case send_message(response, state) do
-      {:ok, state} -> state
-      {:error, _reason} -> state
-    end
+  defp output_error?(%{"error" => %{"data" => %{"type" => type}}}) when is_binary(type),
+    do: String.starts_with?(type, "output_") or type == "invalid_output"
+
+  defp output_error?(_), do: false
+
+  defp output_failed(token, reason, state) do
+    OutputController.retire(Ref.table(state.runtime), token, reason)
+    replace_peer(nil, state)
   end
 
   defp finish_ingress(token, state) do
+    :ets.delete(Ref.table(state.runtime), {:output_failure, token})
+    :ets.delete(Ref.table(state.runtime), {:output_commit, token})
     Runtime.discard_ingress(state.runtime, token)
     state = %{state | ingress: Map.delete(state.ingress, token)}
 
@@ -884,39 +951,22 @@ defmodule Arbor.MCP.Server.HandlerServer do
   defp do_expire_ingress(token, state) do
     state =
       case Map.get(state.ingress, token) do
-        %{remaining: remaining} ->
-          Enum.reduce(remaining, state, fn request, state ->
-            if notification?(request),
-              do: state,
-              else:
-                record_response(
-                  token,
-                  JSONRPC.error(
-                    response_id(request),
-                    ErrorCodes.internal_error(),
-                    "Request timeout",
-                    %{"type" => "handler_timeout"}
-                  ),
-                  state
-                )
-          end)
+        %{batch?: true} ->
+          output_failed(token, :handler_timeout, state)
+
+        %{output?: false, remaining: [request | _]} ->
+          if notification?(request) do
+            state
+          else
+            OutputController.mark_failure(Ref.table(state.runtime), token, :handler_timeout)
+            record_response(token, timeout_response(response_id(request)), state, true)
+          end
 
         _ ->
           state
       end
 
-    case Map.get(state.ingress, token) do
-      %{batch?: true, responses: responses} when responses != [] ->
-        state = send_response(Enum.reverse(responses), state)
-        finish_ingress(token, state)
-
-      %{batch?: false, responses: [response | _responses]} ->
-        state = send_response(response, state)
-        finish_ingress(token, state)
-
-      _ ->
-        finish_ingress(token, state)
-    end
+    finish_ingress(token, state)
   end
 
   defp drain_ingress_queue(state) do
@@ -947,6 +997,8 @@ defmodule Arbor.MCP.Server.HandlerServer do
     connection = if peer, do: make_ref(), else: nil
     :ets.insert(Ref.table(state.runtime), {:edge_connection, self(), connection})
 
+    connect_output_peer(peer, connection, state)
+
     transport_state =
       case state.transport do
         Test -> %{state.transport_state | peer_pid: peer}
@@ -971,6 +1023,17 @@ defmodule Arbor.MCP.Server.HandlerServer do
         ingress_queue: :queue.new(),
         subscriptions: %{}
     }
+  end
+
+  defp connect_output_peer(nil, _connection, state) do
+    :ets.delete(Ref.table(state.runtime), :output_peer)
+    OutputController.connect(Ref.table(state.runtime), nil, nil, nil)
+  end
+
+  defp connect_output_peer(peer, connection, state) do
+    transport = if state.transport == Local, do: :beam, else: :test
+    :ets.insert(Ref.table(state.runtime), {:output_peer, connection, peer, transport})
+    OutputController.connect(Ref.table(state.runtime), connection, peer, transport)
   end
 
   # Batches are allowed up to (but not including) the version that removed
@@ -1367,6 +1430,11 @@ defmodule Arbor.MCP.Server.HandlerServer do
 
     case Runtime.dispatch_reserved(state.runtime, token, request,
            dispatch_opts: dispatch_opts,
+           output: %{
+             edge: self(),
+             connection: state.connection,
+             batch?: state.ingress[token].batch?
+           },
            retain_reservation: true
          ) do
       {:ok, ^token} ->

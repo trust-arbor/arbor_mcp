@@ -36,6 +36,7 @@ defmodule Arbor.MCP.Server.Runtime.ExecutionSupervisor do
         type: :supervisor,
         shutdown: config.shutdown_timeout_ms
       },
+      {Arbor.MCP.Server.Runtime.OutputController, opts},
       {Arbor.MCP.Server.Runtime.Scheduler, opts}
     ]
 

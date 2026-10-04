@@ -2,6 +2,7 @@ defmodule Arbor.MCP.Server.Runtime.Config do
   @moduledoc false
 
   alias Arbor.MCP.Server.Runtime.ServiceConfig
+  @timer_limit 4_294_967_295
 
   defstruct handler: nil,
             handler_args: [],
@@ -17,6 +18,12 @@ defmodule Arbor.MCP.Server.Runtime.Config do
             max_pending_bytes: 8_000_000,
             max_control_queue: 32,
             max_control_bytes: 65_536,
+            max_output_frame_bytes: 1_048_576,
+            max_output_term_bytes: 1_048_576,
+            max_output_bytes: 4_194_304,
+            max_output_frames: 128,
+            max_output_scope_bytes: 65_536,
+            output_timeout_ms: 5_000,
             request_timeout_ms: 10_000,
             cancel_grace_ms: 100,
             init_timeout_ms: 10_000,
@@ -30,6 +37,7 @@ defmodule Arbor.MCP.Server.Runtime.Config do
          :ok <- validate_handler(config),
          :ok <- validate_execution(config),
          :ok <- validate_limits(config),
+         :ok <- validate_timers(config),
          {:ok, services} <- ServiceConfig.new(opts),
          :ok <- validate_replay_requirement(opts, services) do
       {:ok, %{config | services: services}}
@@ -76,6 +84,12 @@ defmodule Arbor.MCP.Server.Runtime.Config do
       :max_request_bytes,
       :max_pending_bytes,
       :max_control_bytes,
+      :max_output_frame_bytes,
+      :max_output_term_bytes,
+      :max_output_bytes,
+      :max_output_frames,
+      :max_output_scope_bytes,
+      :output_timeout_ms,
       :request_timeout_ms,
       :init_timeout_ms,
       :shutdown_timeout_ms
@@ -92,4 +106,19 @@ defmodule Arbor.MCP.Server.Runtime.Config do
 
   defp positive_integer?(value), do: is_integer(value) and value > 0
   defp nonnegative_integer?(value), do: is_integer(value) and value >= 0
+
+  defp validate_timers(config) do
+    keys = [
+      :request_timeout_ms,
+      :init_timeout_ms,
+      :shutdown_timeout_ms,
+      :cancel_grace_ms,
+      :output_timeout_ms
+    ]
+
+    case Enum.find(keys, &(Map.fetch!(config, &1) > @timer_limit)) do
+      nil -> :ok
+      key -> {:error, {:invalid_limit, key}}
+    end
+  end
 end

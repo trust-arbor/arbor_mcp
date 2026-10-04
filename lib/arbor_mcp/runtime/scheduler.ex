@@ -8,6 +8,8 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
     CallbackContext,
     Failure,
     Lifecycle,
+    OutputController,
+    OutputLedger,
     Services,
     ShutdownGuard
   }
@@ -79,7 +81,10 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
             task: nil,
             terminal: false,
             phase: :callback,
-            tracker_pending: false
+            tracker_pending: false,
+            output: nil,
+            delivery_pending: false,
+            worker_down: false
           }
 
           state = %{
@@ -112,10 +117,16 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
         token = Map.fetch!(state.tasks, ref)
         state = if state.work[token].terminal, do: state, else: fail(state, token, :handler_crash)
 
+        cleanup_worker_output(state, token)
+
+        state = put_in(state.work[token].worker_down, true)
+
         state =
-          if state.work[token].tracker_pending,
-            do: queue_tracker(state, token),
-            else: remove_work(state, token)
+          cond do
+            state.work[token].delivery_pending -> state
+            state.work[token].tracker_pending -> queue_tracker(state, token)
+            true -> remove_work(state, token)
+          end
 
         {:noreply, start_available(state)}
 
@@ -130,6 +141,18 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
         end
 
       true ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:runtime_output_settled, token, _result}, state) do
+    case state.work[token] do
+      %{delivery_pending: true} = work ->
+        state = put_in(state.work[token].delivery_pending, false)
+        state = if work.worker_down, do: remove_work(state, token), else: state
+        {:noreply, start_available(state)}
+
+      _ ->
         {:noreply, state}
     end
   end
@@ -161,6 +184,13 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
   end
 
   def handle_info(_message, state), do: {:noreply, state}
+
+  defp cleanup_worker_output(state, token) do
+    work = state.work[token]
+
+    if work.terminal and not work.delivery_pending and work.phase != :tracker and work.output,
+      do: OutputController.failed(state.table, token, :handler_crash)
+  end
 
   @impl true
   def handle_call({:cancel, generation, key}, _from, state) do
@@ -267,22 +297,46 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
       deadline: work.reservation.deadline,
       scope: work.reservation.scope,
       runtime: Keyword.fetch!(work.opts, :runtime),
-      owner: work.reservation.owner
+      owner: work.reservation.owner,
+      scheduler: self()
     }
 
     task =
       Task.Supervisor.async_nolink(
         state.task_supervisor,
         fn ->
-          invoke(invocation, work, config, snapshot)
+          output =
+            if reply_needed?(work),
+              do:
+                OutputController.register(
+                  state.table,
+                  token,
+                  Keyword.get(work.opts, :output),
+                  invocation.scheduler
+                ),
+              else: {:ok, nil}
+
+          case output do
+            {:ok, output} ->
+              proposal = invoke(invocation, work, config, snapshot)
+              prepare_proposal(proposal, invocation, work, config, snapshot, output)
+
+            {:error, reason} ->
+              {:output_failure, reason}
+          end
         end,
         shutdown: config.cancel_grace_ms
       )
 
+    output =
+      if reply_needed?(work),
+        do: %{group: match?(%{batch?: true}, Keyword.get(work.opts, :output))},
+        else: nil
+
     %{
       state
       | tasks: Map.put(state.tasks, task.ref, token),
-        work: Map.put(state.work, token, %{work | task: task})
+        work: Map.put(state.work, token, %{work | task: task, output: output})
     }
   rescue
     _exception -> state |> fail(token, :handler_start_failed) |> remove_work(token)
@@ -292,6 +346,7 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
 
   defp complete(state, token, proposal) do
     work = Map.fetch!(state.work, token)
+    {proposal, ticket} = restore_proposal(proposal)
 
     context = %{
       terminal: if(work.phase == :tracker, do: false, else: work.terminal),
@@ -309,21 +364,99 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
         true -> Lifecycle.complete(context, proposal, now())
       end
 
-    case decision do
-      :ignore ->
-        state
+    apply_completion(state, token, ticket, decision)
+  end
 
-      {:cancel, reason} ->
-        cancel_work(state, token, reason)
+  defp apply_completion(state, _token, ticket, :ignore) do
+    release_ticket(ticket)
+    state
+  end
 
-      {:fail, reason} ->
-        fail(state, token, reason)
+  defp apply_completion(state, token, ticket, {:cancel, reason}) do
+    release_ticket(ticket)
+    cancel_work(state, token, reason)
+  end
 
-      {:commit, result, next_state} ->
-        state = Map.put(state, :handler_state, next_state)
-        if work.phase == :tracker, do: state, else: mark_terminal(state, token, result)
+  defp apply_completion(state, token, ticket, {:fail, reason}) do
+    release_ticket(ticket)
+    fail(state, token, reason)
+  end
+
+  defp apply_completion(state, token, ticket, {:commit, result, next_state}) do
+    state = Map.put(state, :handler_state, next_state)
+
+    cond do
+      state.work[token].phase == :tracker -> state
+      ticket -> publish_committed(state, token, ticket)
+      true -> mark_terminal(state, token, result)
     end
   end
+
+  defp release_ticket(nil), do: :ok
+  defp release_ticket(ticket), do: OutputLedger.release(ticket)
+
+  defp publish_committed(state, token, ticket) do
+    work = state.work[token]
+    :ok = OutputController.mark_committed(state.table, token, ticket)
+    state = put_in(state.work[token].terminal, true)
+    state = put_in(state.work[token].delivery_pending, true)
+
+    result =
+      if work.output.group do
+        with :ok <- OutputLedger.hold(ticket),
+             do: OutputController.held(state.table, token, ticket)
+      else
+        OutputLedger.publish(ticket)
+      end
+
+    case result do
+      :ok ->
+        state
+
+      {:error, reason} ->
+        Admission.terminal(state.table, token, Failure.result(work.reservation, reason))
+        OutputController.retire(state.table, token, reason)
+        put_in(state.work[token].delivery_pending, false)
+    end
+  end
+
+  defp restore_proposal({:prepared, kind, next_state, ticket}) do
+    case OutputLedger.value(ticket) do
+      {:ok, value} -> {{kind, value, next_state}, ticket}
+      {:error, reason} -> {{:output_failure, reason}, ticket}
+    end
+  end
+
+  defp restore_proposal(proposal), do: {proposal, nil}
+
+  defp prepare_proposal(proposal, _invocation, _work, _config, _snapshot, nil), do: proposal
+
+  defp prepare_proposal(proposal, invocation, work, config, snapshot, output) do
+    context = %{
+      terminal: false,
+      deadline: invocation.deadline,
+      request_id: work.reservation.request_id,
+      kind: work.reservation.kind,
+      execution: config.execution,
+      state: snapshot
+    }
+
+    case Lifecycle.complete(context, proposal, now()) do
+      {:commit, {:ok, value}, next_state} ->
+        case OutputController.prepare(output, value) do
+          {:ok, ticket} -> {:prepared, elem(proposal, 0), next_state, ticket}
+          {:error, reason} -> {:output_failure, reason}
+        end
+
+      _ ->
+        proposal
+    end
+  end
+
+  defp reply_needed?(%{phase: :tracker}), do: false
+  defp reply_needed?(%{reservation: %{kind: :call}}), do: true
+  defp reply_needed?(%{reservation: %{kind: :rpc, request_id: id}}), do: not is_nil(id)
+  defp reply_needed?(_), do: false
 
   defp cancel_work(state, token, reason) do
     case Map.get(state.work, token) do
@@ -362,6 +495,8 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
 
   defp fail(state, token, reason) do
     work = Map.fetch!(state.work, token)
+    OutputController.mark_failure(state.table, token, reason)
+    if work.output, do: OutputController.failed(state.table, token, reason)
     mark_terminal(state, token, Failure.result(work.reservation, reason))
   end
 
@@ -386,6 +521,8 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
         if Keyword.get(work.opts, :retain_reservation, false) do
           Admission.release_step(state.table, token)
         else
+          :ets.delete(state.table, {:output_failure, token})
+          :ets.delete(state.table, {:output_commit, token})
           Admission.release(state.table, token)
         end
 

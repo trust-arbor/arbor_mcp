@@ -30,6 +30,8 @@ defmodule Arbor.MCP.Server.Runtime.Lifecycle do
   def complete(_context, {:runtime_failure, :handler_crash}, _now),
     do: {:fail, :handler_crash}
 
+  def complete(_context, {:output_failure, reason}, _now), do: {:fail, reason}
+
   def complete(_context, _invalid, _now), do: {:fail, :invalid_handler_result}
 
   defp commit(%{execution: :stateless, state: state}, result, next_state) do

@@ -218,7 +218,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
       |> MessageProcessor.new(transport: :http, session_id: "session-one")
       |> MessageProcessor.process(opts)
 
-    assert next.response["result"]["structuredContent"]["count"] == 1
+    assert %{"result" => %{"structuredContent" => %{"count" => 1}}} = next.response
     assert Server.call(root, :read) == 1
   end
 
@@ -605,7 +605,9 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     on_exit(fn -> if Process.alive?(edge), do: :sys.resume(edge) end)
     send(callback, :issue_progress)
     assert_receive {:progress_accepted, :ok}
-    wait_for(fn -> Runtime.stats(root).active == 0 end)
+    # Callback execution has ended, but the stateful slot remains occupied until
+    # the edge accepts and hands off its charged output.
+    wait_for(fn -> Runtime.stats(root).active == 1 end)
     :sys.resume(edge)
     assert_receive {:transport_message, progress}
     assert response_map(progress)["method"] == "notifications/progress"
