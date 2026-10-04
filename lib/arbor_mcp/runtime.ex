@@ -98,6 +98,7 @@ defmodule Arbor.MCP.Server.Runtime do
     HTTPWriterProxy,
     Initialization,
     Ref,
+    RetainedTerm,
     ShutdownGuard
   }
 
@@ -328,7 +329,13 @@ defmodule Arbor.MCP.Server.Runtime do
              do: {:ok, reservation.token}
       else
         with {:ok, route, reservation} <- Admission.reserve(runtime, request, opts) do
-          opts = [runtime: runtime, dispatch_opts: Keyword.get(opts, :dispatch_opts, [])]
+          request = RetainedTerm.materialize(request)
+
+          opts = [
+            runtime: runtime,
+            dispatch_opts: RetainedTerm.materialize(Keyword.get(opts, :dispatch_opts, []))
+          ]
+
           send(route.scheduler, {:submit, route.generation, reservation.token, request, opts})
           {:ok, reservation.token}
         end

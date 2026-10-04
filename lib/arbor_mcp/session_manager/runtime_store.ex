@@ -2,7 +2,14 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
   @moduledoc false
 
   alias Arbor.MCP.Internal.SessionStore
-  alias Arbor.MCP.Server.Runtime.{OutputCodec, ServiceInvocation, ServiceOperation, ServiceStore}
+
+  alias Arbor.MCP.Server.Runtime.{
+    OutputCodec,
+    RetainedTerm,
+    ServiceInvocation,
+    ServiceOperation,
+    ServiceStore
+  }
 
   @identity [:principal_id, :tenant_id, :issuer, :audience]
   @metadata @identity ++ [:transport, :client_info]
@@ -130,7 +137,7 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
     key = {namespace, id}
     claim_key = {namespace, id, epoch, wire_id}
     claims = SessionStore.all(model.store, :request_ids)
-    bytes = :erlang.external_size({claim_key, 0}) + 8
+    bytes = RetainedTerm.bytes({claim_key, 0}) + 8
 
     with {:ok, _row} <- epoch_row(model, key, epoch),
          true <- is_integer(wire_id) or is_binary(wire_id),
@@ -260,7 +267,7 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
       bytes =
         max(
           byte_size(encoded) + byte_size(event.id) + byte_size(id) + 64,
-          :erlang.external_size({{namespace, id, epoch, sequence}, event}) + 8
+          RetainedTerm.bytes({{namespace, id, epoch, sequence}, event}) + 8
         )
 
       events = events(model, namespace, id, epoch)
@@ -505,11 +512,11 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
   defp valid_id?(id), do: is_binary(id) and byte_size(id) in 1..128
 
   defp row_capacity(model, key, row) do
-    size = :erlang.external_size({key, row})
+    size = RetainedTerm.bytes({key, row})
 
     previous =
       case SessionStore.lookup(model.store, :sessions, key) do
-        [{^key, old}] -> :erlang.external_size({key, old})
+        [{^key, old}] -> RetainedTerm.bytes({key, old})
         [] -> 0
       end
 
@@ -521,8 +528,8 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
 
   defp metadata_bytes(model),
     do:
-      Enum.sum(Enum.map(SessionStore.all(model.store, :sessions), &:erlang.external_size/1)) +
-        Enum.sum(Enum.map(model.claims, &:erlang.external_size/1))
+      Enum.sum(Enum.map(SessionStore.all(model.store, :sessions), &RetainedTerm.bytes/1)) +
+        Enum.sum(Enum.map(model.claims, &RetainedTerm.bytes/1))
 
   defp events(model, namespace, id, epoch),
     do:

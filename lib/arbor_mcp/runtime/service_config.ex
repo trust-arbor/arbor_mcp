@@ -163,10 +163,12 @@ defmodule Arbor.MCP.Server.Runtime.ServiceConfig do
   defp namespace(_ownership, _descriptor, _opts), do: {:error, :invalid_ownership}
 
   defp validate_operation_capability(kind, adapter)
-       when kind in [:sessions, :resource_subscriptions] do
-    if adapter.runtime_service_capabilities()[:bounded_operations] == 1,
-      do: :ok,
-      else: {:error, :bounded_operations_required}
+       when kind in [:tasks, :replay_cache, :sessions, :resource_subscriptions] do
+    if adapter.runtime_service_capabilities()[:bounded_operations] == 1 and
+         function_exported?(adapter, :operate, 4) and
+         function_exported?(adapter, :runtime_service_binding, 2),
+       do: :ok,
+       else: {:error, :bounded_operations_required}
   rescue
     _error -> {:error, :invalid_capability_declaration}
   end

@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.SubscriptionRegistry.RuntimeStore do
   @moduledoc false
-  alias Arbor.MCP.Server.Runtime.{ServiceOperation, ServiceStore}
+  alias Arbor.MCP.Server.Runtime.{RetainedTerm, ServiceOperation, ServiceStore}
   alias Arbor.MCP.SessionManager.SessionLease
 
   def start_link(opts), do: ServiceStore.start_link(__MODULE__, opts)
@@ -44,7 +44,7 @@ defmodule Arbor.MCP.SubscriptionRegistry.RuntimeStore do
     with {:ok, {id, epoch}} <- SessionLease.validate(lease, service, :resource_subscriptions),
          true <- is_binary(uri) and byte_size(uri) in 1..model.limits.uri do
       key = {namespace, id, epoch, uri}
-      bytes = :erlang.external_size({key, %{lease: lease, service: service, bytes: 0}}) + 8
+      bytes = RetainedTerm.bytes({key, %{lease: lease, service: service, bytes: 0}}) + 8
 
       cond do
         Map.has_key?(model.entries, key) ->
@@ -173,7 +173,7 @@ defmodule Arbor.MCP.SubscriptionRegistry.RuntimeStore do
 
   defp bounded(result, model) do
     if length(result) <= model.limits.page and
-         :erlang.external_size(result) <= model.limits.page_bytes,
+         RetainedTerm.bytes(result) <= model.limits.page_bytes,
        do: {:ok, Enum.sort(result)},
        else: {:error, :lookup_page_required}
   end

@@ -6,7 +6,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
   def format_status(status),
     do: Arbor.MCP.Server.Runtime.Diagnostics.format_status(status, __MODULE__)
 
-  alias Arbor.MCP.Server.Runtime.{Initialization, OutputCodec, OutputTicket}
+  alias Arbor.MCP.Server.Runtime.{Initialization, OutputCodec, OutputTicket, RetainedTerm}
 
   @enforce_keys [:pid, :table, :generation, :owner, :limits]
   defstruct [:pid, :table, :generation, :owner, :limits]
@@ -71,6 +71,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
     with {:ok, _} <- validate(ref),
          true <- Keyword.has_key?(opts, :scope) || {:error, :invalid_output_scope},
          :ok <- scope_valid(scope),
+         scope = RetainedTerm.materialize(scope),
          :ok <- pid_valid(owner),
          :ok <- deadline_valid(deadline),
          {:ok, gate} <- read(ref),
@@ -195,7 +196,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
     with :ok <- owner_valid(ref),
          :ok <- scope_valid(scope),
          true <-
-           (is_atom(reason) and :erlang.external_size(reason) <= 64) || {:error, :invalid_reason},
+           (is_atom(reason) and RetainedTerm.bytes(reason) <= 64) || {:error, :invalid_reason},
          do: invoke(ref, {:scope, scope}, {:retire, scope, reason})
   end
 
@@ -514,7 +515,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
           "]"
         ])
 
-      term_bytes = :erlang.external_size(term)
+      term_bytes = RetainedTerm.bytes(term)
 
       payload = %{
         term: term,
@@ -902,6 +903,9 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
     control_deadline = now() + ref.limits.call_timeout_ms
     control_deadline = min(control_deadline, output_deadline || control_deadline)
 
+    key = RetainedTerm.materialize(key)
+    request = RetainedTerm.materialize(request)
+
     pending = %{
       id: id,
       producer: self(),
@@ -1124,7 +1128,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
         sequence: 9_223_372_036_854_775_807
     }
 
-    :erlang.external_size(largest) + 16
+    RetainedTerm.bytes(largest) + 16
   end
 
   defp metadata_bytes(gate) do
@@ -1148,7 +1152,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
         max(largest, control_reserve(scope))
       end)
 
-    :erlang.external_size(scopes) + max(:erlang.external_size(gate.pending), reserve)
+    RetainedTerm.bytes(scopes) + max(RetainedTerm.bytes(gate.pending), reserve)
   end
 
   defp control_reserve(scope) do
@@ -1161,7 +1165,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
       }
     }
 
-    :erlang.external_size(pending) + 64
+    RetainedTerm.bytes(pending) + 64
   end
 
   defp ticket(ref, token, scope),

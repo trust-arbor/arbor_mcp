@@ -22,10 +22,16 @@ defmodule Arbor.MCP.Server.RuntimeServiceStartupTest do
 
   defmodule PreReturnReplay do
     use GenServer
-    alias Arbor.MCP.Server.Runtime.ServiceAdapter
+    alias Arbor.MCP.Server.Runtime.{ServiceAdapter, ServiceOperation}
 
-    def runtime_service_capabilities, do: %{bounded_startup: 1}
+    def runtime_service_capabilities, do: %{bounded_startup: 1, bounded_operations: 1}
     def consume(_jti, _expires_at, _opts), do: :ok
+
+    def runtime_service_binding(_server, _timeout),
+      do: %{address: %{timeout: 1_000}, read_address: nil}
+
+    def operate(:consume, _args, context, _opts),
+      do: ServiceOperation.validate_context(context)
 
     def start_link(opts) do
       result = GenServer.start_link(__MODULE__, opts, timeout: opts[:init_timeout_ms])

@@ -2,7 +2,15 @@ defmodule Arbor.MCP.Server.Runtime.Services do
   @moduledoc false
 
   alias Arbor.MCP.Server.Runtime
-  alias Arbor.MCP.Server.Runtime.{Admission, CallbackContext, Ref, ServiceRef, ShutdownGuard}
+
+  alias Arbor.MCP.Server.Runtime.{
+    Admission,
+    CallbackContext,
+    Ref,
+    ServiceOperation,
+    ServiceRef,
+    ShutdownGuard
+  }
 
   def reference(server, kind) do
     with {:ok, runtime} <- runtime(server, kind),
@@ -90,7 +98,12 @@ defmodule Arbor.MCP.Server.Runtime.Services do
   def dispatch_options(runtime, opts) do
     case resolve(runtime, :replay_cache) do
       {:ok, binding} ->
-        {:ok, Keyword.put(opts, :replay_cache, {binding.adapter, adapter_options(binding)})}
+        {:ok,
+         Keyword.put(
+           opts,
+           :replay_cache,
+           {Arbor.MCP.Server.ReplayCache.Runtime, [runtime: binding.runtime]}
+         )}
 
       {:error, :service_not_configured} ->
         {:ok, opts}
@@ -101,8 +114,7 @@ defmodule Arbor.MCP.Server.Runtime.Services do
   end
 
   def consume(service, jti, expires_at) do
-    with {:ok, binding} <- resolve(service, :replay_cache),
-         do: binding.adapter.consume(jti, expires_at, adapter_options(binding))
+    ServiceOperation.call(service, :replay_cache, :consume, [jti, expires_at], [])
   end
 
   defp publication_options(runtime) do

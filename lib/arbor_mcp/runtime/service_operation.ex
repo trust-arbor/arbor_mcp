@@ -6,6 +6,7 @@ defmodule Arbor.MCP.Server.Runtime.ServiceOperation do
     CallbackContext,
     Deadline,
     Ref,
+    RetainedTerm,
     ServiceInvocation,
     Services
   }
@@ -36,6 +37,90 @@ defmodule Arbor.MCP.Server.Runtime.ServiceOperation do
     else
       {:error, :invalid_operation_limits}
     end
+  end
+
+  def publish(address), do: Process.put({__MODULE__, :address}, address)
+
+  def native_call(server, operation, args, opts) do
+    with pid when is_pid(pid) and node(pid) == node() <- GenServer.whereis(server),
+         {:dictionary, dictionary} <- Process.info(pid, :dictionary),
+         {{__MODULE__, :address}, address} <- List.keyfind(dictionary, {__MODULE__, :address}, 0),
+         true <- :ets.info(address.table, :owner) == pid do
+      timeout = Keyword.get(opts, :timeout, address.timeout)
+      origin = CallbackContext.current()
+
+      if is_integer(timeout) and timeout > 0 and timeout <= @max_wait do
+        deadline = now() + min(timeout, address.timeout)
+        deadline = if origin, do: min(deadline, origin.deadline), else: deadline
+
+        context = %{
+          native: address,
+          runtime: if(origin, do: origin.runtime),
+          origin: origin,
+          owner: self(),
+          deadline: deadline
+        }
+
+        submit(address, operation, args, context)
+      else
+        {:error, :invalid_operation_timeout}
+      end
+    else
+      _missing -> {:error, :service_unavailable}
+    end
+  rescue
+    ArgumentError -> {:error, :service_unavailable}
+  catch
+    :exit, _reason -> {:error, :service_unavailable}
+  end
+
+  def run(address, model, offset, runner) do
+    ready(address)
+    cutoff = maintenance_deadline()
+    {entries, offset} = turn_entries(address, offset)
+
+    model =
+      Enum.reduce_while(entries, model, fn {_token, entry}, model ->
+        if now() < cutoff do
+          {result, model} =
+            if begin(entry) do
+              {operation, args, context} = entry.payload
+              runner.(operation, args, context, model)
+            else
+              {{:error, :operation_timeout}, model}
+            end
+
+          finish(address, entry, result, min(cutoff, entry.deadline))
+          {:cont, model}
+        else
+          {:halt, model}
+        end
+      end)
+
+    {model, offset}
+  end
+
+  def reap(address, offset) do
+    cutoff = maintenance_deadline()
+    {entries, offset} = turn_entries(address, offset)
+
+    Enum.each(entries, fn {_token, entry} ->
+      if now() < cutoff and not current?(entry),
+        do: finish(address, entry, {:error, :operation_timeout}, cutoff)
+    end)
+
+    if Enum.any?(entries(address), fn {_token, entry} ->
+         :atomics.get(entry.phase, 1) == 0 and current?(entry)
+       end),
+       do: wake(address)
+
+    offset
+  end
+
+  defp turn_entries(address, offset) do
+    entries = entries(address)
+    offset = if entries == [], do: 0, else: rem(offset, length(entries))
+    {entries |> Enum.drop(offset) |> Enum.take(32), offset + 32}
   end
 
   def call(service, kind, operation, args, opts) do
@@ -76,11 +161,12 @@ defmodule Arbor.MCP.Server.Runtime.ServiceOperation do
       phase: phase
     }
 
-    bytes = :erlang.external_size(entry) + 8
+    bytes = RetainedTerm.bytes(entry, address.payload) + 8
     entry = %{entry | bytes: bytes}
 
     try do
       with true <- bytes <= address.payload,
+           entry = RetainedTerm.materialize(entry),
            :ok <- claim(address, entry, @cas_attempts) do
         wake(address)
 
@@ -142,6 +228,14 @@ defmodule Arbor.MCP.Server.Runtime.ServiceOperation do
     :atomics.get(entry.phase, 1) in [0, 1] and Process.alive?(entry.owner) and
       Process.alive?(context.owner) and now() < entry.deadline and
       context_current?(Map.delete(context, :phase))
+  rescue
+    ArgumentError -> false
+  end
+
+  def context_current?(%{native: address} = context) do
+    :ets.info(address.table, :owner) == address.server and
+      Process.alive?(address.server) and processing?(context) and
+      Process.alive?(context.owner) and origin_current?(context) and context.deadline > now()
   rescue
     ArgumentError -> false
   end

@@ -19,6 +19,7 @@ candidate; the final compiled graph, HTTP cutover and RC gates remain open.
 | Mounted Gateway freeze, manifest `2b6fcb4fe34a705993316a555d182d9a93573f6d651a0baf9f56a33b3ca0c9e3` | Twenty-six HTTP POST/request-SSE paths, merged with current privacy, stdio and Client context. A separate topology fixture and native Gateway report correction accompany it. Canonical combined runtime/stdIO/privacy selection passes 329 cases on both. Full HTTP lifecycle cutover remains open. |
 | Client diagnostics freeze, manifest `135a1a25ba69ea80315b8a5fc2a1ce146025e49d375d5c4fa1e969b97d0aa8da` | Fourteen Client/HTTP diagnostic paths; canonical affected selection passes 228 cases on both. Exact typed startup errors remain available to callers and trusted host logging; private MRTR callback failure now completes its Task normally. This does not establish arbitrary custom callback report privacy. |
 | Retained HTTP session freeze, manifest `f52627b2f5e0976473881f7feb592b454c4121b4bb8fed9c128f3ad96f57e4a4` | Twelve-path addressed legacy GET/replay/DELETE overlay merged with the committed Gateway/Client source. Canonical retained session/wire selection passes 19 cases and broader actual Gateway wire selection passes 40 on each toolchain. Notification-array continuation, subscriptions, cancellation, MRTR, initialization arrays and aliases remain separate gates. |
+| Native store/retention freeze, manifest `33a9e5ff434dc8abbaad592930df61dc592cf7f4532332a6e68c52cc72eb3227` | Twenty-two store/retention paths plus a separate two-path running-deadline fixture; canonical pressure selection passes 158 and retained Runtime/Gateway selection passes 329 on each toolchain. Native payload admission and final mutation guards preserve original cutoffs. Default-limit RSS, native write admission and durable filesystem qualification remain open. |
 
 The historical census is retained under
 `tmp/v2-semantic-census-69b0a39/{SEMANTIC_CENSUS.md,semantic-inventory.json,REVIEW_NOTES.md}`.
@@ -374,7 +375,17 @@ See [listener adapters](https://github.com/trust-arbor/arbor_mcp/blob/111a3c7042
 [current HttpPlug](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/http_plug.ex).
 
 Tasks retained payload bytes, Replay aggregate retention and notification
-fanout/physical output still need final convergence/pressure evidence. Owned
+fanout/physical output still need final convergence/pressure evidence. Native
+Tasks/Replay now have bounded pre-mailbox operation admission and finite entry,
+aggregate retention, identifier and expiry limits. Managed input/output/store
+terms detach subbinary backing; retained function environments are charged while
+their identity is preserved. Runtime-selected custom Tasks/Replay adapters must
+declare `bounded_operations: 1`, expose `runtime_service_binding/2` and implement
+`operate/4`, with a final source/deadline check before mutation. Standalone custom
+Task store callbacks remain supported. See [store bounds](./V2_NATIVE_STORE_PRESSURE.md)
+for exact defaults and tagged capacity outcomes. DETS table names now use
+references; finite filesystem open/sync/close and cleanup remain separate gates.
+Owned
 service addressing alone does not bound those payloads. A modern subscription
 must capture authoritative registered-edge/runtime origin, not arbitrary caller
 proof; callbacks should use Context's notification path. Its bounded registry/

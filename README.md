@@ -17,7 +17,7 @@ mix compile
 mix test
 ```
 
-`ARBOR_RPC_PATH` is a local development override. Without it, the package declares a normal `{:arbor_rpc, "~> 2.0"}` dependency. For isolated split QA, `ARBOR_V2_DEPS` can point to an existing directory of dependency sources; `ARBOR_V2_BUILD` and `ARBOR_V2_LOCK` select separate build and lock paths. Release checks must also run without those overrides using the packaged artifacts.
+`ARBOR_RPC_PATH` is a local development override. Without it, the package declares a normal Hex dependency with an explicit development/RC prerelease floor; stable releases retain the `~> 2.0` major-compatible range. See the [package release guide](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_PACKAGE_RELEASE.md). For isolated split QA, `ARBOR_V2_DEPS` can point to an existing directory of dependency sources; `ARBOR_V2_BUILD` and `ARBOR_V2_LOCK` select separate build and lock paths. Release checks must also run without those overrides using the packaged artifacts.
 
 The supported Elixir floor is 1.17. The CI matrix checks multiple Elixir/OTP versions; passing CI and the release gates are required before publishing 2.0.
 

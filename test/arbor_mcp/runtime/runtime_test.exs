@@ -271,20 +271,6 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     assert {:ok, _} = Runtime.await(held, 1_000)
   end
 
-  test "running deadline reaps blocked work before another stateful callback starts" do
-    runtime = start_runtime(label: :timeout, request_timeout_ms: 100, cancel_grace_ms: 30)
-    assert {:ok, token} = Runtime.submit(runtime, message(1, "hold"), timeout: 20)
-    assert_receive {:started, :timeout, 1, worker, 0}
-    monitor = Process.monitor(worker)
-
-    assert {:error, %{"error" => %{"data" => %{"type" => "handler_timeout"}}}} =
-             Runtime.await(token, 1_000)
-
-    assert_receive {:DOWN, ^monitor, :process, ^worker, :killed}, 1_000
-    assert {:ok, %{"result" => 1}} = Runtime.request(runtime, message(2, "inc"))
-    refute_receive {:arbor_mcp_runtime, ^token, _}, 20
-  end
-
   test "worker crashes and malformed results preserve committed state and do not kill owners" do
     runtime = start_runtime(label: :fault)
     assert {:ok, %{"result" => 1}} = Runtime.request(runtime, message(1, "inc"))

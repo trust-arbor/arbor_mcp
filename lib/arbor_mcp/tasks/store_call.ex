@@ -6,7 +6,7 @@ defmodule Arbor.MCP.Tasks.StoreCall do
   # authorization can consult the configured task store without depending on
   # the `Arbor.MCP.Tasks` facade, which itself publishes through Subscriptions.
 
-  alias Arbor.MCP.Server.Runtime.Services
+  alias Arbor.MCP.Server.Runtime.{ServiceOperation, Services}
   alias Arbor.MCP.Tasks.Store
 
   @spec call(atom(), [term()], keyword()) :: term() | {:error, :task_store_unavailable}
@@ -29,7 +29,16 @@ defmodule Arbor.MCP.Tasks.StoreCall do
             :service
           ])
 
-        apply(store, function, args ++ [store_opts])
+        if opts[:runtime],
+          do:
+            ServiceOperation.call(
+              opts[:runtime],
+              :tasks,
+              function,
+              args,
+              Keyword.delete(opts, :owner)
+            ),
+          else: apply(store, function, args ++ [store_opts])
 
       {:error, _reason} ->
         {:error, :task_store_unavailable}

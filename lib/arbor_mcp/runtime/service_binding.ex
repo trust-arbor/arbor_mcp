@@ -126,7 +126,7 @@ defmodule Arbor.MCP.Server.Runtime.ServiceBinding do
     binding = Map.merge(descriptor, %{server: pid, generation: Keyword.fetch!(opts, :generation)})
 
     native_result =
-      if descriptor.kind in [:sessions, :resource_subscriptions] do
+      if descriptor.kind in [:tasks, :replay_cache, :sessions, :resource_subscriptions] do
         if ServiceStartup.current?(table, generation, deadline),
           do:
             {:ok,

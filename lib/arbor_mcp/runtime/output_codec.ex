@@ -1,6 +1,8 @@
 defmodule Arbor.MCP.Server.Runtime.OutputCodec do
   @moduledoc false
 
+  alias Arbor.MCP.Server.Runtime.RetainedTerm
+
   @default_limit 1_048_576
 
   @type prepared :: %{
@@ -22,8 +24,9 @@ defmodule Arbor.MCP.Server.Runtime.OutputCodec do
 
     with :ok <- positive_limits(frame_limit, term_limit),
          :ok <- bounded_term(term, term_limit, deadline),
-         term_bytes = :erlang.external_size(term),
+         term_bytes = RetainedTerm.bytes(term),
          true <- term_bytes <= term_limit || {:error, :output_term_too_large},
+         term = RetainedTerm.materialize(term),
          {:ok, wire, wire_bytes} <- encode_policy(term, opts, frame_limit),
          :ok <- deadline_open(deadline) do
       {:ok,

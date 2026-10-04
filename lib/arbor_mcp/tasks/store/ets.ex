@@ -16,7 +16,7 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
 
   @behaviour Arbor.MCP.Tasks.Store
 
-  alias Arbor.MCP.Server.Runtime.ServiceAdapter
+  alias Arbor.MCP.Server.Runtime.{RetainedTerm, ServiceAdapter, ServiceOperation}
   alias Arbor.MCP.Tasks.{Extension, Task}
 
   @name __MODULE__
@@ -33,6 +33,7 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
       :expires_at_ms,
       :cancel_requested_at_ms,
       input_responses: %{},
+      bytes: 0,
       version: 0
     ]
   end
@@ -48,7 +49,15 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
   end
 
   @doc false
-  def runtime_service_capabilities, do: %{bounded_startup: 1}
+  def runtime_service_capabilities, do: %{bounded_startup: 1, bounded_operations: 1}
+
+  @doc false
+  def runtime_service_binding(server, timeout),
+    do: GenServer.call(server, :service_binding, timeout)
+
+  @doc false
+  def operate(operation, args, context, opts),
+    do: ServiceOperation.submit(opts[:service_address], operation, args, context)
 
   @impl Arbor.MCP.Tasks.Store
   def create(%Task{} = task, owner, opts) do
@@ -78,19 +87,33 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
 
   @impl Arbor.MCP.Tasks.Store
   def cancellation_requested?(task_id, owner, opts) do
-    call(opts, {:cancellation_requested, task_id, owner})
+    call(opts, {:cancellation_requested?, task_id, owner})
   end
 
   @impl GenServer
   def init(opts) do
     with :ok <- ServiceAdapter.watch_owned(opts),
+         {:ok, address} <- ServiceOperation.new(opts),
+         {:ok, max_entry_bytes} <- positive_limit(Keyword.get(opts, :max_entry_bytes, 1_000_000)),
+         {:ok, max_retained_bytes} <-
+           positive_limit(Keyword.get(opts, :max_retained_bytes, 8_000_000)),
          {:ok, max_tasks} <- positive_limit(Keyword.get(opts, :max_tasks, @default_max_tasks)),
          {:ok, max_ttl_ms} <-
            positive_limit(Keyword.get(opts, :max_ttl_ms, @default_max_ttl_ms)),
          {:ok, now_fun} <- now_fun(Keyword.get(opts, :now_fun)) do
+      ServiceOperation.publish(address)
+      Process.send_after(self(), :service_reap, 25)
+
       {:ok,
        %{
+         address: address,
+         operation_offset: 0,
+         reap_offset: 0,
+         retained_bytes: 0,
+         max_entry_bytes: max_entry_bytes,
+         max_retained_bytes: max_retained_bytes,
          entries: %{},
+         expiry_queue: :gb_sets.empty(),
          max_tasks: max_tasks,
          max_ttl_ms: max_ttl_ms,
          now_fun: now_fun
@@ -99,10 +122,37 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
   end
 
   @impl GenServer
-  def handle_call(request, _from, state) do
-    now = state.now_fun.()
-    state = cleanup_expired(state, now)
-    handle_request(request, state, now)
+  def handle_call(:service_binding, _from, state) do
+    {:reply, %{address: state.address, read_address: nil}, state}
+  end
+
+  @impl GenServer
+  def handle_info(:service_operations, state) do
+    {state, offset} =
+      ServiceOperation.run(state.address, state, state.operation_offset, &execute/4)
+
+    {:noreply, %{state | operation_offset: offset}}
+  end
+
+  def handle_info(:service_reap, state) do
+    offset = ServiceOperation.reap(state.address, state.reap_offset)
+    state = cleanup_expired(state, state.now_fun.())
+    Process.send_after(self(), :service_reap, 25)
+    {:noreply, %{state | reap_offset: offset}}
+  end
+
+  defp execute(operation, args, context, state) do
+    state = cleanup_expired(state, state.now_fun.())
+    request = List.to_tuple([operation | args])
+    state = expire_requested(state, request, state.now_fun.())
+    {:reply, result, proposed} = handle_request(request, state, state.now_fun.())
+
+    case ServiceOperation.validate_context(context) do
+      :ok -> {result, proposed}
+      error -> {error, state}
+    end
+  catch
+    :throw, :store_full -> {{:error, :store_full}, state}
   end
 
   defp handle_request({:create, task, owner}, state, now) do
@@ -182,7 +232,7 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
     end
   end
 
-  defp handle_request({:cancellation_requested, task_id, owner}, state, _now) do
+  defp handle_request({:cancellation_requested?, task_id, owner}, state, _now) do
     case authorized_entry(state, task_id, owner) do
       {:ok, entry} -> {:reply, {:ok, not is_nil(entry.cancel_requested_at_ms)}, state}
       {:error, reason} -> {:reply, {:error, reason}, state}
@@ -278,12 +328,61 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
   end
 
   defp put_entry(state, %Entry{task: task} = entry) do
-    %{state | entries: Map.put(state.entries, task.id, entry)}
+    bytes = RetainedTerm.bytes(%{entry | bytes: 0})
+    previous = if state.entries[task.id], do: state.entries[task.id].bytes, else: 0
+    retained = state.retained_bytes - previous + bytes
+
+    if bytes > state.max_entry_bytes or retained > state.max_retained_bytes,
+      do: throw(:store_full)
+
+    %{
+      state
+      | entries: Map.put(state.entries, task.id, %{entry | bytes: bytes}),
+        retained_bytes: retained,
+        expiry_queue: :gb_sets.add({entry.expires_at_ms, task.id}, state.expiry_queue)
+    }
   end
 
   defp cleanup_expired(state, now) do
-    entries = Map.reject(state.entries, fn {_id, entry} -> entry.expires_at_ms <= now end)
-    %{state | entries: entries}
+    expire_turn(state, now, System.monotonic_time(:millisecond) + 5, 32)
+  end
+
+  defp expire_turn(state, _now, _cutoff, 0), do: state
+
+  defp expire_turn(state, now, cutoff, remaining) do
+    if not :gb_sets.is_empty(state.expiry_queue) and
+         System.monotonic_time(:millisecond) < cutoff do
+      {expiry, id} = :gb_sets.smallest(state.expiry_queue)
+
+      if expiry <= now,
+        do: expire_turn(remove_entry(state, id), now, cutoff, remaining - 1),
+        else: state
+    else
+      state
+    end
+  end
+
+  defp expire_requested(state, {:create, task, _owner}, now),
+    do: expire_id(state, task.id, now)
+
+  defp expire_requested(state, request, now), do: expire_id(state, elem(request, 1), now)
+
+  defp expire_id(state, id, now) do
+    case state.entries[id] do
+      %Entry{expires_at_ms: expiry} when expiry <= now -> remove_entry(state, id)
+      _current -> state
+    end
+  end
+
+  defp remove_entry(state, id) do
+    {entry, entries} = Map.pop(state.entries, id)
+
+    %{
+      state
+      | entries: entries,
+        retained_bytes: state.retained_bytes - entry.bytes,
+        expiry_queue: :gb_sets.delete({entry.expires_at_ms, id}, state.expiry_queue)
+    }
   end
 
   defp positive_limit(value) when is_integer(value) and value > 0, do: {:ok, value}
@@ -301,7 +400,12 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
 
   defp call(opts, request) do
     server = Keyword.get(opts, :server, @name)
-    GenServer.call(server, request)
+    [operation | args] = Tuple.to_list(request)
+
+    case ServiceOperation.native_call(server, operation, args, opts) do
+      {:error, :service_unavailable} -> {:error, :task_store_unavailable}
+      result -> result
+    end
   catch
     :exit, _reason -> {:error, :task_store_unavailable}
   end

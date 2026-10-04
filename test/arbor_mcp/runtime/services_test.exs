@@ -60,9 +60,20 @@ defmodule Arbor.MCP.Server.RuntimeServicesTest do
 
   defmodule SharedTasks do
     use GenServer
+    alias Arbor.MCP.Server.Runtime.ServiceOperation
 
-    def start_link(_opts), do: GenServer.start_link(__MODULE__, %{})
-    def runtime_service_capabilities, do: %{namespace: 1}
+    def start_link(_opts), do: GenServer.start_link(__MODULE__, [])
+    def runtime_service_capabilities, do: %{namespace: 1, bounded_operations: 1}
+    def runtime_service_binding(server, timeout), do: GenServer.call(server, :binding, timeout)
+
+    def operate(operation, args, context, opts),
+      do:
+        ServiceOperation.submit(
+          opts[:service_address],
+          operation,
+          [opts[:namespace] | args],
+          context
+        )
 
     for {operation, arity} <- [
           create: 3,
@@ -76,29 +87,57 @@ defmodule Arbor.MCP.Server.RuntimeServicesTest do
       args = Macro.generate_arguments(arity - 1, __MODULE__)
 
       def unquote(operation)(unquote_splicing(args), opts) do
-        GenServer.call(
+        ServiceOperation.native_call(
           Keyword.fetch!(opts, :server),
-          {unquote(operation), [unquote_splicing(args)], Keyword.fetch!(opts, :namespace)}
+          unquote(operation),
+          [Keyword.fetch!(opts, :namespace), unquote_splicing(args)],
+          opts
         )
       end
     end
 
     @impl true
-    def init(stores), do: {:ok, stores}
+    def init(opts) do
+      {:ok, address} = ServiceOperation.new(opts)
+      ServiceOperation.publish(address)
+      Process.send_after(self(), :reap, 25)
+      {:ok, %{address: address, stores: %{}, operation_offset: 0, reap_offset: 0}}
+    end
 
     @impl true
-    def handle_call({operation, args, namespace}, _from, stores) do
+    def handle_call(:binding, _from, state),
+      do: {:reply, %{address: state.address, read_address: nil}, state}
+
+    @impl true
+    def handle_info(:service_operations, state) do
+      {state, offset} =
+        ServiceOperation.run(state.address, state, state.operation_offset, &execute/4)
+
+      {:noreply, %{state | operation_offset: offset}}
+    end
+
+    def handle_info(:reap, state) do
+      offset = ServiceOperation.reap(state.address, state.reap_offset)
+      Process.send_after(self(), :reap, 25)
+      {:noreply, %{state | reap_offset: offset}}
+    end
+
+    defp execute(operation, [namespace | args], context, state) do
       {server, stores} =
-        case stores[namespace] do
+        case state.stores[namespace] do
           nil ->
             {:ok, pid} = Store.ETS.start_link(name: nil)
-            {pid, Map.put(stores, namespace, pid)}
+            {pid, Map.put(state.stores, namespace, pid)}
 
           pid ->
-            {pid, stores}
+            {pid, state.stores}
         end
 
-      {:reply, apply(Store.ETS, operation, args ++ [[server: server]]), stores}
+      # Forward the existing admission proof into the native backend, so a
+      # delayed inner operation still checks the original runtime invocation.
+      %{address: address} = Store.ETS.runtime_service_binding(server, 1_000)
+      result = ServiceOperation.submit(address, operation, args, context)
+      {result, %{state | stores: stores}}
     end
   end
 
@@ -129,12 +168,19 @@ defmodule Arbor.MCP.Server.RuntimeServicesTest do
 
   defmodule LifecycleReplay do
     use GenServer
+    alias Arbor.MCP.Server.Runtime.ServiceOperation
 
     def start_link(opts),
       do: GenServer.start_link(__MODULE__, opts, timeout: Keyword.fetch!(opts, :init_timeout_ms))
 
-    def runtime_service_capabilities, do: %{bounded_startup: 1}
+    def runtime_service_capabilities, do: %{bounded_startup: 1, bounded_operations: 1}
     def consume(_jti, _expires_at, _opts), do: :ok
+
+    def runtime_service_binding(_server, _timeout),
+      do: %{address: %{timeout: 1_000}, read_address: nil}
+
+    def operate(:consume, _args, context, _opts),
+      do: ServiceOperation.validate_context(context)
 
     @impl true
     def init(opts) do

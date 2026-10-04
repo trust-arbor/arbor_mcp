@@ -15,6 +15,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     Failure,
     Initialization,
     Ref,
+    RetainedTerm,
     ShutdownGuard
   }
 
@@ -41,6 +42,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
          :ok <- input_open(table, opts),
          {:ok, route} <- route(table),
          {:ok, bytes} <- request_size(request, opts, route.config),
+         opts = materialize_options(opts),
          {:ok, reservation} <-
            claim_slot(runtime, route, request, bytes, opts, invocation_deadline) do
       confirm_candidate(table, route, reservation)
@@ -189,6 +191,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
 
   def publish(table, route, reservation, payload, edge) do
     key = {:reservation, reservation.token}
+    payload = RetainedTerm.materialize(payload)
     stored = Map.merge(reservation, %{payload: payload, stage: :published, edge: edge})
 
     match =
@@ -461,14 +464,14 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   def handle_call({:promote, token, request, opts}, _from, state) do
     case Map.get(state.reservations, token) do
       %{bound: false, terminal: false} = reservation ->
-        request_id = Map.get(request, "id")
+        request_id = RetainedTerm.materialize(Map.get(request, "id"))
         key = key(reservation.scope, request_id || {:notification, token}, :inbound)
 
         cond do
           reservation.deadline <= System.monotonic_time(:millisecond) ->
             {:reply, {:error, :handler_timeout}, state}
 
-          :erlang.external_size(key) > 4_096 ->
+          RetainedTerm.bytes(key) > 4_096 ->
             {:reply, {:error, :invalid_scope}, state}
 
           Enum.any?(state.reservations, fn {other, entry} ->
@@ -820,8 +823,8 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     do: Process.alive?(reservation.producer) and Process.alive?(reservation.owner)
 
   defp request_size(request, opts, config) do
-    request_bytes = :erlang.external_size(request)
-    context_bytes = :erlang.external_size(Keyword.get(opts, :dispatch_opts, []))
+    request_bytes = RetainedTerm.bytes(request, config.max_request_bytes)
+    context_bytes = RetainedTerm.bytes(Keyword.get(opts, :dispatch_opts, []))
 
     context_bytes = context_bytes + retained_option_bytes(opts)
 
@@ -839,6 +842,16 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     end
   end
 
+  defp materialize_options(opts) do
+    Enum.reduce([:dispatch_opts, :wire_ids, :origin, :uncancellable_ids, :scope], opts, fn key,
+                                                                                           acc ->
+      case Keyword.fetch(acc, key) do
+        {:ok, value} -> Keyword.put(acc, key, RetainedTerm.materialize(value))
+        :error -> acc
+      end
+    end)
+  end
+
   defp retained_option_bytes(opts) do
     Enum.reduce(
       [:wire_ids, :origin, :uncancellable_ids, :scope, :admission_deadline, :invocation_deadline],
@@ -846,7 +859,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
       fn key, bytes ->
         case Keyword.fetch(opts, key) do
           {:ok, nil} -> bytes
-          {:ok, value} -> bytes + :erlang.external_size(value)
+          {:ok, value} -> bytes + RetainedTerm.bytes(value)
           :error -> bytes
         end
       end
@@ -862,7 +875,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     timeout = Keyword.get(opts, :timeout, route.config.request_timeout_ms)
     scope = Keyword.get(opts, :scope, {:connection, owner})
     direction = Keyword.get(opts, :direction, :inbound)
-    request_id = Map.get(request, "id")
+    request_id = RetainedTerm.materialize(Map.get(request, "id"))
     key = key(scope, request_id || {:notification, token}, direction)
     participant_error = participant_error(owner, caller)
 
@@ -876,7 +889,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
       not is_integer(timeout) or timeout <= 0 ->
         {:error, :invalid_timeout}
 
-      :erlang.external_size(key) > 4_096 ->
+      RetainedTerm.bytes(key) > 4_096 ->
         {:error, :invalid_scope}
 
       not valid_origin?(Keyword.get(opts, :origin)) ->
@@ -1031,7 +1044,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     records = Enum.map(slots, &{{:slot, &1}, token, producer})
     cleanup_bytes = ByteBudget.cleanup_record_bytes(token, producer)
 
-    :erlang.external_size(metadata) + cleanup_bytes +
+    RetainedTerm.bytes(metadata) + cleanup_bytes +
       Enum.sum(Enum.map(records, &:erlang.external_size/1))
   end
 
@@ -1110,7 +1123,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   defp valid_origin?(%{token: token, generation: generation, scope: scope} = origin),
     do:
       is_reference(token) and is_reference(generation) and map_size(origin) == 3 and
-        :erlang.external_size(scope) <= 4_096
+        RetainedTerm.bytes(scope) <= 4_096
 
   defp valid_origin?(_origin), do: false
 
@@ -1128,7 +1141,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   defp settle_output_phase(_candidate, _status), do: :ok
 
   defp output_origin_bytes(nil), do: 0
-  defp output_origin_bytes(proof), do: :erlang.external_size(proof)
+  defp output_origin_bytes(proof), do: RetainedTerm.bytes(proof)
 
   defp capture_output_origin(table, opts) do
     case Keyword.get(opts, :origin) do

@@ -378,6 +378,41 @@ cancellation, MRTR, initialization arrays and deprecated aliases/listener API
 retirement remain HTTP release gates. A separate continuation fix is in progress;
 none of those features is deferred to v3.
 
+The package metadata checkpoint keeps four literal `2.0.0-dev` versions and
+coherent explicit prerelease dependency floors. Separate preparation copies use
+literal RC/stable versions, normal major-compatible stable requirements, and
+package-qualified ACP monorepo tags/source links. Each ACP project now declares
+its own dev-only ExDoc dependency. [Package preparation](./V2_PACKAGE_RELEASE.md)
+records dependency order and installed-source verification.
+
+The exact metadata source at MCP `9f47f38`/ACP `cc8b207` passes six independent
+four-package dev/RC.1/stable archive consumers on the two supported toolchains:
+24 source archives, twelve installed-application/compiler-free-release probes,
+and six standalone ACP documentation builds. Stage archives match byte-for-byte
+between producing toolchains; release assembly may rewrite `.app` files and strip
+BEAM debug information, so raw application/BEAM bytes are recorded separately.
+This validates metadata and preparation on the named source. Final combined and
+tagged-source archives, normal published Hex resolution, newest/platform checks
+and native pressure remain release gates. No tags or packages are published.
+
+The later managed-store/retention checkpoint corrects the reproduced late
+Tasks/Replay mutations, oversized backing-binary retention, unbounded Replay
+retention and DETS table-name atom growth. Canonical minimum/current selections
+pass **158 pressure/store cases** and **329 retained Runtime/Gateway/stdio/privacy
+cases** with zero failures. Narrow integration preserves the original HTTP
+invocation cutoff, prepared companion output and codec-owned replay terms.
+[Store bounds](./V2_NATIVE_STORE_PRESSURE.md) records finite standalone defaults,
+typed capacity outcomes and the explicit custom Runtime adapter capability.
+The short running-deadline fixture retains its original 100/20/30 ms settings
+and actual body-entry/death assertions in a separate synchronous module.
+
+Measured default-limit RSS plateaus, standalone legacy boundaries and finite
+durable filesystem behavior remain open. A separate real native RPC probe found
+valid writes retained in a suspended Actor's mailbox after all original callers
+timed out, followed by late native writes on resume. Pre-Actor write admission and
+final original-cutoff validation are in progress. Actor death alone remains
+insufficient proof of native child/group cleanup.
+
 | Slice | Reviewable evidence | Remaining work |
 |---|---|---|
 | Installed HTTP writer authority | The exact 13-path slice passes canonical minimum/current full selections, all 27 pinned SDK cases and production warnings-as-errors compilation. Runtime starts an owned proxy under the original initialization epoch/cutoff, retaining a separate IO domain across proxy/Admission/execution replacement. Entry bindings derive actual writer identity and original deadline; session claims verify addressed lease/epoch. Root stop reports unresolved borrowed IO explicitly. | Gateway/Controller routing, complete legacy batch authority and actual Bandit/Cowboy delivery remain; the integrated 41 focused and 84 retained cases do not clear those routing/physical transport gates. |
@@ -552,6 +587,17 @@ is specified in [V2_PACKAGE_CONTRACT.md](./V2_PACKAGE_CONTRACT.md).
    transitional `ex_mcp` package must agree with the accepted topology.
 7. **Qualify and soak.** Run the applicable gates below against packaged
    artifacts, publish at least one RC, and record durable release evidence.
+
+The default native Tasks/replay limits now have a reproducible fresh-VM probe
+in `scripts/measure_native_store.exs`. On minimum/current toolchains, a 2x wave
+followed by an additional 8x wave reaches identical count/byte plateaus with
+explicit rejection, then idle expiry drains entries, indices and operation
+credit. Actual owned store processes stop. Canonical pressure/store/runtime
+selections pass 158/39/329 cases on each toolchain, and the retained/broader HTTP
+wire selections pass 19/40 cases each. The pressure probe records owner/VM/RSS
+supporting samples without claiming transient peaks or an absolute RSS cap.
+Native RPC write admission, DETS finite cleanup and the remaining HTTP
+convergence still have separate implementation/qualification gates.
 
 ## Full-roadmap work still outstanding
 
