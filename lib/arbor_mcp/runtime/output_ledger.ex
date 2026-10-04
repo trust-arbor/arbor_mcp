@@ -15,7 +15,6 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
             limits: map()
           }
   @type error :: {:error, atom()}
-  @scope_limit 4_096
   @reap_ms 20
   @defaults [
     max_frame_bytes: 1_048_576,
@@ -108,11 +107,11 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
   end
 
   @spec publish(OutputTicket.t()) :: :ok | error()
-  def publish(%OutputTicket{} = ticket), do: ticket_operation(ticket, {:publish, ticket.token})
+  def publish(ticket), do: ticket_operation(ticket, :publish)
   @spec release(OutputTicket.t()) :: :ok | error()
-  def release(%OutputTicket{} = ticket), do: ticket_operation(ticket, {:release, ticket.token})
+  def release(ticket), do: ticket_operation(ticket, :release)
   @spec ack(OutputTicket.t()) :: :ok | error()
-  def ack(%OutputTicket{} = ticket), do: ticket_operation(ticket, {:ack, ticket.token})
+  def ack(ticket), do: ticket_operation(ticket, :ack)
 
   @spec subscribe(t(), term(), pid()) :: :ok | error()
   def subscribe(ref, scope, consumer) do
@@ -633,11 +632,11 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
     end
   end
 
-  defp ticket_operation(ticket, request) do
-    with {:ok, ref} <- ticket_ref(ticket) do
+  defp ticket_operation(ticket, operation) do
+    with {:ok, ref, token} <- ticket_ref(ticket) do
       deadline =
-        case request do
-          {:publish, token} ->
+        case operation do
+          :publish ->
             case entry(ref, token) do
               {:ok, entry} -> entry.deadline
               _ -> nil
@@ -647,7 +646,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
             nil
         end
 
-      invoke(ref, {:ticket, ticket.token}, request, deadline)
+      invoke(ref, {:ticket, token}, {operation, token}, deadline)
     end
   end
 
@@ -784,26 +783,20 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
         do: :ok
       )
 
-  defp ticket_ref(%OutputTicket{} = ticket) do
-    with :ok <- scope_valid(ticket.scope),
-         true <- is_reference(ticket.token) || {:error, :invalid_output_ticket},
-         {:ok, ref} <- ref(ticket.ledger),
-         true <-
-           (ref.table == ticket.table and ref.generation == ticket.generation) ||
-             {:error, :output_unavailable},
-         {:ok, entry} <- entry(ref, ticket.token),
-         true <- entry.scope == ticket.scope || {:error, :invalid_output_ticket} do
-      {:ok, ref}
-    else
-      {:error, :output_released} ->
-        with {:ok, ref} <- ref(ticket.ledger),
-             true <-
-               (ref.generation == ticket.generation and ref.table == ticket.table) ||
-                 {:error, :output_unavailable},
-             do: {:ok, ref}
+  defp ticket_ref(ticket) do
+    with {:ok, {ledger, token}} <- OutputTicket.address(ticket),
+         {:ok, ref} <- ref(ledger),
+         :ok <- OutputTicket.validate_ledger(ticket, ref.pid, ref.table, ref.generation),
+         :ok <- ticket_entry_valid(ref, token, ticket) do
+      {:ok, ref, token}
+    end
+  end
 
-      error ->
-        error
+  defp ticket_entry_valid(ref, token, ticket) do
+    case entry(ref, token) do
+      {:ok, entry} -> OutputTicket.validate_scope(ticket, entry.scope)
+      {:error, :output_released} -> :ok
+      error -> error
     end
   end
 
@@ -853,12 +846,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
          do: if(Map.has_key?(gate.scopes, scope), do: :ok, else: {:error, :output_unknown_scope})
   end
 
-  defp scope_valid(scope),
-    do:
-      if(:erlang.external_size(scope) <= @scope_limit,
-        do: :ok,
-        else: {:error, :invalid_output_scope}
-      )
+  defp scope_valid(scope), do: OutputTicket.validate_scope_value(scope)
 
   defp deadline_valid(deadline),
     do:
@@ -924,13 +912,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
   end
 
   defp ticket(ref, token, scope),
-    do: %OutputTicket{
-      ledger: ref.pid,
-      table: ref.table,
-      generation: ref.generation,
-      token: token,
-      scope: scope
-    }
+    do: OutputTicket.new(ref.pid, ref.table, ref.generation, token, scope)
 
   defp pending(ref, id) do
     with {:ok, gate} <- read(ref) do

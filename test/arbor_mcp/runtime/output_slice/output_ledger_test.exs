@@ -83,7 +83,9 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedgerTest do
       for _ <- 1..80, do: hold_producer(self(), ref, %{"data" => String.duplicate("x", 100)}, [])
 
     Enum.each(producers, &send(&1, :go))
-    eventually(fn -> Ledger.stats(ref).frames == 8 end)
+    # Count admission includes claims whose producer has not stored its payload
+    # yet. Wait for that separate transition before asserting prepared stages.
+    eventually(fn -> Ledger.stats(ref).prepared == 8 end)
     assert %{frames: 8, prepared: 8, queued: 0, in_flight: 0} = Ledger.stats(ref)
     {:messages, messages} = Process.info(ref.pid, :messages)
 
