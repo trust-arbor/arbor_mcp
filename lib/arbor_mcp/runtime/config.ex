@@ -11,6 +11,7 @@ defmodule Arbor.MCP.Server.Runtime.Config do
             services: nil,
             execution: :stateful,
             max_concurrency: 1,
+            # Data permits include every batch member, retained until settlement.
             max_queue: 128,
             max_request_bytes: 1_000_000,
             max_pending_bytes: 8_000_000,

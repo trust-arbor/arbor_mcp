@@ -409,7 +409,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
   end
 
   test "BEAM ingress uses the same scheduler and preserves sequential legacy batch results" do
-    {root, transport} = start_pair(transport: :beam, max_queue: 0)
+    {root, transport} = start_pair(transport: :beam, max_queue: 2)
 
     requests = [
       tool(1, "inc"),

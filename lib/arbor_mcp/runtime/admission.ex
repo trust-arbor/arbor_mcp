@@ -373,12 +373,21 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   end
 
   def handle_call(:stats, _from, state) do
-    slots = :ets.select_count(state.table, [{{{:slot, :_}, :_, :_}, [], [true]}])
+    slots = :ets.match_object(state.table, {{:slot, :_}, :_, :_})
+    data_capacity = state.config.max_concurrency + state.config.max_queue
+
+    data_slots =
+      Enum.filter(slots, fn {{:slot, index}, _token, _producer} -> index <= data_capacity end)
+
     bytes = ByteBudget.used(state.table)
 
     {:reply,
      %{
-       reserved: slots,
+       reserved: length(slots),
+       reserved_envelopes: envelope_count(slots),
+       admitted_work: length(data_slots),
+       admitted_envelopes: envelope_count(data_slots),
+       confirmed_work: confirmed_work(state.reservations),
        pending_bytes: bytes.data + bytes.outgoing + bytes.incoming,
        control_bytes: bytes.outgoing + bytes.incoming,
        response_bytes: bytes.incoming,
@@ -457,11 +466,16 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   def handle_info(:reap_unconfirmed, state) do
     # A producer may be killed between insert_new and confirm. Reap those
     # bounded slot records without charging bytes or allocating a monitor.
-    for {{:slot, _slot}, token, producer} = object <- :ets.tab2list(state.table),
+    producers =
+      state.table
+      |> :ets.match_object({{:slot, :_}, :_, :_})
+      |> Enum.map(fn {_key, token, producer} -> {token, producer} end)
+      |> Enum.uniq()
+
+    for {token, producer} <- producers,
         not Map.has_key?(state.reservations, token),
         not Process.alive?(producer) do
-      :ets.delete_object(state.table, object)
-      ByteBudget.release(state.table, token)
+      release_slot(state.table, %{token: token, producer: producer})
     end
 
     for {{:cancel_control, _key}, producer} = object <- :ets.tab2list(state.table),
@@ -634,19 +648,18 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
         {:error, :invalid_origin}
 
       true ->
-        slots = available_slots(route.config, Keyword.get(opts, :kind))
+        count = work_count(request, opts)
+        timeout = min(timeout, route.config.request_timeout_ms)
+        deadline = System.monotonic_time(:millisecond) + timeout
+        available = available_slots(route.config, Keyword.get(opts, :kind))
 
-        slot =
-          Enum.find(slots, fn index ->
-            :ets.insert_new(Ref.table(runtime), {{:slot, index}, token, producer})
-          end)
-
-        if slot do
-          now = System.monotonic_time(:millisecond)
-
+        with {:ok, slots} <-
+               claim_work_slots(Ref.table(runtime), available, count, token, producer, deadline) do
           reservation = %{
             token: token,
-            slot: slot,
+            slot: hd(slots),
+            slots: slots,
+            work_count: count,
             producer: producer,
             caller: caller,
             owner: owner,
@@ -659,18 +672,16 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
             wire_ids: Keyword.get(opts, :wire_ids, []),
             uncancellable_ids: Keyword.get(opts, :uncancellable_ids, []),
             batch?: Keyword.get(opts, :batch?, false),
-            bytes: bytes,
+            bytes: bytes + work_metadata_bytes(request, slots, token, producer),
             request_id: request_id,
             key: key,
             scope: scope,
             generation: route.generation,
-            timeout: min(timeout, route.config.request_timeout_ms),
-            deadline: now + min(timeout, route.config.request_timeout_ms)
+            timeout: timeout,
+            deadline: deadline
           }
 
           claim_candidate(Ref.table(runtime), route.generation, reservation)
-        else
-          {:error, :server_busy}
         end
     end
   rescue
@@ -697,20 +708,75 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   end
 
   defp slot_owned?(table, reservation) do
-    :ets.lookup(table, {:slot, reservation.slot}) == [
-      {{:slot, reservation.slot}, reservation.token, reservation.producer}
-    ]
+    Enum.all?(reservation.slots, fn slot ->
+      :ets.lookup(table, {:slot, slot}) == [
+        {{:slot, slot}, reservation.token, reservation.producer}
+      ]
+    end)
   end
 
   defp release_slot(table, reservation) do
-    :ets.delete_object(
-      table,
-      {{:slot, reservation.slot}, reservation.token, reservation.producer}
-    )
+    # Remove the entire token's permit set in one ETS operation. A concurrent
+    # producer may reuse freed positions without an older release deleting it.
+    :ets.select_delete(table, [
+      {{{:slot, :_}, reservation.token, reservation.producer}, [], [true]}
+    ])
 
     ByteBudget.release(table, reservation.token)
   rescue
     ArgumentError -> :ok
+  end
+
+  defp work_count(%{"payload" => members}, opts) when is_list(members) do
+    if Keyword.get(opts, :kind) in [:edge_control, :edge_response],
+      do: 1,
+      else: max(1, length(members))
+  end
+
+  defp work_count(_request, _opts), do: 1
+
+  # The input payload/context/options remain charged once. Arrays add the
+  # serialized permit records and new reservation slot metadata once, rather
+  # than retaining or charging a separate copy of every member payload.
+  defp work_metadata_bytes(%{"payload" => members}, slots, token, producer)
+       when is_list(members) do
+    metadata = %{slot: hd(slots), slots: slots, work_count: length(slots)}
+    records = Enum.map(slots, &{{:slot, &1}, token, producer})
+    :erlang.external_size(metadata) + Enum.sum(Enum.map(records, &:erlang.external_size/1))
+  end
+
+  defp work_metadata_bytes(_request, _slots, _token, _producer), do: 0
+
+  defp claim_work_slots(table, available, count, token, producer, deadline, attempts \\ 512)
+
+  defp claim_work_slots(_table, _available, _count, _token, _producer, _deadline, 0),
+    do: {:error, :server_busy}
+
+  defp claim_work_slots(table, available, count, token, producer, deadline, attempts) do
+    if System.monotonic_time(:millisecond) >= deadline do
+      {:error, :handler_timeout}
+    else
+      slots = available |> Stream.reject(&:ets.member(table, {:slot, &1})) |> Enum.take(count)
+      records = Enum.map(slots, &{{:slot, &1}, token, producer})
+
+      cond do
+        length(slots) != count -> {:error, :server_busy}
+        :ets.insert_new(table, records) -> {:ok, slots}
+        true -> claim_work_slots(table, available, count, token, producer, deadline, attempts - 1)
+      end
+    end
+  end
+
+  defp envelope_count(slots) do
+    slots |> Enum.map(fn {_key, token, _producer} -> token end) |> Enum.uniq() |> length()
+  end
+
+  defp confirmed_work(reservations) do
+    Enum.reduce(reservations, 0, fn {_token, reservation}, total ->
+      if reservation.kind in [:edge_control, :edge_response],
+        do: total,
+        else: total + reservation.work_count
+    end)
   end
 
   defp data_bytes(%{kind: kind}) when kind in [:edge_control, :edge_response], do: 0

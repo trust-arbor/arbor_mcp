@@ -11,8 +11,12 @@ defmodule Arbor.MCP.Server.Runtime do
   The test/BEAM protocol edge uses an ETS payload handoff and a coalesced wake:
   accepted ingress never queues its full payload in the edge mailbox.
 
-  Data admission permits `max_concurrency + max_queue` envelopes and
-  `max_pending_bytes` serialized input/context bytes. Outgoing helper controls
+  Data admission permits `max_concurrency + max_queue` work items. A legacy
+  batch reserves one permit per member, including notifications and invalid
+  elements, and retains them until the whole envelope settles. Non-array input
+  and an empty invalid array each reserve one permit. `max_pending_bytes` covers
+  serialized input/context/options once plus an array's serialized permit-set
+  metadata; member payloads are not charged repeatedly. Outgoing helper controls
   and incoming reverse-request responses have independent admission lanes,
   each permitting `max_control_queue` envelopes and `max_control_bytes` bytes.
   The aggregate control limit is twice each configured control limit. A
