@@ -274,17 +274,29 @@ aggregate batch output, store recovery, stdio, HTTP and shutdown across all
 transports remain qualification gates. Do not equate bounded admission with a
 hard bound on arbitrary Erlang sends, all callback memory or application state.
 
-The current scheduled custom `handle_call/3` receives a synthetic
-`{callback_task_pid, reference}` as `from`, rather than the original caller's
-PID/tag. This differs from direct GenServer caller-identity semantics as well
-as callback `self()`. Deferred `GenServer.reply/2` remains unsupported. Record
-and resolve the caller-identity contract with representative consumers before
-RC; namespace renaming alone does not migrate handlers that use `from`.
+Scheduled custom `handle_call/3` now receives
+`{original_caller_pid, proxy_reply_tag}` as `from` at candidate `c8a4987`.
+The opaque reply tag addresses the callback worker; early or saved late
+`GenServer.reply/2` calls cannot settle the caller or bypass serialized state
+commit. Callback `self()` still identifies a supervised task. Deferred replies
+remain unsupported. The original PID, worker separation and early/late reply
+behavior have regressions on minimum/current toolchains; representative
+consumer/resource migration remains required before RC. See the candidate's
+`docs/V2_CALLER_IDENTITY_SLICE.md` for the contract and limits.
 
-Legacy batches currently reserve one input envelope in the Test/BEAM candidate.
-The accepted runtime contract requires individual work capacity and prohibits
-bypassing the queue count with a batch. Per-member work admission and aggregate
-response accounting remain prerequisites before cross-transport release qualification.
+Legacy batches at `9eaca9e` reserve one input envelope plus one work permit per
+member, including notifications and invalid members. Atomic whole-set claims
+prevent a batch from bypassing the queue count; permits remain held until its
+envelope settles. Combined batch/services/caller regressions pass on minimum
+and current toolchains. Aggregate response accounting and production output
+preparation remain prerequisites before cross-transport release qualification.
+
+The synchronous runtime helper at `dd75a7c` uses one caller wait budget from
+API entry through admission and result observation. Expired confirmation
+retains uncertain credit until the admission owner releases it, and queued late
+results cannot bypass the original wait cutoff. Already accepted work may still
+commit under its server deadline. Finite cleanup under byte-ledger contention
+remains a separate pressure gate; this is not a complete transport qualification.
 
 ## Non-symbol migration inventory and release prerequisites
 
