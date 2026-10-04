@@ -172,8 +172,16 @@ current reports 4,912 tests and minimum reports a 4,994-test inventory including
 cases pass on each toolchain, and the existing schema performance budgets pass
 unchanged. Production compilation, full formatting, strict Credo, ExDoc and
 normal commit hooks pass. Dialyzer retains the 35 existing dev filters with no
-new filters. [Fresh checkpoint CI](https://github.com/trust-arbor/arbor_mcp/actions/runs/37216046234)
-is running; final-source archives and broader release qualification remain.
+new filters. [Checkpoint CI](https://github.com/trust-arbor/arbor_mcp/actions/runs/37216046234)
+passes nine of twelve jobs, including both actual archive consumers, coverage,
+SDK interop, external conformance, performance and Dialyzer. Three test jobs
+expose fixture coordination boundaries: the blocked-service test can exhaust a
+60 ms root-startup allowance before reaching its child, accepted batch output
+can arrive after its 100 ms assertion, and physical TCP closure can follow the
+listener's DOWN/Ranch-removal observation. The corrected finite coordination
+checks retain the owned-child, atomic-admission and socket-closure assertions;
+all 54 affected service/batch/listener cases pass on minimum/current. Fresh
+combined CI and final-source archives remain required.
 
 | Slice | Reviewable evidence | Remaining work |
 |---|---|---|

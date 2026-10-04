@@ -73,7 +73,7 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
 
     refute_receive {:batch_incremented, _worker}, 20
     assert {:ok, _transport} = Test.send_message([tool(1, "inc"), tool(2, "inc")], transport)
-    assert_receive {:transport_message, response}
+    assert_receive {:transport_message, response}, 1_000
     assert Enum.map(decode(response), & &1["id"]) == [1, 2]
     wait_for_empty(root)
   end

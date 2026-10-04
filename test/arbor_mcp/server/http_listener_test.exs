@@ -296,7 +296,24 @@ defmodule Arbor.MCP.Server.HTTPListenerTest do
   end
 
   defp refute_open(port) do
-    assert {:error, :econnrefused} =
-             :gen_tcp.connect({127, 0, 0, 1}, port, [:binary, active: false], 500)
+    refute_open_until(port, System.monotonic_time(:millisecond) + 1_000)
+  end
+
+  defp refute_open_until(port, deadline) do
+    remaining = max(deadline - System.monotonic_time(:millisecond), 0)
+    assert remaining > 0, "listener socket remained open after shutdown"
+
+    case :gen_tcp.connect({127, 0, 0, 1}, port, [:binary, active: false], min(remaining, 500)) do
+      {:error, :econnrefused} ->
+        :ok
+
+      {:ok, socket} ->
+        :ok = :gen_tcp.close(socket)
+        Process.sleep(min(remaining, 5))
+        refute_open_until(port, deadline)
+
+      other ->
+        flunk("could not confirm listener socket closure: #{inspect(other)}")
+    end
   end
 end

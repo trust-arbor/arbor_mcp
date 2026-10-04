@@ -798,7 +798,7 @@ defmodule Arbor.MCP.Server.RuntimeSessionServicesTest do
           handler: Handler,
           handler_args: parent,
           dispatcher: Handler,
-          init_timeout_ms: 60,
+          init_timeout_ms: 1_000,
           shutdown_timeout_ms: 60,
           services: [sessions: [adapter: BlockingBinding, options: [test_pid: parent]]]
         )
@@ -806,9 +806,9 @@ defmodule Arbor.MCP.Server.RuntimeSessionServicesTest do
       send(parent, {:blocked_start_result, result})
     end)
 
-    assert_receive {:blocking_service_owner, owner}, 500
-    assert_receive {:blocked_start_result, {:error, _reason}}, 500
-    assert System.monotonic_time(:millisecond) - started < 500
+    assert_receive {:blocking_service_owner, owner}, 1_500
+    assert_receive {:blocked_start_result, {:error, _reason}}, 1_500
+    assert System.monotonic_time(:millisecond) - started < 2_000
     eventually(fn -> not Process.alive?(owner) end)
   end
 
