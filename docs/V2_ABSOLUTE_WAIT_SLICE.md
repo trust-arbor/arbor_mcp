@@ -48,9 +48,9 @@ current strict Credo passes without new filters. An independent read-only
 probe confirms oversized metadata rejection with zero retained credit and the
 already-queued late-reply case returning `:await_timeout` with an empty mailbox.
 
-This slice establishes deadline checks and finite confirmation waits. Existing
-byte-ledger cleanup CAS loops still need finite contention handling with retained
-reapable credit; the input-byte cleanup slice addresses that separate gate.
+This slice establishes deadline checks and finite confirmation waits. The integrated
+[input-byte cleanup slice](V2_INPUT_BYTE_CLEANUP_SLICE.md) adds finite contention handling with retained
+reapable credit; its separate source/pressure limits remain explicit.
 It does not certify a hard return-time bound during arbitrary VM suspension or
 sustained cleanup contention. Store startup/control budgets, server stdio/HTTP,
 output preparation before state commit, transport writers, grouped batch output,

@@ -1530,5 +1530,20 @@
     "tools_family_callables": 81,
     "unexpected_manifest_difference_policy": "review, not automatically authorize removal"
   },
-  "namespace_move_rule_interpretation": "Exact helper overrides and ACP/vendor rules precede the remaining MCP fallback; not an executable blanket string replacement."
+  "namespace_move_rule_interpretation": "Exact helper overrides and ACP/vendor rules precede the remaining MCP fallback; not an executable blanket string replacement.",
+  "qualified_runtime_checkpoint": {
+    "source": "b189976",
+    "rpc": "0e4cfd1efdb7437eb6cf4c944ed6fa04553da7bb",
+    "namespace": "Arbor.MCP.* / Arbor.ACP.* / Arbor.RPC.*",
+    "executed_tests_per_supported_toolchain": 3938,
+    "doctests": 20,
+    "properties": 34,
+    "excluded": 82,
+    "input_cleanup_source": "cc7ee20",
+    "session_services_source": "b189976",
+    "api_removals_performed": 0,
+    "production_output_wired": false,
+    "http_runtime_wired": false,
+    "release": false
+  }
 }
