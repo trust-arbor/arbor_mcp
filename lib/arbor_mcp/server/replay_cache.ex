@@ -10,6 +10,10 @@ defmodule Arbor.MCP.Server.ReplayCache do
 
   @callback consume(jti :: String.t(), expires_at :: integer(), opts :: keyword()) ::
               :ok | {:error, :replayed | term()}
+
+  @doc "Consumes a continuation ID through an explicitly addressed runtime replay service."
+  def consume(service, jti, expires_at),
+    do: Arbor.MCP.Server.Runtime.Services.consume(service, jti, expires_at)
 end
 
 defmodule Arbor.MCP.Server.ReplayCache.ETS do
@@ -26,12 +30,19 @@ defmodule Arbor.MCP.Server.ReplayCache.ETS do
 
   @name __MODULE__
 
+  alias Arbor.MCP.Server.Runtime.ServiceAdapter
+
   def start_link(opts \\ []) do
+    server_opts = [timeout: Keyword.get(opts, :init_timeout_ms, :infinity)]
+
     case Keyword.get(opts, :name, @name) do
-      nil -> GenServer.start_link(__MODULE__, opts)
-      name -> GenServer.start_link(__MODULE__, opts, name: name)
+      nil -> GenServer.start_link(__MODULE__, opts, server_opts)
+      name -> GenServer.start_link(__MODULE__, opts, Keyword.put(server_opts, :name, name))
     end
   end
+
+  @doc false
+  def runtime_service_capabilities, do: %{bounded_startup: 1}
 
   @impl Arbor.MCP.Server.ReplayCache
   def consume(jti, expires_at, opts \\ [])
@@ -43,7 +54,9 @@ defmodule Arbor.MCP.Server.ReplayCache.ETS do
   end
 
   @impl GenServer
-  def init(_opts), do: {:ok, %{}}
+  def init(opts) do
+    with :ok <- ServiceAdapter.watch_owned(opts), do: {:ok, %{}}
+  end
 
   @impl GenServer
   def handle_call({:consume, jti, expires_at, now}, _from, entries) do

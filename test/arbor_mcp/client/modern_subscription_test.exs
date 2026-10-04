@@ -4,7 +4,7 @@ defmodule Arbor.MCP.Client.ModernSubscriptionTest do
   alias Arbor.MCP.Client
   alias Arbor.MCP.Client.Subscription
   alias Arbor.MCP.Server
-  alias Arbor.MCP.Server.{HandlerServer, Subscriptions}
+  alias Arbor.MCP.Server.{HandlerServer, Runtime, Subscriptions}
 
   @subscription_id_key "io.modelcontextprotocol/subscriptionId"
 
@@ -108,7 +108,7 @@ defmodule Arbor.MCP.Client.ModernSubscriptionTest do
     assert subscription.acknowledged_filter == subscription.requested_filter
 
     assert [%{subscription_id: subscription_id}] =
-             Subscriptions.entries(registry: registry)
+             Subscriptions.entries(service: registry)
 
     assert subscription_id == subscription.request_id
 
@@ -124,7 +124,7 @@ defmodule Arbor.MCP.Client.ModernSubscriptionTest do
     refute_receive {:ex_mcp_subscription, ^subscription, _method, _params}
 
     assert :ok = Subscription.cancel(subscription, "test complete")
-    assert_eventually(fn -> Subscriptions.entries(registry: registry) == [] end)
+    assert_eventually(fn -> Subscriptions.entries(service: registry) == [] end)
   end
 
   test "surfaces graceful server closure to the subscriber" do
@@ -133,14 +133,14 @@ defmodule Arbor.MCP.Client.ModernSubscriptionTest do
     assert {:ok, subscription} =
              Client.listen(client, %{"toolsListChanged" => true}, timeout: 2_000)
 
-    {:ok, edge} = Arbor.MCP.Server.Runtime.edge(server)
+    {:ok, edge} = Runtime.edge(server)
 
     assert :ok =
              Subscriptions.close(
                edge,
                subscription.request_id,
                :server_shutdown,
-               registry: registry
+               service: registry
              )
 
     assert_receive {:ex_mcp_subscription_closed, ^subscription, {:complete, result}}
@@ -154,17 +154,17 @@ defmodule Arbor.MCP.Client.ModernSubscriptionTest do
     assert {:ok, first} = Client.subscribe_resource(client, "test://shared")
     assert {:ok, second} = Client.subscribe_resource(client, "test://shared")
     assert first.pid == second.pid
-    assert length(Subscriptions.entries(registry: registry)) == 1
+    assert length(Subscriptions.entries(service: registry)) == 1
 
     assert {:ok, %{}} = Client.unsubscribe_resource(client, "test://shared")
-    assert length(Subscriptions.entries(registry: registry)) == 1
+    assert length(Subscriptions.entries(service: registry)) == 1
 
     :ok = Server.notify_resource_update(server, "test://shared")
 
     assert_receive {:ex_mcp_resource_updated, "test://shared", _params}
 
     assert {:ok, %{}} = Client.unsubscribe_resource(client, "test://shared")
-    assert_eventually(fn -> Subscriptions.entries(registry: registry) == [] end)
+    assert_eventually(fn -> Subscriptions.entries(service: registry) == [] end)
     assert {:error, :not_subscribed} = Client.unsubscribe_resource(client, "test://shared")
   end
 
@@ -176,7 +176,7 @@ defmodule Arbor.MCP.Client.ModernSubscriptionTest do
     refute first.pid == replacement.pid
 
     assert_eventually(fn ->
-      case Subscriptions.entries(registry: registry) do
+      case Subscriptions.entries(service: registry) do
         [%{filter: %{"resourceSubscriptions" => uris}}] ->
           Enum.sort(uris) == ["test://a", "test://b"]
 
@@ -193,7 +193,7 @@ defmodule Arbor.MCP.Client.ModernSubscriptionTest do
     assert {:ok, %{}} = Client.unsubscribe_resource(client, "test://a")
 
     assert_eventually(fn ->
-      case Subscriptions.entries(registry: registry) do
+      case Subscriptions.entries(service: registry) do
         [%{filter: %{"resourceSubscriptions" => ["test://b"]}}] -> true
         _other -> false
       end
@@ -222,7 +222,7 @@ defmodule Arbor.MCP.Client.ModernSubscriptionTest do
     assert_receive {:subscribed, :b, {:ok, _subscription}}, 1_000
 
     assert_eventually(fn ->
-      case Subscriptions.entries(registry: registry) do
+      case Subscriptions.entries(service: registry) do
         [%{filter: %{"resourceSubscriptions" => uris}}] ->
           Enum.sort(uris) == ["test://a", "test://b"]
 
@@ -234,14 +234,14 @@ defmodule Arbor.MCP.Client.ModernSubscriptionTest do
     Process.exit(subscriber_a, :kill)
 
     assert_eventually(fn ->
-      case Subscriptions.entries(registry: registry) do
+      case Subscriptions.entries(service: registry) do
         [%{filter: %{"resourceSubscriptions" => ["test://b"]}}] -> true
         _other -> false
       end
     end)
 
     Process.exit(subscriber_b, :kill)
-    assert_eventually(fn -> Subscriptions.entries(registry: registry) == [] end)
+    assert_eventually(fn -> Subscriptions.entries(service: registry) == [] end)
   end
 
   test "rejects the API on a legacy connection without sending subscriptions/listen" do
@@ -347,22 +347,15 @@ defmodule Arbor.MCP.Client.ModernSubscriptionTest do
   end
 
   defp start_stack do
-    registry_child =
-      Supervisor.child_spec(
-        {Subscriptions, name: nil, max_lifetime_ms: 5_000},
-        id: make_ref()
-      )
-
-    registry = start_supervised!(registry_child)
-
     {:ok, server} =
       HandlerServer.start_link(
         handler: Handler,
         transport: :test,
         protocol_mode: :modern_only,
-        subscription_registry: registry
+        services: [subscriptions: [options: [max_lifetime_ms: 5_000]]]
       )
 
+    {:ok, registry} = Runtime.service(server, :subscriptions)
     Arbor.MCP.TestHelpers.stop_on_exit(server)
 
     {:ok, client} =

@@ -3,6 +3,8 @@ defmodule Arbor.MCP.Server.SubscriptionListener do
 
   use GenServer
 
+  alias Arbor.MCP.Server.Runtime.ShutdownGuard
+
   @subscription_id_key "io.modelcontextprotocol/subscriptionId"
 
   defstruct [
@@ -60,6 +62,7 @@ defmodule Arbor.MCP.Server.SubscriptionListener do
 
   @impl true
   def init(opts) do
+    if table = Keyword.get(opts, :runtime_table), do: :ok = ShutdownGuard.watch(table, self())
     transport_ref = Keyword.fetch!(opts, :transport_ref)
     lifetime = Keyword.fetch!(opts, :max_lifetime_ms)
     Process.send_after(self(), :expire, lifetime)

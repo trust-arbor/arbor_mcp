@@ -3,7 +3,14 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
 
   use GenServer
 
-  alias Arbor.MCP.Server.Runtime.{Admission, CallbackContext, Failure, Lifecycle, ShutdownGuard}
+  alias Arbor.MCP.Server.Runtime.{
+    Admission,
+    CallbackContext,
+    Failure,
+    Lifecycle,
+    Services,
+    ShutdownGuard
+  }
 
   def start_link(opts) do
     config = Keyword.fetch!(opts, :config)
@@ -404,25 +411,36 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
       dispatch_opts =
         Keyword.merge(config.dispatch_opts, Keyword.get(work.opts, :dispatch_opts, []))
 
-      dispatcher = config.dispatcher
+      service_options =
+        if work.phase == :callback and work.reservation.kind == :rpc,
+          do: Services.dispatch_options(invocation.runtime, dispatch_opts),
+          else: {:ok, dispatch_opts}
 
-      case {work.phase, work.reservation.kind} do
-        {:tracker, _kind} ->
-          {:noreply,
-           config.cancellation_tracker.mark_cancelled(work.reservation.request_id, snapshot)}
+      case service_options do
+        {:ok, dispatch_opts} ->
+          dispatcher = config.dispatcher
 
-        {:callback, :call} ->
-          if function_exported?(config.handler, :handle_call, 3),
-            do: invoke_custom_call(config.handler, work, snapshot),
-            else: {:reply, {:error, {:unknown_call, work.request["payload"]}}, snapshot}
+          case {work.phase, work.reservation.kind} do
+            {:tracker, _kind} ->
+              {:noreply,
+               config.cancellation_tracker.mark_cancelled(work.reservation.request_id, snapshot)}
 
-        {:callback, :cast} ->
-          if function_exported?(config.handler, :handle_cast, 2),
-            do: config.handler.handle_cast(work.request["payload"], snapshot),
-            else: {:noreply, snapshot}
+            {:callback, :call} ->
+              if function_exported?(config.handler, :handle_call, 3),
+                do: invoke_custom_call(config.handler, work, snapshot),
+                else: {:reply, {:error, {:unknown_call, work.request["payload"]}}, snapshot}
 
-        {:callback, :rpc} ->
-          dispatcher.dispatch(work.request, config.handler, snapshot, dispatch_opts)
+            {:callback, :cast} ->
+              if function_exported?(config.handler, :handle_cast, 2),
+                do: config.handler.handle_cast(work.request["payload"], snapshot),
+                else: {:noreply, snapshot}
+
+            {:callback, :rpc} ->
+              dispatcher.dispatch(work.request, config.handler, snapshot, dispatch_opts)
+          end
+
+        {:error, _reason} ->
+          {:runtime_failure, :handler_crash}
       end
     end)
   rescue

@@ -119,7 +119,6 @@ defmodule Arbor.MCP.Integration.RollbackDrillTest do
 
   test "drains modern work before a legacy-only restart and requires explicit pin reset" do
     ledger = start_supervised!({Agent, fn -> %{completed: []} end})
-    registry = start_subscription_registry()
 
     modern_server =
       start_server(
@@ -127,8 +126,10 @@ defmodule Arbor.MCP.Integration.RollbackDrillTest do
         protocol_mode: :modern_only,
         mrtr: true,
         request_state: [active_key_id: "rollback", keys: %{"rollback" => @request_state_key}],
-        subscription_registry: registry
+        services: [subscriptions: [options: [max_lifetime_ms: 10_000]]]
       )
+
+    {:ok, registry} = Runtime.service(modern_server, :subscriptions)
 
     modern_client =
       start_client(modern_server,
@@ -143,7 +144,7 @@ defmodule Arbor.MCP.Integration.RollbackDrillTest do
              Client.listen(modern_client, %{"toolsListChanged" => true}, timeout: 2_000)
 
     assert %Subscription.Ref{} = subscription
-    assert [_entry] = Subscriptions.entries(registry: registry)
+    assert [_entry] = Subscriptions.entries(service: registry)
 
     mrtr_task =
       Task.async(fn ->
@@ -171,11 +172,11 @@ defmodule Arbor.MCP.Integration.RollbackDrillTest do
                runtime_edge(modern_server),
                subscription.request_id,
                :server_shutdown,
-               registry: registry
+               service: registry
              )
 
     assert_receive {:ex_mcp_subscription_closed, ^subscription, {:complete, _result}}, 2_000
-    assert_eventually(fn -> Subscriptions.entries(registry: registry) == [] end)
+    assert_eventually(fn -> Subscriptions.entries(service: registry) == [] end)
 
     send(callback, {:complete_rollback_mrtr, "Lin"})
 
@@ -207,16 +208,6 @@ defmodule Arbor.MCP.Integration.RollbackDrillTest do
     assert :ok = EraCache.clear(identity)
     assert :ok = EraCache.observe(identity, :legacy, "2025-11-25")
     assert {:ok, %{era: :legacy}} = EraCache.lookup(identity)
-  end
-
-  defp start_subscription_registry do
-    child_spec =
-      Supervisor.child_spec(
-        {Subscriptions, name: nil, max_lifetime_ms: 10_000},
-        id: make_ref()
-      )
-
-    start_supervised!(child_spec)
   end
 
   defp start_server(ledger, opts) do

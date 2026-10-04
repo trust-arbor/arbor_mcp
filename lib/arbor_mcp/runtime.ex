@@ -82,12 +82,14 @@ defmodule Arbor.MCP.Server.Runtime do
     table = :ets.new(__MODULE__, [:set, :public, read_concurrency: true, write_concurrency: true])
     {:ok, guard} = ShutdownGuard.start(self(), table, config)
     :ets.insert(table, {:shutdown_guard, guard})
+
     Process.put({__MODULE__, :reference}, Ref.new(self(), table))
     runtime_opts = [table: table, supervisor: self(), config: config]
 
     children =
       [
-        {Admission, runtime_opts}
+        {Admission, runtime_opts},
+        {Arbor.MCP.Server.Runtime.StoreSupervisor, runtime_opts}
       ] ++
         Enum.map(Keyword.get(opts, :store_children, []), &ShutdownGuard.owned_spec(&1, table)) ++
         [
@@ -107,6 +109,33 @@ defmodule Arbor.MCP.Server.Runtime do
         end
 
     Supervisor.init(children, strategy: :rest_for_one)
+  end
+
+  @doc """
+  Returns an opaque logical reference to this runtime's configured service.
+
+  Supported kinds are `:tasks`, `:replay_cache` and `:subscriptions`. References
+  survive service-child restarts but do not follow a whole-runtime replacement.
+  An unavailable explicit reference never falls back to an application service.
+  """
+  @spec service(server(), :tasks | :replay_cache | :subscriptions) ::
+          {:ok, Arbor.MCP.Server.Runtime.ServiceRef.t()} | {:error, atom()}
+  def service(server, kind), do: Arbor.MCP.Server.Runtime.Services.reference(server, kind)
+
+  @doc """
+  Captures a logical service reference from the active runtime callback.
+
+  Capture the reference before spawning a worker, and pass it as `service:` to
+  service operations. Callback context is not inherited by spawned processes.
+  Tasks workers must also retain `Arbor.MCP.Tasks.owner/1` for authorization.
+  """
+  @spec service(:tasks | :replay_cache | :subscriptions) ::
+          {:ok, Arbor.MCP.Server.Runtime.ServiceRef.t()} | {:error, atom()}
+  def service(kind) do
+    case CallbackContext.current() do
+      %{runtime: runtime} -> service(runtime, kind)
+      nil -> {:error, :no_runtime_context}
+    end
   end
 
   @spec ref(server()) :: {:ok, Ref.t()} | {:error, :runtime_unavailable}

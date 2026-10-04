@@ -23,8 +23,8 @@ defmodule Arbor.MCP.Server.HandlerServerSubscriptionsTest do
   end
 
   test "listen remains open while correlated notifications flow over the test transport" do
-    registry = start_registry()
-    server = start_server(registry)
+    server = start_server()
+    {:ok, registry} = Runtime.service(server, :subscriptions)
     connect(server)
 
     send_request(server, listen_request(71, %{"toolsListChanged" => true}))
@@ -39,7 +39,7 @@ defmodule Arbor.MCP.Server.HandlerServerSubscriptionsTest do
     {:ok, edge} = Arbor.MCP.Server.Runtime.edge(server)
 
     assert [%{subscription_id: 71, transport_ref: ^edge}] =
-             Subscriptions.entries(registry: registry)
+             Subscriptions.entries(service: registry)
 
     :ok = Server.notify_tools_changed(server)
 
@@ -51,7 +51,7 @@ defmodule Arbor.MCP.Server.HandlerServerSubscriptionsTest do
     :ok = Server.notify_prompts_changed(server)
     refute_receive {:transport_message, _unrequested}
 
-    assert :ok = Subscriptions.close(edge, 71, :test_complete, registry: registry)
+    assert :ok = Subscriptions.close(edge, 71, :test_complete, service: registry)
 
     assert_receive {:transport_message, encoded_complete}, 1_000
     completed = Jason.decode!(encoded_complete)
@@ -61,8 +61,8 @@ defmodule Arbor.MCP.Server.HandlerServerSubscriptionsTest do
   end
 
   test "stdio-style cancellation removes the long-lived request without a completion response" do
-    registry = start_registry()
-    server = start_server(registry)
+    server = start_server()
+    {:ok, registry} = Runtime.service(server, :subscriptions)
     connect(server)
 
     send_request(
@@ -79,13 +79,13 @@ defmodule Arbor.MCP.Server.HandlerServerSubscriptionsTest do
     }
 
     send_request(server, cancellation)
-    assert_eventually(fn -> Subscriptions.entries(registry: registry) == [] end)
+    assert_eventually(fn -> Subscriptions.entries(service: registry) == [] end)
     refute_receive {:transport_message, _completion}
   end
 
   test "invalid filters produce a finite JSON-RPC error instead of opening a stream" do
-    registry = start_registry()
-    server = start_server(registry)
+    server = start_server()
+    {:ok, registry} = Runtime.service(server, :subscriptions)
     connect(server)
 
     send_request(server, listen_request(73, %{"toolsListChanged" => "yes"}))
@@ -95,12 +95,11 @@ defmodule Arbor.MCP.Server.HandlerServerSubscriptionsTest do
     assert error["id"] == 73
     assert error["error"]["code"] == -32602
     assert error["error"]["message"] == "Subscription request rejected"
-    assert Subscriptions.entries(registry: registry) == []
+    assert Subscriptions.entries(service: registry) == []
   end
 
   test "request-scoped notifications are not stamped as subscription events" do
-    registry = start_registry()
-    server = start_server(registry)
+    server = start_server()
     connect(server)
 
     send_request(server, listen_request(74, %{"toolsListChanged" => true}))
@@ -116,8 +115,7 @@ defmodule Arbor.MCP.Server.HandlerServerSubscriptionsTest do
   end
 
   test "the process lifetime rejects a duplicate request ID before handler dispatch" do
-    registry = start_registry()
-    server = start_server(registry)
+    server = start_server()
     connect(server)
 
     request = tools_list_request(81)
@@ -140,8 +138,7 @@ defmodule Arbor.MCP.Server.HandlerServerSubscriptionsTest do
   end
 
   test "the process lifetime fails closed when request ID storage reaches its cap" do
-    registry = start_registry()
-    server = start_server(registry, max_request_ids: 1)
+    server = start_server(max_request_ids: 1)
     connect(server)
 
     send_request(server, tools_list_request(82))
@@ -163,8 +160,7 @@ defmodule Arbor.MCP.Server.HandlerServerSubscriptionsTest do
   end
 
   test "BEAM-local transport shares the same process-lifetime duplicate guard" do
-    registry = start_registry()
-    server = start_server(registry, transport: :beam)
+    server = start_server(transport: :beam)
     connect(server)
 
     request = tools_list_request("beam-duplicate")
@@ -192,8 +188,8 @@ defmodule Arbor.MCP.Server.HandlerServerSubscriptionsTest do
   end
 
   test "an admitted subscription that expires behind a suspended edge never creates a listener" do
-    registry = start_registry()
-    server = start_server(registry, request_timeout_ms: 40)
+    server = start_server(request_timeout_ms: 40)
+    {:ok, registry} = Runtime.service(server, :subscriptions)
     connect(server)
     {:ok, edge} = Runtime.edge(server)
     :sys.suspend(edge)
@@ -201,7 +197,7 @@ defmodule Arbor.MCP.Server.HandlerServerSubscriptionsTest do
     send_request(server, listen_request(91, %{"toolsListChanged" => true}))
     Process.sleep(60)
     assert %{reserved: 1} = Runtime.stats(server)
-    assert Subscriptions.entries(registry: registry) == []
+    assert Subscriptions.entries(service: registry) == []
     :sys.resume(edge)
     assert_receive {:transport_message, encoded_error}, 1_000
 
@@ -209,13 +205,13 @@ defmodule Arbor.MCP.Server.HandlerServerSubscriptionsTest do
              Jason.decode!(encoded_error)
 
     assert_eventually(fn -> Runtime.stats(server).reserved == 0 end)
-    assert Subscriptions.entries(registry: registry) == []
+    assert Subscriptions.entries(service: registry) == []
     refute_receive {:transport_message, _late_ack}, 30
   end
 
   test "queued retired listener events and mirrored indexes cannot cross peer replacement" do
-    registry = start_registry()
-    server = start_server(registry)
+    server = start_server()
+    {:ok, registry} = Runtime.service(server, :subscriptions)
     connect(server)
     send_request(server, listen_request(92, %{"toolsListChanged" => true}))
     assert_receive {:transport_message, _ack}, 1_000
@@ -225,7 +221,7 @@ defmodule Arbor.MCP.Server.HandlerServerSubscriptionsTest do
     [{:edge_connection, ^edge, old_connection}] =
       :ets.lookup(Ref.table(runtime), :edge_connection)
 
-    [entry] = Subscriptions.entries(registry: registry)
+    [entry] = Subscriptions.entries(service: registry)
     listener = :sys.get_state(edge).subscriptions[92]
     assert entry.transport_ref == edge
     :sys.suspend(edge)
@@ -259,26 +255,16 @@ defmodule Arbor.MCP.Server.HandlerServerSubscriptionsTest do
     assert_receive {:replacement_connected, ^peer, {:ok, ^edge, ^runtime, _connection}}, 1_000
     refute_receive {:replacement_message, _retired_event}, 30
     refute :ets.member(Ref.table(runtime), {:subscription, old_connection, 92})
-    assert_eventually(fn -> Subscriptions.entries(registry: registry) == [] end)
+    assert_eventually(fn -> Subscriptions.entries(service: registry) == [] end)
   end
 
-  defp start_registry do
-    child =
-      Supervisor.child_spec(
-        {Subscriptions, name: nil, max_lifetime_ms: 5_000},
-        id: make_ref()
-      )
-
-    start_supervised!(child)
-  end
-
-  defp start_server(registry, extra_opts \\ []) do
+  defp start_server(extra_opts \\ []) do
     opts =
       [
         handler: Handler,
         transport: :test,
         protocol_mode: :modern_only,
-        subscription_registry: registry,
+        services: [subscriptions: [options: [max_lifetime_ms: 5_000]]],
         principal_id: "principal-1",
         tenant_id: "tenant-1",
         authorize_subscription_filter: fn requested, _context -> {:ok, requested} end,

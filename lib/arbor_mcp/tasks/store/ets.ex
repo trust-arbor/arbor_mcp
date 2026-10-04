@@ -12,6 +12,7 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
 
   @behaviour Arbor.MCP.Tasks.Store
 
+  alias Arbor.MCP.Server.Runtime.ServiceAdapter
   alias Arbor.MCP.Tasks.{Extension, Task}
 
   @name __MODULE__
@@ -34,11 +35,16 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
+    server_opts = [timeout: Keyword.get(opts, :init_timeout_ms, :infinity)]
+
     case Keyword.get(opts, :name, @name) do
-      nil -> GenServer.start_link(__MODULE__, opts)
-      name -> GenServer.start_link(__MODULE__, opts, name: name)
+      nil -> GenServer.start_link(__MODULE__, opts, server_opts)
+      name -> GenServer.start_link(__MODULE__, opts, Keyword.put(server_opts, :name, name))
     end
   end
+
+  @doc false
+  def runtime_service_capabilities, do: %{bounded_startup: 1}
 
   @impl Arbor.MCP.Tasks.Store
   def create(%Task{} = task, owner, opts) do
@@ -73,7 +79,8 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
 
   @impl GenServer
   def init(opts) do
-    with {:ok, max_tasks} <- positive_limit(Keyword.get(opts, :max_tasks, @default_max_tasks)),
+    with :ok <- ServiceAdapter.watch_owned(opts),
+         {:ok, max_tasks} <- positive_limit(Keyword.get(opts, :max_tasks, @default_max_tasks)),
          {:ok, max_ttl_ms} <-
            positive_limit(Keyword.get(opts, :max_ttl_ms, @default_max_ttl_ms)),
          {:ok, now_fun} <- now_fun(Keyword.get(opts, :now_fun)) do

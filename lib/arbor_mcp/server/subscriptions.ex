@@ -10,6 +10,7 @@ defmodule Arbor.MCP.Server.Subscriptions do
   use GenServer
 
   alias Arbor.MCP.Server.SubscriptionListener
+  alias Arbor.MCP.Server.Runtime.{ServiceAdapter, Services}
   alias Arbor.MCP.Server.Subscriptions.{Entry, ETS}
   alias Arbor.MCP.SubscriptionFilter
   alias Arbor.MCP.Tasks.Extension, as: TasksExtension
@@ -20,6 +21,7 @@ defmodule Arbor.MCP.Server.Subscriptions do
   defstruct [
     :adapter,
     :adapter_state,
+    :runtime_table,
     :listener_supervisor,
     :filter_authorizer,
     :publication_authorizer,
@@ -41,66 +43,95 @@ defmodule Arbor.MCP.Server.Subscriptions do
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
+    server_opts = [timeout: Keyword.get(opts, :init_timeout_ms, :infinity)]
+
     case Keyword.get(opts, :name, __MODULE__) do
-      nil -> GenServer.start_link(__MODULE__, opts)
-      name -> GenServer.start_link(__MODULE__, opts, name: name)
+      nil -> GenServer.start_link(__MODULE__, opts, server_opts)
+      name -> GenServer.start_link(__MODULE__, opts, Keyword.put(server_opts, :name, name))
     end
   end
+
+  @doc false
+  def runtime_service_capabilities, do: %{bounded_startup: 1}
 
   @spec listen(Arbor.MCP.Types.request_id(), map(), pid(), keyword()) ::
           {:ok, Entry.t()} | {:error, term()}
   def listen(subscription_id, requested_filter, transport_ref, opts \\ []) do
-    registry = Keyword.get(opts, :registry, __MODULE__)
-    GenServer.call(registry, {:listen, subscription_id, requested_filter, transport_ref, opts})
+    call_service(opts, :listen, [subscription_id, requested_filter, transport_ref], fn opts ->
+      registry = Keyword.get(opts, :registry, __MODULE__)
+      GenServer.call(registry, {:listen, subscription_id, requested_filter, transport_ref, opts})
+    end)
   end
 
-  @spec cancel(pid(), Arbor.MCP.Types.request_id(), keyword()) :: :ok
+  @spec cancel(pid(), Arbor.MCP.Types.request_id(), keyword()) :: :ok | {:error, term()}
   def cancel(transport_ref, subscription_id, opts \\ []) do
-    registry = Keyword.get(opts, :registry, __MODULE__)
-    GenServer.call(registry, {:cancel, transport_ref, subscription_id})
+    call_service(opts, :cancel, [transport_ref, subscription_id], fn opts ->
+      registry = Keyword.get(opts, :registry, __MODULE__)
+      GenServer.call(registry, {:cancel, transport_ref, subscription_id})
+    end)
   end
 
   @spec close(pid(), Arbor.MCP.Types.request_id(), atom(), keyword()) ::
-          :ok | {:error, :not_found}
+          :ok | {:error, term()}
   def close(transport_ref, subscription_id, reason \\ :server_closed, opts \\ []) do
-    registry = Keyword.get(opts, :registry, __MODULE__)
-    GenServer.call(registry, {:close, transport_ref, subscription_id, reason})
+    call_service(opts, :close, [transport_ref, subscription_id, reason], fn opts ->
+      registry = Keyword.get(opts, :registry, __MODULE__)
+      GenServer.call(registry, {:close, transport_ref, subscription_id, reason})
+    end)
   end
 
-  @spec remove_transport(pid(), keyword()) :: :ok
+  @spec remove_transport(pid(), keyword()) :: :ok | {:error, term()}
   def remove_transport(transport_ref, opts \\ []) do
-    registry = Keyword.get(opts, :registry, __MODULE__)
-    GenServer.call(registry, {:remove_transport, transport_ref})
+    call_service(opts, :remove_transport, [transport_ref], fn opts ->
+      registry = Keyword.get(opts, :registry, __MODULE__)
+      GenServer.call(registry, {:remove_transport, transport_ref})
+    end)
   catch
     :exit, _reason -> :ok
   end
 
-  @spec publish(String.t(), map(), keyword()) :: %{
-          subscribers: non_neg_integer(),
-          enqueued: non_neg_integer(),
-          coalesced: non_neg_integer(),
-          closed: non_neg_integer()
-        }
+  @spec publish(String.t(), map(), keyword()) ::
+          %{
+            subscribers: non_neg_integer(),
+            enqueued: non_neg_integer(),
+            coalesced: non_neg_integer(),
+            closed: non_neg_integer()
+          }
+          | {:error, term()}
   def publish(method, params \\ %{}, opts \\ []) do
-    registry = Keyword.get(opts, :registry, __MODULE__)
-    transport_ref = Keyword.get(opts, :transport_ref)
-    GenServer.call(registry, {:publish, method, params, transport_ref})
+    call_service(opts, :publish, [method, params], fn opts ->
+      registry = Keyword.get(opts, :registry, __MODULE__)
+      transport_ref = Keyword.get(opts, :transport_ref)
+      GenServer.call(registry, {:publish, method, params, transport_ref})
+    end)
   end
 
   @doc false
-  @spec publish_async(String.t(), map(), keyword()) :: :ok
+  @spec publish_async(String.t(), map(), keyword()) :: :ok | {:error, term()}
   def publish_async(method, params \\ %{}, opts \\ []) do
-    registry = Keyword.get(opts, :registry, __MODULE__)
-    transport_ref = Keyword.get(opts, :transport_ref)
-    GenServer.cast(registry, {:publish, method, params, transport_ref})
+    call_service(opts, :publish_async, [method, params], fn opts ->
+      registry = Keyword.get(opts, :registry, __MODULE__)
+      transport_ref = Keyword.get(opts, :transport_ref)
+      GenServer.cast(registry, {:publish, method, params, transport_ref})
+    end)
   catch
     :exit, _reason -> :ok
   end
 
-  @spec entries(keyword()) :: [Entry.t()]
+  @spec entries(keyword()) :: [Entry.t()] | {:error, term()}
   def entries(opts \\ []) do
-    registry = Keyword.get(opts, :registry, __MODULE__)
-    GenServer.call(registry, :entries)
+    call_service(opts, :entries, [], fn opts ->
+      registry = Keyword.get(opts, :registry, __MODULE__)
+      GenServer.call(registry, :entries)
+    end)
+  end
+
+  defp call_service(opts, operation, args, local) do
+    with {:ok, adapter, resolved} <- Services.subscription_options(opts) do
+      if adapter == __MODULE__,
+        do: local.(resolved),
+        else: apply(adapter, operation, args ++ [resolved])
+    end
   end
 
   @spec delivered(pid()) :: :ok
@@ -112,6 +143,7 @@ defmodule Arbor.MCP.Server.Subscriptions do
     opts
     |> Keyword.take([
       :subscription_registry,
+      :runtime,
       :authorize_subscription_filter,
       :authorize_subscription_publication,
       :subscription_max_queue,
@@ -123,6 +155,7 @@ defmodule Arbor.MCP.Server.Subscriptions do
     ])
     |> Enum.map(fn
       {:subscription_registry, value} -> {:registry, value}
+      {:runtime, value} -> {:runtime, value}
       {:authorize_subscription_filter, value} -> {:authorize_filter, value}
       {:authorize_subscription_publication, value} -> {:authorize_publication, value}
       {:subscription_max_queue, value} -> {:max_queue, value}
@@ -155,7 +188,7 @@ defmodule Arbor.MCP.Server.Subscriptions do
     if Code.ensure_loaded?(handler) and
          function_exported?(handler, :__task_store_enabled__, 0) and
          handler.__task_store_enabled__() do
-      Keyword.put(opts, :task_store_opts, handler.__task_store_options__())
+      Keyword.put_new(opts, :task_store_opts, handler.__task_store_options__())
     else
       opts
     end
@@ -167,7 +200,8 @@ defmodule Arbor.MCP.Server.Subscriptions do
   def init(opts) do
     {adapter, adapter_opts} = adapter_spec(Keyword.get(opts, :adapter, ETS))
 
-    with {:ok, adapter_state} <- adapter.init(adapter_opts),
+    with :ok <- ServiceAdapter.watch_owned(opts),
+         {:ok, adapter_state} <- adapter.init(adapter_opts),
          {:ok, limits} <- validate_limits(opts),
          :ok <- validate_filter_authorizer(Keyword.get(opts, :authorize_filter)),
          :ok <- validate_publication_authorizer(Keyword.get(opts, :authorize_publication)) do
@@ -177,6 +211,7 @@ defmodule Arbor.MCP.Server.Subscriptions do
          adapter_state: adapter_state,
          listener_supervisor:
            Keyword.get(opts, :listener_supervisor, Arbor.MCP.DynamicSupervisor),
+         runtime_table: Keyword.get(opts, :runtime_table),
          filter_authorizer: Keyword.get(opts, :authorize_filter),
          publication_authorizer: Keyword.get(opts, :authorize_publication),
          supported_notifications: Keyword.get(opts, :supported_notifications, @default_supported),
@@ -369,6 +404,7 @@ defmodule Arbor.MCP.Server.Subscriptions do
 
     listener_opts = [
       registry: self(),
+      runtime_table: state.runtime_table,
       token: token,
       subscription_id: subscription_id,
       transport_ref: transport_ref,

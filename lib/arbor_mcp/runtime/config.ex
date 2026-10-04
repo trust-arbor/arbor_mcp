@@ -1,11 +1,14 @@
 defmodule Arbor.MCP.Server.Runtime.Config do
   @moduledoc false
 
+  alias Arbor.MCP.Server.Runtime.ServiceConfig
+
   defstruct handler: nil,
             handler_args: [],
             dispatcher: Arbor.MCP.Server.Dispatch,
             cancellation_tracker: nil,
             dispatch_opts: [],
+            services: nil,
             execution: :stateful,
             max_concurrency: 1,
             max_queue: 128,
@@ -22,11 +25,35 @@ defmodule Arbor.MCP.Server.Runtime.Config do
     keys = Map.keys(Map.from_struct(%__MODULE__{}))
     config = struct(__MODULE__, Keyword.take(opts, keys))
 
-    with :ok <- validate_handler(config),
+    with :ok <- validate_legacy_services(opts),
+         :ok <- validate_handler(config),
          :ok <- validate_execution(config),
-         :ok <- validate_limits(config) do
-      {:ok, config}
+         :ok <- validate_limits(config),
+         {:ok, services} <- ServiceConfig.new(opts),
+         :ok <- validate_replay_requirement(opts, services) do
+      {:ok, %{config | services: services}}
     end
+  end
+
+  defp validate_legacy_services(opts) do
+    cond do
+      Keyword.get(opts, :subscription_registry) ->
+        {:error,
+         {:subscription_registry_requires_service_descriptor,
+          :configure_owned_subscriptions_or_namespaced_borrowed_service}}
+
+      Keyword.get(opts, :replay_cache) ->
+        {:error, :replay_cache_requires_service_descriptor}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp validate_replay_requirement(opts, services) do
+    if Keyword.get(opts, :require_replay_protection, false) and is_nil(services.replay_cache),
+      do: {:error, :replay_cache_required},
+      else: :ok
   end
 
   defp validate_handler(%{handler: handler, dispatcher: dispatcher})

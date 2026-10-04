@@ -8,16 +8,20 @@ defmodule Arbor.MCP.Tasks do
   input-response helpers.
 
   The current request principal, tenant, and endpoint are included in the
-  store owner automatically. A worker outside a server callback should retain
-  `owner/1` from the creating request and pass it back with `owner: owner`.
+  store owner automatically. Runtime callbacks use their owned task service.
+  A worker outside the callback must capture `Server.Runtime.service(:tasks)`
+  and `owner/1` before spawning, then pass `service: service, owner: owner`.
 
   Successful creates and wire-visible transitions asynchronously publish the
   full modern state to authorized `subscriptions/listen` task filters. Pass a
-  non-default registry as `subscription_registry: registry`; use
-  `notify: false` only when the host owns publication.
+  runtime address as `runtime: runtime` or its task reference as `service: service`.
+  The runtime selects the matching subscription service. Outside Runtime,
+  standalone legacy helpers still accept `subscription_registry: registry`.
+  Use `notify: false` only when the host owns publication.
   """
 
   alias Arbor.MCP.Server.Context
+  alias Arbor.MCP.Server.Runtime.Services
   alias Arbor.MCP.Server.Subscriptions
   alias Arbor.MCP.Tasks.{Extension, Store, StoreCall, Task}
 
@@ -205,11 +209,24 @@ defmodule Arbor.MCP.Tasks do
   end
 
   defp notify(%Task{} = task, opts) do
+    case Services.task_options(opts) do
+      {:ok, resolved} -> publish_task(task, resolved)
+      {:error, _reason} -> :ok
+    end
+  end
+
+  defp publish_task(task, opts) do
     if Keyword.get(opts, :notify, true) do
       publish_opts =
         case Keyword.fetch(opts, :subscription_registry) do
           {:ok, registry} -> [registry: registry]
           :error -> []
+        end
+
+      publish_opts =
+        case Keyword.get(opts, :service) || Keyword.get(opts, :runtime) do
+          nil -> publish_opts
+          server -> Keyword.put(publish_opts, :runtime, server)
         end
 
       Subscriptions.publish_async(
