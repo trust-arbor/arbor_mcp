@@ -25,8 +25,10 @@ defmodule Arbor.MCP.Server.Runtime do
   cover supported ingress and helper APIs, not arbitrary Erlang sends, handler
   state, arbitrary callback output, or the accumulated responses of a batch.
 
-  `request/3` uses a temporary process alias: a finite `await_timeout` stops
-  waiting without leaving late replies in the caller mailbox. It does not
+  `request/3` uses a temporary process alias: a finite `await_timeout` covers
+  admission and waiting from API entry, without leaving late replies in the
+  caller mailbox. Finite waits range from zero through 4,294,967,295 ms;
+  a zero wait admits no new work. It does not
   cancel accepted work; use `timeout` for the server deadline or `cancel/4` for
   explicit cancellation. Low-level `submit/3` and `await/2` deliver to the
   configured reply target. An `await/2` timeout leaves that delivery active,
@@ -57,6 +59,7 @@ defmodule Arbor.MCP.Server.Runtime do
     Admission,
     CallbackContext,
     Config,
+    Deadline,
     ExecutionSupervisor,
     Ref,
     ShutdownGuard
@@ -254,12 +257,17 @@ defmodule Arbor.MCP.Server.Runtime do
 
   @doc false
   def request(server, request, opts \\ []) do
-    with :ok <- validate_await_timeout(Keyword.get(opts, :await_timeout, :infinity)),
+    await_timeout = Keyword.get(opts, :await_timeout, :infinity)
+
+    with :ok <- validate_await_timeout(await_timeout),
+         deadline = Deadline.after_ms(await_timeout),
+         :ok <- await_budget_open(deadline),
          {:ok, runtime} <- ref(server) do
       monitor = Process.monitor(Ref.supervisor(runtime))
       reply_alias = :erlang.alias()
 
       try do
+        opts = Keyword.put(opts, :admission_deadline, deadline)
         request_with_alias(runtime, request, opts, monitor, reply_alias)
       after
         :erlang.unalias(reply_alias)
@@ -335,13 +343,21 @@ defmodule Arbor.MCP.Server.Runtime do
   def cancelled?, do: CallbackContext.cancelled?()
 
   defp request_with_alias(runtime, request, opts, monitor, reply_alias) do
-    with {:ok, token} <- submit(runtime, request, Keyword.put(opts, :reply_to, reply_alias)) do
+    deadline = Keyword.fetch!(opts, :admission_deadline)
+
+    with :ok <- await_budget_open(deadline),
+         {:ok, token} <- submit(runtime, request, Keyword.put(opts, :reply_to, reply_alias)) do
       try do
-        receive do
-          {:arbor_mcp_runtime, ^token, result} -> result
-          {:DOWN, ^monitor, :process, _pid, _reason} -> {:error, :runtime_unavailable}
-        after
-          Keyword.get(opts, :await_timeout, :infinity) -> {:error, :await_timeout}
+        with :ok <- await_budget_open(deadline) do
+          receive do
+            {:arbor_mcp_runtime, ^token, result} ->
+              result_before_deadline(result, deadline)
+
+            {:DOWN, ^monitor, :process, _pid, _reason} ->
+              result_before_deadline({:error, :runtime_unavailable}, deadline)
+          after
+            Deadline.remaining(deadline) -> {:error, :await_timeout}
+          end
         end
       after
         :erlang.unalias(reply_alias)
@@ -356,6 +372,18 @@ defmodule Arbor.MCP.Server.Runtime do
   end
 
   defp validate_await_timeout(:infinity), do: :ok
-  defp validate_await_timeout(timeout) when is_integer(timeout) and timeout >= 0, do: :ok
+
+  defp validate_await_timeout(timeout)
+       when is_integer(timeout) and timeout >= 0 and timeout <= 4_294_967_295,
+       do: :ok
+
   defp validate_await_timeout(_timeout), do: {:error, :invalid_await_timeout}
+
+  defp await_budget_open(deadline) do
+    if Deadline.remaining(deadline) == 0, do: {:error, :await_timeout}, else: :ok
+  end
+
+  defp result_before_deadline(result, deadline) do
+    with :ok <- await_budget_open(deadline), do: result
+  end
 end

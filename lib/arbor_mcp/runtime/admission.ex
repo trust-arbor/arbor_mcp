@@ -3,7 +3,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
 
   use GenServer
 
-  alias Arbor.MCP.Server.Runtime.{ByteBudget, Failure, Ref, ShutdownGuard}
+  alias Arbor.MCP.Server.Runtime.{ByteBudget, Deadline, Failure, Ref, ShutdownGuard}
 
   def start_link(opts) do
     with {:ok, pid} <- GenServer.start_link(__MODULE__, opts) do
@@ -18,11 +18,23 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   def reserve(runtime, request, opts) do
     table = Ref.table(runtime)
 
-    with {:ok, route} <- route(table),
+    with :ok <- Deadline.validate(Keyword.get(opts, :admission_deadline, :infinity)),
+         {:ok, route} <- route(table),
          {:ok, bytes} <- request_size(request, opts, route.config),
          {:ok, reservation} <- claim_slot(runtime, route, request, bytes, opts) do
+      confirm_candidate(table, route, reservation)
+    end
+  end
+
+  defp confirm_candidate(table, route, reservation) do
+    {wait, timeout_reason} = Deadline.confirmation_budget(reservation)
+
+    if wait == 0 do
+      release_slot(table, reservation)
+      {:error, timeout_reason}
+    else
       try do
-        case GenServer.call(route.admission, {:confirm, reservation.token}, 5_000) do
+        case GenServer.call(route.admission, {:confirm, reservation.token}, wait) do
           {:ok, confirmed} ->
             {:ok, route, confirmed}
 
@@ -31,6 +43,10 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
             error
         end
       catch
+        :exit, {:timeout, _call} ->
+          GenServer.cast(route.admission, {:abandon, reservation.token})
+          {:error, timeout_reason}
+
         :exit, _reason ->
           # Confirmation may have succeeded before the caller timed out. Keep
           # the slot until the admission owner has released its ledger record;
@@ -506,6 +522,8 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   end
 
   defp confirm_reservation(reservation, state) do
+    deadline_error = Deadline.admission_error(reservation)
+
     cond do
       ShutdownGuard.closing?(state.table) ->
         {:reply, {:error, :runtime_stopped}, state}
@@ -516,15 +534,15 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
       not slot_owned?(state.table, reservation) ->
         {:reply, {:error, :admission_lost}, state}
 
+      deadline_error ->
+        release_slot(state.table, reservation)
+        {:reply, {:error, deadline_error}, state}
+
       not origin_active?(state.table, reservation.origin) ->
         release_slot(state.table, reservation)
         {:reply, {:error, :request_cancelled}, state}
 
-      not Process.alive?(reservation.producer) ->
-        release_slot(state.table, reservation)
-        {:reply, {:error, :owner_down}, state}
-
-      not Process.alive?(reservation.owner) ->
+      not participants_alive?(reservation) ->
         release_slot(state.table, reservation)
         {:reply, {:error, :owner_down}, state}
 
@@ -588,6 +606,9 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     end
   end
 
+  defp participants_alive?(reservation),
+    do: Process.alive?(reservation.producer) and Process.alive?(reservation.owner)
+
   defp request_size(request, opts, config) do
     request_bytes = :erlang.external_size(request)
     context_bytes = :erlang.external_size(Keyword.get(opts, :dispatch_opts, []))
@@ -609,7 +630,8 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   end
 
   defp retained_option_bytes(opts) do
-    Enum.reduce([:wire_ids, :origin, :uncancellable_ids, :scope], 0, fn key, bytes ->
+    Enum.reduce([:wire_ids, :origin, :uncancellable_ids, :scope, :admission_deadline], 0, fn key,
+                                                                                             bytes ->
       case Keyword.fetch(opts, key) do
         {:ok, nil} -> bytes
         {:ok, value} -> bytes + :erlang.external_size(value)
@@ -651,10 +673,15 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
         count = work_count(request, opts)
         timeout = min(timeout, route.config.request_timeout_ms)
         deadline = System.monotonic_time(:millisecond) + timeout
+        admission_deadline = Keyword.get(opts, :admission_deadline, :infinity)
+
+        limit =
+          Deadline.admission_limit(%{deadline: deadline, admission_deadline: admission_deadline})
+
         available = available_slots(route.config, Keyword.get(opts, :kind))
 
         with {:ok, slots} <-
-               claim_work_slots(Ref.table(runtime), available, count, token, producer, deadline) do
+               claim_work_slots(Ref.table(runtime), available, count, token, producer, limit) do
           reservation = %{
             token: token,
             slot: hd(slots),
@@ -678,6 +705,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
             scope: scope,
             generation: route.generation,
             timeout: timeout,
+            admission_deadline: admission_deadline,
             deadline: deadline
           }
 
@@ -747,14 +775,22 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
 
   defp work_metadata_bytes(_request, _slots, _token, _producer), do: 0
 
-  defp claim_work_slots(table, available, count, token, producer, deadline, attempts \\ 512)
+  defp claim_work_slots(table, available, count, token, producer, limit, attempts \\ 512)
 
   defp claim_work_slots(_table, _available, _count, _token, _producer, _deadline, 0),
     do: {:error, :server_busy}
 
-  defp claim_work_slots(table, available, count, token, producer, deadline, attempts) do
+  defp claim_work_slots(
+         table,
+         available,
+         count,
+         token,
+         producer,
+         {deadline, reason} = limit,
+         attempts
+       ) do
     if System.monotonic_time(:millisecond) >= deadline do
-      {:error, :handler_timeout}
+      {:error, reason}
     else
       slots = available |> Stream.reject(&:ets.member(table, {:slot, &1})) |> Enum.take(count)
       records = Enum.map(slots, &{{:slot, &1}, token, producer})
@@ -762,7 +798,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
       cond do
         length(slots) != count -> {:error, :server_busy}
         :ets.insert_new(table, records) -> {:ok, slots}
-        true -> claim_work_slots(table, available, count, token, producer, deadline, attempts - 1)
+        true -> claim_work_slots(table, available, count, token, producer, limit, attempts - 1)
       end
     end
   end

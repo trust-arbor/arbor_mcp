@@ -1,6 +1,8 @@
 defmodule Arbor.MCP.Server.Runtime.ByteBudget do
   @moduledoc false
 
+  alias Arbor.MCP.Server.Runtime.Deadline
+
   @lanes [:data, :outgoing, :incoming]
 
   def reset(table, generation, config) do
@@ -25,6 +27,13 @@ defmodule Arbor.MCP.Server.Runtime.ByteBudget do
   # this operation and candidate publication leaves a reapable slot/token, not
   # an orphaned counter increment. No payload metadata precedes this claim.
   def claim(table, generation, reservation) do
+    case Deadline.admission_error(reservation) do
+      nil -> claim_open(table, generation, reservation)
+      reason -> {:error, reason}
+    end
+  end
+
+  defp claim_open(table, generation, reservation) do
     token = reservation.token
     bytes = reservation.bytes
     key = {:byte_budget, lane(reservation.kind)}
