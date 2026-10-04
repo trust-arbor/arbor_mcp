@@ -29,7 +29,6 @@ defmodule Arbor.MCP.Content.Builders do
       # File-based content
       content = from_file("image.png")
       |> with_alt_text("Product screenshot")
-      |> resize(800, 600)
 
       # Batch creation
       contents = batch([
@@ -51,9 +50,7 @@ defmodule Arbor.MCP.Content.Builders do
   @typedoc "File processing options"
   @type file_opts :: [
           max_size: pos_integer(),
-          mime_types: [String.t()],
-          auto_resize: {pos_integer(), pos_integer()},
-          quality: float()
+          mime_types: [String.t()]
         ]
 
   defmacro __using__(_opts) do
@@ -123,6 +120,10 @@ defmodule Arbor.MCP.Content.Builders do
   @doc """
   Creates content from a file with automatic type detection.
 
+  `:max_size` and `:mime_types` constrain loading. Removed `:auto_resize` and
+  `:quality` options return an error before reading the file; process media in
+  the application before loading it.
+
   ## Examples
 
       # Image file
@@ -132,12 +133,14 @@ defmodule Arbor.MCP.Content.Builders do
       content = from_file("README.md")
 
       # With options
-      content = from_file("large_image.jpg", max_size: 1_000_000, auto_resize: {800, 600})
+      content = from_file("large_image.jpg", max_size: 1_000_000)
   """
   @spec from_file(String.t(), file_opts()) :: Protocol.content() | {:error, String.t()}
   def from_file(file_path, opts \\ []) do
-    with {:ok, data} <- File.read(file_path),
+    with :ok <- validate_file_options(opts),
+         {:ok, data} <- File.read(file_path),
          {:ok, mime_type} <- detect_mime_type(file_path, data),
+         :ok <- validate_file_mime(mime_type, opts),
          :ok <- validate_file_size(data, opts),
          {:ok, content} <- create_content_from_file(data, mime_type, file_path, opts) do
       content
@@ -153,7 +156,7 @@ defmodule Arbor.MCP.Content.Builders do
   ## Examples
 
       content = image_from_file("photo.jpg")
-      content = image_from_file("diagram.png", alt_text: "System architecture", auto_resize: {800, 600})
+      content = image_from_file("diagram.png", alt_text: "System architecture")
   """
   @spec image_from_file(String.t(), keyword()) :: Protocol.image() | {:error, String.t()}
   def image_from_file(file_path, opts \\ []) do
@@ -186,7 +189,8 @@ defmodule Arbor.MCP.Content.Builders do
   """
   @spec text_from_file(String.t(), keyword()) :: Protocol.text() | {:error, String.t()}
   def text_from_file(file_path, opts \\ []) do
-    with {:ok, data} <- File.read(file_path),
+    with :ok <- validate_file_options(opts),
+         {:ok, data} <- File.read(file_path),
          format <- detect_text_format(file_path),
          language <- detect_language(file_path) do
       base_opts = [format: format, language: language] ++ opts
@@ -429,29 +433,6 @@ defmodule Arbor.MCP.Content.Builders do
   # Utility Functions
 
   @doc """
-  Resizes image content data.
-
-  Deprecated stub — not an MCP requirement. MCP image content is base64 + MIME only.
-  """
-  @deprecated "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0."
-  @spec resize(Protocol.image(), pos_integer(), pos_integer()) ::
-          Protocol.image() | {:error, String.t()}
-  def resize(%{type: :image} = _content, _width, _height) do
-    {:error, "Image resizing not implemented - requires image processing library"}
-  end
-
-  @doc """
-  Compresses image content.
-
-  Deprecated stub — not an MCP requirement.
-  """
-  @deprecated "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0."
-  @spec compress(Protocol.image(), keyword()) :: Protocol.image() | {:error, String.t()}
-  def compress(%{type: :image} = _content, _opts \\ []) do
-    {:error, "Image compression not implemented - requires image processing library"}
-  end
-
-  @doc """
   Extracts text content from various content types.
 
   ## Examples
@@ -549,6 +530,25 @@ defmodule Arbor.MCP.Content.Builders do
     }
 
     Map.get(language_map, extension)
+  end
+
+  defp validate_file_options(opts) do
+    if Keyword.has_key?(opts, :auto_resize) or Keyword.has_key?(opts, :quality),
+      do: {:error, "Media processing file options were removed; process media before loading"},
+      else: :ok
+  end
+
+  defp validate_file_mime(mime_type, opts) do
+    case Keyword.get(opts, :mime_types) do
+      nil ->
+        :ok
+
+      allowed when is_list(allowed) ->
+        if mime_type in allowed, do: :ok, else: {:error, "File MIME type is not allowed"}
+
+      _ ->
+        {:error, "Invalid file MIME types option"}
+    end
   end
 
   defp validate_file_size(data, opts) do

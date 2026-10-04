@@ -1,10 +1,10 @@
 # V2 API migration inventory
 
-Status: proposed removal/replacement inventory for review. This inventory does
-not implement source removals. Supported 1.x remains in `lib/`; candidate
-v2 source is in the isolated MCP checkout and canonical ACP repository. This
-inventory records the accepted package/namespace split and API retirement
-scope, and distinguishes implemented candidate contracts from release gates.
+Status: accepted retirement inventory; the first 15 callable removals are
+implemented in the v2 candidate. Supported 1.x remains on the default branch.
+Candidate v2 source is in the isolated MCP checkout and canonical ACP repository.
+This inventory records the package/namespace split, implemented migrations and
+remaining release gates.
 
 The frozen [API baseline](./v2/api_baseline_1_5_plus.json) describes application
 `ex_mcp` version `1.5.0` at source `1808c56bd4fc7b000043c2775f61ecced6ed059f`
@@ -144,12 +144,18 @@ foundation evidence, not implemented runtime-mounted HTTP convergence.
 
 ## Remove unimplemented media/encoding helpers
 
-The exact callable set is in the compiled-deprecation table. `Builders.resize`
-and `compress`, and `Transformer.convert_encoding`, `compress_image`,
-`resize_image` and `generate_thumbnail` currently return an explicit
-not-implemented error. `Sanitizer.remove_metadata/1` clears a content-level
-`:metadata` map when present; it never strips image EXIF. There is no library
-image-processing replacement to advertise.
+The 11 media/metadata callable signatures below and the four ambiguous protocol
+helpers in the next section are removed in the candidate. Compiled absence and
+semantic migrations pass on minimum/current together with component composition:
+444 tests and eight properties, zero failures. The frozen 1.x baseline is
+unchanged. See [the implementation record](./V2_API_RETIREMENTS_SLICE.md).
+
+The exact callable set is in the compiled-deprecation table. In 1.x,
+`Builders.resize` and `compress`, and `Transformer.convert_encoding`,
+`compress_image`, `resize_image` and `generate_thumbnail` returned an explicit
+not-implemented error. `Sanitizer.remove_metadata/1` cleared a content-level
+`:metadata` map when present; it never stripped image EXIF. Perform media
+processing in the application before constructing MCP content.
 
 Perform media processing and EXIF removal in an application-owned pipeline, then
 use retained `Arbor.MCP.Content.Builders.image/2,3` with base64 data and MIME.
@@ -169,9 +175,9 @@ counts:
 
 | Retained type/API | Planned narrowing or unmet prerequisite |
 |---|---|
-| `ExMCP.Content.Transformer.transformation_op/0` | Retire `:convert_encoding`, `{:convert_encoding, from}`, `:compress_images`, `:resize_images`, `{:resize_images, opts}` and `:generate_thumbnails`. Current pipeline clauses are no-ops, with other atoms accepted by a catch-all. Agree and test explicit rejection/error behavior for removed operations; changing a typespec alone does not remove silent acceptance. Keep implemented whitespace and custom operations. |
-| `ExMCP.Content.Sanitizer.sanitization_op/0` | Retire `:remove_metadata` and `:compress_media` pipeline operations alongside `remove_metadata/1`. Keep the type and supported sanitizers. Agree/test rejection behavior for removed tokens; clearing content metadata and actual media sanitization have different effects. |
-| `ExMCP.Content.Builders.file_opts/0` | `:auto_resize` and `:quality` are advertised but have no implementation in file processing. Their final removal/explicit-rejection policy needs review alongside the stub removal; retain implemented size/MIME checks. Remove misleading examples once decided. |
+| `ExMCP.Content.Transformer.transformation_op/0` | Removed media/encoding atoms and tuple forms return a fixed tagged error before any pipeline step. Whitespace and custom operations remain. The retained experimental generic atom fallback does not override this rejection. |
+| `ExMCP.Content.Sanitizer.sanitization_op/0` | Removed `:remove_metadata` and `:compress_media` atoms and tuple forms raise a fixed `ArgumentError` before any content/text pipeline step. Supported sanitizers remain. Application metadata can be changed explicitly with `Map.put/3`. |
+| `ExMCP.Content.Builders.file_opts/0` | `:auto_resize` and `:quality` are removed from the type/examples and rejected by presence before file reads in all file builders. `from_file/2` retains size checks and now enforces the previously ignored `:mime_types` allowlist. |
 
 `Transformer.transform/2`, `transform_with_validation/2`, `convert_format/2`,
 `extract_text/1`, `Sanitizer.sanitize/2` and the content modules themselves are
@@ -309,7 +315,7 @@ following inventories must be finished separately before removals ship:
 |---|---|
 | Application configuration | Migrate `config :ex_mcp` to the owning app (`:arbor_mcp`, `:arbor_acp`, or RPC only for actual shared options), including module-valued OAuth/task/subscription keys and JSON Schema policy. Enumerate all `Application.get_env/fetch_env/compile_env/put_env` sites; do not blanket-map vendor environment variables or protocol data. |
 | HTTP options | Retire the `:sse_enabled` alias separately from the retained `:legacy_http_sse` wire feature. Inventory `:sse_mode`, `:handler_opts` static/function/MFA behavior, `:handler_call_timeout`, `:handler`, `:server`, authentication facts, replay and store options before runtime-mounted HTTP replacement. Per-request handler initialization must not survive behind a renamed option. |
-| Media options | Decide explicit rejection of removed pipeline tokens and advertised `:auto_resize` / `:quality`; typespec narrowing alone is insufficient. |
+| Media options | Implemented in the first retirement checkpoint: full pipeline prevalidation rejects removed tokens before custom effects, and every file builder rejects `:auto_resize` / `:quality` presence before file access. Retained `:mime_types` and `:max_size` constrain loading. See `V2_API_RETIREMENTS_SLICE.md` for exact policies and tests. |
 | Process/store names | Current `ExMCP.Supervisor`, `DynamicSupervisor`, cancellation/subscription/session/progress/replay/task owners and named ETS such as `:progress_tracker_state` / `:http_plug_sessions` must be assigned to package-wide or runtime-owned state. Enumerate DETS paths/table allocation and upgrade cleanup; renaming module atoms does not provide two-runtime isolation. |
 | Telemetry and messages | Main emits `[:ex_mcp, ...]`; candidate MCP stdio already emits `[:arbor_mcp, ...]`. Inventory every event name, measurement, metadata field and handler attachment; decide the migration/compatibility policy. Internal push events and raw Port callbacks change to generation-tagged acknowledged RPC events. They are not covered by export parity. |
 | Lifecycle/results | Audit public close/disconnect errors, startup cleanup failures, supervisor links/child specs, worker `self()`, direct GenServer calls, deferred callbacks, callback-created ETS/children and timeout cancellation assumptions. ACP's explicit cleanup-result and receipt/shutdown changes are documented in its `docs/ADAPTER_EXTENSION_API.md`. |

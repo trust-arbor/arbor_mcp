@@ -26,6 +26,25 @@ owned by the POST request and require no server transport flag. The deprecated
 2024-11-05 two-endpoint transport remains available with
 `legacy_http_sse: true` throughout Arbor.MCP 1.x.
 
+## Shared declarations
+
+Compose existing DSL modules at compilation with `components: [MyApp.SharedTools]`:
+
+```elixir
+defmodule MyApp.Server do
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, components: [MyApp.SharedTools]
+end
+```
+
+`MyApp.SharedTools` uses the same Handler and DSL declarations. Its tools,
+resources, templates and prompts are included once; nested components flatten
+at compilation, and duplicate identities fail with both declaration locations.
+Inherited callbacks receive the host state and callback context, preserving their
+own private helpers, defaults and compiled validators. Including a component
+initializes only the host handler and starts one Runtime. Component callbacks
+must accept the host's state shape.
+
 ## Tools
 
 Tools declare input metadata and a `run` handler:

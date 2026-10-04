@@ -102,24 +102,11 @@ defmodule Arbor.MCP.Protocol.ErrorCodes do
   """
   def consent_required, do: @consent_required
 
-  @doc "Legacy Arbor.MCP consent-required code retained only for decoding old local errors."
-  @deprecated "Use consent_required/0; -32002 is reserved as a historical MCP code"
-  def legacy_consent_required, do: @legacy_resource_not_found
-
   @doc "Consent denied: User denied consent for the operation"
   def consent_denied, do: @consent_denied
 
   @doc "Generic server error: Catch-all for server-side errors"
   def server_error, do: @server_error
-
-  @doc """
-  Legacy resource-not-found code used by MCP 2025-11-25 and earlier.
-
-  New code should call `resource_not_found/1` with the negotiated version or
-  protocol era.
-  """
-  @deprecated "Use resource_not_found/1 so modern peers receive -32602"
-  def resource_not_found, do: @legacy_resource_not_found
 
   @doc "Returns the resource-not-found code appropriate for a protocol era or version."
   @spec resource_not_found(:legacy | :modern | String.t()) :: integer()
@@ -151,10 +138,6 @@ defmodule Arbor.MCP.Protocol.ErrorCodes do
   def resource_not_found_code?(code, version) when is_binary(version) do
     resource_not_found_code?(code, RevisionCatalog.era_for(version))
   end
-
-  @doc "Legacy URL-elicitation-required code from MCP 2025-11-25."
-  @deprecated "MCP 2026-07-28 retired -32042; use MRTR for modern peers"
-  def url_elicitation_required, do: @legacy_url_elicitation_required
 
   @doc "Returns the URL-elicitation code for legacy peers and rejects modern emission."
   @spec url_elicitation_required(:legacy | :modern | String.t()) ::

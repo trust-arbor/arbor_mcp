@@ -19,6 +19,8 @@ defmodule Arbor.MCP.Compliance.VersionNegotiationPropertyTest do
 
   alias Arbor.MCP.Internal.VersionRegistry
   alias Arbor.MCP.Protocol.VersionNegotiator
+  alias Arbor.MCP.Server.ResultNormalizer
+  alias Arbor.MCP.TestSupport.LegacyInitialize
 
   @supported_versions VersionNegotiator.supported_versions()
 
@@ -133,14 +135,14 @@ defmodule Arbor.MCP.Compliance.VersionNegotiationPropertyTest do
     end
   end
 
-  property "the capability compatibility shim delegates for every supported version" do
+  property "canonical initialization retains capabilities for every supported version" do
     forall version <- supported_version_gen() do
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      result = apply(VersionNegotiator, :build_capabilities, [version])
+      result = LegacyInitialize.result(version)
 
-      result.protocolVersion == version and
-        result.serverInfo.name == "Arbor.MCP" and
-        result.capabilities == VersionRegistry.capabilities_for_version(version)
+      result["protocolVersion"] == version and
+        result["serverInfo"]["name"] == "Arbor.MCP" and
+        result["capabilities"] ==
+          ResultNormalizer.stringify_keys(VersionRegistry.capabilities_for_version(version))
     end
   end
 end

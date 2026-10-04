@@ -15,14 +15,8 @@ defmodule Arbor.MCP.Content.Transformer do
   - `{:custom, fun/1}`
   - limited text format conversion in `convert_format/2`
 
-  ### Deprecated stubs (planned for removal in 2.0.0)
-
-  Image processing was never part of MCP/ACP and was never implemented:
-
-  - `compress_image/3`, `:compress_images`
-  - `resize_image/3`, `:resize_images`
-  - `generate_thumbnail/3`, `:generate_thumbnails`
-  - `convert_encoding/2` (needs external encoding libs)
+  Media processing and encoding conversion belong to the application. The v2
+  pipeline rejects removed media/encoding operations before running any step.
   """
 
   alias Arbor.MCP.Content.Protocol
@@ -30,18 +24,15 @@ defmodule Arbor.MCP.Content.Transformer do
   @typedoc "Transformation operation"
   @type transformation_op ::
           :normalize_whitespace
-          | :convert_encoding
-          | :compress_images
-          | :resize_images
           | :extract_text
-          | :generate_thumbnails
           | {:custom, function()}
           | atom()
 
   @doc """
   Transforms content by applying a list of transformation operations.
 
-  Deprecated image ops are **no-ops** in the pipeline for backward compatibility.
+  Removed media and encoding operations return an error before any operation
+  runs. Perform that processing in the application, then construct MCP content.
 
   ## Examples
 
@@ -50,8 +41,10 @@ defmodule Arbor.MCP.Content.Transformer do
   @spec transform(Protocol.content(), [transformation_op()]) ::
           {:ok, Protocol.content()} | {:error, String.t()}
   def transform(content, operations) when is_list(operations) do
-    result = Enum.reduce(operations, content, &apply_transformation/2)
-    {:ok, result}
+    with :ok <- validate_operations(operations) do
+      result = Enum.reduce(operations, content, &apply_transformation/2)
+      {:ok, result}
+    end
   rescue
     e -> {:error, "Transformation failed: #{Exception.message(e)}"}
   end
@@ -62,12 +55,14 @@ defmodule Arbor.MCP.Content.Transformer do
   @spec transform_with_validation(Protocol.content(), [transformation_op()]) ::
           {:ok, Protocol.content()} | {:error, String.t()}
   def transform_with_validation(content, operations) when is_list(operations) do
-    Enum.reduce_while(operations, {:ok, content}, fn operation, {:ok, current_content} ->
-      case apply_operation_with_validation(current_content, operation) do
-        {:ok, transformed} -> {:cont, {:ok, transformed}}
-        {:error, _} = error -> {:halt, error}
-      end
-    end)
+    with :ok <- validate_operations(operations) do
+      Enum.reduce_while(operations, {:ok, content}, fn operation, {:ok, current_content} ->
+        case apply_operation_with_validation(current_content, operation) do
+          {:ok, transformed} -> {:cont, {:ok, transformed}}
+          {:error, _} = error -> {:halt, error}
+        end
+      end)
+    end
   end
 
   @doc """
@@ -85,17 +80,6 @@ defmodule Arbor.MCP.Content.Transformer do
     # Clean up spaces around newlines
     |> String.replace(~r/ *\n */, "\n")
     |> String.trim()
-  end
-
-  @doc """
-  Converts text encoding to UTF-8.
-
-  Deprecated stub — not an MCP requirement.
-  """
-  @deprecated "Not implemented; not required by MCP/ACP. Planned for removal in 2.0.0."
-  @spec convert_encoding(String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
-  def convert_encoding(text, _from_encoding \\ "auto") when is_binary(text) do
-    {:error, "Encoding conversion not implemented - requires external encoding library"}
   end
 
   @doc """
@@ -126,42 +110,6 @@ defmodule Arbor.MCP.Content.Transformer do
   def extract_text(_), do: {:error, "Unknown content type"}
 
   @doc """
-  Compresses image data.
-
-  Deprecated stub — MCP only transports image content blocks; processing is app-level.
-  """
-  @deprecated "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools."
-  @spec compress_image(binary(), String.t(), keyword()) ::
-          {:ok, binary()} | {:error, String.t()}
-  def compress_image(_image_data, _mime_type, _opts \\ []) do
-    {:error, "Image compression not implemented - requires external image processing library"}
-  end
-
-  @doc """
-  Resizes image to fit within specified dimensions.
-
-  Deprecated stub — not required by MCP/ACP.
-  """
-  @deprecated "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools."
-  @spec resize_image(binary(), String.t(), keyword()) ::
-          {:ok, binary()} | {:error, String.t()}
-  def resize_image(_image_data, _mime_type, _opts) do
-    {:error, "Image resizing not implemented - requires external image processing library"}
-  end
-
-  @doc """
-  Generates a thumbnail from image content.
-
-  Deprecated stub — not required by MCP/ACP.
-  """
-  @deprecated "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools."
-  @spec generate_thumbnail(binary(), String.t(), keyword()) ::
-          {:ok, binary()} | {:error, String.t()}
-  def generate_thumbnail(_image_data, _mime_type, _opts \\ []) do
-    {:error, "Thumbnail generation not implemented - requires external image processing library"}
-  end
-
-  @doc """
   Converts content from one format to another.
   """
   @spec convert_format(Protocol.content(), atom()) ::
@@ -182,14 +130,22 @@ defmodule Arbor.MCP.Content.Transformer do
 
   # Private helper functions
 
+  @removed_operations [:convert_encoding, :compress_images, :resize_images, :generate_thumbnails]
+
+  defp validate_operations(operations) do
+    if Enum.any?(operations, &removed_operation?/1),
+      do: {:error, "Media and encoding transformation operations were removed"},
+      else: :ok
+  end
+
+  defp removed_operation?(operation) when is_tuple(operation) and tuple_size(operation) > 0,
+    do: elem(operation, 0) in @removed_operations
+
+  defp removed_operation?(operation), do: operation in @removed_operations
+
   defp apply_transformation(:normalize_whitespace, %{type: :text, text: text} = content) do
     %{content | text: normalize_whitespace(text)}
   end
-
-  # Stubs: leave content unchanged (see moduledoc). Explicit * functions return errors.
-  defp apply_transformation({:convert_encoding, _from}, %{type: :text} = content), do: content
-  defp apply_transformation(:compress_images, %{type: :image} = content), do: content
-  defp apply_transformation({:resize_images, _opts}, %{type: :image} = content), do: content
 
   defp apply_transformation({:custom, fun}, content) when is_function(fun, 1) do
     fun.(content)

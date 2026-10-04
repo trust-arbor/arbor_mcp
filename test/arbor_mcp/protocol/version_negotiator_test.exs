@@ -3,6 +3,8 @@ defmodule Arbor.MCP.Protocol.VersionNegotiatorTest do
 
   alias Arbor.MCP.Internal.VersionRegistry
   alias Arbor.MCP.Protocol.VersionNegotiator
+  alias Arbor.MCP.Server.ResultNormalizer
+  alias Arbor.MCP.TestSupport.LegacyInitialize
 
   describe "negotiate/1" do
     test "returns the highest mutually supported version" do
@@ -103,28 +105,31 @@ defmodule Arbor.MCP.Protocol.VersionNegotiatorTest do
     end
   end
 
-  describe "build_capabilities/1" do
-    test "is a compatibility shim over the canonical registry" do
-      # Invoke dynamically because this deliberately covers a deprecated API.
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      result = apply(VersionNegotiator, :build_capabilities, ["2025-11-25"])
+  describe "canonical initialize migration" do
+    test "builds complete initialization through the canonical result and capability APIs" do
+      result = LegacyInitialize.result("2025-11-25")
 
-      assert result.protocolVersion == "2025-11-25"
-      assert result.serverInfo.name == "Arbor.MCP"
-      assert is_binary(result.serverInfo.version)
+      assert result["protocolVersion"] == "2025-11-25"
+      assert result["serverInfo"]["name"] == "Arbor.MCP"
+      assert is_binary(result["serverInfo"]["version"])
 
-      assert result.capabilities == VersionRegistry.capabilities_for_version("2025-11-25")
+      assert result["capabilities"] ==
+               ResultNormalizer.stringify_keys(
+                 VersionRegistry.capabilities_for_version("2025-11-25")
+               )
 
-      assert result.capabilities.tasks == %{}
+      assert result["capabilities"]["tasks"] == %{}
     end
 
     test "does not advertise a staged version" do
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      result = apply(VersionNegotiator, :build_capabilities, ["2026-07-28"])
+      result = LegacyInitialize.result("2026-07-28")
 
-      assert result.protocolVersion == "2025-11-25"
+      assert result["protocolVersion"] == "2025-11-25"
 
-      assert result.capabilities == VersionRegistry.capabilities_for_version("2025-11-25")
+      assert result["capabilities"] ==
+               ResultNormalizer.stringify_keys(
+                 VersionRegistry.capabilities_for_version("2025-11-25")
+               )
     end
   end
 end

@@ -15,11 +15,9 @@ defmodule Arbor.MCP.Content.Sanitizer do
   - `:limit_size` (text truncation; binary content marked on overflow)
   - `sanitize_path/1`, `strip_sql_injection/1`
 
-  ### Deprecated (not MCP/ACP requirements)
-
-  - `:remove_metadata` / `remove_metadata/1` — EXIF stripping was never implemented;
-    not required by MCP. Prefer app-level media pipelines if needed.
-  - `:compress_media` — no-op stub; planned for removal in 2.0.0
+  Media sanitization belongs to the application. The v2 pipeline rejects
+  removed metadata/media operations before running any step. Clearing an
+  application metadata map does not remove EXIF from media bytes.
   """
 
   alias Arbor.MCP.Content.Protocol
@@ -30,13 +28,14 @@ defmodule Arbor.MCP.Content.Sanitizer do
           | :strip_scripts
           | :normalize_unicode
           | :limit_size
-          | :remove_metadata
-          | :compress_media
           | {:custom, function()}
           | atom()
 
   @doc """
   Sanitizes content by applying a list of sanitization operations.
+
+  Removed metadata/media operations raise `ArgumentError` before any operation
+  runs, including custom operations.
 
   ## Examples
 
@@ -48,6 +47,7 @@ defmodule Arbor.MCP.Content.Sanitizer do
   """
   @spec sanitize(Protocol.content(), [sanitization_op()]) :: Protocol.content()
   def sanitize(content, operations) when is_list(operations) do
+    validate_operations!(operations)
     Enum.reduce(operations, content, &apply_sanitization/2)
   end
 
@@ -56,6 +56,7 @@ defmodule Arbor.MCP.Content.Sanitizer do
   """
   @spec sanitize_text(String.t(), [sanitization_op()]) :: String.t()
   def sanitize_text(text, operations) when is_binary(text) and is_list(operations) do
+    validate_operations!(operations)
     Enum.reduce(operations, text, &apply_text_sanitization/2)
   end
 
@@ -102,19 +103,6 @@ defmodule Arbor.MCP.Content.Sanitizer do
   end
 
   @doc """
-  Removes potentially dangerous metadata from content.
-
-  > #### Deprecated {: .warning}
-  > Never implemented for real EXIF stripping. Not required by MCP/ACP.
-  > Returns content unchanged (or clears a `:metadata` key when present).
-  > Planned for removal in 2.0.0.
-  """
-  @deprecated "Not implemented for EXIF; not an MCP requirement. Planned for removal in 2.0.0."
-  @spec remove_metadata(Protocol.content()) :: Protocol.content()
-  def remove_metadata(%{metadata: _} = content), do: Map.put(content, :metadata, %{})
-  def remove_metadata(content), do: content
-
-  @doc """
   Sanitizes file paths to prevent directory traversal.
   """
   @spec sanitize_path(String.t()) :: String.t()
@@ -143,6 +131,18 @@ defmodule Arbor.MCP.Content.Sanitizer do
 
   # Private helper functions
 
+  @removed_operations [:remove_metadata, :compress_media]
+
+  defp validate_operations!(operations) do
+    if Enum.any?(operations, &removed_operation?/1),
+      do: raise(ArgumentError, "Metadata and media sanitization operations were removed")
+  end
+
+  defp removed_operation?(operation) when is_tuple(operation) and tuple_size(operation) > 0,
+    do: elem(operation, 0) in @removed_operations
+
+  defp removed_operation?(operation), do: operation in @removed_operations
+
   defp apply_sanitization(:html_escape, %{type: :text, text: text} = content) do
     %{content | text: html_escape(text)}
   end
@@ -157,10 +157,6 @@ defmodule Arbor.MCP.Content.Sanitizer do
 
   defp apply_sanitization({:limit_size, max_size}, content) do
     limit_content_size(content, max_size)
-  end
-
-  defp apply_sanitization(:remove_metadata, content) do
-    remove_metadata(content)
   end
 
   defp apply_sanitization({:custom, fun}, content) when is_function(fun, 1) do

@@ -12,6 +12,8 @@ defmodule Arbor.MCP.Compliance.Version20250326Test do
 
   alias Arbor.MCP.Internal.{Protocol, VersionRegistry}
   alias Arbor.MCP.Protocol.VersionNegotiator
+  alias Arbor.MCP.Server.ResultNormalizer
+  alias Arbor.MCP.TestSupport.LegacyInitialize
 
   describe "version support" do
     test "2025-03-26 is a supported version in VersionRegistry" do
@@ -65,14 +67,18 @@ defmodule Arbor.MCP.Compliance.Version20250326Test do
   end
 
   describe "canonical capabilities for 2025-03-26" do
-    test "the compatibility shim delegates to VersionRegistry" do
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      result = apply(VersionNegotiator, :build_capabilities, ["2025-03-26"])
+    test "canonical initialization retains version-specific capabilities" do
+      result = LegacyInitialize.result("2025-03-26")
 
-      assert result.protocolVersion == "2025-03-26"
-      assert result.serverInfo.name == "Arbor.MCP"
-      assert result.capabilities == VersionRegistry.capabilities_for_version("2025-03-26")
-      assert result.capabilities.experimental.batchProcessing
+      assert result["protocolVersion"] == "2025-03-26"
+      assert result["serverInfo"]["name"] == "Arbor.MCP"
+
+      assert result["capabilities"] ==
+               ResultNormalizer.stringify_keys(
+                 VersionRegistry.capabilities_for_version("2025-03-26")
+               )
+
+      assert result["capabilities"]["experimental"]["batchProcessing"]
     end
   end
 

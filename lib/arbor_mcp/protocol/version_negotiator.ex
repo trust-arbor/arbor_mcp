@@ -87,31 +87,6 @@ defmodule Arbor.MCP.Protocol.VersionNegotiator do
 
   def supported?(_), do: false
 
-  @doc """
-  Build a legacy initialize-result wrapper using the canonical capability registry.
-
-  This function is retained as a 1.x compatibility shim. Initialization is
-  handled by Arbor.MCP's server dispatchers; code that only needs the capability
-  map should use `Arbor.MCP.Server.Capabilities.build_capabilities/2`.
-  """
-  @deprecated "Use Arbor.MCP.Protocol.Initialize or Arbor.MCP.Server.Capabilities"
-  @spec build_capabilities(String.t()) :: map()
-  def build_capabilities(negotiated_version) do
-    protocol_version =
-      if VersionRegistry.supported?(negotiated_version),
-        do: negotiated_version,
-        else: VersionRegistry.preferred_version()
-
-    %{
-      protocolVersion: protocol_version,
-      serverInfo: %{
-        name: "Arbor.MCP",
-        version: Application.spec(:arbor_mcp, :vsn) |> to_string()
-      },
-      capabilities: VersionRegistry.capabilities_for_version(protocol_version)
-    }
-  end
-
   # Private function to compare version strings
   # Later versions should sort first (descending order)
   defp version_compare(v1, v2) do

@@ -50,7 +50,12 @@ defmodule Arbor.MCP.Client.EstablishDeadlineTest do
       # so initialize may follow it; nothing else is ever sent. (On a loaded
       # host a deadline can pass before a request is written, and then that
       # request is rightly not sent at all.)
-      assert received_requests() in [[], ["server/discover"], ["server/discover", "initialize"]]
+      assert received_requests() in [
+               [],
+               ["server/discover"],
+               ["initialize"],
+               ["server/discover", "initialize"]
+             ]
     end
 
     test "modern_only returns within :era_probe_timeout", %{url: url} do

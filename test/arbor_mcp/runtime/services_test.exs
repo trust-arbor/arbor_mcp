@@ -319,10 +319,20 @@ defmodule Arbor.MCP.Server.RuntimeServicesTest do
       ]
     ]
 
-    a = start_runtime(services: services)
-    b = start_runtime(services: services)
     legacy_store = start_supervised!({Store.ETS, name: nil}, id: make_ref())
     owner = %{principal_id: "alice", tenant_id: "same-tenant", audience: "mcp://same"}
+
+    listen_opts = [
+      services: services,
+      principal_id: "alice",
+      tenant_id: "same-tenant",
+      audience: "mcp://same",
+      client_capabilities: Extension.put_capability(%{}),
+      task_store_opts: [server: legacy_store]
+    ]
+
+    {a, edge_a, connection_a} = start_subscription_runtime(listen_opts)
+    {b, edge_b, connection_b} = start_subscription_runtime(listen_opts)
 
     for runtime <- [a, b] do
       assert {:ok, _task} =
@@ -334,45 +344,34 @@ defmodule Arbor.MCP.Server.RuntimeServicesTest do
                )
     end
 
-    listen_opts = [
-      principal_id: "alice",
-      tenant_id: "same-tenant",
-      audience: "mcp://same",
-      client_capabilities: Extension.put_capability(%{}),
-      task_store_opts: [server: legacy_store]
-    ]
-
-    assert {:ok, ea} =
-             Subscriptions.listen(
-               1,
-               %{"taskIds" => ["shared"]},
-               self(),
-               [runtime: a] ++ listen_opts
-             )
-
-    assert {:ok, eb} =
-             Subscriptions.listen(
-               1,
-               %{"taskIds" => ["shared"]},
-               self(),
-               [runtime: b] ++ listen_opts
-             )
-
+    ea = listen(a, edge_a, connection_a, 1, %{"taskIds" => ["shared"]})
+    eb = listen(b, edge_b, connection_b, 1, %{"taskIds" => ["shared"]})
     assert ea.filter == %{"taskIds" => ["shared"]}
     assert eb.filter == ea.filter
-    la = ea.listener_pid
-    lb = eb.listener_pid
-    assert_receive {:ex_mcp_subscription_message, ^la, :acknowledged, _ack}
-    assert_receive {:ex_mcp_subscription_message, ^lb, :acknowledged, _ack}
-    Subscriptions.delivered(la)
-    Subscriptions.delivered(lb)
+    assert ea.principal_id == "alice"
+    assert eb.tenant_id == "same-tenant"
+    assert ea.transport_ref == edge_a
+    assert eb.transport_ref == edge_b
+    assert {:error, :not_found_or_unauthorized} = Tasks.get("shared", server: legacy_store)
+
     assert {:ok, _task} = Tasks.complete("shared", %{"runtime" => "a"}, runtime: a, owner: owner)
-    assert_receive {:ex_mcp_subscription_message, ^la, :notification, notification}
+    notification = receive_response(:test)
+    assert notification["method"] == "notifications/tasks"
     assert notification["params"]["status"] == "completed"
-    refute_receive {:ex_mcp_subscription_message, ^lb, :notification, _cross_domain}, 30
-    assert :ok = Subscriptions.cancel(self(), 1, runtime: a)
-    assert Subscriptions.entries(runtime: a) == []
-    assert [_entry] = Subscriptions.entries(runtime: b)
+    assert notification["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"] == 1
+    assert {:ok, %{"status" => "working"}} = Tasks.get("shared", runtime: b, owner: owner)
+    refute_receive {:transport_message, _cross_domain}, 30
+
+    cancellation = %{
+      "jsonrpc" => "2.0",
+      "method" => "notifications/cancelled",
+      "params" => %{"requestId" => 1}
+    }
+
+    assert :ok = HandlerServer.ingress(a, edge_a, connection_a, cancellation)
+    eventually(fn -> Subscriptions.entries(runtime: a) == [] end)
+    assert [%{listener_pid: listener_b}] = Subscriptions.entries(runtime: b)
+    assert listener_b == eb.listener_pid
   end
 
   test "disabled or stale explicit task services never fall back to an available global task" do
@@ -609,18 +608,14 @@ defmodule Arbor.MCP.Server.RuntimeServicesTest do
 
     sibling = start_runtime()
 
-    runtime =
-      start_runtime(
+    {runtime, edge, connection} =
+      start_subscription_runtime(
         shutdown_timeout_ms: 80,
         services: [subscriptions: [options: [authorize_publication: authorizer]]]
       )
 
-    {:ok, entry} =
-      Subscriptions.listen(1, %{"toolsListChanged" => true}, self(), runtime: runtime)
-
+    entry = listen(runtime, edge, connection, 1, %{"toolsListChanged" => true})
     listener = entry.listener_pid
-    assert_receive {:ex_mcp_subscription_message, ^listener, :acknowledged, _ack}
-    Subscriptions.delivered(listener)
 
     publication =
       Task.async(fn ->
@@ -639,6 +634,38 @@ defmodule Arbor.MCP.Server.RuntimeServicesTest do
     eventually(fn -> not Process.alive?(listener) and not Process.alive?(guard) end)
     Task.await(publication, 1_000)
     assert {:ok, %{"result" => 0}} = Runtime.request(sibling, request(1, "read"))
+  end
+
+  defp start_subscription_runtime(opts) do
+    server =
+      start_supervised!(
+        {HandlerServer,
+         Keyword.merge(
+           [
+             id: make_ref(),
+             handler: StoredHandler,
+             transport: :test,
+             protocol_mode: :modern_only
+           ],
+           opts
+         )}
+      )
+
+    {:ok, edge, runtime, connection} = HandlerServer.connect(server, self())
+    {runtime, edge, connection}
+  end
+
+  defp listen(runtime, edge, connection, id, filter) do
+    request = modern_request(id, "subscriptions/listen", %{"notifications" => filter})
+    assert :ok = HandlerServer.ingress(runtime, edge, connection, request)
+    ack = receive_response(:test)
+    assert ack["method"] == "notifications/subscriptions/acknowledged"
+    assert ack["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"] == id
+
+    assert [%{subscription_id: ^id, transport_ref: ^edge} = entry] =
+             Subscriptions.entries(runtime: runtime)
+
+    entry
   end
 
   defp start_runtime(opts \\ []) do

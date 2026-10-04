@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "planned retirement inventory; source-removal prerequisites and final release qualification remain open",
+  "status": "accepted retirement inventory; first fifteen callables removed and migration cases qualified; remaining prerequisites and final release qualification open",
   "baseline": {
     "application": "ex_mcp",
     "package_version": "1.5.0",
@@ -1580,5 +1580,182 @@
     "response_struct_presence_limit": "nil represents either absent or explicit null; use raw map for presence",
     "api_removals_performed": 0,
     "release": false
+  },
+  "first_retirement_checkpoint": {
+    "namespace": "Arbor.MCP",
+    "removed_callables": [
+      {
+        "module": "ExMCP.Content.Builders",
+        "kind": "function",
+        "name": "compress",
+        "arity": 1,
+        "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0.",
+        "replacement_group": "media",
+        "candidate_module": "Arbor.MCP.Content.Builders"
+      },
+      {
+        "module": "ExMCP.Content.Builders",
+        "kind": "function",
+        "name": "compress",
+        "arity": 2,
+        "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0.",
+        "replacement_group": "media",
+        "candidate_module": "Arbor.MCP.Content.Builders"
+      },
+      {
+        "module": "ExMCP.Content.Builders",
+        "kind": "function",
+        "name": "resize",
+        "arity": 3,
+        "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0.",
+        "replacement_group": "media",
+        "candidate_module": "Arbor.MCP.Content.Builders"
+      },
+      {
+        "module": "ExMCP.Content.Sanitizer",
+        "kind": "function",
+        "name": "remove_metadata",
+        "arity": 1,
+        "compiled_deprecation": "Not implemented for EXIF; not an MCP requirement. Planned for removal in 2.0.0.",
+        "replacement_group": "metadata",
+        "candidate_module": "Arbor.MCP.Content.Sanitizer"
+      },
+      {
+        "module": "ExMCP.Content.Transformer",
+        "kind": "function",
+        "name": "compress_image",
+        "arity": 2,
+        "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools.",
+        "replacement_group": "media",
+        "candidate_module": "Arbor.MCP.Content.Transformer"
+      },
+      {
+        "module": "ExMCP.Content.Transformer",
+        "kind": "function",
+        "name": "compress_image",
+        "arity": 3,
+        "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools.",
+        "replacement_group": "media",
+        "candidate_module": "Arbor.MCP.Content.Transformer"
+      },
+      {
+        "module": "ExMCP.Content.Transformer",
+        "kind": "function",
+        "name": "convert_encoding",
+        "arity": 1,
+        "compiled_deprecation": "Not implemented; not required by MCP/ACP. Planned for removal in 2.0.0.",
+        "replacement_group": "media",
+        "candidate_module": "Arbor.MCP.Content.Transformer"
+      },
+      {
+        "module": "ExMCP.Content.Transformer",
+        "kind": "function",
+        "name": "convert_encoding",
+        "arity": 2,
+        "compiled_deprecation": "Not implemented; not required by MCP/ACP. Planned for removal in 2.0.0.",
+        "replacement_group": "media",
+        "candidate_module": "Arbor.MCP.Content.Transformer"
+      },
+      {
+        "module": "ExMCP.Content.Transformer",
+        "kind": "function",
+        "name": "generate_thumbnail",
+        "arity": 2,
+        "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools.",
+        "replacement_group": "media",
+        "candidate_module": "Arbor.MCP.Content.Transformer"
+      },
+      {
+        "module": "ExMCP.Content.Transformer",
+        "kind": "function",
+        "name": "generate_thumbnail",
+        "arity": 3,
+        "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools.",
+        "replacement_group": "media",
+        "candidate_module": "Arbor.MCP.Content.Transformer"
+      },
+      {
+        "module": "ExMCP.Content.Transformer",
+        "kind": "function",
+        "name": "resize_image",
+        "arity": 3,
+        "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools.",
+        "replacement_group": "media",
+        "candidate_module": "Arbor.MCP.Content.Transformer"
+      },
+      {
+        "module": "ExMCP.Protocol.ErrorCodes",
+        "kind": "function",
+        "name": "legacy_consent_required",
+        "arity": 0,
+        "compiled_deprecation": "Use consent_required/0; -32002 is reserved as a historical MCP code",
+        "replacement_group": "consent",
+        "candidate_module": "Arbor.MCP.Protocol.ErrorCodes"
+      },
+      {
+        "module": "ExMCP.Protocol.ErrorCodes",
+        "kind": "function",
+        "name": "resource_not_found",
+        "arity": 0,
+        "compiled_deprecation": "Use resource_not_found/1 so modern peers receive -32602",
+        "replacement_group": "resource_code",
+        "candidate_module": "Arbor.MCP.Protocol.ErrorCodes"
+      },
+      {
+        "module": "ExMCP.Protocol.ErrorCodes",
+        "kind": "function",
+        "name": "url_elicitation_required",
+        "arity": 0,
+        "compiled_deprecation": "MCP 2026-07-28 retired -32042; use MRTR for modern peers",
+        "replacement_group": "url_code",
+        "candidate_module": "Arbor.MCP.Protocol.ErrorCodes"
+      },
+      {
+        "module": "ExMCP.Protocol.VersionNegotiator",
+        "kind": "function",
+        "name": "build_capabilities",
+        "arity": 1,
+        "compiled_deprecation": "Use ExMCP.Protocol.Initialize or ExMCP.Server.Capabilities",
+        "replacement_group": "initialize",
+        "candidate_module": "Arbor.MCP.Protocol.VersionNegotiator"
+      }
+    ],
+    "removed_callable_count": 15,
+    "remaining_callable_count": 87,
+    "remaining_families": {
+      "Server.Tools": 81,
+      "HTTP wrappers and startup helpers": 6
+    },
+    "compiled_absence_test": "test/arbor_mcp/protocol/api_retirement_test.exs",
+    "semantic_migration_tests": [
+      "test/arbor_mcp/content/media_retirement_test.exs",
+      "test/arbor_mcp/protocol/error_code_characterization_test.exs",
+      "test/arbor_mcp/protocol/version_negotiator_test.exs",
+      "test/arbor_mcp/compliance/version_2024_11_05_test.exs",
+      "test/arbor_mcp/compliance/version_2025_03_26_test.exs",
+      "test/arbor_mcp/compliance/version_2025_06_18_test.exs",
+      "test/arbor_mcp/compliance/version_2025_11_25_test.exs",
+      "test/arbor_mcp/compliance/version_negotiation_property_test.exs"
+    ],
+    "combined_component_and_retirement_qualification": {
+      "tests_per_toolchain": 444,
+      "properties_per_toolchain": 8,
+      "failures_per_toolchain": 0,
+      "toolchains": [
+        "Elixir1.17.3/OTP27.0.1",
+        "Elixir1.19.5/OTP28.4.1"
+      ],
+      "production_warnings_as_errors_each": 0
+    },
+    "removed_option_policy": {
+      "Transformer": "tagged error before any pipeline step",
+      "Sanitizer": "ArgumentError before any pipeline step",
+      "Builders": [
+        "auto_resize and quality rejected by presence before file read",
+        "mime_types enforced for automatic file loading"
+      ]
+    },
+    "final_compiled_api_diff_complete": false,
+    "stable_release": false
   }
 }

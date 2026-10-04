@@ -15,10 +15,8 @@ defmodule Arbor.MCP.Protocol.ErrorCodeCharacterizationTest do
       consent_required: ErrorCodes.consent_required(),
       consent_denied: ErrorCodes.consent_denied(),
       server_error: ErrorCodes.server_error(),
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      resource_not_found: apply(ErrorCodes, :resource_not_found, []),
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      url_elicitation_required: apply(ErrorCodes, :url_elicitation_required, [])
+      resource_not_found: ErrorCodes.resource_not_found(:legacy),
+      url_elicitation_required: ErrorCodes.url_elicitation_required(:legacy)
     }
 
     errors = %{

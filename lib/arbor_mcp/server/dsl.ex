@@ -29,13 +29,19 @@ defmodule Arbor.MCP.Server.DSL do
   Invalid declarations fail at compile time with file/line and fix hints
   (missing handlers, duplicate names, wrong instructions per kind, etc.).
 
+  Reuse declarations with `use Arbor.MCP.Server.DSL, components: [SharedPrimitives]`.
+  Components use this same DSL. Their handlers run with the host state and
+  callback context, without starting or initializing the component modules.
+  Components appear in list order before local declarations; duplicate primitive
+  identities fail compilation with declaration locations.
+
   Inside DSL modules, `ToolResult` is an alias for `Arbor.MCP.Server.Result`.
   See the project DSL guide for full details.
   """
 
   alias Arbor.MCP.Content.SchemaPolicy
   alias Arbor.MCP.Server.{DSL, ResultNormalizer}
-  alias Arbor.MCP.Server.DSL.Builder
+  alias Arbor.MCP.Server.DSL.{Builder, Components}
 
   # DSL schemas are trusted application declarations compiled while the module
   # is loading. Give their worker enough scheduler headroom during parallel
@@ -43,15 +49,21 @@ defmodule Arbor.MCP.Server.DSL do
   @compile_time_schema_timeout_ms 5_000
 
   defmacro __using__(opts) do
+    components = Components.expand_modules(Keyword.get(opts, :components, []), __CALLER__)
+    opts = Keyword.put(opts, :components, components)
+    source = %{file: __CALLER__.file, line: __CALLER__.line}
+
     quote do
       import Arbor.MCP.Server.DSL
       alias Arbor.MCP.Server.Result, as: ToolResult
 
       @ex_mcp_dsl_opts unquote(Macro.escape(opts))
+      @ex_mcp_dsl_component_source unquote(Macro.escape(source))
       Module.register_attribute(__MODULE__, :ex_mcp_dsl_tools, accumulate: true)
       Module.register_attribute(__MODULE__, :ex_mcp_dsl_resources, accumulate: true)
       Module.register_attribute(__MODULE__, :ex_mcp_dsl_resource_templates, accumulate: true)
       Module.register_attribute(__MODULE__, :ex_mcp_dsl_prompts, accumulate: true)
+      Module.register_attribute(__MODULE__, :ex_mcp_dsl_locations, accumulate: true)
 
       @doc false
       def child_spec(opts) do
@@ -86,12 +98,40 @@ defmodule Arbor.MCP.Server.DSL do
 
     prompts = env.module |> Module.get_attribute(:ex_mcp_dsl_prompts, []) |> Enum.reverse()
 
+    source = Module.get_attribute(env.module, :ex_mcp_dsl_component_source)
+    component_env = %{env | line: source.line}
+    imported = Components.import_entries(opts, component_env)
+    tools = imported.tools ++ tools
+    resources = imported.resources ++ resources
+    resource_templates = imported.resource_templates ++ resource_templates
+    prompts = imported.prompts ++ prompts
+
+    locations = Map.new(Module.get_attribute(env.module, :ex_mcp_dsl_locations, []))
+
+    component_info =
+      Components.describe(
+        env.module,
+        %{
+          tools: tools,
+          resources: resources,
+          resource_templates: resource_templates,
+          prompts: prompts
+        },
+        locations,
+        env
+      )
+
+    Components.assert_unique!(component_info, component_env)
+
     assert_unique_ids!(env, tools, :tool, & &1.name)
     assert_unique_ids!(env, resources, :resource, & &1.uri)
     assert_unique_ids!(env, resource_templates, :resource_template, & &1.uriTemplate)
     assert_unique_ids!(env, prompts, :prompt, & &1.name)
 
     quote do
+      @doc false
+      def __mcp_dsl_component__, do: unquote(Macro.escape(component_info))
+
       unquote(
         generate_server_callbacks(env.module, opts, tools, resources, resource_templates, prompts)
       )
@@ -113,9 +153,11 @@ defmodule Arbor.MCP.Server.DSL do
   """
   defmacro tool(name, description \\ nil, do: block) do
     entry = build_entry(__CALLER__, :tool, name, description, block)
+    location = declaration_location(entry, :tools, __CALLER__)
 
     quote do
       @ex_mcp_dsl_tools unquote(Macro.escape(entry))
+      @ex_mcp_dsl_locations unquote(Macro.escape(location))
     end
   end
 
@@ -124,9 +166,11 @@ defmodule Arbor.MCP.Server.DSL do
   """
   defmacro resource(uri, description \\ nil, do: block) do
     entry = build_entry(__CALLER__, :resource, uri, description, block)
+    location = declaration_location(entry, :resources, __CALLER__)
 
     quote do
       @ex_mcp_dsl_resources unquote(Macro.escape(entry))
+      @ex_mcp_dsl_locations unquote(Macro.escape(location))
     end
   end
 
@@ -135,9 +179,11 @@ defmodule Arbor.MCP.Server.DSL do
   """
   defmacro resource_template(uri_template, description \\ nil, do: block) do
     entry = build_entry(__CALLER__, :resource_template, uri_template, description, block)
+    location = declaration_location(entry, :resource_templates, __CALLER__)
 
     quote do
       @ex_mcp_dsl_resource_templates unquote(Macro.escape(entry))
+      @ex_mcp_dsl_locations unquote(Macro.escape(location))
     end
   end
 
@@ -146,9 +192,11 @@ defmodule Arbor.MCP.Server.DSL do
   """
   defmacro prompt(name, description \\ nil, do: block) do
     entry = build_entry(__CALLER__, :prompt, name, description, block)
+    location = declaration_location(entry, :prompts, __CALLER__)
 
     quote do
       @ex_mcp_dsl_prompts unquote(Macro.escape(entry))
+      @ex_mcp_dsl_locations unquote(Macro.escape(location))
     end
   end
 
@@ -544,6 +592,9 @@ defmodule Arbor.MCP.Server.DSL do
     end)
   end
 
+  defp declaration_location(entry, kind, env),
+    do: {{kind, entry}, %{file: env.file, line: env.line}}
+
   defp declaration_label(:tool, id), do: "tool #{inspect(id)}"
   defp declaration_label(:resource, id), do: "resource #{inspect(id)}"
   defp declaration_label(:resource_template, id), do: "resource_template #{inspect(id)}"
@@ -618,13 +669,19 @@ defmodule Arbor.MCP.Server.DSL do
   defp generate_tool_handlers(tools) do
     tools
     |> Enum.with_index()
-    |> Enum.map(fn {{_tool, handler, _params}, index} ->
-      name = :"__ex_mcp_dsl_tool_#{index}__"
+    |> Enum.flat_map(fn
+      {{_tool, {:component, _module, _id, _source}, _params}, _index} ->
+        []
 
-      quote do
-        @doc false
-        def unquote(name)(args, state), do: unquote(handler).(args, state)
-      end
+      {{_tool, handler, _params}, index} ->
+        name = :"__ex_mcp_dsl_tool_#{index}__"
+
+        [
+          quote do
+            @doc false
+            def unquote(name)(args, state), do: unquote(handler).(args, state)
+          end
+        ]
     end)
   end
 
@@ -713,19 +770,47 @@ defmodule Arbor.MCP.Server.DSL do
     end
   end
 
+  defp tool_callback_entry({{definition, {:component, module, id, _source}, _params}, _index}),
+    do: {definition.name, {:component, module, id}}
+
+  defp tool_callback_entry({{definition, _handler, params}, index}) do
+    input_schema = compile_tool_schema(definition[:inputSchema], :input)
+    output_schema = compile_tool_schema(definition[:outputSchema], :output)
+
+    {definition.name, {:"__ex_mcp_dsl_tool_#{index}__", input_schema, output_schema, params}}
+  end
+
+  defp generate_local_tool_execution do
+    quote do
+      case DSL.prepare_tool_arguments(arguments, params, input_schema) do
+        {:ok, arguments} ->
+          result = apply(__MODULE__, handler, [arguments, state])
+
+          case Result.normalize_tool(result, state) do
+            {:ok, response, new_state} ->
+              validation =
+                response
+                |> DSL.validate_tool_response(output_schema)
+                |> __ex_mcp_dsl_widen_validation__()
+
+              case validation do
+                {:ok, response} -> {:ok, response, new_state}
+                {:error, reason} -> {:ok, Result.error(reason), new_state}
+              end
+          end
+
+        {:error, error} ->
+          {:error, error, state}
+      end
+    end
+  end
+
   defp generate_tool_callbacks([]), do: nil
 
   defp generate_tool_callbacks(tools) do
     definitions = Enum.map(tools, fn {definition, _handler, _params} -> definition end)
 
-    mapping =
-      tools
-      |> Enum.with_index()
-      |> Map.new(fn {{definition, _handler, params}, index} ->
-        input_schema = compile_tool_schema(definition[:inputSchema], :input)
-        output_schema = compile_tool_schema(definition[:outputSchema], :output)
-        {definition.name, {:"__ex_mcp_dsl_tool_#{index}__", input_schema, output_schema, params}}
-      end)
+    mapping = tools |> Enum.with_index() |> Map.new(&tool_callback_entry/1)
 
     quote do
       alias Arbor.MCP.Server.DSL.Builder
@@ -741,27 +826,11 @@ defmodule Arbor.MCP.Server.DSL do
         mapping = unquote(Macro.escape(mapping))
 
         case Map.get(mapping, name) do
+          {:component, module, id} ->
+            module.handle_call_tool(id, arguments, state)
+
           {handler, input_schema, output_schema, params} ->
-            case DSL.prepare_tool_arguments(arguments, params, input_schema) do
-              {:ok, arguments} ->
-                result = apply(__MODULE__, handler, [arguments, state])
-
-                case Result.normalize_tool(result, state) do
-                  {:ok, response, new_state} ->
-                    validation =
-                      response
-                      |> DSL.validate_tool_response(output_schema)
-                      |> __ex_mcp_dsl_widen_validation__()
-
-                    case validation do
-                      {:ok, response} -> {:ok, response, new_state}
-                      {:error, reason} -> {:ok, Result.error(reason), new_state}
-                    end
-                end
-
-              {:error, error} ->
-                {:error, error, state}
-            end
+            unquote(generate_local_tool_execution())
 
           nil ->
             {:error, Arbor.MCP.Error.protocol_error(-32602, "Unknown tool: #{name}"), state}
@@ -775,13 +844,19 @@ defmodule Arbor.MCP.Server.DSL do
   defp generate_resource_handlers(entries, kind) do
     entries
     |> Enum.with_index()
-    |> Enum.map(fn {{_definition, handler, _params}, index} ->
-      name = :"__ex_mcp_dsl_#{kind}_#{index}__"
+    |> Enum.flat_map(fn
+      {{_definition, {:component, _module, _id, _source}, _params}, _index} ->
+        []
 
-      quote do
-        @doc false
-        def unquote(name)(params, state), do: unquote(handler).(params, state)
-      end
+      {{_definition, handler, _params}, index} ->
+        name = :"__ex_mcp_dsl_#{kind}_#{index}__"
+
+        [
+          quote do
+            @doc false
+            def unquote(name)(params, state), do: unquote(handler).(params, state)
+          end
+        ]
     end)
   end
 
@@ -797,16 +872,24 @@ defmodule Arbor.MCP.Server.DSL do
     resource_mapping =
       resources
       |> Enum.with_index()
-      |> Map.new(fn {{definition, _handler, _params}, index} ->
-        {definition.uri, {:"__ex_mcp_dsl_resource_#{index}__", definition[:mimeType]}}
+      |> Map.new(fn
+        {{definition, {:component, module, _id, _source}, _params}, _index} ->
+          {definition.uri, {{:component, module}, definition[:mimeType]}}
+
+        {{definition, _handler, _params}, index} ->
+          {definition.uri, {:"__ex_mcp_dsl_resource_#{index}__", definition[:mimeType]}}
       end)
 
     template_mapping =
       resource_templates
       |> Enum.with_index()
-      |> Enum.map(fn {{definition, _handler, params}, index} ->
-        {definition.uriTemplate, :"__ex_mcp_dsl_resource_template_#{index}__",
-         definition[:mimeType], params}
+      |> Enum.map(fn
+        {{definition, {:component, module, _id, _source}, params}, _index} ->
+          {definition.uriTemplate, {:component, module}, definition[:mimeType], params}
+
+        {{definition, _handler, params}, index} ->
+          {definition.uriTemplate, :"__ex_mcp_dsl_resource_template_#{index}__",
+           definition[:mimeType], params}
       end)
 
     quote do
@@ -823,6 +906,9 @@ defmodule Arbor.MCP.Server.DSL do
         template_mapping = unquote(Macro.escape(template_mapping))
 
         case Map.get(resource_mapping, uri) do
+          {{:component, module}, _mime_type} ->
+            module.handle_read_resource(uri, state)
+
           {handler, mime_type} ->
             params = %{uri: uri}
             result = apply(__MODULE__, handler, [params, state])
@@ -836,6 +922,10 @@ defmodule Arbor.MCP.Server.DSL do
       defp read_resource_template(uri, template_mapping, state) do
         Enum.find_value(template_mapping, fn {template, handler, mime_type, params} ->
           case Matcher.match_uri_template(uri, template) do
+            {:ok, _variables} when is_tuple(handler) and elem(handler, 0) == :component ->
+              {:component, module} = handler
+              module.handle_read_resource(uri, state)
+
             {:ok, variables} ->
               variables =
                 variables
@@ -903,13 +993,19 @@ defmodule Arbor.MCP.Server.DSL do
   defp generate_prompt_handlers(prompts) do
     prompts
     |> Enum.with_index()
-    |> Enum.map(fn {{_prompt, handler, _args}, index} ->
-      name = :"__ex_mcp_dsl_prompt_#{index}__"
+    |> Enum.flat_map(fn
+      {{_prompt, {:component, _module, _id, _source}, _args}, _index} ->
+        []
 
-      quote do
-        @doc false
-        def unquote(name)(args, state), do: unquote(handler).(args, state)
-      end
+      {{_prompt, handler, _args}, index} ->
+        name = :"__ex_mcp_dsl_prompt_#{index}__"
+
+        [
+          quote do
+            @doc false
+            def unquote(name)(args, state), do: unquote(handler).(args, state)
+          end
+        ]
     end)
   end
 
@@ -921,8 +1017,12 @@ defmodule Arbor.MCP.Server.DSL do
     mapping =
       prompts
       |> Enum.with_index()
-      |> Map.new(fn {{definition, _handler, args}, index} ->
-        {definition.name, {:"__ex_mcp_dsl_prompt_#{index}__", args}}
+      |> Map.new(fn
+        {{definition, {:component, module, id, _source}, _args}, _index} ->
+          {definition.name, {:component, module, id}}
+
+        {{definition, _handler, args}, index} ->
+          {definition.name, {:"__ex_mcp_dsl_prompt_#{index}__", args}}
       end)
 
     quote do
@@ -941,6 +1041,9 @@ defmodule Arbor.MCP.Server.DSL do
         mapping = unquote(Macro.escape(mapping))
 
         case Map.get(mapping, name) do
+          {:component, module, id} ->
+            module.handle_get_prompt(id, arguments, state)
+
           {handler, args} ->
             arguments = Builder.normalize_arguments(arguments, args)
             result = apply(__MODULE__, handler, [arguments, state])
