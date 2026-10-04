@@ -125,12 +125,22 @@ retains those identities.
 The namespace decision is settled as `Arbor.MCP.*`, `Arbor.ACP.*` and
 `Arbor.RPC.*`; package and OTP application names retain underscores. The
 repository migration is complete. Main remains a supported 1.x package. The
-fully passing supported-main checkpoint is `7430d19`, after the Mint floor was
-raised to `1.10.2`, the Pi fixture was corrected and the API inventory recorded.
-Follow-up CI at `e4461ab` exposed a fixture's default 100 ms file-creation wait;
-its replacement uses a finite 1,000 ms startup allowance and monitors the owner
-exit before asserting file cleanup. The focused correction passes locally and
-in both minimum/current split-adapter builds; fresh supported-main CI is required.
+fully passing supported-main checkpoint is `2d91a74`, with the Mint floor at
+`1.10.2`, the Pi fixture corrected and the API inventory recorded. The fixture
+uses a finite 1,000 ms startup allowance and monitors owner exit before asserting
+file cleanup. [Fresh supported-main CI](https://github.com/trust-arbor/arbor_mcp/actions/runs/37190914814)
+passes. The same fixture correction passes locally in both minimum/current
+split-adapter builds; [fresh ACP CI](https://github.com/trust-arbor/arbor_acp/actions/runs/37190913343)
+also passes at `b4e4ab0`.
+
+MCP v2 CI at `c8a4987` exposed three additional checks: OTP 27 reports private
+opaque-ticket contract violations, an output-pressure fixture observes a count
+before all candidates finish preparing, and the stress fixture injects random
+errors before initialization. Corrections are being qualified independently.
+The supported branch's stress correction exercises 1,000 real mock-server
+requests after successful initialization with seeded failure injection; the
+v2 correction exercises the real client as well. Neither correction changes
+the production mock-server error policy.
 
 | Slice | Reviewable evidence | Remaining work |
 |---|---|---|
