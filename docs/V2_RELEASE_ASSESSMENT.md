@@ -217,7 +217,11 @@ for the held callback to start. The three coordination waits in that test now
 use a finite 1,000 ms budget; held-worker ordering, cancellation, committed state
 and released-reservation assertions are unchanged. The complete 25-case runtime
 edge selection passes on minimum/current at the failing CI seed `242598`.
-A fresh complete remote run remains required for this correction.
+[Complete CI at `9cd520f`](https://github.com/trust-arbor/arbor_mcp/actions/runs/37205296625)
+passes all twelve jobs, including the corrected performance selection, minimum
+and newest toolchains, both normal-Hex archive consumers, coverage, Dialyzer,
+official SDK interoperability and external conformance. This qualifies that
+named source checkpoint and closes the two fixture failures described above.
 
 Test counts describe their named snapshots and slices; they are not an aggregate
 release certificate. No RC, stable Hex artifact or final API/default freeze has
