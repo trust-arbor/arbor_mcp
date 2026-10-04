@@ -292,8 +292,33 @@ current-generation delivery and malformed-notification coverage.
 1.x baseline and historical census, and distinguish the accepted 96 removals,
 ACP facade move and seven required internal runtime retirements. They identify
 wire/storage literals that must survive the rename. Final compiled graphs,
-HTTP cutover, full diagnostic privacy, host-owned logger migration and RC
-qualification remain release gates. Fresh combined CI is required.
+HTTP cutover, full diagnostic privacy and RC qualification remain release gates.
+
+[CI at `289f021`](https://github.com/trust-arbor/arbor_mcp/actions/runs/37233707056)
+passes eleven of twelve jobs, including both archive consumers, coverage,
+conformance, SDKs and the minimum/newest toolchains. The remaining current unit
+failure waits for a setup acknowledgement using ExUnit's 100 ms default while
+the endpoint's configured output budget is 1,000 ms. The fixture now waits for
+that configured budget; all later cancellation and output assertions retain
+their original bounds. Its eleven focused cases pass at the failing CI seed.
+
+The host logging checkpoint removes automatic global logger reconfiguration
+from MCP Application/StdioLauncher and ACP stdio connection. Standalone commands
+route their own default handler to stderr without lowering levels or replacing
+filters. The explicit legacy suppression helper remains available. Canonical
+MCP native stdio probes pass 46 cases on each supported toolchain; full selections
+pass **5,052 executed tests, 20 doctests and 34 properties each**, zero failures
+(82 excluded; minimum reports 5,134 inventory). ACP passes **359 core tests** on
+both (7 excluded). Production compilation and formatting pass both; MCP strict
+Credo, compiled documentation and minimum Dialyzer pass with 66 existing filtered
+warnings and no new filters. ACP compiled documentation and corrected owned-file
+Credo qualification pass. Fresh combined CI is required.
+
+Runtime pressure probes now demonstrate late Tasks/Replay mutations after the
+original callback has expired, retained backing binaries exceeding accounted
+request bytes, unbounded standalone Replay retention and permanent atom growth
+across DETS open/close cycles. These are concrete remaining store/admission
+release defects; the host logging checkpoint does not resolve them.
 
 | Slice | Reviewable evidence | Remaining work |
 |---|---|---|

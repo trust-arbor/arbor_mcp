@@ -9,8 +9,8 @@ defmodule Arbor.MCP.StdioLauncher do
 
   While this module minimizes output contamination, Mix.install may still
   produce some stdout output during dependency resolution that cannot be
-  completely suppressed. The Arbor.MCP STDIO server is designed to gracefully
-  handle and ignore such non-JSON lines during startup.
+  completely suppressed. Those bytes precede the protocol stream and a peer
+  may reject them.
 
   For production use, consider using pre-compiled releases instead of Mix.install
   to eliminate all startup output.
@@ -22,17 +22,22 @@ defmodule Arbor.MCP.StdioLauncher do
       #!/usr/bin/env elixir
 
       Arbor.MCP.StdioLauncher.start(MyServer, [
-        {:arbor_mcp, "~> 1.0.0-rc.4"},
+        {:arbor_mcp, "~> 2.0"},
         {:jason, "~> 1.4"}
       ])
 
   This will:
   1. Install dependencies with minimal output
-  2. Configure logging appropriately for STDIO transport
-  3. Start your server with STDIO transport
-  """
+  2. Preserve the host's logger configuration
+  3. Start your server with STDIO transport and a 200 ms startup delay
 
-  alias Arbor.MCP.Internal.StdioLoggerConfig
+  Configure all host log handlers to stderr or another non-protocol sink before
+  calling this function. For releases, configure `:logger` `:default_handler`
+  with `config: [type: :standard_error]` before application startup. This launcher
+  does not reconfigure host logging or set stdio Application flags.
+  `Mix.install/2` can still print dependency/compiler output to stdout; use a
+  compiled release when a clean protocol stream is required from process boot.
+  """
 
   @doc """
   Starts a STDIO server with proper dependency installation.
@@ -45,11 +50,7 @@ defmodule Arbor.MCP.StdioLauncher do
   """
   def start(server_module, deps, opts \\ []) do
     # Note: We can't redirect stdout as that's needed for JSON-RPC
-    # Mix.install output will go to stdout, but our improved STDIO
-    # server will gracefully ignore non-JSON lines
-
-    # Configure logging before Mix.install
-    configure_stdio_environment()
+    # Mix.install may print startup output; the host chooses how to deploy it.
 
     # Install dependencies with minimal output
     if function_exported?(Mix, :install, 2) do
@@ -59,12 +60,13 @@ defmodule Arbor.MCP.StdioLauncher do
       raise "Mix.install/2 is not available. This module is intended for use in Elixir scripts."
     end
 
-    # Ensure logging is still suppressed after Mix.install
-    configure_stdio_environment()
-
     # Start the server
     server_opts = Keyword.get(opts, :server_opts, [])
-    server_opts = Keyword.put(server_opts, :transport, :stdio)
+
+    server_opts =
+      server_opts
+      |> Keyword.put(:transport, :stdio)
+      |> Keyword.put_new(:stdio_startup_delay, 200)
 
     case server_module.start_link(server_opts) do
       {:ok, pid} ->
@@ -76,13 +78,5 @@ defmodule Arbor.MCP.StdioLauncher do
         IO.puts(:stderr, "Failed to start server: #{inspect(error)}")
         System.halt(1)
     end
-  end
-
-  defp configure_stdio_environment do
-    # Configure startup delay
-    Application.put_env(:arbor_mcp, :stdio_startup_delay, 200)
-
-    # Use centralized STDIO logging configuration
-    StdioLoggerConfig.configure()
   end
 end

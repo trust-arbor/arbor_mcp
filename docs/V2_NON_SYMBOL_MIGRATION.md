@@ -13,12 +13,13 @@ candidate; the final compiled graph, HTTP cutover and RC gates remain open.
 | Frozen supported source `1808c56bd4fc7b000043c2775f61ecced6ed059f` | The unchanged [1.x compiled baseline](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/docs/v2/api_baseline_1_5_plus.json), including hidden symbols. |
 | MCP `69b0a39ab889f8b8af19707873c9066614b68cf8`, ACP/RPC `0e4cfd1efdb7437eb6cf4c944ed6fa04553da7bb` | Historical 64-entry semantic census. MCP reflection reused `f16660b58d69982ed50b014f22319e16c291b345` and explicitly excluded the later DSL source delta, privacy and ordinary Client overlays. It is not a fresh final build. |
 | MCP `111a3c70421206a0d6b96184523ffa1db9d209d6` | Source basis for this document. Stdio authority and subscription-origin followups are present. Source links below describe this checkpoint unless explicitly marked supplementary. |
-| Ordinary Client lifetime freeze, combined manifest `4b2707ffc4fe597293b764ccbea3e10420dd6fa49a9fbb72e201ca0820b2d6bf` | Separate nineteen-path lifetime and seven-path peer-event patches on `f4d8534` plus the exact scoped-helper prerequisite; 201 affected cases on each supported toolchain, zero failures. Integration/final graph comparison remains required. |
+| Ordinary Client lifetime freeze, combined manifest `4b2707ffc4fe597293b764ccbea3e10420dd6fa49a9fbb72e201ca0820b2d6bf`; integration `289f02138783698205186c2b8294989753e3d2cf` | Separate nineteen-path lifetime and seven-path peer-event patches on `f4d8534` plus the exact scoped-helper prerequisite; 201 affected cases on each supported toolchain, zero failures. The combined Client/guard checkpoint passes 5,048 executed cases plus doctests/properties on both. Final graph comparison remains required. |
 | Runtime privacy freeze, manifest `24eeccc6bb017d98a20ef313bf44c9dda86c23e9838b986e9312bda9337e0970`; integration `40f65d14b437c8da1cb1b0ac55f761980ca1fa70` | Thirty-path diagnostics patch plus separate clean stdio-domain retirement correction. Frozen privacy cases: 245/toolchain; combined integration: 248/toolchain, zero failures. It remains supplementary to the original census and does not establish whole-library Client/HTTP diagnostic privacy. |
+| Host logging freezes: MCP manifest `4496515f751d22dc946b166e75014ddacc6ce5e1ab5f6dbe5e9ee9299c170050`, ACP manifest `47b9ced480a79726ba64e16a28de66e6db8a26d9d7096f09a94c570db2905d45` | Ten MCP and eight ACP paths remove automatic global logger changes. Canonical MCP passes 46 native stdio cases and 5,052 executed full cases on both supported toolchains; ACP passes 359 core cases on both. ACP integration is `cc8b2078855148f390e899c7122fa56c8275da17`. These do not establish arbitrary host-handler privacy. |
 
 The historical census is retained under
 `tmp/v2-semantic-census-69b0a39/{SEMANTIC_CENSUS.md,semantic-inventory.json,REVIEW_NOTES.md}`.
-The two supplementary freezes are retained under
+The Client and runtime privacy freezes are retained under
 `tmp/arbor-mcp-client-lifetime-qa/tmp/ordinary-client-freeze` and
 `tmp/arbor-mcp-privacy-qa/tmp/runtime-privacy-freeze-1`. These are development
 evidence locations, not files installed by the packages. Do not overwrite the
@@ -384,12 +385,23 @@ renaming a prefix; legacy MessageProcessor spans describe their own path.
 See [actual emit sites](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/runtime/admission.ex). Retain the existing
 default logger attachment ID when replacing handlers to avoid duplicate attachment.
 
-The StdioServer facade does not configure global Logger. Application `:stdio_mode`
-and StdioLauncher still invoke global logger setup, and ACP agent setup has its
-own global entry path. Configure diagnostic stderr before host boot and audit
-those entry paths separately. See [Application](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/application.ex),
-[launcher](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/stdio_launcher.ex) and
-[logger helper](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/internal/stdio_logger_config.ex).
+At the historical `111a3c7` source basis, Application `:stdio_mode`, StdioLauncher
+and ACP agent setup still changed global Logger. The separate host logging
+checkpoint removes those automatic changes. Library startup, launcher startup
+and ACP stdio connection now preserve host levels, primary filters, handlers
+and Application logger flags. Explicit `StdioLoggerConfig.configure/0` retains
+the legacy global emergency threshold for hosts that choose it; it does not
+route logs or guarantee clean stdout.
+
+Hosts must configure every diagnostic handler to stderr or another non-protocol
+sink before boot. Standalone Mix commands and examples own their default handler
+and persist stderr routing across application startup while preserving levels,
+formatter and filters. Additional handlers remain host-owned. `Mix.install`
+and compilation can print before protocol startup; use a compiled release when
+stdout must contain JSON-RPC from process boot. StdioLauncher now supplies its
+200 ms default through endpoint `server_opts[:stdio_startup_delay]`, preserving
+an explicit endpoint override rather than changing global Application settings.
+See [configuration](./CONFIGURATION.md) and [transport guide](./TRANSPORT_GUIDE.md).
 
 The **separate privacy freeze** formats diagnostic status as fixed component
 names/counts, retains opaque native constructor arguments, uses fixed

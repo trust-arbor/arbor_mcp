@@ -1402,33 +1402,35 @@ feature (`logging/setLevel`, per-request log levels, and
 available throughout Arbor.MCP 1.x. New observability integrations should use
 stderr for stdio diagnostics or OpenTelemetry for structured telemetry.
 
-For stdio servers, stdout must contain only JSON-RPC messages. When stdio
-mode starts, Arbor.MCP mutates VM-global Logger, Application, and OTP logger
-behavior (sets the primary level to `:emergency` and `:arbor_mcp`
-`:stdio_mode`). This is process-wide
-for the BEAM VM, not scoped to the stdio connection: other applications
-and OTP processes in the same VM lose normal logging. 1.x keeps this
-global behavior; 2.0 may replace it.
-
-That suppression starts when the stdio transport starts, which in a release
-is after every application has already booted. The default Elixir logger
-writes to stdout, so anything logged at `info` or above during boot lands
-in the protocol stream before the first frame. Arbor.MCP's own boot logs are at
-`debug` for this reason. For a stdio deployment, configure both of the
-following at compile time so the window is closed before boot:
+For stdio servers, stdout must contain only JSON-RPC messages. Arbor.MCP 2.0
+preserves the host's Logger levels, handlers, filters and application settings
+during application startup and stdio connection. Configure every host log sink
+before application startup so diagnostics cannot reach the protocol stream.
+For a compiled release, put this in the host's configuration:
 
 ```elixir
-# config/runtime.exs or config/config.exs
-config :arbor_mcp, stdio_mode: true
-
+# Host config/runtime.exs or config/config.exs
 config :logger, :default_handler, config: [type: :standard_error]
 ```
 
-The first suppresses logging from the moment the `:arbor_mcp` application
-starts. The second moves the default handler to stderr, where MCP hosts
-expect server diagnostics, so anything that still logs, from any
-application in the VM, cannot reach stdout. Together they make the boot
-sequence safe regardless of what other applications log.
+This sends the default handler to stderr and preserves normal log levels.
+Additional handlers must also use non-protocol sinks. A dependency's own config
+is not loaded by its consumers. The old `config :arbor_mcp, stdio_mode: true`
+flag no longer suppresses logging automatically.
+
+The exported <code>Arbor.MCP.Internal.StdioLoggerConfig.configure/0</code> remains an
+explicit legacy host opt-in: it sets the library flag and VM-global Logger,
+`:logger` application and OTP primary levels to `:emergency`. It does not route
+logs to stderr and suppresses unrelated application logs. No library startup or
+transport connection calls it in 2.0.
+
+Standalone commands and examples route their own default handler to stderr
+before starting applications. For an already running VM, OTP's `:logger_std_h`
+requires replacing the host-owned handler to change its `:type`; updating that
+field in place is unsupported. Preserve the handler's level, formatter, filters
+and other configuration when replacing it. `Mix.install/2` can still print
+compiler/dependency output before the protocol starts even with `verbose: false`;
+use compiled releases for clean stdout from process boot.
 
 Send ad hoc diagnostics to stderr:
 

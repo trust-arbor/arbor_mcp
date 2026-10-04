@@ -15,12 +15,9 @@ defmodule Mix.Tasks.StdioServer do
   @shortdoc "Runs a stdio MCP server"
 
   def run(_args) do
+    Mix.Task.run("app.config")
+    configure_host_logging()
     Mix.Task.run("app.start")
-
-    # Configure for STDIO mode
-    Application.put_env(:arbor_mcp, :stdio_mode, true)
-    Application.put_env(:arbor_mcp, :stdio_startup_delay, 10)
-    Logger.configure(level: :emergency)
 
     # Define the server inline to avoid compilation issues
     Code.eval_string("""
@@ -131,10 +128,32 @@ defmodule Mix.Tasks.StdioServer do
 
     # Start the server using the standard STDIO transport
     # The module is defined dynamically above, so we need to call it dynamically
-    # credo:disable-for-next-line Credo.Check.Refactor.Apply
-    {:ok, _server} = apply(ExampleStdioServer, :start_link, [[transport: :stdio]])
+    server_module = Module.concat(["ExampleStdioServer"])
+    {:ok, _server} = server_module.start_link(transport: :stdio, stdio_startup_delay: 10)
 
     # Keep the process alive
     Process.sleep(:infinity)
+  end
+
+  # This standalone command owns its VM's default logger handler. Preserve
+  # its level, formatter and filters while routing diagnostics away from JSON-RPC.
+  defp configure_host_logging do
+    {:ok, %{module: :logger_std_h} = handler} = :logger.get_handler_config(:default)
+
+    config =
+      handler
+      |> Map.drop([:id, :module])
+      |> Map.update!(:config, &Map.put(&1, :type, :standard_error))
+
+    # Mix app.start restarts Logger, so persist this host-owned boot policy too.
+    boot_config =
+      config
+      |> Map.put(:module, :logger_std_h)
+      |> Map.update!(:config, &Map.to_list/1)
+      |> Map.to_list()
+
+    Application.put_env(:logger, :default_handler, boot_config)
+    :ok = :logger.remove_handler(:default)
+    :ok = :logger.add_handler(:default, :logger_std_h, config)
   end
 end

@@ -3,15 +3,8 @@ defmodule Arbor.MCP.Application do
 
   use Application
 
-  alias Arbor.MCP.Internal.StdioLoggerConfig
-
   @impl true
   def start(_type, _args) do
-    # Check if STDIO transport is being used and configure logging appropriately.
-    if Application.get_env(:arbor_mcp, :stdio_mode, false) do
-      configure_stdio_logging()
-    end
-
     children =
       [
         # Dynamic supervisor for runtime components
@@ -49,10 +42,5 @@ defmodule Arbor.MCP.Application do
 
     opts = [strategy: :one_for_one, name: Arbor.MCP.Supervisor]
     Supervisor.start_link(children, opts)
-  end
-
-  # Configure logging for STDIO transport to prevent stdout contamination
-  defp configure_stdio_logging do
-    StdioLoggerConfig.configure()
   end
 end

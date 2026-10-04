@@ -234,8 +234,8 @@ defmodule Arbor.MCP.Server.SubscriptionOriginRuntimeTest do
 
     filter = Keyword.get(opts, :subscription_filter, %{"toolsListChanged" => true})
 
-    {:ok, root} =
-      StdioServer.start_link(Keyword.merge(defaults, Keyword.delete(opts, :subscription_filter)))
+    server_opts = Keyword.merge(defaults, Keyword.delete(opts, :subscription_filter))
+    {:ok, root} = StdioServer.start_link(server_opts)
 
     Process.unlink(root)
     on_exit(fn -> if Process.alive?(root), do: Runtime.stop(root) end)
@@ -248,7 +248,8 @@ defmodule Arbor.MCP.Server.SubscriptionOriginRuntimeTest do
       "params" => %{"notifications" => filter, "_meta" => @meta}
     })
 
-    assert_receive {:write_attempt, _, ack}
+    # Setup awaits the configured output budget, rather than ExUnit's 100ms default.
+    assert_receive {:write_attempt, _, ack}, Keyword.fetch!(server_opts, :output_timeout_ms)
     assert decode(ack)["method"] == "notifications/subscriptions/acknowledged"
     {:ok, edge} = Runtime.edge(runtime)
     listener = :sys.get_state(edge).subscriptions[71]

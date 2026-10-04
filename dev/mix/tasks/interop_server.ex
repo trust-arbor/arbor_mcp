@@ -22,11 +22,9 @@ defmodule Mix.Tasks.InteropServer do
     app_start_args =
       if "--no-compile" in args, do: ["--no-compile", "--no-deps-check"], else: []
 
+    Mix.Task.run("app.config", app_start_args)
+    configure_host_logging()
     Mix.Task.run("app.start", app_start_args)
-
-    # Configure for STDIO mode
-    Application.put_env(:arbor_mcp, :stdio_mode, true)
-    Logger.configure(level: :emergency)
 
     Code.eval_string(~S"""
     defmodule InteropHandler do
@@ -145,6 +143,28 @@ defmodule Mix.Tasks.InteropServer do
     receive do
       {:DOWN, ^server_ref, :process, ^server, _reason} -> :ok
     end
+  end
+
+  # This standalone command owns its VM's default logger handler. Preserve
+  # its level, formatter and filters while routing diagnostics away from JSON-RPC.
+  defp configure_host_logging do
+    {:ok, %{module: :logger_std_h} = handler} = :logger.get_handler_config(:default)
+
+    config =
+      handler
+      |> Map.drop([:id, :module])
+      |> Map.update!(:config, &Map.put(&1, :type, :standard_error))
+
+    # Mix app.start restarts Logger, so persist this host-owned boot policy too.
+    boot_config =
+      config
+      |> Map.put(:module, :logger_std_h)
+      |> Map.update!(:config, &Map.to_list/1)
+      |> Map.to_list()
+
+    Application.put_env(:logger, :default_handler, boot_config)
+    :ok = :logger.remove_handler(:default)
+    :ok = :logger.add_handler(:default, :logger_std_h, config)
   end
 
   defp maybe_enable_modern(opts, false), do: opts

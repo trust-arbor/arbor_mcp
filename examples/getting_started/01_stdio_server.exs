@@ -2,11 +2,25 @@
 
 # STDIO MCP server with a single hello tool.
 
-Application.put_env(:arbor_mcp, :stdio_mode, true)
-Application.put_env(:arbor_mcp, :stdio_startup_delay, 10)
-System.put_env("ELIXIR_LOG_LEVEL", "emergency")
-Application.put_env(:logger, :level, :emergency)
-:logger.set_primary_config(:level, :emergency)
+# This standalone host routes its own default logger to stderr before loading
+# the library; preserve normal levels, formatter and filters.
+{:ok, %{module: :logger_std_h} = stdio_logger} = :logger.get_handler_config(:default)
+
+stdio_logger_config =
+  stdio_logger
+  |> Map.drop([:id, :module])
+  |> Map.update!(:config, &Map.put(&1, :type, :standard_error))
+
+# Mix.install may restart Logger; carry the same host routing into that boot.
+stdio_logger_boot =
+  stdio_logger_config
+  |> Map.put(:module, :logger_std_h)
+  |> Map.update!(:config, &Map.to_list/1)
+  |> Map.to_list()
+
+Application.put_env(:logger, :default_handler, stdio_logger_boot)
+:ok = :logger.remove_handler(:default)
+:ok = :logger.add_handler(:default, :logger_std_h, stdio_logger_config)
 
 Mix.install(
   [
@@ -14,8 +28,6 @@ Mix.install(
   ],
   verbose: false
 )
-
-Logger.configure(level: :emergency)
 
 defmodule StdioHelloServer do
   use Arbor.MCP.Server.Handler
@@ -46,6 +58,6 @@ end
 
 if System.get_env("MCP_ENV") != "test" do
   IO.puts(:stderr, "Starting STDIO hello server.")
-  {:ok, _server} = StdioHelloServer.start_link(transport: :stdio)
+  {:ok, _server} = StdioHelloServer.start_link(transport: :stdio, stdio_startup_delay: 10)
   Process.sleep(:infinity)
 end

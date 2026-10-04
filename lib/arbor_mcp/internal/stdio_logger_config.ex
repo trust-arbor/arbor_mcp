@@ -1,27 +1,24 @@
 defmodule Arbor.MCP.Internal.StdioLoggerConfig do
   @moduledoc """
-  Configures logging for the MCP stdio transport so stdout stays JSON-RPC only.
+  Explicit legacy host opt-in for suppressing VM-wide stdio diagnostics.
 
-  `configure/0` mutates VM-global Logger, Application, and OTP logger
-  behavior: it sets `:arbor_mcp` `:stdio_mode`, the Elixir `Logger` level, the
-  `:logger` application env, and the OTP primary logger level to
-  `:emergency`. The change is process-wide for the BEAM VM, not scoped to
-  the stdio connection. Unrelated host-application logging is suppressed.
+  `configure/0` retains its existing behavior: it sets `:arbor_mcp`
+  `:stdio_mode`, Elixir Logger's level, the `:logger` application level, and the
+  OTP primary logger level to `:emergency`. It does not route logs to stderr.
+  Unrelated applications in the same BEAM VM also lose normal logging.
 
-  1.x keeps this global behavior so stdio protocol output stays
-  uncontaminated. 2.0 may replace it with a dedicated IO device and stderr
-  logging.
-
-  This module is internal. Do not call it from application code unless you
-  intend to apply the same VM-global configuration.
+  Arbor.MCP 2.0 never calls this utility during application startup or
+  transport connection. The exported function remains for callers that
+  explicitly choose the legacy suppression policy. Prefer host-owned stderr
+  handlers configured before application startup, preserving normal log levels.
   """
 
   @doc """
-  Configures logging for STDIO transport to prevent stdout contamination.
+  Applies the legacy VM-global `:emergency` logging threshold explicitly.
 
-  The MCP STDIO transport requires that ONLY JSON-RPC messages appear on stdout.
-  This function suppresses all logging to ensure clean protocol communication
-  by mutating VM-global Logger/Application/OTP logger settings.
+  This mutates Logger/Application/OTP logger settings without routing handlers.
+  Emergency reports and direct IO can still reach stdout. The host remains
+  responsible for a JSON-RPC-only protocol stream.
   """
   def configure do
     # Set stdio mode flag

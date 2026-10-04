@@ -36,12 +36,11 @@ Supported options:
 - `:env` - environment variables as `{"KEY", "VALUE"}` tuples.
 - `:timeout` - client operation timeout.
 
-Stdio servers must write only JSON-RPC to stdout. Starting stdio mode
-configures VM-global Logger, Application, and OTP logger settings so
-protocol output is not contaminated. That change is process-wide for the
-BEAM VM, not scoped to the stdio connection. See
-[Configuration — Logging](CONFIGURATION.md#logging). 1.x keeps this
-global behavior; 2.0 may replace it.
+Stdio servers must write only JSON-RPC to stdout. Arbor.MCP 2.0 preserves
+VM-global Logger and Application settings. The host configures diagnostics to
+stderr or another non-protocol sink before application startup. See
+[Configuration — Logging](CONFIGURATION.md#logging) for release configuration
+and the retained explicit legacy suppression utility.
 
 Stdio frames are UTF-8 bytes. The process locale decides whether the VM
 opens stdio as a character device (UTF-8 locales) or a byte device (any

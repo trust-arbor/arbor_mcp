@@ -16,14 +16,18 @@ Use stderr for diagnostics:
 IO.puts(:stderr, "debug")
 ```
 
-For scripts with `Mix.install/2`, configure logging before installing deps:
+Configure logging in the host before applications start:
 
 ```elixir
-Application.put_env(:arbor_mcp, :stdio_mode, true)
-Application.put_env(:logger, :level, :emergency)
-
-Mix.install([{:arbor_mcp, path: "/absolute/path/to/arbor_mcp"}], verbose: false)
+# Host config/config.exs or config/runtime.exs
+config :logger, :default_handler, config: [type: :standard_error]
 ```
+
+Library startup and stdio connection preserve that configuration and normal log
+levels. `:stdio_mode` no longer configures the VM logger automatically. Standalone
+script examples explicitly replace their host-owned default handler before
+`Mix.install/2`; that function may still print dependency/compiler output to
+stdout. Prefer compiled releases when stdout must be clean from process boot.
 
 ### Server hangs after starting
 
