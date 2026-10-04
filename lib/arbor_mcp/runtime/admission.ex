@@ -3,6 +3,8 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
 
   use GenServer
 
+  @cleanup_turn_ms 10
+
   alias Arbor.MCP.Server.Runtime.{ByteBudget, Deadline, Failure, Ref, ShutdownGuard}
 
   def start_link(opts) do
@@ -30,7 +32,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     {wait, timeout_reason} = Deadline.confirmation_budget(reservation)
 
     if wait == 0 do
-      release_slot(table, reservation)
+      rollback_candidate(table, reservation)
       {:error, timeout_reason}
     else
       try do
@@ -39,7 +41,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
             {:ok, route, confirmed}
 
           {:error, _reason} = error ->
-            release_slot(table, reservation)
+            rollback_candidate(table, reservation)
             error
         end
       catch
@@ -404,6 +406,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
        admitted_work: length(data_slots),
        admitted_envelopes: envelope_count(data_slots),
        confirmed_work: confirmed_work(state.reservations),
+       pending_byte_cleanup: length(ByteBudget.pending(state.table)),
        pending_bytes: bytes.data + bytes.outgoing + bytes.incoming,
        control_bytes: bytes.outgoing + bytes.incoming,
        response_bytes: bytes.incoming,
@@ -479,7 +482,14 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     end
   end
 
+  def handle_info(:byte_cleanup, state) do
+    ByteBudget.reap(state.table, Deadline.now() + @cleanup_turn_ms)
+    {:noreply, state}
+  end
+
   def handle_info(:reap_unconfirmed, state) do
+    cleanup_deadline = Deadline.now() + @cleanup_turn_ms
+    ByteBudget.reap(state.table, cleanup_deadline)
     # A producer may be killed between insert_new and confirm. Reap those
     # bounded slot records without charging bytes or allocating a monitor.
     producers =
@@ -491,7 +501,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     for {token, producer} <- producers,
         not Map.has_key?(state.reservations, token),
         not Process.alive?(producer) do
-      release_slot(state.table, %{token: token, producer: producer})
+      release_slot(state.table, %{token: token, producer: producer}, deadline: cleanup_deadline)
     end
 
     for {{:cancel_control, _key}, producer} = object <- :ets.tab2list(state.table),
@@ -531,7 +541,8 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
       reservation.generation != state.generation ->
         {:reply, {:error, :runtime_unavailable}, state}
 
-      not slot_owned?(state.table, reservation) ->
+      not reservation_available?(state.table, reservation) ->
+        release_slot(state.table, reservation)
         {:reply, {:error, :admission_lost}, state}
 
       deadline_error ->
@@ -605,6 +616,11 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
         {:reply, {:ok, reservation}, state}
     end
   end
+
+  defp reservation_available?(table, reservation),
+    do:
+      slot_owned?(table, reservation) and
+        not ByteBudget.release_requested?(table, reservation.token)
 
   defp participants_alive?(reservation),
     do: Process.alive?(reservation.producer) and Process.alive?(reservation.owner)
@@ -730,7 +746,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
         {:ok, reservation}
 
       {:error, _reason} = error ->
-        release_slot(table, reservation)
+        rollback_candidate(table, reservation)
         error
     end
   end
@@ -743,16 +759,13 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     end)
   end
 
-  defp release_slot(table, reservation) do
-    # Remove the entire token's permit set in one ETS operation. A concurrent
-    # producer may reuse freed positions without an older release deleting it.
-    :ets.select_delete(table, [
-      {{{:slot, :_}, reservation.token, reservation.producer}, [], [true]}
-    ])
+  defp rollback_candidate(table, reservation) do
+    {deadline, _reason} = Deadline.admission_limit(reservation)
+    ByteBudget.release(table, reservation.token, deadline: deadline)
+  end
 
-    ByteBudget.release(table, reservation.token)
-  rescue
-    ArgumentError -> :ok
+  defp release_slot(table, reservation, opts \\ []) do
+    ByteBudget.release(table, reservation.token, opts)
   end
 
   defp work_count(%{"payload" => members}, opts) when is_list(members) do
@@ -770,7 +783,10 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
        when is_list(members) do
     metadata = %{slot: hd(slots), slots: slots, work_count: length(slots)}
     records = Enum.map(slots, &{{:slot, &1}, token, producer})
-    :erlang.external_size(metadata) + Enum.sum(Enum.map(records, &:erlang.external_size/1))
+    cleanup_bytes = ByteBudget.cleanup_record_bytes(token, producer)
+
+    :erlang.external_size(metadata) + cleanup_bytes +
+      Enum.sum(Enum.map(records, &:erlang.external_size/1))
   end
 
   defp work_metadata_bytes(_request, _slots, _token, _producer), do: 0
@@ -793,7 +809,11 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
       {:error, reason}
     else
       slots = available |> Stream.reject(&:ets.member(table, {:slot, &1})) |> Enum.take(count)
-      records = Enum.map(slots, &{{:slot, &1}, token, producer})
+
+      records = [
+        ByteBudget.cleanup_record(token, producer)
+        | Enum.map(slots, &{{:slot, &1}, token, producer})
+      ]
 
       cond do
         length(slots) != count -> {:error, :server_busy}
@@ -983,6 +1003,9 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     do: state.bytes + reservation.bytes > state.config.max_pending_bytes
 
   defp drain(state, reason) do
+    :ets.insert(state.table, {:route, :closed})
+    ByteBudget.clear(state.table)
+
     state =
       Enum.reduce(Map.keys(state.reservations), state, fn token, acc ->
         acc
@@ -990,8 +1013,11 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
         |> release_reservation(token)
       end)
 
-    :ets.select_delete(state.table, [{{{:slot, :_}, :_, :_}, [], [true]}])
-    ByteBudget.clear(state.table)
+    :ets.select_delete(state.table, [
+      {{{:slot, :_}, :_, :_}, [], [true]},
+      {{{:byte_cleanup, :_}, :_, :_}, [], [true]}
+    ])
+
     :ets.select_delete(state.table, [{{{:cancel_control, :_}, :_}, [], [true]}])
     state
   end

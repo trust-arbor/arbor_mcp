@@ -1,0 +1,35 @@
+# Finite input-byte cleanup prerequisite
+
+This integrated v2 draft prerequisite preserves the candidate's absolute caller/admission deadlines, per-member legacy batch capacity, caller identity, and callback semantics. It changes private `ByteBudget` and `Admission` cleanup. It does not wire the output ledger or qualify production output, batch aggregation, raw mailbox bounds, or throughput.
+
+## Ownership and bounds
+
+Admission atomically claims the entire work-slot set together with one fixed, payload-free token cleanup record. That record contains only a token reference, producer PID, and one of `:none`, `:trim`, or `:release`. It cannot be recreated after retirement; deferred operations update an existing record only. There is at most one record per held envelope, across data/outgoing/incoming lanes. The record is fixed count-bounded bookkeeping for non-array input, preserving its existing byte-accounting contract; array permit metadata charges the largest record shape (`:release`) once alongside the slot set. It does not introduce one payload copy per batch member.
+
+A claim CAS has at most 512 attempts and checks the original absolute admission deadline before retry and before publication. Contention exhaustion returns the existing `:server_busy` result. Byte-credit publication remains one atomic CAS recording the token, bytes, and candidate metadata. The input frame/context/options stay charged once.
+
+Trim/release share a finite cleanup budget across the three lanes: at most 512 CAS attempts and five milliseconds. Producer rollback clamps that budget to the original server/caller admission cutoff. Already-expired rollback updates the small token record without taking byte-row snapshots or entering another CAS loop. Deferred cleanup returns `{:pending, :trim | :release}` internally. It keeps the full work-slot set and any byte claim owned; count positions become reusable only after byte removal has succeeded. A successful release deletes the producer/token-matched count positions and cleanup record in one ETS operation. Repeated old cleanup cannot delete a fresh token occupying the same positions.
+
+Trim may defer while confirmation succeeds: its already-admitted byte claim and count positions remain held. The actor may discard the extra candidate metadata later. A release request monotonically upgrades a pending trim, and later trim requests cannot replace it. An unconfirmed candidate marked for release cannot subsequently pass confirmation.
+
+## Owner retry and retirement
+
+Deferred records send one coalesced, payload-free `:byte_cleanup` wake to Admission. One fixed wake flag prevents a wake per token or retry. The existing 100-millisecond reaper also checks pending records, covering a wake/flag-removal race. Each owner retry turn has a separate ten-millisecond budget; individual cleanup retains its five-millisecond/512-attempt cap. Dead unconfirmed producers retain their token ownership until cleanup completes, and are marked for cleanup under that same turn deadline. No retry allocates another record or timer per token.
+
+`Runtime.stats/1` exposes `pending_byte_cleanup`, the number of marked cleanup records. `reserved` and `pending_bytes` continue to include credit held by cleanup even after a terminal reservation leaves Admission's active map. These fields are observations of separate ledger operations, not one atomic snapshot of all runtime state.
+
+Whole-generation retirement is an owner-only operation. Admission first closes its route and atomically replaces all three byte rows with generation-fenced empty rows. Old producer CAS snapshots therefore cannot restore a retired generation. It then retires token/count/control records. A scheduler/Admission restart may abandon the retired generation, but a delayed old cleanup operation cannot affect fresh tokens. Arbitrary direct ETS writes or invoking owner-only lifecycle helpers from unrelated processes bypass this private contract.
+
+## Limits and integration
+
+The budgets bound retries and retained ownership; they are not hard real-time guarantees for BEAM scheduling, individual ETS snapshots/CAS operations, telemetry callbacks, or OS execution. Whole-row snapshot copies, producer-owned inputs, VM bookkeeping, and callback state remain separate costs. All-lane pressure and same-runner throughput must measure those costs before release. A runtime-owned cleanup reaper cannot make progress while its actor is suspended; its token/count/byte ownership stays retained until it resumes or its generation is retired.
+
+The slice uses one existing reaper timer and one wake flag. It does not claim a hard bound on arbitrary Erlang sends, unsupported direct helper calls, or library-wide mailboxes. Supported callers retain the existing admission count/byte controls and explicit overload policy.
+
+## Qualification
+
+The final focused suite passed **120 tests** on Elixir 1.17.3/OTP 27.0.1, Elixir 1.19.5/OTP 28.4.1, and Elixir 1.20.3/OTP 29.0.5. All three passed forced warnings-as-errors application compilation and full formatting. Current strict Credo passed with 637 files and no new filters. Normal minimum/current Dialyzer passed with the existing filters (67/67 and 73/73 respectively); additional raw audits found no warnings from ByteBudget or Admission. The focused harness starts ExUnit directly with independent dependency sources/builds, without the repository test helper's global OS-port cleanup. It includes runtime, per-member batch, absolute deadline, services, caller/HandlerServer, and ten new cleanup cases. The new cases exercise expired rollback under a suspended actor, retained exact count/byte credit, coalesced wakes, all three lanes, monotonic trim/release upgrade, accepted trim settlement, producer/owner death, neighboring leases, duplicate old release after readmission, scheduler and hard Admission restart, and 60 hot producers making 600 attempts while an independent sampler checks lane/count/marker caps.
+
+Three additional seed variations on each toolchain passed the same 120 cases, including 600 hot attempts per run. These are behavioral pressure/lifecycle checks, rather than a same-runner throughput or allocator/RSS benchmark. Full-application CI and production output convergence are separate gates. This snapshot starts from canonical `88a9f75857a8ffaf176adbddce2703b15a977e20` plus the separately qualified absolute-deadline files; dependency sources/builds and PLTs are private copies, with shared RPC pinned to `b46cbfe8ced0d29519462f8a83b64e5750caaa92`. All 120 focused cases, compilation with warnings-as-errors and formatting pass on minimum/current/newest. Three additional varied seeds per toolchain also pass. Current strict Credo reports zero issues; normal minimum/current Dialyzer passes unchanged filters, with zero raw Admission/ByteBudget warnings. The merged current full local CI selection passes 20 doctests, 34 properties and 3,911 executed tests (82 excluded), zero failures.
+
+The four qualified paths are integrated in the unpublished v2 draft. Full combined CI and same-runner pressure measurements remain release gates.
