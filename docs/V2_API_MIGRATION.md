@@ -274,12 +274,15 @@ aggregate batch output, store recovery, stdio, HTTP and shutdown across all
 transports remain qualification gates. Do not equate bounded admission with a
 hard bound on arbitrary Erlang sends, all callback memory or application state.
 
-The current scheduled custom `handle_call/3` receives a synthetic
-`{callback_task_pid, reference}` as `from`, rather than the original caller's
-PID/tag. This differs from direct GenServer caller-identity semantics as well
-as callback `self()`. Deferred `GenServer.reply/2` remains unsupported. Record
-and resolve the caller-identity contract with representative consumers before
-RC; namespace renaming alone does not migrate handlers that use `from`.
+Scheduled custom `handle_call/3` now receives
+`{original_caller_pid, proxy_reply_tag}` as `from` at candidate `c8a4987`.
+The opaque reply tag addresses the callback worker; early or saved late
+`GenServer.reply/2` calls cannot settle the caller or bypass serialized state
+commit. Callback `self()` still identifies a supervised task. Deferred replies
+remain unsupported. The original PID, worker separation and early/late reply
+behavior have regressions on minimum/current toolchains; representative
+consumer/resource migration remains required before RC. See the candidate's
+`docs/V2_CALLER_IDENTITY_SLICE.md` for the contract and limits.
 
 Legacy batches currently reserve one input envelope in the Test/BEAM candidate.
 The accepted runtime contract requires individual work capacity and prohibits

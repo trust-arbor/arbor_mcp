@@ -122,8 +122,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
     test "removes the file once the process that built the command exits" do
       test_pid = self()
 
-      owner =
-        spawn(fn ->
+      {owner, owner_ref} =
+        spawn_monitor(fn ->
           {_cmd, args} = ClaudeSDK.command(mcp_servers: %{"docs" => %{"command" => "docs-mcp"}})
           send(test_pid, {:config, hd(mcp_config_values(args))})
 
@@ -132,10 +132,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
           end
         end)
 
-      assert_receive {:config, path}
+      assert_receive {:config, path}, 1_000
       assert File.exists?(path)
 
       send(owner, :stop)
+      assert_receive {:DOWN, ^owner_ref, :process, ^owner, :normal}, 1_000
       wait_until(fn -> not File.exists?(Path.dirname(path)) end)
     end
 
