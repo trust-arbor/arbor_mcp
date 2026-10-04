@@ -9,6 +9,7 @@ defmodule Arbor.MCP.CancellationTest do
   alias Arbor.MCP.Internal.Protocol
   alias Arbor.MCP.Server.Handler
   alias Arbor.MCP.Server.HandlerServer, as: Server
+  alias Arbor.MCP.Server.Runtime
 
   defmodule TestHandler do
     @behaviour Handler
@@ -131,7 +132,7 @@ defmodule Arbor.MCP.CancellationTest do
 
       # Cleanup
       GenServer.stop(client)
-      GenServer.stop(server)
+      assert :ok = Runtime.stop(server)
     end
 
     test "client validates cancellation of initialize request" do
@@ -156,7 +157,7 @@ defmodule Arbor.MCP.CancellationTest do
 
       # Cleanup
       GenServer.stop(client)
-      GenServer.stop(server)
+      assert :ok = Runtime.stop(server)
     end
 
     test "client ignores cancellation for unknown requests" do
@@ -183,7 +184,7 @@ defmodule Arbor.MCP.CancellationTest do
 
       # Cleanup
       GenServer.stop(client)
-      GenServer.stop(server)
+      assert :ok = Runtime.stop(server)
     end
   end
 
@@ -237,7 +238,7 @@ defmodule Arbor.MCP.CancellationTest do
 
       # Cleanup
       GenServer.stop(client)
-      GenServer.stop(server)
+      assert :ok = Runtime.stop(server)
     end
 
     test "server ignores cancellation for unknown requests" do
@@ -257,25 +258,18 @@ defmodule Arbor.MCP.CancellationTest do
       wait_until(fn -> is_list(Client.get_pending_requests(client)) end)
 
       # Send cancellation for non-existent request
-      GenServer.cast(
-        server,
-        {:handle_message,
-         %{
-           "jsonrpc" => "2.0",
-           "method" => "notifications/cancelled",
-           "params" => %{
-             "requestId" => "non_existent",
-             "reason" => "Should be ignored"
-           }
-         }}
-      )
+      assert :ok =
+               Client.notify(client, "notifications/cancelled", %{
+                 "requestId" => "non_existent",
+                 "reason" => "Should be ignored"
+               })
 
       # Server should still be functional
       assert {:ok, _tools} = Client.list_tools(client)
 
       # Cleanup
       GenServer.stop(client)
-      GenServer.stop(server)
+      assert :ok = Runtime.stop(server)
     end
   end
 
@@ -323,7 +317,7 @@ defmodule Arbor.MCP.CancellationTest do
 
       # Cleanup
       GenServer.stop(client)
-      GenServer.stop(server)
+      assert :ok = Runtime.stop(server)
     end
 
     test "malformed cancellation notification is ignored" do
@@ -343,24 +337,17 @@ defmodule Arbor.MCP.CancellationTest do
       wait_until(fn -> is_list(Client.get_pending_requests(client)) end)
 
       # Send malformed cancellation (missing requestId)
-      GenServer.cast(
-        server,
-        {:handle_message,
-         %{
-           "jsonrpc" => "2.0",
-           "method" => "notifications/cancelled",
-           "params" => %{
-             "reason" => "Missing requestId"
-           }
-         }}
-      )
+      assert :ok =
+               Client.notify(client, "notifications/cancelled", %{
+                 "reason" => "Missing requestId"
+               })
 
       # Server should still be functional
       assert {:ok, _tools} = Client.list_tools(client)
 
       # Cleanup
       GenServer.stop(client)
-      GenServer.stop(server)
+      assert :ok = Runtime.stop(server)
     end
   end
 
@@ -389,7 +376,7 @@ defmodule Arbor.MCP.CancellationTest do
 
       # Cleanup
       GenServer.stop(client)
-      GenServer.stop(server)
+      assert :ok = Runtime.stop(server)
     end
   end
 end

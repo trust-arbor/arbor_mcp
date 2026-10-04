@@ -8,6 +8,7 @@ defmodule Arbor.MCP.LifecycleTest do
 
   alias Arbor.MCP.Client
   alias Arbor.MCP.Server.HandlerServer, as: Server
+  alias Arbor.MCP.Server.Runtime
 
   defmodule TestHandler do
     use Arbor.MCP.Server.Handler
@@ -58,7 +59,7 @@ defmodule Arbor.MCP.LifecycleTest do
         )
 
       on_exit(fn ->
-        if Process.alive?(server), do: GenServer.stop(server)
+        Runtime.stop(server)
       end)
 
       {:ok, server: server}
@@ -133,6 +134,8 @@ defmodule Arbor.MCP.LifecycleTest do
       # Give server time to process disconnection but it should stay alive
       Process.sleep(50)
       assert Process.alive?(server)
+      assert {:ok, edge} = Runtime.edge(server)
+      assert Process.alive?(edge)
 
       # Server should be able to accept new connections
       {:ok, new_client} =
@@ -212,7 +215,7 @@ defmodule Arbor.MCP.LifecycleTest do
           end
       end
 
-      GenServer.stop(server)
+      assert :ok = Runtime.stop(server)
     end
   end
 end

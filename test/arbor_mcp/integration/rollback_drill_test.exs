@@ -4,7 +4,7 @@ defmodule Arbor.MCP.Integration.RollbackDrillTest do
   alias Arbor.MCP.Client
   alias Arbor.MCP.Client.{EraCache, Subscription}
   alias Arbor.MCP.Server
-  alias Arbor.MCP.Server.{Context, HandlerServer, Subscriptions}
+  alias Arbor.MCP.Server.{Context, HandlerServer, Runtime, Subscriptions}
 
   @moduletag :integration
 
@@ -168,7 +168,7 @@ defmodule Arbor.MCP.Integration.RollbackDrillTest do
 
     assert :ok =
              Subscriptions.close(
-               modern_server,
+               runtime_edge(modern_server),
                subscription.request_id,
                :server_shutdown,
                registry: registry
@@ -183,7 +183,7 @@ defmodule Arbor.MCP.Integration.RollbackDrillTest do
     assert get_in(modern_result, ["content", Access.at(0), "text"]) == "Welcome, Lin"
 
     assert :ok = Client.disconnect(modern_client)
-    assert :ok = GenServer.stop(modern_server)
+    assert :ok = Runtime.stop(modern_server)
 
     # Application state lives outside either protocol-era process. The
     # legacy-only node receives the reconciled state only after the modern node
@@ -287,9 +287,12 @@ defmodule Arbor.MCP.Integration.RollbackDrillTest do
   end
 
   defp stop_server(server) do
-    if Process.alive?(server), do: GenServer.stop(server)
-  catch
-    :exit, _reason -> :ok
+    Runtime.stop(server)
+  end
+
+  defp runtime_edge(server) do
+    {:ok, edge} = Runtime.edge(server)
+    edge
   end
 
   defp assert_eventually(fun, attempts \\ 50)
