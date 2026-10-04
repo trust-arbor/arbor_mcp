@@ -7,6 +7,13 @@
 - **Toolchain:** Elixir `1.19.5`, OTP `28`, Mix environment `dev`
 - **Related:** [V2_ROADMAP.md](./V2_ROADMAP.md), [historical API census](./API_DIFF_RC5_TO_1_0.md)
 
+The proposed [v2 migration inventory](./V2_API_MIGRATION.md) and
+[machine-readable removal plan](./v2/api_migration_plan.json) now cover the
+compiled deprecations and accepted retirement families. They distinguish
+namespace/package moves from removals and list replacement prerequisites;
+configuration/options/process-name/telemetry inventories and the final compiled
+v2 diff remain separate release gates. The frozen snapshot below is unchanged.
+
 ## Purpose and scope
 
 This snapshot makes the starting Elixir surface for the full v2 migration

@@ -1,8 +1,8 @@
 # V2 package and adapter contract
 
 - **Status:** Package split, optional adapter bundle, and `Arbor.MCP.*` /
-  `Arbor.ACP.*` namespaces accepted; shared-package qualification and subprocess
-  event/ownership design remain open.
+  `Arbor.ACP.*` namespaces accepted; shared event/ownership implementation is
+  reviewable, with package-wide qualification and the final ABI/default freeze open.
 - **Release target:** Friday, 2026-10-09, subject to the full v2 release gates.
 - **Reviewed:** 2026-10-03, current ExMCP main at `1808c56`; sibling ExACP
   extraction at `58dee1d`.
@@ -14,7 +14,7 @@
   [ACP wire v2 tracking](ACP_V2_TRACKING.md).
 
 `Arbor.MCP` and `Arbor.ACP` are the confirmed public namespaces. `Arbor.RPC` remains
-the proposed name for the qualified shared mechanics package. ACP wire protocol
+the implementation name for the shared mechanics package. ACP wire protocol
 versions remain independent of the library's major release.
 
 The dotted public module spelling was accepted on 2026-10-03 for the wider
@@ -30,7 +30,7 @@ paths remain independent of the Elixir namespace.
 | `trust-arbor/arbor_mcp` | repository root | `arbor_mcp` | MCP clients, servers, HTTP, authorization, runtime and scheduler |
 | `trust-arbor/arbor_acp` | `packages/arbor_acp` | `arbor_acp` | ACP client/native agent, protocol and generic adapter extension runtime |
 | `trust-arbor/arbor_acp` | `packages/arbor_acp_adapters` | `arbor_acp_adapters` | Optional Claude, Codex, Pi and ZCode implementations |
-| `trust-arbor/arbor_acp` | `packages/arbor_rpc` | `arbor_rpc` (proposed) | Neutral JSON-RPC, framing and child-process mechanics shared by both protocols |
+| `trust-arbor/arbor_acp` | `packages/arbor_rpc` | `arbor_rpc` | Neutral JSON-RPC, framing and child-process mechanics shared by both protocols |
 
 Each package is a standalone Mix project with its own package metadata, source
 files, tests, documentation and release tag. Vendor modules remain under
@@ -72,10 +72,13 @@ and telemetry as third-party runtime dependencies.
 
 ## Source of truth and ownership map
 
-Current ExMCP main is the implementation source of truth until the cutover is
-committed and qualified. The dirty `spike/acp-cutover` worktree is migration
-evidence, not a newer canonical implementation. The sibling extraction must be
-refreshed from main before becoming canonical: it lacks
+Supported 1.x remains canonical on MCP `master`. V2 ACP is now canonical in
+`trust-arbor/arbor_acp`, and MCP v2 is developed in draft PR #76. Extraction
+scripts are retained for reconciliation evidence; do not regenerate over the
+canonical ACP projects. The dirty `spike/acp-cutover` worktree and original
+sibling are preserved migration evidence.
+
+At the initial review, the older sibling required refresh because it lacked
 `Adapters.ClaudeSDK.MCPConfig`, current Claude launch-option validation and
 unsupported session-MCP handling, release PATH cleanup, and current stdio
 process-group lifecycle mechanics.
@@ -160,6 +163,19 @@ are `open(command, opts)`, `write(handle, iodata)`, `close(handle)`,
 wrapper adds receive/subscribe delivery over that handle and the frame reducer.
 Finalize event/ownership signatures in the runtime design record before exposing
 them; these functions are proposed, unlike the copied primitive APIs above.
+
+**October 4 implementation:**
+[ACP draft PR #1](https://github.com/trust-arbor/arbor_acp/pull/1) now implements
+these handles and shared mechanics. `FramedStream.next_until/3` retains an
+absolute deadline across protocol filtering. Subscriptions deliver neutral
+`{:arbor_rpc, generation, {:frame, token, bytes}}` events; the receiving process
+ACKs its token after bounded processing. Closure carries its reason and original
+unfinished bytes. Opening ownership is independent of readers, and known cleanup
+failures propagate. The generic ACP bridge and Pi use this interface; native ACP
+and MCP child-stdio integration candidates are being qualified. The canonical
+[RPC source documentation](https://github.com/trust-arbor/arbor_acp/tree/codex/shared-subprocess/packages/arbor_rpc)
+records exact signatures and remaining Port-pressure/platform limits. This is
+an implemented candidate, not the final release ABI/default freeze.
 
 The mechanical implementation must centralize executable resolution, environment
 construction, Port creation, ownership transfer, OS PID capture, normal/error

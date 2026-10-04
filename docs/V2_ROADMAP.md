@@ -1,8 +1,8 @@
 # ExMCP 2.0 Roadmap
 
-- **Status:** Full v2 scope accepted, including runtime/scheduler redesign; Phase 1 partially prepared; package split prototyped
+- **Status:** Full v2 scope accepted; independent package projects and runtime foundation implemented; transport integration and release qualification underway
 - **Target:** Arbor package v2 release, Friday 2026-10-09, after qualification and RC soak
-- **Last updated:** 2026-10-03
+- **Last updated:** 2026-10-04
 - **Related release work:** [`RELEASE_1_0_0.md`](./RELEASE_1_0_0.md),
   [`API_DIFF_RC5_TO_1_0.md`](./API_DIFF_RC5_TO_1_0.md),
   [`POST_1_0_MAINTENANCE_PLAN.md`](./POST_1_0_MAINTENANCE_PLAN.md),
@@ -10,6 +10,7 @@
   [`MCP_2026_07_28_MIGRATION_PLAN.md`](./MCP_2026_07_28_MIGRATION_PLAN.md),
   [`V2_RELEASE_ASSESSMENT.md`](./V2_RELEASE_ASSESSMENT.md),
   [`V2_API_BASELINE.md`](./V2_API_BASELINE.md),
+  [`V2_API_MIGRATION.md`](./V2_API_MIGRATION.md),
   [`V2_PACKAGE_CONTRACT.md`](./V2_PACKAGE_CONTRACT.md),
   [`V2_RUNTIME_CONTRACT.md`](./V2_RUNTIME_CONTRACT.md),
   [`V2_RELEASE_PLAN.md`](./V2_RELEASE_PLAN.md)
@@ -82,6 +83,16 @@ URL redirect were verified. MCP development continues there. The ACP
 repository will hold the core and optional adapter package. New Hex packages
 and consumer migration wait for qualified artifacts. Package ownership and
 shared mechanics are specified in [V2_PACKAGE_CONTRACT.md](./V2_PACKAGE_CONTRACT.md).
+
+The ACP repository now exists at
+[`trust-arbor/arbor_acp`](https://github.com/trust-arbor/arbor_acp). Its three
+standalone projects have independent minimum/current toolchain checks. MCP v2
+is developed in [draft PR #76](https://github.com/trust-arbor/arbor_mcp/pull/76),
+and shared child-process convergence in
+[ACP draft PR #1](https://github.com/trust-arbor/arbor_acp/pull/1). Supported
+MCP `master` remains the `ExMCP` 1.x implementation. No v2 package is published.
+The [release assessment](./V2_RELEASE_ASSESSMENT.md) distinguishes committed
+foundations, local integration candidates and outstanding release gates.
 
 ## 3. Guiding constraints
 
@@ -206,7 +217,7 @@ size of the compatibility surface.
 | Optional HTTP server dependency (Cowboy optional, Bandit supported) | Cowlib advisory tracking (#18); PR #21 | Adopt | 2.0, alongside runtime/scheduler redesign | `EEF-CVE-2026-43966` and `EEF-CVE-2026-43969` are "won't fix" upstream, so every consumer carries audit exceptions for encoders ExMCP never calls. Standalone `transport: :http` would require the host to add Bandit or Cowboy, which breaks 1.x consumers; Phoenix mounts of `ExMCP.HttpPlug` are unaffected. Listener lifecycle goes behind per-adapter modules; `:ranch_ref`, the named listener, and shutdown semantics are preserved where Cowboy is chosen. |
 | Separate MCP and ACP Hex packages | Package-footprint review | Implementing; initial independent packages tested | 2.0 | Arbor repository ownership is settled; fresh core/adapter/RPC extraction passes tests and archive inspection. Shared subprocess convergence, final namespaces, compatibility and release qualification remain gates. |
 | Optional ACP vendor-adapter package | 2026-10-03 package review | Adopt; extension contract in progress | 2.0 | Keep the generic adapter framework in ACP; move vendor implementations to one optional bundle in the ACP repository with a separate release cadence and explicit core compatibility ranges. |
-| Third shared runtime package | Package-footprint review | Defer pending split design | 2.0 only if justified | Centralize security-sensitive JSON-RPC/framing/process code only if both packages need a stable neutral contract; do not publish a grab-bag of tiny helpers. |
+| Neutral shared RPC package | Package-footprint and lifecycle review | Adopt; implemented candidate | 2.0 | `arbor_rpc` owns JSON-RPC/framing/environment and owned subprocess mechanics used by MCP and ACP. Final ABI/default and platform/pressure qualification remain release gates. |
 | Built-in distributed database/event sourcing | External review extrapolation | Reject for core | External adapters | ExMCP should define contracts, not require a database or event-source all runtime state. |
 | Copy Anubis APIs or rewrite ExMCP around them | Comparison exercise | Reject | — | ExMCP has broader protocol, transport, authorization, ACP, and compatibility requirements. |
 | Treat every additive API as a safe 1.x backport | Backport discussion | Reject | — | Additions create support obligations and can still change lifecycle, defaults, ordering, or wire behavior. |
@@ -512,7 +523,7 @@ ExMCP 2.0 is not intended to:
 - remove legacy MCP support solely because the package major changed; or
 - preserve deprecated APIs under new names indefinitely.
 
-## 10. Open decisions
+## 10. Package design record and remaining decisions
 
 ### 10.1 MCP/ACP package topology
 
@@ -529,8 +540,9 @@ below. The shim generator also omits legacy structs and assumes `ExACP` /
 See [`V2_RELEASE_ASSESSMENT.md`](./V2_RELEASE_ASSESSMENT.md) for the concrete
 blockers and the accepted full-release scope. Repository transfer, Hex
 package identity, OTP application/config identity, Elixir namespaces, and
-wire/storage names are separate decisions. No rename or transfer has been
-accepted by this roadmap.
+wire/storage names are separate decisions. The accepted Arbor names and
+completed repository transfer are recorded in section 2 and the package
+contract; the following footprint comparison preserves the original design evidence.
 
 ACP is large enough to justify evaluating a split: historically, at commit `db8a998`, after
 the post-1.0 ZCode adapter and CLI interop merge, the tree contains 50 ACP
@@ -571,7 +583,7 @@ packages), rather than forcing all ACP consumers to depend on ExMCP. An
 integration module/package is distinct from the proposed neutral shared runtime:
 the latter must not own either protocol's configuration schema.
 
-The package-topology design must compare these options:
+The package-topology design compared these options:
 
 | Shape | Advantages | Costs and risks |
 |---|---|---|
@@ -580,29 +592,23 @@ The package-topology design must compare these options:
 | Independent `ex_mcp` and `ex_acp` with copied helpers | Two simple dependency graphs and independent releases | Security, framing, environment, and JSON-RPC fixes can drift. Copying those implementations is not acceptable. |
 | `ex_mcp` and `ex_acp` depend on a small shared package | No duplicated security-sensitive code; independent protocol packages and dependency sets | Adds a third public app, versioning policy, release order, compatibility matrix, and another release/maintenance coordination surface. |
 
-The initial direction was a same-repository, multi-package design spike; the
-local prototype instead uses two repositories. The repository topology is
-still open. Before accepting either layout, separate the generic transport
-behaviour from concrete MCP transport selection and factor the subprocess
-transport into a neutral bounded-NDJSON/Port core with MCP- and ACP-specific
-validation wrappers. Remeasure the residual shared surface and decide whether
-it justifies a shared package. ACP-only helpers can remain ACP-owned.
+The accepted topology uses two repositories: MCP in `trust-arbor/arbor_mcp`,
+and RPC, ACP core and the optional adapter bundle in `trust-arbor/arbor_acp`.
+The implemented shared candidate factors JSON-RPC, bounded framing, child
+PATH/environment, Port ownership and finite cleanup into `arbor_rpc` with
+protocol-specific wrappers. ACP-only helpers remain ACP-owned. Remeasure
+archive, dependency and compile footprints using the final packaged artifacts.
 
-Create a third package only if the residual code forms a cohesive, stable
-runtime contract used by both packages. Its scope should be limited to
-mechanics such as JSON-RPC envelopes, bounded line framing, subprocess
-lifecycle/environment policy, and payload-safe diagnostics. Protocol methods,
-MCP resource policy, ACP session semantics, adapter mappings, and public client
-APIs stay in their owning packages. Trivial map construction may be separately
-owned rather than forcing a dependency on a miscellaneous helper package.
+The neutral shared contract excludes protocol methods, MCP resource policy,
+ACP session semantics, vendor mappings and either public client API. Trivial
+map construction is owned separately instead of expanding the shared package.
 
-If a shared package is justified, keep all packages in one repository, release
-the shared package first, use explicit compatible version ranges, and run a CI
-matrix against the lowest and newest supported shared version. One contract
-suite should execute against both protocol wrappers, and security/framing fixes
-must update that suite before either consumer releases. The Phase 1 design must
-also choose whether the existing `ExMCP.ACP.*` namespace remains in `ex_acp`,
-migrates to `ExACP.*`, or is preserved temporarily by a compatibility package.
+Release RPC first with explicit compatible ranges, then qualify each protocol
+wrapper against the lowest and newest supported RPC versions. Shared security
+and framing changes must pass both consumers' contract lanes. The optional
+bundle also qualifies its ACP extension range. Public namespaces are
+`Arbor.MCP.*`, `Arbor.ACP.*` and `Arbor.RPC.*`; whether a final 1.x bridge supplies
+compatibility delegates and for how long remains a migration decision.
 
 The design spike must record, for the monolith and each viable split:
 
