@@ -10,6 +10,10 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
 
   use GenServer
 
+  @impl true
+  def format_status(status),
+    do: Arbor.MCP.Server.Runtime.Diagnostics.format_status(status, __MODULE__)
+
   @behaviour Arbor.MCP.Tasks.Store
 
   alias Arbor.MCP.Server.Runtime.ServiceAdapter

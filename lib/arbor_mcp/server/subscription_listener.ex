@@ -3,6 +3,10 @@ defmodule Arbor.MCP.Server.SubscriptionListener do
 
   use GenServer
 
+  @impl true
+  def format_status(status),
+    do: Arbor.MCP.Server.Runtime.Diagnostics.format_status(status, __MODULE__)
+
   alias Arbor.MCP.Server.Runtime.{Deadline, ShutdownGuard}
   alias Arbor.MCP.Server.Subscriptions.{Delivery, Mailbox, Origin}
 

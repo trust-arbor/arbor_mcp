@@ -6,6 +6,10 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownGuard do
   # follows process links, and exits after the root and owned descendants do.
   use GenServer
 
+  @impl true
+  def format_status(status),
+    do: Arbor.MCP.Server.Runtime.Diagnostics.format_status(status, __MODULE__)
+
   alias Arbor.MCP.Server.Runtime.{Deadline, Initialization, ServiceStartup}
 
   @cleanup_grace_ms 50

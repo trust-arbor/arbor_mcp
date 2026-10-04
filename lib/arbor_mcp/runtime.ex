@@ -92,6 +92,7 @@ defmodule Arbor.MCP.Server.Runtime do
     Admission,
     CallbackContext,
     Deadline,
+    Diagnostics,
     ExecutionSupervisor,
     HTTPWriterProxy,
     Initialization,
@@ -111,7 +112,12 @@ defmodule Arbor.MCP.Server.Runtime do
   @doc false
   def start_configured(opts, config, deadline) do
     result =
-      Initialization.start_supervisor(__MODULE__, {opts, config, deadline}, deadline, opts[:name])
+      Initialization.start_supervisor(
+        __MODULE__,
+        fn -> {opts, config, deadline} end,
+        deadline,
+        opts[:name]
+      )
 
     if Deadline.now() < deadline do
       result
@@ -134,15 +140,17 @@ defmodule Arbor.MCP.Server.Runtime do
   end
 
   def child_spec(opts) do
-    %{
+    Diagnostics.child_spec(%{
       id: Keyword.get(opts, :id, __MODULE__),
       start: {__MODULE__, :start_link, [opts]},
       type: :supervisor,
       shutdown: Keyword.get(opts, :shutdown_timeout_ms, 5_000)
-    }
+    })
   end
 
   @impl true
+  def init(constructor) when is_function(constructor, 0), do: init(constructor.())
+
   def init({opts, config, deadline}) do
     if Deadline.now() >= deadline, do: exit(:runtime_init_timeout)
     table = :ets.new(__MODULE__, [:set, :public, read_concurrency: true, write_concurrency: true])
@@ -175,7 +183,7 @@ defmodule Arbor.MCP.Server.Runtime do
             ]
         end ++ [{Initialization.Barrier, [kind: :root] ++ runtime_opts}]
 
-    Supervisor.init(children, strategy: :rest_for_one)
+    Supervisor.init(Enum.map(children, &Diagnostics.child_spec/1), strategy: :rest_for_one)
   end
 
   @doc """

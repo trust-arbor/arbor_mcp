@@ -4,6 +4,7 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthorityTest do
   alias Arbor.MCP.Server.{Runtime, StdioServer}
   alias Arbor.MCP.Server.Runtime.{Config, Deadline, OutputController, Ref}
   alias Arbor.MCP.Server.Stdio.{OutputAuthority, OutputLease}
+  alias Arbor.MCP.Server.Stdio.OutputAuthority.Control
   alias Arbor.MCP.Server.Stdio.OutputAuthority.Ref, as: AuthorityRef
 
   defmodule Device do
@@ -158,6 +159,164 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthorityTest do
       )
 
   defp stats(ref), do: OutputAuthority.stats(ref, Deadline.after_ms(1_000))
+
+  test "64 completed device deaths before endpoint retirement reclaim capacity without weakening exclusive leases" do
+    {_authority, ref} = authority()
+    input = device()
+
+    for id <- 1..64 do
+      output =
+        start_supervised!(
+          Supervisor.child_spec({Device, [owner: self(), hold: false]}, restart: :temporary),
+          id: make_ref()
+        )
+
+      {:ok, root} = StdioServer.start_link(opts(ref, input, output))
+      assert_receive {:initialized, _}, 1_000
+      :ok = invoke(input, id)
+      assert_receive {:invoked, 1}, 1_000
+      assert_receive {:retained, ^output, _sender, _wire}, 1_000
+      eventually(fn -> match?(%{frames: 0, bytes: 0}, stats(ref)) end)
+
+      monitor = Process.monitor(output)
+      Process.exit(output, :kill)
+      assert_receive {:DOWN, ^monitor, :process, ^output, :killed}, 1_000
+      eventually(fn -> match?(%{devices: 1, poisoned: 0, frames: 0}, stats(ref)) end)
+      assert Process.alive?(root)
+
+      assert :ok = Runtime.stop(root)
+      eventually(fn -> match?(%{devices: 0, monitors: 0, bytes: 0}, stats(ref)) end)
+    end
+
+    replacement = device()
+    {:ok, root} = StdioServer.start_link(opts(ref, input, replacement))
+    assert_receive {:initialized, _}, 1_000
+    assert :ok = Runtime.stop(root)
+    assert Process.alive?(input) and Process.alive?(replacement)
+  end
+
+  test "clean device retirement rejects old controls and permits a named replacement only after root retirement" do
+    {authority, ref} = authority()
+    input = device()
+
+    output =
+      start_supervised!(
+        Supervisor.child_spec({Device, [owner: self(), hold: false]}, restart: :temporary),
+        id: make_ref()
+      )
+
+    name = :arbor_mcp_stdio_clean_retirement_fixture
+    Process.register(output, name)
+    {:ok, root} = StdioServer.start_link(opts(ref, input, name))
+    assert_receive {:initialized, _}, 1_000
+    {:ok, runtime} = Runtime.ref(root)
+    table = Ref.table(runtime)
+    [{:stdio_output_lease, lease}] = :ets.lookup(table, :stdio_output_lease)
+    {:ok, info} = OutputLease.info(lease)
+    {:ok, context} = Arbor.MCP.Server.Runtime.Initialization.current(table)
+
+    output_monitor = Process.monitor(output)
+    Process.exit(output, :kill)
+    assert_receive {:DOWN, ^output_monitor, :process, ^output, :killed}, 1_000
+    eventually(fn -> match?(%{devices: 1, poisoned: 0}, stats(ref)) end)
+
+    assert {:error, :stdio_output_unavailable} =
+             OutputAuthority.bind(lease, runtime, Deadline.after_ms(1_000))
+
+    assert {:error, :stdio_output_unsettled} =
+             OutputAuthority.execution_boundary(lease, table, context)
+
+    replacement = device()
+    Process.register(replacement, name)
+
+    assert {:error, :stdio_output_device_changed} =
+             StdioServer.start_link(opts(ref, input, name))
+
+    :ok = :sys.suspend(authority)
+    caller = self()
+
+    producer =
+      spawn(fn ->
+        result =
+          Control.call(
+            ref,
+            {:write, info.token, "old leased frame", context.epoch},
+            Deadline.after_ms(2_000)
+          )
+
+        send(caller, {:retired_control, result, Process.info(self(), :messages)})
+      end)
+
+    eventually(fn ->
+      Enum.any?(Control.entries(AuthorityRef.table(ref)), fn {_slot, entry} ->
+        entry.caller == producer and Control.active?(entry)
+      end)
+    end)
+
+    assert :ok = Runtime.stop(root)
+    :ok = :sys.resume(authority)
+    assert_receive {:retired_control, {:error, :stdio_output_unavailable}, {:messages, []}}, 1_000
+    eventually(fn -> match?(%{devices: 0, frames: 0, bytes: 0}, stats(ref)) end)
+    refute_receive {:retained, ^replacement, _, _}, 30
+
+    {:ok, new_root} = StdioServer.start_link(opts(ref, input, name))
+    assert_receive {:initialized, _}, 1_000
+    assert :ok = Runtime.stop(new_root)
+    assert Process.alive?(replacement)
+  end
+
+  test "held device death preserves error poison while an unknown sender still retains its physical charge" do
+    {_authority, ref} = authority()
+    input = device()
+
+    output =
+      start_supervised!(
+        Supervisor.child_spec({Device, [owner: self(), hold: true]}, restart: :temporary),
+        id: make_ref()
+      )
+
+    {:ok, root} = StdioServer.start_link(opts(ref, input, output))
+    assert_receive {:initialized, _}, 1_000
+    :ok = invoke(input, 1)
+    assert_receive {:invoked, 1}, 1_000
+    assert_receive {:retained, ^output, _sender, _wire}, 1_000
+    assert :ok = Runtime.stop(root)
+    Process.exit(output, :kill)
+    eventually(fn -> match?(%{devices: 1, poisoned: 1, frames: 0, bytes: 0}, stats(ref)) end)
+
+    unknown_output =
+      start_supervised!(
+        Supervisor.child_spec({Device, [owner: self(), hold: true]}, restart: :temporary),
+        id: make_ref()
+      )
+
+    name = :arbor_mcp_stdio_unknown_retirement_fixture
+    Process.register(unknown_output, name)
+    {:ok, unknown_root} = StdioServer.start_link(opts(ref, input, name))
+    Process.unlink(unknown_root)
+    assert_receive {:initialized, _}, 1_000
+    :ok = invoke(input, 2)
+    assert_receive {:invoked, 1}, 1_000
+    assert_receive {:retained, ^unknown_output, sender, wire}, 1_000
+    monitor = Process.monitor(unknown_root)
+    Process.exit(sender, :kill)
+    assert_receive {:DOWN, ^monitor, :process, ^unknown_root, _}, 1_000
+    output_monitor = Process.monitor(unknown_output)
+    Process.exit(unknown_output, :kill)
+    assert_receive {:DOWN, ^output_monitor, :process, ^unknown_output, :killed}, 1_000
+    eventually(fn -> match?(%{devices: 2, poisoned: 2, frames: 1}, stats(ref)) end)
+    assert %{bytes: charged} = stats(ref)
+    assert charged == byte_size(wire)
+
+    replacement = device()
+    Process.register(replacement, name)
+
+    assert {:error, :stdio_output_device_changed} =
+             StdioServer.start_link(opts(ref, input, name))
+
+    assert %{devices: 2, poisoned: 2, frames: 1, bytes: ^charged} = stats(ref)
+    assert Process.alive?(input) and Process.alive?(replacement)
+  end
 
   test "four permanent replacements preserve the same one-frame physical liability until actual IO completion" do
     {_authority, ref} = authority()
@@ -516,7 +675,7 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthorityTest do
     assert length(messages) <= 2
     Enum.each(producers, &Process.exit(&1, :kill))
     :ok = :sys.resume(authority)
-    eventually(fn -> stats(ref).devices == 0 and stats(ref).slots == 1 end)
+    eventually(fn -> match?(%{devices: 0, slots: 1}, stats(ref)) end)
     refute_receive {:control_result, _, _}
   end
 

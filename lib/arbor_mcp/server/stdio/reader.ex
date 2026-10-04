@@ -2,6 +2,10 @@ defmodule Arbor.MCP.Server.Stdio.Reader do
   @moduledoc false
   use GenServer
 
+  @impl true
+  def format_status(status),
+    do: Arbor.MCP.Server.Runtime.Diagnostics.format_status(status, __MODULE__)
+
   alias Arbor.MCP.Server.HandlerServer
   alias Arbor.MCP.Server.Runtime.{Admission, Deadline, Initialization, ShutdownGuard}
   alias Arbor.RPC.StdioFraming
@@ -98,7 +102,7 @@ defmodule Arbor.MCP.Server.Stdio.Reader do
       {:ok, unit} -> read_frame(device, mode, limit, [unit | parts], bytes + byte_size(unit))
       :eof when bytes == 0 -> :eof
       :eof -> {:ok, parts |> Enum.reverse() |> IO.iodata_to_binary(), true}
-      {:error, reason} -> {:error, {:stdin_error, reason}}
+      {:error, _reason} -> {:error, :stdin_error}
     end
   end
 

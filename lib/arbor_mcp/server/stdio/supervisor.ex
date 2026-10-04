@@ -3,14 +3,14 @@ defmodule Arbor.MCP.Server.Stdio.Supervisor do
   use Supervisor
 
   alias Arbor.MCP.Server.HandlerServer
-  alias Arbor.MCP.Server.Runtime.{Initialization, Ref}
+  alias Arbor.MCP.Server.Runtime.{Diagnostics, Initialization, Ref}
   alias Arbor.MCP.Server.Stdio.{Reader, Writer}
 
   def start_link(opts) do
     table = Ref.table(Keyword.fetch!(opts, :runtime))
 
     with {:ok, context} <- Initialization.current(table) do
-      Initialization.start_supervisor(__MODULE__, opts, context.deadline)
+      Initialization.start_supervisor(__MODULE__, fn -> opts end, context.deadline)
     end
   end
 
@@ -23,12 +23,17 @@ defmodule Arbor.MCP.Server.Stdio.Supervisor do
     }
 
   @impl true
+  def init(constructor) when is_function(constructor, 0), do: init(constructor.())
+
   def init(opts) do
     table = Ref.table(Keyword.fetch!(opts, :runtime))
     :ok = Initialization.watch(table, self())
     opts = Keyword.put(opts, :table, table)
 
-    Supervisor.init([{Writer, opts}, {HandlerServer, opts}, {Reader, opts}],
+    children =
+      Enum.map([{Writer, opts}, {HandlerServer, opts}, {Reader, opts}], &Diagnostics.child_spec/1)
+
+    Supervisor.init(children,
       strategy: :one_for_all
     )
   end

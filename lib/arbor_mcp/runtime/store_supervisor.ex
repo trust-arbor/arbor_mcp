@@ -5,6 +5,7 @@ defmodule Arbor.MCP.Server.Runtime.StoreSupervisor do
 
   alias Arbor.MCP.Server.Runtime.{
     Deadline,
+    Diagnostics,
     Initialization,
     OwnedChild,
     ServiceBinding,
@@ -45,7 +46,7 @@ defmodule Arbor.MCP.Server.Runtime.StoreSupervisor do
 
         result =
           if ServiceStartup.current?(table, generation, deadline),
-            do: Initialization.start_supervisor(__MODULE__, startup_opts, deadline),
+            do: Initialization.start_supervisor(__MODULE__, fn -> startup_opts end, deadline),
             else: {:error, :service_start_timeout}
 
         case result do
@@ -97,6 +98,8 @@ defmodule Arbor.MCP.Server.Runtime.StoreSupervisor do
   end
 
   @impl true
+  def init(constructor) when is_function(constructor, 0), do: init(constructor.())
+
   def init(opts) do
     table = Keyword.fetch!(opts, :table)
     :ok = ServiceStartup.register(table, self(), opts[:runtime_service_starter], opts[:deadline])
@@ -141,7 +144,10 @@ defmodule Arbor.MCP.Server.Runtime.StoreSupervisor do
       end
 
     # Any permanent service failure must reach Runtime's rest_for_one boundary.
-    Supervisor.init(children, strategy: :one_for_all, max_restarts: 0)
+    Supervisor.init(Enum.map(children, &Diagnostics.child_spec/1),
+      strategy: :one_for_all,
+      max_restarts: 0
+    )
   end
 
   defp service_spec(descriptor, opts) do

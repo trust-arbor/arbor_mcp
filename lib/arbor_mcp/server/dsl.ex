@@ -67,7 +67,7 @@ defmodule Arbor.MCP.Server.DSL do
 
       @doc false
       def child_spec(opts) do
-        %{
+        Arbor.MCP.Server.Runtime.Diagnostics.child_spec(%{
           id: Keyword.get(opts, :id, __MODULE__),
           start: {__MODULE__, :start_link, [opts]},
           type:
@@ -77,7 +77,7 @@ defmodule Arbor.MCP.Server.DSL do
             ),
           restart: :permanent,
           shutdown: Keyword.get(opts, :shutdown_timeout_ms, 5_000)
-        }
+        })
       end
 
       defoverridable child_spec: 1

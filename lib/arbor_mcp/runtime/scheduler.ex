@@ -2,6 +2,11 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
   @moduledoc false
 
   use GenServer
+  require Logger
+
+  @impl true
+  def format_status(status),
+    do: Arbor.MCP.Server.Runtime.Diagnostics.format_status(status, __MODULE__)
 
   alias Arbor.MCP.Server.Runtime.{
     Admission,
@@ -42,7 +47,7 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
     table = Keyword.fetch!(opts, :table)
     :ok = Initialization.watch(table, self())
 
-    with {:ok, handler_state} <- config.handler.init(config.handler_args),
+    with {:ok, handler_state} <- initialize_handler(config),
          {:ok, generation} <- Admission.activate(table, self(), config) do
       [{:callback_tasks, task_supervisor}] = :ets.lookup(table, :callback_tasks)
 
@@ -62,6 +67,18 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
       {:error, reason} -> {:stop, {:handler_init_failed, reason}}
       _invalid -> {:stop, :invalid_handler_init}
     end
+  end
+
+  defp initialize_handler(config) do
+    case config.handler.init(config.handler_args) do
+      {:ok, state} -> {:ok, state}
+      {:error, _reason} -> {:error, :callback_error}
+      _invalid -> :invalid_handler_init
+    end
+  rescue
+    _exception -> {:error, :callback_error}
+  catch
+    _kind, _reason -> {:error, :callback_error}
   end
 
   @impl true
@@ -255,10 +272,22 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
       )
     )
 
-    if function_exported?(state.config.handler, :terminate, 2) do
-      state.config.handler.terminate(reason, state.handler_state)
-    end
+    terminate_handler(reason, state)
+  end
 
+  defp terminate_handler(reason, state) do
+    if function_exported?(state.config.handler, :terminate, 2),
+      do: state.config.handler.terminate(reason, state.handler_state)
+
+    :ok
+  rescue
+    _exception -> termination_failed()
+  catch
+    _kind, _reason -> termination_failed()
+  end
+
+  defp termination_failed do
+    Logger.error("MCP handler termination failed")
     :ok
   end
 

@@ -44,9 +44,15 @@ their captured initialization epoch; a cached payload from the old epoch cannot
 start IO after that transition. Test/BEAM edge recovery is unaffected.
 
 Sender death without an authenticated result and IO errors fail closed. The
-device remains poisoned and no later runtime may use it. Logical local names
-are retained alongside the captured device PID, so retargeting a poisoned name
-cannot acquire a fresh lease. Device or authority death also fails closed.
+device remains poisoned and no later runtime may use it. A device that dies
+with no unresolved IO and no earlier uncertainty instead retires cleanly: it
+rejects old bind/write/replacement controls, and its domain is reclaimed only
+after the owning root or unbound starter retires. Pending nonphysical controls
+are invalidated before its lease and aliases are removed. This permits a new
+device under a clean retired logical name without forgetting physical liability.
+Logical local names are retained alongside the captured device PID, so
+retargeting a poisoned name cannot acquire a fresh lease. Authority death and
+device death with unresolved IO also fail closed.
 Distinct actual devices are independent.
 
 The default authority is outside the Runtime tree and has a retained VM-local

@@ -188,7 +188,12 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthority do
   end
 
   defp retire_domain(domain, :sender, _table, _pid), do: domain
-  defp retire_domain(domain, :device, _table, _pid), do: %{domain | poisoned: true}
+
+  defp retire_domain(%{io: nil, poisoned: false} = domain, :device, _table, _pid),
+    do: %{domain | retired_device: true}
+
+  defp retire_domain(domain, :device, _table, _pid),
+    do: %{domain | retired_device: true, poisoned: true}
 
   defp retire_domain(%{root: pid} = domain, :root, _table, pid),
     do: %{domain | root: nil, starter: nil}
@@ -202,7 +207,7 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthority do
 
   @impl true
   def format_status(status),
-    do: %{status | state: %{stdio_output_devices: map_size(status.state.domains)}, log: []}
+    do: Arbor.MCP.Server.Runtime.Diagnostics.format_status(status, __MODULE__)
 
   defp initialize_reference(table) do
     identity = make_ref()
@@ -235,7 +240,7 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthority do
 
   defp dispatch(%{command: {:bind, token, runtime}} = entry, slot, state) do
     with {device, domain} <- find_lease(state, token),
-         true <- Control.active?(entry) and not domain.poisoned,
+         true <- Control.active?(entry) and usable_device?(domain),
          {:ok, context} <- Initialization.current(Ref.table(runtime)),
          true <- Initialization.current?(Ref.table(runtime), context),
          true <- bindable?(domain, runtime, context),
@@ -268,7 +273,7 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthority do
 
   defp dispatch(%{command: {:execution_boundary, token, runtime, epoch}} = entry, slot, state) do
     with {device, domain} <- find_lease(state, token),
-         true <- Control.active?(entry) and not domain.poisoned and domain.io == nil,
+         true <- Control.active?(entry) and usable_device?(domain) and domain.io == nil,
          true <- Ref.valid?(runtime) and domain.root == Ref.supervisor(runtime),
          {:ok, %{epoch: ^epoch} = context} <- Initialization.current(Ref.table(runtime)),
          true <- Initialization.current?(Ref.table(runtime), context),
@@ -284,7 +289,7 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthority do
 
   defp dispatch(%{command: {:write, token, wire, epoch}} = entry, slot, state) do
     with {device, domain} <- find_lease(state, token),
-         true <- Control.active?(entry) and not domain.poisoned and domain.io == nil,
+         true <- Control.active?(entry) and usable_device?(domain) and domain.io == nil,
          true <- domain.writer == entry.caller and alive?(domain.root),
          true <- domain.epoch == epoch,
          true <-
@@ -388,6 +393,7 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthority do
           bound?: false,
           epoch: nil,
           io: nil,
+          retired_device: false,
           poisoned: false
         }
 
@@ -413,6 +419,7 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthority do
   end
 
   defp domain_status(%{poisoned: true}, _state), do: {:error, :stdio_output_unavailable}
+  defp domain_status(%{retired_device: true}, _state), do: {:error, :stdio_output_unavailable}
   defp domain_status(%{io: io}, _state) when not is_nil(io), do: :wait
   defp domain_status(domain, _state) when not is_nil(domain), do: {:error, :stdio_output_in_use}
 
@@ -438,6 +445,7 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthority do
   defp remove_domain(state, device) do
     domain = state.domains[device]
     :ets.delete(state.table, {:lease, domain.token})
+    retire_controls(state.table, domain.token)
 
     {retired, monitors} =
       Enum.split_with(state.monitors, fn {_ref, {pid, _, _}} -> pid == device end)
@@ -451,6 +459,24 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthority do
         aliases: Map.drop(state.aliases, domain.keys)
     }
   end
+
+  defp usable_device?(domain), do: not domain.poisoned and not domain.retired_device
+
+  # A released lease can have published controls that have not started IO.
+  # Retire them before dropping its logical aliases; a producer that publishes
+  # after this pass still cannot resolve the deleted lease or start a write.
+  defp retire_controls(table, token) do
+    for {slot, entry} <- Control.entries(table), lease_command?(entry.command, token) do
+      Control.claim(entry)
+      Control.finish(table, slot, entry, {:error, :stdio_output_unavailable})
+    end
+  end
+
+  defp lease_command?({:bind, token, _runtime}, token), do: true
+  defp lease_command?({:execution_boundary, token, _runtime, _epoch}, token), do: true
+  defp lease_command?({:write, token, _wire, _epoch}, token), do: true
+  defp lease_command?({:release, token}, token), do: true
+  defp lease_command?(_command, _token), do: false
 
   defp finish(state, slot, entry, result) do
     Control.finish(state.table, slot, entry, result)

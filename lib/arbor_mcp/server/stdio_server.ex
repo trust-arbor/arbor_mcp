@@ -74,7 +74,12 @@ defmodule Arbor.MCP.Server.StdioServer do
   end
 
   def child_spec(opts),
-    do: %{Runtime.child_spec(opts) | start: {__MODULE__, :start_link, [opts]}}
+    do:
+      Arbor.MCP.Server.Runtime.Diagnostics.child_spec(%{
+        Runtime.child_spec(opts)
+        | start: {__MODULE__, :start_link, [opts]},
+          modules: [__MODULE__]
+      })
 
   defp output_authority(opts, deadline) do
     case Keyword.fetch(opts, :_stdio_output_authority) do

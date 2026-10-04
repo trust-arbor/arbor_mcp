@@ -61,10 +61,22 @@ defmodule Arbor.MCP.Server.HandlerServer do
     Subscriptions
   }
 
-  alias Arbor.MCP.Server.Runtime.{Admission, Initialization, OutputController, Ref, ShutdownGuard}
+  alias Arbor.MCP.Server.Runtime.{
+    Admission,
+    Diagnostics,
+    Initialization,
+    OutputController,
+    Ref,
+    ShutdownGuard
+  }
+
   alias Arbor.MCP.Server.Subscriptions.Origin
 
   alias Arbor.MCP.Transport.{Local, Test}
+
+  @impl true
+  def format_status(status),
+    do: Diagnostics.format_status(status, __MODULE__)
 
   # JSON-RPC batches were removed from the spec in 2025-06-18 and have not
   # come back since, so every version from 2025-06-18 onwards rejects them.
@@ -149,19 +161,23 @@ defmodule Arbor.MCP.Server.HandlerServer do
   end
 
   def child_spec(opts) do
-    if Keyword.has_key?(opts, :runtime) do
-      %{
-        id: __MODULE__,
-        start: {__MODULE__, :start_edge_link, [opts]},
-        shutdown: Keyword.get(opts, :shutdown_timeout_ms, 5_000)
-      }
-    else
-      %{
-        Runtime.child_spec(opts)
-        | id: Keyword.get(opts, :id, __MODULE__),
-          start: {__MODULE__, :start_link, [opts]}
-      }
-    end
+    spec =
+      if Keyword.has_key?(opts, :runtime) do
+        %{
+          id: __MODULE__,
+          start: {__MODULE__, :start_edge_link, [opts]},
+          shutdown: Keyword.get(opts, :shutdown_timeout_ms, 5_000)
+        }
+      else
+        %{
+          Runtime.child_spec(opts)
+          | id: Keyword.get(opts, :id, __MODULE__),
+            start: {__MODULE__, :start_link, [opts]},
+            modules: [__MODULE__]
+        }
+      end
+
+    Diagnostics.child_spec(spec)
   end
 
   @doc false

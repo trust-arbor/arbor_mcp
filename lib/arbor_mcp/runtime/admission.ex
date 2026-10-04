@@ -3,6 +3,10 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
 
   use GenServer
 
+  @impl true
+  def format_status(status),
+    do: Arbor.MCP.Server.Runtime.Diagnostics.format_status(status, __MODULE__)
+
   @cleanup_turn_ms 10
 
   alias Arbor.MCP.Server.Runtime.{

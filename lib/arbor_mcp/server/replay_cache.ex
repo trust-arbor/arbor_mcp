@@ -26,6 +26,10 @@ defmodule Arbor.MCP.Server.ReplayCache.ETS do
 
   use GenServer
 
+  @impl true
+  def format_status(status),
+    do: Arbor.MCP.Server.Runtime.Diagnostics.format_status(status, __MODULE__)
+
   @behaviour Arbor.MCP.Server.ReplayCache
 
   @name __MODULE__

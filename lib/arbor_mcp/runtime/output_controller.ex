@@ -2,6 +2,10 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
   @moduledoc false
   use GenServer
 
+  @impl true
+  def format_status(status),
+    do: Arbor.MCP.Server.Runtime.Diagnostics.format_status(status, __MODULE__)
+
   alias Arbor.MCP.Server.Runtime.{Admission, Failure, Initialization, OutputLedger, OutputTicket}
   alias Arbor.MCP.Server.Subscriptions.Origin
 

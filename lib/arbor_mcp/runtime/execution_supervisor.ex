@@ -3,14 +3,14 @@ defmodule Arbor.MCP.Server.Runtime.ExecutionSupervisor do
 
   use Supervisor
 
-  alias Arbor.MCP.Server.Runtime.Initialization
+  alias Arbor.MCP.Server.Runtime.{Diagnostics, Initialization}
 
   def start_link(opts) do
     table = Keyword.fetch!(opts, :table)
 
     with {:ok, context} <- Initialization.begin(table, opts[:config], :runtime),
          {:ok, pid} <-
-           Initialization.start_supervisor(__MODULE__, opts, context.deadline),
+           Initialization.start_supervisor(__MODULE__, fn -> opts end, context.deadline),
          :ok <- Initialization.watch(table, pid, :supervisor) do
       {:ok, pid}
     end
@@ -28,6 +28,8 @@ defmodule Arbor.MCP.Server.Runtime.ExecutionSupervisor do
   end
 
   @impl true
+  def init(constructor) when is_function(constructor, 0), do: init(constructor.())
+
   def init(opts) do
     table = Keyword.fetch!(opts, :table)
     config = Keyword.fetch!(opts, :config)
@@ -46,7 +48,7 @@ defmodule Arbor.MCP.Server.Runtime.ExecutionSupervisor do
       {Initialization.Barrier, [kind: :execution] ++ opts}
     ]
 
-    Supervisor.init(children, strategy: :one_for_all)
+    Supervisor.init(Enum.map(children, &Diagnostics.child_spec/1), strategy: :one_for_all)
   end
 
   @doc false

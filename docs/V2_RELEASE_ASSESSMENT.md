@@ -232,6 +232,32 @@ authority's requirement for a fresh host VM are documented in
 [the stdio migration guide](./V2_STDIO_OUTPUT_LIABILITY.md). Combined static,
 package and final CI qualification remain required.
 
+The combined diagnostic/clean-device retirement followup passes **248 affected
+cases on minimum and current**, including ten actual diagnostic status/failure
+probes. Runtime child construction remains synchronous in the original native
+parent; facade child-module identity, restart policies and finite startup/shutdown
+cutoffs are preserved. Native status and failure reports omit options, handler
+state, requests and prepared output. Handler initialization errors and failed
+termination hooks now use fixed diagnostic reasons/messages, with remaining
+cleanup preserved. Explicit trusted OTP state/debug inspection remains available;
+see [runtime diagnostics](./V2_RUNTIME_DIAGNOSTICS.md).
+
+Clean stdio device retirement now rejects old controls while preserving the old
+root's exclusive lease, then reclaims capacity after root/starter retirement.
+Sixty-four sequential completed-write/device-death cycles recover their slots.
+Held writes, unknown sender outcomes and previous IO errors still retain their
+physical charge or poison. The exact retirement slice passes 41 stdio and 44
+retained startup/Test-BEAM cases on each toolchain. The two independent slices
+pass production/development compilation, formatting, strict Credo and ExDoc;
+minimum Dialyzer retains 66 existing filtered warnings with no new filters.
+
+[CI at `111a3c7`](https://github.com/trust-arbor/arbor_mcp/actions/runs/37228261099)
+passes eleven of twelve jobs, including coverage, minimum/newest toolchains,
+both archive consumers and SDK lanes. The remaining saturation fixture expected
+a stats map while all control slots were occupied; it now retries the valid
+`:stdio_output_busy` response. Fresh combined CI, host-owned stdio logger
+migration, complete cross-transport privacy and final release qualification remain.
+
 | Slice | Reviewable evidence | Remaining work |
 |---|---|---|
 | Installed HTTP writer authority | The exact 13-path slice passes canonical minimum/current full selections, all 27 pinned SDK cases and production warnings-as-errors compilation. Runtime starts an owned proxy under the original initialization epoch/cutoff, retaining a separate IO domain across proxy/Admission/execution replacement. Entry bindings derive actual writer identity and original deadline; session claims verify addressed lease/epoch. Root stop reports unresolved borrowed IO explicitly. | Gateway/Controller routing, complete legacy batch authority and actual Bandit/Cowboy delivery remain; the integrated 41 focused and 84 retained cases do not clear those routing/physical transport gates. |
@@ -412,7 +438,7 @@ is specified in [V2_PACKAGE_CONTRACT.md](./V2_PACKAGE_CONTRACT.md).
 | Phase | Remaining implementation |
 |---|---|
 | 1: contracts | Review and finish the [removal/replacement inventory](./V2_API_MIGRATION.md), non-symbol migration, result/configuration contracts and final public defaults. The runtime candidate validates its scheduling configuration, but not every transport/configuration option. |
-| 2: runtime | Finish installed HTTP gateway/session routing and ordinary Client worker cleanup. Server stdio dispatch is implemented; persistent borrowed-device liability across Runtime replacement is being corrected. Qualify all remaining singleton boundaries, store lifecycle and cross-runtime crash/restart/stop isolation. |
+| 2: runtime | Finish installed HTTP gateway/session routing and ordinary Client worker cleanup. Server stdio dispatch and retained physical liability across Runtime replacement are integrated, including clean device retirement. Qualify all remaining singleton boundaries, store lifecycle and cross-runtime crash/restart/stop isolation. |
 | 3: dispatch/scheduler | Test/BEAM, server stdio and custom calls prepare bounded output before serialized state commit, with grouped batch accounting and actual stdio IO receipts. HTTP still needs gateway/Controller delivery, complete legacy batches and real socket acknowledgements. Complete cross-transport and crash-log privacy qualification. |
 | 4: stores | Deliberate public contracts, runtime-owned adapter lifecycle and payload-safe store telemetry. The internal ETS/DETS seam is groundwork, not the whole target. |
 | 5: public API | Shared `Server.Result`, default 2020-12 validation, selected DSL composition, media/options migration, dynamic owned tools and `with_connection` pass their integrated selections. The first 96 callable removals are implemented. Finish HTTP retirement, configuration/default contracts and ordinary Client cleanup. |
