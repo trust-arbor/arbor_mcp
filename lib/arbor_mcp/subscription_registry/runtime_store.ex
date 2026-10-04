@@ -154,7 +154,11 @@ defmodule Arbor.MCP.SubscriptionRegistry.RuntimeStore do
             if match?(
                  {:ok, _key},
                  SessionLease.validate(entry.lease, entry.service, :resource_subscriptions)
-               ), do: entries, else: Map.delete(entries, key)
+               ) do
+              entries
+            else
+              Map.delete(entries, key)
+            end
 
           {:cont, {entries, processed + 1}}
         else
