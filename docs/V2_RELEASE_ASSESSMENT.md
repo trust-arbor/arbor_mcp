@@ -151,13 +151,14 @@ grouped-batch output, plus the original service-cohort startup cutoff.
 
 The four-package archive fixture is committed at `b240463`. Its
 [complete twelve-job CI run](https://github.com/trust-arbor/arbor_mcp/actions/runs/37201745057)
-is in progress; both minimum/current archive consumer jobs have passed actual
-Hex external dependency installation and compiler-free assembled-release probes.
+passes all twelve jobs, including the minimum/current actual archive consumers,
+newest-Elixir tests, Dialyzer, coverage, interop and external conformance. The
+archive jobs resolve external dependencies through Hex and run compiler-free
+assembled-release probes.
 The preceding `47fe089` run passed nine of ten jobs; its OTP 29 cleanup fixture
 read an already-deleted ETS table. `21abb42` captures owned PIDs before failure
-and preserves the cleanup assertions (18 minimum/current cases pass). No
-complete latest-source CI result or RC qualification is inferred from these
-individual results.
+and preserves the cleanup assertions (18 minimum/current cases pass). The fully green result qualifies `b240463`; later schema integration and final
+RC qualification remain separate.
 
 The supported branch's stress correction exercises 1,000 real mock-server
 requests after successful initialization with seeded failure injection; the
@@ -188,9 +189,9 @@ results cannot reach state commit through the production output pipeline. The
 integrated SchemaPolicy slice adds explicit optional-`nil` compilation/validation,
 native JSON/collision/resource checks before encoding, raw/fetched meta-schema
 validation and real DSL declaration checks. Its 34 focused cases pass on both
-supported toolchains; the combined current selection passes 4,008 executed tests,
-20 doctests and 34 properties with no failures (82 excluded). Minimum combined
-selection is being checked separately. No accepted API retirement is removed.
+supported toolchains; both combined minimum/current selections pass 4,008 executed tests, 20 doctests
+and 34 properties with no failures (82 excluded; 4,090-test inventory). Normal
+commit hooks pass with 35 existing dev warnings filtered and no new filters. No accepted API retirement is removed.
 The current validator's draft-7 default does not implement modern MCP's default
 2020-12 semantics; full dialect and scalar structured-result compatibility remain
 explicit release gates.

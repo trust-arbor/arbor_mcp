@@ -1532,10 +1532,10 @@
   },
   "namespace_move_rule_interpretation": "Exact helper overrides and ACP/vendor rules precede the remaining MCP fallback; not an executable blanket string replacement.",
   "qualified_runtime_checkpoint": {
-    "source": "e0f1c9a6bbe1d239da0918e2cf9e0378802ba7bb",
+    "source": "cc1f4cba733a3c56b4bf3b7386d3eb26f27af3d2",
     "rpc": "0e4cfd1efdb7437eb6cf4c944ed6fa04553da7bb",
     "namespace": "Arbor.MCP.* / Arbor.ACP.* / Arbor.RPC.*",
-    "executed_tests_per_supported_toolchain": 3991,
+    "executed_tests_per_supported_toolchain": 4008,
     "doctests": 20,
     "properties": 34,
     "excluded": 82,
@@ -1558,10 +1558,13 @@
     "latest_ci": {
       "run": 37201745057,
       "source": "b2404634fa2780b8524fd9e0ecaeaadb69494a6a",
-      "status": "in_progress",
-      "archive_consumer_jobs_passed": 2
+      "status": "completed",
+      "archive_consumer_jobs_passed": 2,
+      "conclusion": "success",
+      "passed_jobs": 12
     },
-    "current_full_before_unreachable_private_guard_removal": true,
-    "final_codec_current_focused_tests": 39
+    "current_full_before_unreachable_private_guard_removal": false,
+    "final_codec_current_focused_tests": 39,
+    "schema_replacement_source": "cc1f4cba733a3c56b4bf3b7386d3eb26f27af3d2"
   }
 }

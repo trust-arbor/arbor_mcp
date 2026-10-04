@@ -154,9 +154,10 @@ independent logs accompany the immutable freeze. Broad transport/application,
 consumer archive, full modern-dialect and throughput gates remain separate.
 
 Root integration passed the same 34 focused cases on both supported toolchains.
-The complete current selection with production output/startup integration passes
-4,008 executed tests, 20 doctests and 34 properties, zero failures (82 excluded).
+The complete minimum/current selections with production output/startup
+integration pass 4,008 executed tests, 20 doctests and 34 properties, zero
+failures (82 excluded; 4,090-test inventory).
 Minimum forced project compilation checks 330 files with warnings as errors and
-owned-file formatting passes. Minimum combined selection and complete fresh
-remote CI are recorded separately after completion; they are not inferred from
-the isolated freeze or current run.
+owned-file formatting passes. Normal commit hooks pass with 35 existing dev warnings filtered and no added
+filters. Complete fresh remote CI on the schema source remains separate from
+the fully passing earlier `b240463` checkpoint.
