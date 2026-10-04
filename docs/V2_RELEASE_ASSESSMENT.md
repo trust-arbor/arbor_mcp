@@ -209,6 +209,29 @@ release and emits only the dispatch variants present in the compiled declaration
 All 56 affected component/runtime cases pass on minimum/current/newest; all three
 warnings-as-errors builds pass. Fresh combined CI remains required.
 
+The DSL/cancellation followup is committed at `69b0a39`.
+[Its CI](https://github.com/trust-arbor/arbor_mcp/actions/runs/37226700206)
+passes nine of twelve jobs; the newest-toolchain source compilation now passes.
+The remaining failures expose a terminal HTTP cleanup receipt/ETS deletion race
+and a subscription fixture assuming physical ordering across independent
+producers. Cleanup now rechecks the actual terminal receipt without inferring
+completion from guardian death. The fixture requires exactly one cancellation
+reply and one preserved earlier notification in either physical order.
+All 69 affected lifecycle, subscription-origin and HTTP installation cases
+pass on minimum/current/newest. Fresh combined CI remains required.
+
+The persistent stdio endpoint authority is integrated from an exact 11-path
+handoff. Its 38 focused cases and 44 retained native startup/Test-BEAM cases
+pass on minimum and current. The authority retains one physical sender and its
+charged write across whole-root or internal execution-cohort replacement.
+An unsettled replacement fails before fresh handler initialization or output
+credit. Healthy idle replacement retains the same Runtime reference. An actual
+IO receipt followed by sender `DOWN` releases liability; borrowed device or
+runtime death alone does not. The conservative 64-device bound and poisoned
+authority's requirement for a fresh host VM are documented in
+[the stdio migration guide](./V2_STDIO_OUTPUT_LIABILITY.md). Combined static,
+package and final CI qualification remain required.
+
 | Slice | Reviewable evidence | Remaining work |
 |---|---|---|
 | Installed HTTP writer authority | The exact 13-path slice passes canonical minimum/current full selections, all 27 pinned SDK cases and production warnings-as-errors compilation. Runtime starts an owned proxy under the original initialization epoch/cutoff, retaining a separate IO domain across proxy/Admission/execution replacement. Entry bindings derive actual writer identity and original deadline; session claims verify addressed lease/epoch. Root stop reports unresolved borrowed IO explicitly. | Gateway/Controller routing, complete legacy batch authority and actual Bandit/Cowboy delivery remain; the integrated 41 focused and 84 retained cases do not clear those routing/physical transport gates. |

@@ -2,6 +2,7 @@ defmodule Arbor.MCP.Server.Runtime.Initialization do
   @moduledoc false
 
   alias Arbor.MCP.Server.Runtime.{Admission, Config, Deadline, OutputController, ShutdownGuard}
+  alias Arbor.MCP.Server.Stdio.OutputAuthority
 
   @timer_limit 4_294_967_295
 
@@ -131,20 +132,42 @@ defmodule Arbor.MCP.Server.Runtime.Initialization do
   end
 
   def begin(table, config, scope, deadline \\ nil) do
-    case current(table) do
-      {:ok, %{status: :starting} = context} ->
-        if Deadline.now() < context.deadline,
-          do: {:ok, context},
-          else: {:error, :runtime_init_timeout}
+    result =
+      case current(table) do
+        {:ok, %{status: :starting} = context} ->
+          if Deadline.now() < context.deadline,
+            do: {:ok, context},
+            else: {:error, :runtime_init_timeout}
 
-      {:ok, %{status: :failed}} ->
-        {:error, :runtime_init_timeout}
+        {:ok, %{status: :failed}} ->
+          {:error, :runtime_init_timeout}
 
-      {:ok, %{status: :ready}} ->
-        start_epoch(table, config, scope, Deadline.now() + config.init_timeout_ms)
+        {:ok, %{status: :ready}} ->
+          start_epoch(table, config, scope, Deadline.now() + config.init_timeout_ms)
 
-      {:error, :runtime_unavailable} ->
-        start_epoch(table, config, scope, deadline || Deadline.now() + config.init_timeout_ms)
+        {:error, :runtime_unavailable} ->
+          start_epoch(table, config, scope, deadline || Deadline.now() + config.init_timeout_ms)
+      end
+
+    with {:ok, context} <- result,
+         :ok <- stdio_boundary(table, context),
+         do: {:ok, context}
+  end
+
+  defp stdio_boundary(table, context) do
+    case :ets.lookup(table, :stdio_output_lease) do
+      [{:stdio_output_lease, lease}] ->
+        case OutputAuthority.execution_boundary(lease, table, context) do
+          :ok ->
+            :ok
+
+          _unsettled ->
+            abort(table, context)
+            {:error, :stdio_output_unsettled}
+        end
+
+      [] ->
+        :ok
     end
   end
 
@@ -384,6 +407,7 @@ defmodule Arbor.MCP.Server.Runtime.Initialization do
       :closing,
       :runtime_initialization,
       :runtime_requirements,
+      :stdio_output_lease,
       :http_writer_domain,
       :http_writer_proxy
     ] or

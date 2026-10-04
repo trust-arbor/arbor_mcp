@@ -92,27 +92,33 @@ defmodule Arbor.MCP.Server.StdioRuntimeTest do
     :ok = GenServer.call(output, :release_write)
     assert_receive {:written, ^first}
     assert_receive {:invoked, 2}
-    assert_receive {:write_attempt, ^writer, second}
+    assert_receive {:write_attempt, second_sender, second}
+    refute second_sender == writer
+    refute Process.alive?(writer)
     :ok = GenServer.call(output, :release_write)
     assert_receive {:written, ^second}
     eventually(fn -> Admission.stats(Ref.table(runtime)).reserved == 0 end)
   end
 
   test "a timed-out write is terminal uncertain and never retries a committed callback" do
-    {root, _runtime, input_device, output} = pair(hold: true, output_timeout_ms: 80)
+    {root, runtime, input_device, output} = pair(hold: true, output_timeout_ms: 80)
     monitor = Process.monitor(root)
     input(input_device, line(request(1, "inc")) <> line(request(2, "inc")))
     assert_receive {:invoked, 1}
     assert_receive {:write_attempt, writer, bytes}
-    writer_monitor = Process.monitor(writer)
-    assert_receive {:DOWN, ^writer_monitor, :process, ^writer, :killed}, 1_000
+    [{:stdio_writer, proxy}] = :ets.lookup(Ref.table(runtime), :stdio_writer)
+    writer_monitor = Process.monitor(proxy)
+    assert_receive {:DOWN, ^writer_monitor, :process, ^proxy, :killed}, 1_000
+    assert Process.alive?(writer)
     assert_receive {:DOWN, ^monitor, :process, ^root, _reason}, 1_000
     refute_receive {:invoked, 2}, 30
     assert Process.alive?(output)
     # The borrowed device can complete an irreversible old request later. That
-    # uncertainty is reported honestly; it cannot start another owned write.
+    # uncertainty is reported honestly; the endpoint sender retains its credit
+    # through Runtime loss and cannot start another physical write.
     :ok = GenServer.call(output, :release_write)
     assert_receive {:written, ^bytes}
+    eventually(fn -> not Process.alive?(writer) end)
     refute_receive {:write_attempt, _, _}, 30
   end
 

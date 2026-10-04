@@ -222,9 +222,19 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
       :ok
     else
       case stats(domain) do
-        %{in_flight: 0} -> :ok
-        %{in_flight: count, bytes: bytes} -> {:error, {:http_io_unsettled, count, bytes}}
-        _unavailable -> {:error, :http_io_cleanup_unconfirmed}
+        %{in_flight: 0} ->
+          :ok
+
+        %{in_flight: count, bytes: bytes} ->
+          {:error, {:http_io_unsettled, count, bytes}}
+
+        _unavailable ->
+          # The guardian can publish its terminal receipt and delete its ETS
+          # table between the first receipt read and stats. Recheck the actual
+          # receipt; guardian death alone never establishes IO completion.
+          if :atomics.get(domain.lifetime, 1) == 1,
+            do: :ok,
+            else: {:error, :http_io_cleanup_unconfirmed}
       end
     end
   rescue

@@ -228,6 +228,7 @@ defmodule Arbor.MCP.MixProject do
         "docs/DSL_GUIDE.md",
         "docs/V2_SCHEMA_DIALECT.md",
         "docs/V2_CLIENT_CONNECTION_SCOPE.md",
+        "docs/V2_STDIO_OUTPUT_LIABILITY.md",
         "docs/TRANSPORT_GUIDE.md",
         "docs/CONFIGURATION.md",
         "docs/HTTP_LISTENERS.md",

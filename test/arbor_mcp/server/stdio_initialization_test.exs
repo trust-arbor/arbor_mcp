@@ -2,8 +2,8 @@ defmodule Arbor.MCP.Server.StdioInitializationTest do
   use ExUnit.Case, async: true
 
   alias Arbor.MCP.Server.Runtime
-  alias Arbor.MCP.Server.Runtime.{Config, Initialization, Ref}
-  alias Arbor.MCP.Server.Stdio.{Dispatch, Supervisor}
+  alias Arbor.MCP.Server.Runtime.{Initialization, Ref}
+  alias Arbor.MCP.Server.Stdio.{Dispatch, OutputAuthority, OutputLease, Supervisor}
   alias Arbor.MCP.Test.StdioRuntimeFixture.{Device, Handler}
 
   defmodule HeldEdge do
@@ -107,12 +107,26 @@ defmodule Arbor.MCP.Server.StdioInitializationTest do
       endpoint: "stdio"
     ]
 
-    {:ok, config} = Config.new(opts)
-    opts = Keyword.put(opts, :edge, {HeldEdge, Keyword.put(opts, :stdio_config, config)})
-
     caller =
       spawn(fn ->
-        result = Runtime.start_link(opts)
+        {:ok, config, deadline} = Initialization.configure(opts)
+        {:ok, authority} = OutputAuthority.default(deadline)
+        {:ok, lease} = OutputAuthority.acquire(authority, output, config, deadline)
+
+        edge_opts =
+          opts
+          |> Keyword.put(:stdio_config, config)
+          |> Keyword.put(:stdio_output, OutputLease.device(lease))
+          |> Keyword.put(:stdio_output_lease, lease)
+
+        result =
+          Runtime.start_configured(
+            Keyword.put(opts, :edge, {HeldEdge, edge_opts}),
+            config,
+            deadline
+          )
+
+        if not match?({:ok, _}, result), do: OutputAuthority.release(lease, deadline)
         if match?({:ok, _pid}, result), do: Process.unlink(elem(result, 1))
         send(owner, {:stdio_started, self(), result})
         if caller_opts[:hold_caller], do: receive(do: (:finish -> :ok))

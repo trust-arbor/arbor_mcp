@@ -6,9 +6,18 @@ defmodule Arbor.MCP.Server.StdioServer do
   supervisor. Use `Arbor.MCP.Server` helpers for custom calls and controls;
   the returned PID is no longer an inline callback GenServer in v2.
 
-  Responses are prepared before state commits. One owned writer writes
-  already encoded frames; credit settles only after IO reports completion.
-  A timed-out in-flight write is uncertain, terminal and never retried.
+  Responses are prepared before state commits. Startup acquires an exclusive
+  lease for the borrowed output device under the original initialization
+  deadline. A second live endpoint returns `:stdio_output_in_use`; a retired
+  endpoint with unresolved IO waits only until that cutoff.
+
+  The owned runtime Writer proxies an endpoint-owned physical sender. A held
+  write remains charged across runtime replacement until IO reports completion
+  and that sender exits. Writer or runtime death alone cannot release it. A
+  timed-out in-flight write is uncertain, terminal and never retried; sender,
+  device, or authority loss without completion fails closed. The persistent
+  authority admits at most 64 output devices and does not restart empty after
+  failure.
 
   EOF fences new input, drains accepted work under its original deadlines
   and `:stdio_eof_timeout_ms`, then stops the owned runtime. The default EOF
@@ -26,11 +35,14 @@ defmodule Arbor.MCP.Server.StdioServer do
   application setting, or 100 ms). Only the first input line may have a UTF-8
   BOM. Blank/non-JSON startup lines are ignored. A valid final frame without
   a newline is processed before EOF.
+
+  Output devices must be local live PIDs, local registered atoms, or
+  `:stdio`/`:standard_io`. Custom `:via` output addresses are unsupported.
   """
 
   alias Arbor.MCP.Server.Runtime
   alias Arbor.MCP.Server.Runtime.Initialization
-  alias Arbor.MCP.Server.Stdio.{Dispatch, Supervisor}
+  alias Arbor.MCP.Server.Stdio.{Dispatch, OutputAuthority, OutputLease, Supervisor}
 
   @timer_limit 4_294_967_295
 
@@ -40,17 +52,36 @@ defmodule Arbor.MCP.Server.StdioServer do
     opts = opts |> Keyword.put_new(:handler_args, opts) |> Keyword.put(:dispatcher, Dispatch)
 
     with {:ok, config, deadline} <- Initialization.configure(opts),
-         {:ok, stdio_opts} <- stdio_options(opts, config) do
-      Runtime.start_configured(
-        Keyword.put(opts, :edge, {Supervisor, Keyword.merge(opts, stdio_opts)}),
-        config,
-        deadline
-      )
+         {:ok, stdio_opts} <- stdio_options(opts, config),
+         {:ok, authority} <- output_authority(opts, deadline),
+         {:ok, lease} <-
+           OutputAuthority.acquire(authority, stdio_opts[:stdio_output], config, deadline) do
+      stdio_opts =
+        stdio_opts
+        |> Keyword.put(:stdio_output, OutputLease.device(lease))
+        |> Keyword.put(:stdio_output_lease, lease)
+
+      result =
+        Runtime.start_configured(
+          Keyword.put(opts, :edge, {Supervisor, Keyword.merge(opts, stdio_opts)}),
+          config,
+          deadline
+        )
+
+      if not match?({:ok, _}, result), do: OutputAuthority.release(lease, deadline)
+      result
     end
   end
 
   def child_spec(opts),
     do: %{Runtime.child_spec(opts) | start: {__MODULE__, :start_link, [opts]}}
+
+  defp output_authority(opts, deadline) do
+    case Keyword.fetch(opts, :_stdio_output_authority) do
+      {:ok, ref} -> Arbor.MCP.Server.Stdio.OutputAuthority.Ref.validate(ref)
+      :error -> OutputAuthority.default(deadline)
+    end
+  end
 
   defp stdio_options(opts, config) do
     delay =

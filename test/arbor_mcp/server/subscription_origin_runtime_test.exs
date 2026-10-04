@@ -192,12 +192,20 @@ defmodule Arbor.MCP.Server.SubscriptionOriginRuntimeTest do
     assert_receive {:source_cancelled, ^worker}
     send(worker, :release)
     release(output, ack)
-    assert_receive {:write_attempt, _, terminal}
-    assert %{"id" => 6, "error" => _} = decode(terminal)
-    release(output, terminal)
-    assert_receive {:write_attempt, _, earlier_effect}
-    assert decode(earlier_effect)["method"] == "notifications/tools/list_changed"
-    release(output, earlier_effect)
+
+    messages =
+      for _ <- 1..2 do
+        assert_receive {:write_attempt, _, frame}
+        message = decode(frame)
+        release(output, frame)
+        message
+      end
+
+    # The completed publication and cancellation reply have independent
+    # producers. Both must survive, with exactly one notification, in either
+    # physical order after the held ACK is released.
+    assert Enum.count(messages, &match?(%{"id" => 6, "error" => _}, &1)) == 1
+    assert Enum.count(messages, &(&1["method"] == "notifications/tools/list_changed")) == 1
     refute_receive {:write_attempt, _, _}, 30
     assert Process.alive?(listener)
     assert scheduler_state(runtime).count == 1
