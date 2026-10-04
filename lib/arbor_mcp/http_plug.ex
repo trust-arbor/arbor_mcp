@@ -480,7 +480,7 @@ defmodule Arbor.MCP.HttpPlug do
   # option is still honoured for plugs placed directly in an endpoint, where
   # nothing strips the prefix.
   defp mcp_endpoint_path?(conn, opts) do
-    conn.path_info == [] or conn.path_info == split_path(opts.endpoint)
+    conn.path_info == [] or conn.path_info == split_path(Map.get(opts, :endpoint, "/mcp"))
   end
 
   defp do_dispatch("OPTIONS", _path, conn, opts) do
@@ -1312,7 +1312,8 @@ defmodule Arbor.MCP.HttpPlug do
 
   defp runtime_array_policy(conn, request, opts) when is_list(request) do
     if request == [] or opts.protocol_mode == :modern_only or modern_protocol_header?(conn) or
-         Enum.any?(request, &modern_request_metadata?/1),
+         Enum.any?(request, &modern_request_metadata?/1) or
+         not RuntimeSession.valid_initialization_batch?(request),
        do: {:error, :invalid_json_rpc_envelope},
        else: :ok
   end
@@ -1348,13 +1349,16 @@ defmodule Arbor.MCP.HttpPlug do
   defp runtime_session_reference(conn, request) do
     if modern_http_request?(conn, request),
       do: {:ok, nil},
-      else: get_or_create_session_id(conn, request)
+      else:
+        get_or_create_session_id(conn, RuntimeSession.initialization_request(request) || request)
   end
 
   defp runtime_protocol_version(conn, request, session) do
-    if is_list(request) do
+    if is_list(request) and is_nil(RuntimeSession.initialization_request(request)) do
       validate_runtime_legacy_version(conn, request, session)
     else
+      request = RuntimeSession.initialization_request(request) || request
+
       if modern_http_request?(conn, request) or request["method"] == "initialize",
         do: validate_protocol_version(conn, request, nil, nil),
         else: validate_runtime_legacy_version(conn, request, session)
@@ -1465,6 +1469,21 @@ defmodule Arbor.MCP.HttpPlug do
 
   defp initialization_error?(%{"method" => "initialize"}, wire) when wire != "",
     do: Map.has_key?(decode_runtime_wire(wire), "error")
+
+  defp initialization_error?(requests, wire) when is_list(requests) and wire != "" do
+    case RuntimeSession.initialization_request(requests) do
+      nil ->
+        false
+
+      initial ->
+        response = decode_runtime_wire(wire)
+
+        not is_list(response) or
+          Enum.any?(response, fn entry ->
+            is_map(entry) and entry["id"] == initial["id"] and Map.has_key?(entry, "error")
+          end)
+    end
+  end
 
   defp initialization_error?(_request, _wire), do: false
 

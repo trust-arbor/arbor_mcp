@@ -406,12 +406,17 @@ typed capacity outcomes and the explicit custom Runtime adapter capability.
 The short running-deadline fixture retains its original 100/20/30 ms settings
 and actual body-entry/death assertions in a separate synchronous module.
 
-Measured default-limit RSS plateaus, standalone legacy boundaries and finite
-durable filesystem behavior remain open. A separate real native RPC probe found
-valid writes retained in a suspended Actor's mailbox after all original callers
-timed out, followed by late native writes on resume. Pre-Actor write admission and
-final original-cutoff validation are in progress. Actor death alone remains
-insufficient proof of native child/group cleanup.
+The default-limit fresh-VM store probe below qualifies count/byte plateaus and
+idle cleanup, with supporting owner/VM/RSS samples. Finite durable filesystem
+behavior remains a separate gate. Native RPC write admission is integrated at
+ACP `27f5606`: reservation precedes copying/enqueue, and original producer
+cutoffs are checked before native admission. The actual suspended-Actor probe
+admits three of 32 producers, rejects 29 with backpressure, and issues zero new
+native writes after their original cutoffs. RPC 113 tests pass on all three
+local toolchains; [exact-commit Linux CI](https://github.com/trust-arbor/arbor_acp/actions/runs/37244251536)
+passes all nine package/SDK/archive jobs. Actor death alone remains insufficient
+proof of native child/group cleanup. Final combined package/platform and RC
+qualification remains required.
 
 | Slice | Reviewable evidence | Remaining work |
 |---|---|---|
@@ -593,11 +598,28 @@ in `scripts/measure_native_store.exs`. On minimum/current toolchains, a 2x wave
 followed by an additional 8x wave reaches identical count/byte plateaus with
 explicit rejection, then idle expiry drains entries, indices and operation
 credit. Actual owned store processes stop. Canonical pressure/store/runtime
-selections pass 158/39/329 cases on each toolchain, and the retained/broader HTTP
-wire selections pass 19/40 cases each. The pressure probe records owner/VM/RSS
+selections pass 158/39/332 cases on each toolchain, and the retained/broader HTTP
+wire selections pass 19/43 cases each. The pressure probe records owner/VM/RSS
 supporting samples without claiming transient peaks or an absolute RSS cap.
-Native RPC write admission, DETS finite cleanup and the remaining HTTP
-convergence still have separate implementation/qualification gates.
+Native RPC write admission is integrated at the qualified ACP revision above;
+DETS finite cleanup and remaining HTTP convergence still have separate gates.
+
+The next mounted HTTP slice adds accepted notification-array continuation,
+ordered initialization arrays, scoped cancellation controls and actual MRTR
+retry/replay. Its canonical combined selection passes 23 cases on each supported toolchain,
+including seven actual Cowboy socket cases, with the 19 retained-session, 43
+Gateway wire and 332 Runtime/deadline/batch cases also passing. Integration
+preserves pressure/materialization rules and the original request cutoff. Queued and
+future batch cancellation, subscription publication/listener ownership and HTTP
+API retirement remain separate gates. See [the control convergence slice](./V2_HTTP_CONTROL_CONVERGENCE_SLICE.md).
+
+Full Linux CI at `20d04d9` passes six of twelve jobs, including both archive
+consumers, SDK interop, compliance, external conformance and Dialyzer. All six
+failing jobs encounter the same missing `endpoint` default in legacy direct
+HttpPlug option maps. The narrow fallback correction preserves explicit mount
+paths and modern method rejection; the nine existing session/replay/delete cases
+and 35 Gateway routing cases pass on both toolchains. Fresh combined CI remains
+required after the control slice and native RPC integration.
 
 ## Full-roadmap work still outstanding
 

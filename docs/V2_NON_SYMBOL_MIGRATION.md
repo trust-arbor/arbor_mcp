@@ -38,6 +38,8 @@ redirect does not rename a Hex package, application or Elixir module.
 
 | Owner | Application and modules |
 | --- | --- |
+| Mounted HTTP control convergence manifest `59bca49d96ee0dccd7341ae193a2fc9b5ae8cbc9f2dc0f6ae0a0a92795ae12a4` | Accepted legacy notification/init arrays, charged same-lease/trusted-modern cancellation controls and actual MRTR retry/replay; canonical combined23 wire/pure,19 retained-session,43 Gateway wire and332 runtime cases pass both. Merge retains pressure/phase/deadline rules and adds endpoint default fallback; queued/future controls, subscriptions/listeners and finalAPI retirement remain required. |
+| Native RPC write admission, ACP `27f5606` | Aggregate count/byte reservation precedes payload copying and Actor enqueue; final native admission checks original producer cutoff and identity. Canonical RPC113 cases pass all three local toolchains and exact-commit Linux CI passes9/9 including archives. Actual32-producer probe admits3/rejects29 and has zero new native writes after cutoff. Native acknowledgement does not prove vendor consumption or child/group cleanup. |
 | MCP | `:arbor_mcp`, `Arbor.MCP.*` |
 | ACP core and generic adapter contract | `:arbor_acp`, `Arbor.ACP.*` |
 | Optional vendor implementations | `:arbor_acp_adapters`, `Arbor.ACP.Adapters.*`; core ACP does not depend on the bundle. |

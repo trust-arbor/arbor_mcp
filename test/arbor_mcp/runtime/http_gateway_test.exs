@@ -213,6 +213,56 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayTest do
     refute_receive :http_handler_init, 5
   end
 
+  test "all accepted notification array members continue after their socket returns202" do
+    runtime = runtime()
+    assert_receive :http_handler_init
+    {socket, monitor} = notification_socket(runtime, 2)
+    assert_receive {:gateway_callback, nil, first}
+    assert_receive :accepted_array_202
+    assert_receive {:DOWN, ^monitor, :process, ^socket, :normal}
+    assert %{reserved: 2} = Runtime.stats(runtime)
+
+    send(first, :finish)
+    assert_receive {:gateway_callback, nil, second}
+    assert first != second
+    assert %{reserved: 2} = Runtime.stats(runtime)
+    send(second, :finish)
+    wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
+    assert {:ok, %{"result" => 2}} = Runtime.request(runtime, message(20))
+    refute_receive :http_handler_init, 5
+    {:ok, domain} = HTTPWriterProxy.domain(runtime)
+    assert %{frames: 0} = HTTPWriterRegistry.stats(domain)
+  end
+
+  test "returned notification array retains its original cutoff and skips later members" do
+    runtime = runtime(request_timeout_ms: 100)
+    {socket, monitor} = notification_socket(runtime, 2)
+    assert_receive {:gateway_callback, nil, first}
+    assert_receive :accepted_array_202
+    assert_receive {:DOWN, ^monitor, :process, ^socket, :normal}
+    wait(fn -> not Process.alive?(first) end)
+    wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
+    refute_receive {:gateway_callback, nil, _later}, 10
+    assert {:ok, %{"result" => 0}} = Runtime.request(runtime, message(21))
+  end
+
+  test "replacement Gateway cannot adopt a returned notification array" do
+    runtime = runtime()
+    {socket, monitor} = notification_socket(runtime, 2)
+    assert_receive {:gateway_callback, nil, first}
+    assert_receive :accepted_array_202
+    assert_receive {:DOWN, ^monitor, :process, ^socket, :normal}
+    {:ok, gateway} = HTTPGateway.address(runtime)
+    Process.exit(gateway, :kill)
+    wait(fn -> not Process.alive?(first) end)
+    # Native startup provenance fails this root closed when its owned Gateway
+    # dies. A permanent parent's replacement has a different lifetime domain.
+    wait(fn -> Runtime.stats(runtime) == {:error, :runtime_unavailable} end)
+    refute_receive {:gateway_callback, nil, _later}, 10
+    assert {:error, :http_gateway_unavailable} = HTTPGateway.address(runtime)
+    assert {:error, :runtime_unavailable} = Runtime.request(runtime, message(22))
+  end
+
   test "a timeout during borrowed notification IO retains its original observation without a retry" do
     runtime = runtime(request_timeout_ms: 60, output_timeout_ms: 30)
     {:ok, binding} = HTTPWriterProxy.capture(runtime)
@@ -315,6 +365,22 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayTest do
   end
 
   defp message(id), do: %{"jsonrpc" => "2.0", "id" => id, "method" => "read"}
+
+  defp notification_socket(runtime, count) do
+    parent = self()
+
+    socket =
+      spawn(fn ->
+        {:ok, binding} = HTTPWriterProxy.capture(runtime)
+        notice = %{"jsonrpc" => "2.0", "method" => "hold"}
+        {:ok, _token} = HTTPGateway.submit(runtime, binding, List.duplicate(notice, count))
+        {effect, ""} = checkout(binding)
+        :ok = HTTPWriterRegistry.complete(effect, :ok)
+        send(parent, :accepted_array_202)
+      end)
+
+    {socket, Process.monitor(socket)}
+  end
 
   defp checkout(binding) do
     wait(fn ->

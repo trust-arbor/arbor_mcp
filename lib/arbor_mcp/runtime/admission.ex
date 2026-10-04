@@ -508,12 +508,16 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   def handle_call({:release_step, token}, _from, state) do
     case Map.get(state.reservations, token) do
       %{terminal: true} = reservation ->
+        old_monitor = reservation.monitor
+        if reservation.monitor, do: Process.demonitor(reservation.monitor, [:flush])
+        if reservation.timer, do: Process.cancel_timer(reservation.timer)
         monitor = Process.monitor(reservation.owner)
+        phase = new_output_phase()
 
         timer =
           Process.send_after(
             self(),
-            {:unbound_timeout, token},
+            {:unbound_timeout, token, phase},
             max(0, reservation.deadline - System.monotonic_time(:millisecond))
           )
 
@@ -539,7 +543,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
             key: key,
             stage: :holding,
             monitoring_owner: true,
-            output_phase: new_output_phase()
+            output_phase: phase
         }
 
         :ets.insert(state.table, {{:reservation, token}, reservation})
@@ -550,7 +554,10 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
          %{
            state
            | reservations: Map.put(state.reservations, token, reservation),
-             monitors: Map.put(state.monitors, monitor, token)
+             monitors:
+               state.monitors
+               |> Map.delete(old_monitor)
+               |> Map.put(monitor, token)
          }}
 
       _ ->
@@ -660,9 +667,9 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     end
   end
 
-  def handle_info({:unbound_timeout, token}, state) do
+  def handle_info({:unbound_timeout, token, phase}, state) do
     case Map.get(state.reservations, token) do
-      %{bound: false} ->
+      %{bound: false, output_phase: ^phase} ->
         state =
           deliver_terminal(
             state,
@@ -677,6 +684,8 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
         {:noreply, state}
     end
   end
+
+  def handle_info({:unbound_timeout, _old_token}, state), do: {:noreply, state}
 
   def handle_info(:byte_cleanup, state) do
     ByteBudget.reap(state.table, Deadline.now() + @cleanup_turn_ms)
@@ -763,11 +772,12 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
 
       true ->
         monitor = Process.monitor(reservation.producer)
+        phase = new_output_phase()
 
         timer =
           Process.send_after(
             self(),
-            {:unbound_timeout, reservation.token},
+            {:unbound_timeout, reservation.token, phase},
             max(0, reservation.deadline - System.monotonic_time(:millisecond))
           )
 
@@ -779,7 +789,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
             terminal: false,
             monitoring_owner: false,
             sequence: System.unique_integer([:monotonic, :positive]),
-            output_phase: new_output_phase()
+            output_phase: phase
           })
 
         state = %{

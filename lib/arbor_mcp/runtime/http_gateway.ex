@@ -5,6 +5,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
 
   alias Arbor.MCP.Server.Runtime.{
     Admission,
+    HTTPCancellation,
     HTTPWriterBinding,
     HTTPWriterRegistry,
     HTTPWriteTicket,
@@ -32,6 +33,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
          {:ok, gateway} <- address(runtime),
          {:ok, format, dispatch_opts} <- options(opts),
          {:ok, acceptance} <- acceptance(binding, message, gateway),
+         identity = HTTPCancellation.identity(dispatch_opts, message, proof.lease),
          retained = %{
            binding: binding,
            format: format,
@@ -39,7 +41,13 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
            acceptance: acceptance,
            socket: self(),
            scope: proof.scope,
-           lifecycle_metadata_reserve: :binary.copy(<<0>>, 512)
+           lease: proof.lease,
+           identity: identity,
+           lifecycle_metadata_reserve:
+             :binary.copy(
+               <<0>>,
+               4_512 + 2 * :erlang.external_size({proof.scope, proof.lease, identity})
+             )
          },
          result <- publish(runtime, proof, gateway, message, retained) do
       if match?({:error, _}, result) and acceptance,
@@ -62,6 +70,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
              scope: proof.scope,
              invocation_deadline: proof.deadline,
              dispatch_opts: [http: retained],
+             wire_ids: wire_ids(message),
+             uncancellable_ids: uncancellable_ids(message),
              batch?: is_list(message)
            ),
          :ok <-
@@ -174,12 +184,26 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
     {:noreply, state}
   end
 
-  def handle_info({:arbor_mcp_runtime, token, {:ok, %{"__runtime_output" => ticket}}}, state) do
+  def handle_info(
+        {:arbor_mcp_runtime, token, {:ok, %{"__runtime_output" => ticket} = result}},
+        state
+      ) do
     case state.jobs[token] do
       %{batch?: true} ->
         case OutputController.deliver(state.table, token, ticket) do
-          :ok -> {:noreply, put_in(state.jobs[token].output?, true)}
-          {:error, reason} -> {:noreply, fail(token, reason, state)}
+          :ok ->
+            state = put_in(state.jobs[token].output?, true)
+
+            state =
+              if state.jobs[token].initializing? and
+                   Map.has_key?(result, "error"),
+                 do: put_in(state.jobs[token].remaining, []),
+                 else: state
+
+            {:noreply, state}
+
+          {:error, reason} ->
+            {:noreply, fail(token, reason, state)}
         end
 
       %{} ->
@@ -201,6 +225,24 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
   end
 
   def handle_info({:arbor_mcp_step_ready, token}, state), do: {:noreply, advance(token, state)}
+
+  def handle_info({:http_cancel_settled, token, phase, result}, state) do
+    case state.jobs[token] do
+      %{cancelling?: true, cancellation_phase: ^phase} ->
+        Admission.terminal(state.table, token, result)
+        state = put_in(state.jobs[token].cancelling?, false)
+
+        if result == :notification do
+          Admission.release_step(state.table, token)
+          {:noreply, state}
+        else
+          {:noreply, finish(token, state)}
+        end
+
+      _retired ->
+        {:noreply, state}
+    end
+  end
 
   def handle_info({:http_output_settled, token, _result}, state),
     do: {:noreply, finish(token, state)}
@@ -266,6 +308,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
         bound?: false,
         done?: false,
         failed?: false,
+        initializing?: false,
+        cancelling?: false,
+        cancellation_phase: nil,
         observation: nil,
         socket_monitor: Process.monitor(retained.socket),
         socket_down?: false
@@ -295,6 +340,10 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
 
       %{remaining: [request | rest]} = job ->
         state = put_in(state.jobs[token].remaining, rest)
+
+        state =
+          put_in(state.jobs[token].initializing?, match?(%{"method" => "initialize"}, request))
+
         dispatch(token, request, job, state)
 
       nil ->
@@ -354,6 +403,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
     with {:ok, reservation} <- Admission.promote(state.table, token, request, kind: :rpc),
          :ok <- bind(job, token, reservation, state),
          :ok <- publish_acceptance(job),
+         :ok <- HTTPCancellation.register(state.runtime, token, job.lease, job.identity),
          {:ok, route} <- Admission.route(state.table) do
       work_opts = [
         runtime: state.runtime,
@@ -362,18 +412,69 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
         retain_reservation: true
       ]
 
-      send(route.scheduler, {:submit, route.generation, token, request, work_opts})
       state = put_in(state.jobs[token].bound?, true)
-      put_in(state.jobs[token].acceptance, nil)
+      state = put_in(state.jobs[token].acceptance, nil)
+      dispatch_or_cancel(token, request, route, work_opts, state)
     else
       {:error, reason} -> fail(token, reason, state)
     end
+  end
+
+  defp dispatch_or_cancel(
+         token,
+         %{"method" => "notifications/cancelled", "params" => %{"requestId" => id}} = request,
+         route,
+         work_opts,
+         state
+       )
+       when not is_map_key(request, "id") do
+    case Arbor.MCP.Internal.MessageValidator.validate_method_params(
+           "notifications/cancelled",
+           request["params"]
+         ) do
+      :ok ->
+        case HTTPCancellation.request(state.table, token, id) do
+          {:ok, generation, phase} ->
+            send(route.scheduler, {:http_cancel, generation, token, phase})
+            state = put_in(state.jobs[token].cancelling?, true)
+            put_in(state.jobs[token].cancellation_phase, phase)
+
+          _invalid ->
+            Admission.terminal(state.table, token, :notification)
+            Admission.release_step(state.table, token)
+            state
+        end
+
+      _invalid ->
+        send(route.scheduler, {:submit, route.generation, token, request, work_opts})
+        state
+    end
+  end
+
+  defp dispatch_or_cancel(token, request, route, work_opts, state) do
+    send(route.scheduler, {:submit, route.generation, token, request, work_opts})
+    state
   end
 
   defp publish_acceptance(%{acceptance: nil}), do: :ok
 
   defp publish_acceptance(%{acceptance: ticket}) do
     with :ok <- HTTPWriterRegistry.handoff(ticket), do: HTTPWriterRegistry.publish(ticket)
+  end
+
+  # Acceptance is a single charged socket effect. After its first member has
+  # been bound, a notification-only envelope belongs to this Gateway through
+  # its original reservation lifetime, even after the socket has returned 202.
+  defp bind(%{notification_only?: true, bound?: true, scope: scope}, token, reservation, state) do
+    with {:ok, route} <- Admission.route(state.table),
+         true <- reservation.token == token and reservation.owner == self(),
+         true <- reservation.scope == scope and reservation.generation == route.generation,
+         true <- reservation.deadline > System.monotonic_time(:millisecond),
+         true <- :ets.lookup(state.table, :http_gateway) == [{:http_gateway, self()}] do
+      :ok
+    else
+      _retired -> {:error, :invalid_http_work_origin}
+    end
   end
 
   defp bind(%{batch?: true, bound?: true, binding: binding}, _token, _reservation, state) do
@@ -436,6 +537,11 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
 
   defp finish(token, state) do
     case state.jobs[token] do
+      %{cancelling?: true} ->
+        # The token-only Scheduler control is still queued. Retain its permit
+        # until the matching ACK or this Gateway's death, even after expiry.
+        state
+
       %{observation: observation} when not is_nil(observation) ->
         if HTTPWriteTicket.observation_status(observation) in [:pending, :in_flight],
           do: put_in(state.jobs[token].done?, true),
@@ -452,12 +558,33 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
         if state.jobs[token], do: put_in(state.jobs[token].done?, true), else: state
 
       _settled ->
+        HTTPCancellation.retire(state.table, token)
         if job = state.jobs[token], do: Process.demonitor(job.socket_monitor, [:flush])
         :ets.delete(state.table, {:output_failure, token})
         :ets.delete(state.table, {:output_commit, token})
         Admission.release(state.table, token)
         %{state | jobs: Map.delete(state.jobs, token)}
     end
+  end
+
+  defp wire_ids(message) do
+    message
+    |> List.wrap()
+    |> Enum.flat_map(fn
+      %{"id" => id, "method" => method}
+      when (is_binary(id) or is_integer(id)) and is_binary(method) ->
+        if :erlang.external_size(id) <= 4_000, do: [id], else: []
+
+      _invalid ->
+        []
+    end)
+    |> Enum.uniq()
+  end
+
+  defp uncancellable_ids(message) do
+    for %{"id" => id, "method" => "initialize"} <- List.wrap(message),
+        (is_binary(id) or is_integer(id)) and :erlang.external_size(id) <= 4_000,
+        do: id
   end
 
   defp capture_observation(token, state) do

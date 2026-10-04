@@ -16,20 +16,43 @@ defmodule Arbor.MCP.HttpPlug.RuntimeSession do
          opts = [deadline: proof.deadline],
          {:ok, lease} <- lease(service, reference, request, metadata, opts),
          :ok <- bind(binding, lease),
-         {:ok, claim} <- claim(service, lease, request, Keyword.put(opts, :invocation, binding)),
+         {:ok, claim} <-
+           claim(
+             service,
+             lease,
+             initialization_request(request) || request,
+             Keyword.put(opts, :invocation, binding)
+           ),
          :ok <- claim_ids(service, lease, request, opts) do
       {:ok, %{service: service, lease: lease, claim: claim, opts: opts}}
     end
   end
 
+  # A legacy initialization batch begins with its one initialization request.
+  # The claim remains pending until the complete array has been admitted for IO.
+  def initialization_request([%{"method" => "initialize"} = first | _]), do: first
+  def initialization_request(%{"method" => "initialize"} = request), do: request
+  def initialization_request(_request), do: nil
+
+  def valid_initialization_batch?(members) do
+    initializers = Enum.filter(members, &match?(%{"method" => "initialize"}, &1))
+
+    initializers == [] or
+      (length(initializers) == 1 and
+         match?(
+           %{"method" => "initialize", "id" => id} when is_binary(id) or is_integer(id),
+           List.first(members)
+         ))
+  end
+
   defp lease(service, :new_session, _request, metadata, opts),
     do: SessionManager.create_session(service, metadata, opts)
 
-  defp lease(service, {:existing_session, id}, %{"method" => "initialize"}, metadata, opts),
-    do: SessionManager.ensure_session(service, id, metadata, opts)
-
-  defp lease(service, {:existing_session, id}, _request, metadata, opts),
-    do: SessionManager.ensure_initialized_session(service, id, metadata, opts)
+  defp lease(service, {:existing_session, id}, request, metadata, opts) do
+    if initialization_request(request),
+      do: SessionManager.ensure_session(service, id, metadata, opts),
+      else: SessionManager.ensure_initialized_session(service, id, metadata, opts)
+  end
 
   defp bind(binding, lease), do: HTTPWriterRegistry.bind_lease(binding, lease)
 
@@ -131,6 +154,22 @@ defmodule Arbor.MCP.HttpPlug.RuntimeSession do
   # Initialization settlement runs under the original authenticated cutoff and
   # lease. A failed initialization closes only this captured session epoch.
   def finalize(%{claim: nil}, _request, _response, _expected), do: :ok
+
+  def finalize(session, requests, responses, expected) when is_list(requests) do
+    initial = initialization_request(requests)
+
+    response =
+      if is_list(responses),
+        do: Enum.find(responses, &(is_map(&1) and &1["id"] == initial["id"])),
+        else: nil
+
+    if response do
+      finalize(session, initial, response, expected)
+    else
+      terminate(session)
+    end
+  end
+
   def finalize(_session, %{"method" => "initialize"}, %{"error" => _error}, _expected), do: :ok
 
   def finalize(session, %{"method" => "initialize"}, response, expected) do

@@ -12,6 +12,7 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
     Admission,
     CallbackContext,
     Failure,
+    HTTPCancellation,
     HTTPOutput,
     Initialization,
     Lifecycle,
@@ -83,6 +84,29 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
   end
 
   @impl true
+  def handle_info({:http_cancel, generation, token, phase}, state) do
+    case HTTPCancellation.take(state.table, token, generation, phase) do
+      {:ok, source} when generation == state.generation ->
+        state =
+          Enum.reduce(state.work, state, fn {target_token, work}, current ->
+            if target_token != token and work.request["method"] != "initialize" and
+                 HTTPCancellation.target?(state.table, source, work.reservation),
+               do: cancel_work(current, target_token, :request_cancelled),
+               else: current
+          end)
+
+        send(source.owner, {:http_cancel_settled, token, phase, :notification})
+        {:noreply, state}
+
+      {:expired, source} when generation == state.generation ->
+        send(source.owner, {:http_cancel_settled, token, phase, {:error, :handler_timeout}})
+        {:noreply, state}
+
+      _retired ->
+        {:noreply, state}
+    end
+  end
+
   def handle_info({:submit, generation, token, request, opts}, state) do
     if generation == state.generation do
       case Admission.bind(state.table, token) do
