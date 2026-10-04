@@ -6,6 +6,29 @@ defmodule Arbor.MCP.Server.Runtime do
   explicitly before increasing `max_concurrency`; stateless callbacks cannot
   change their initialized handler state.
 
+  One original `init_timeout_ms` budget covers configuration validation and all
+  owned startup phases through final admission readiness. A genuine service or
+  execution replacement establishes one new startup budget shared by subsequent
+  children. Test/BEAM edge replacement uses its own fresh budget while retaining
+  handler state and the healthy scheduler generation. Failed or late startup
+  closes admission and forcefully cleans proven owned processes; borrowed
+  services survive. Custom adapters must register every owned process before
+  initialization can block. Capability declarations and child-spec construction
+  must be free of side effects.
+
+  Additional stores use `store_children: [[adapter: MyStore, options: []]]`.
+  Each adapter declares `bounded_startup: 1` and follows
+  `Arbor.MCP.Server.Runtime.ServiceAdapter`'s early registration contract.
+  Raw module/argument, map and MFA child specifications are rejected in v2.
+  Additional stores start inside the fail-stop store cohort before execution.
+
+  Unnamed, local, global and standard `Registry` names are supported. A custom
+  `:via` module must declare `runtime_name_capabilities/0` as
+  `%{finite_lookup: 1}` and provide a pure, finite `whereis_name/1`. That lookup
+  runs in OTP's initiating caller before the native timeout; arbitrary blocking
+  lookup implementations are unsupported. Unqualified modules fail validation.
+  Registration and subsequent initialization use the original finite cutoff.
+
   Runtime references survive child restarts. Requests are reserved against
   count and byte budgets before their payload enters the scheduler mailbox.
   The test/BEAM protocol edge uses an ETS payload handoff and a coalesced wake:
@@ -68,9 +91,9 @@ defmodule Arbor.MCP.Server.Runtime do
   alias Arbor.MCP.Server.Runtime.{
     Admission,
     CallbackContext,
-    Config,
     Deadline,
     ExecutionSupervisor,
+    Initialization,
     Ref,
     ShutdownGuard
   }
@@ -79,9 +102,33 @@ defmodule Arbor.MCP.Server.Runtime do
 
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts) do
-    with {:ok, config} <- Config.new(opts) do
-      supervisor_opts = if Keyword.get(opts, :name), do: [name: opts[:name]], else: []
-      Supervisor.start_link(__MODULE__, {opts, config}, supervisor_opts)
+    with {:ok, config, deadline} <- Initialization.configure(opts) do
+      start_configured(opts, config, deadline)
+    end
+  end
+
+  @doc false
+  def start_configured(opts, config, deadline) do
+    result =
+      Initialization.start_supervisor(__MODULE__, {opts, config, deadline}, deadline, opts[:name])
+
+    if Deadline.now() < deadline do
+      result
+    else
+      case result do
+        {:ok, pid} ->
+          Process.unlink(pid)
+
+          case ref(pid) do
+            {:ok, runtime} -> Initialization.abort_current(Ref.table(runtime))
+            _unavailable -> Process.exit(pid, :kill)
+          end
+
+        _failed ->
+          :ok
+      end
+
+      {:error, :runtime_init_timeout}
     end
   end
 
@@ -95,8 +142,10 @@ defmodule Arbor.MCP.Server.Runtime do
   end
 
   @impl true
-  def init({opts, config}) do
+  def init({opts, config, deadline}) do
+    if Deadline.now() >= deadline, do: exit(:runtime_init_timeout)
     table = :ets.new(__MODULE__, [:set, :public, read_concurrency: true, write_concurrency: true])
+    {:ok, _context} = Initialization.begin(table, config, :runtime, deadline)
     {:ok, guard} = ShutdownGuard.start(self(), table, config)
     :ets.insert(table, {:shutdown_guard, guard})
 
@@ -108,7 +157,6 @@ defmodule Arbor.MCP.Server.Runtime do
         {Admission, runtime_opts},
         {Arbor.MCP.Server.Runtime.StoreSupervisor, runtime_opts}
       ] ++
-        Enum.map(Keyword.get(opts, :store_children, []), &ShutdownGuard.owned_spec(&1, table)) ++
         [
           {ExecutionSupervisor, runtime_opts}
         ] ++
@@ -123,7 +171,7 @@ defmodule Arbor.MCP.Server.Runtime do
                 table
               )
             ]
-        end
+        end ++ [{Initialization.Barrier, [kind: :root] ++ runtime_opts}]
 
     Supervisor.init(children, strategy: :rest_for_one)
   end

@@ -3,11 +3,15 @@ defmodule Arbor.MCP.Server.Runtime.ExecutionSupervisor do
 
   use Supervisor
 
-  alias Arbor.MCP.Server.Runtime.ShutdownGuard
+  alias Arbor.MCP.Server.Runtime.Initialization
 
   def start_link(opts) do
-    with {:ok, pid} <- Supervisor.start_link(__MODULE__, opts) do
-      :ok = ShutdownGuard.watch(Keyword.fetch!(opts, :table), pid, :supervisor)
+    table = Keyword.fetch!(opts, :table)
+
+    with {:ok, context} <- Initialization.begin(table, opts[:config], :runtime),
+         {:ok, pid} <-
+           Initialization.start_supervisor(__MODULE__, opts, context.deadline),
+         :ok <- Initialization.watch(table, pid, :supervisor) do
       {:ok, pid}
     end
   end
@@ -27,7 +31,8 @@ defmodule Arbor.MCP.Server.Runtime.ExecutionSupervisor do
   def init(opts) do
     table = Keyword.fetch!(opts, :table)
     config = Keyword.fetch!(opts, :config)
-    :ok = ShutdownGuard.watch(table, self())
+    :ok = Initialization.watch(table, self())
+    opts = Keyword.put(opts, :execution_supervisor, self())
 
     children = [
       %{
@@ -37,7 +42,8 @@ defmodule Arbor.MCP.Server.Runtime.ExecutionSupervisor do
         shutdown: config.shutdown_timeout_ms
       },
       {Arbor.MCP.Server.Runtime.OutputController, opts},
-      {Arbor.MCP.Server.Runtime.Scheduler, opts}
+      {Arbor.MCP.Server.Runtime.Scheduler, opts},
+      {Initialization.Barrier, [kind: :execution] ++ opts}
     ]
 
     Supervisor.init(children, strategy: :one_for_all)
@@ -45,14 +51,19 @@ defmodule Arbor.MCP.Server.Runtime.ExecutionSupervisor do
 
   @doc false
   def start_tasks(table, config) do
-    case Task.Supervisor.start_link(max_children: config.max_concurrency) do
-      {:ok, supervisor} = result ->
-        :ok = ShutdownGuard.watch(table, supervisor, :supervisor)
-        :ets.insert(table, {:callback_tasks, supervisor})
-        result
+    with {:ok, _context} <- Initialization.begin(table, config, :execution) do
+      case Task.Supervisor.start_link(
+             max_children: config.max_concurrency,
+             timeout: Initialization.remaining(table)
+           ) do
+        {:ok, supervisor} = result ->
+          :ok = Initialization.watch(table, supervisor, :supervisor)
+          :ets.insert(table, {:callback_tasks, supervisor})
+          result
 
-      error ->
-        error
+        error ->
+          error
+      end
     end
   end
 end

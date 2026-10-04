@@ -105,12 +105,16 @@ defmodule Arbor.MCP.Server.RuntimeTest do
 
   defmodule BlockingStore do
     use GenServer
+    alias Arbor.MCP.Server.Runtime.ServiceAdapter
 
-    def start_link(test_pid), do: GenServer.start_link(__MODULE__, test_pid)
+    def start_link(opts),
+      do: GenServer.start_link(__MODULE__, opts, timeout: opts[:init_timeout_ms])
 
     @impl true
-    def init(test_pid) do
+    def init(opts) do
       Process.flag(:trap_exit, true)
+      :ok = ServiceAdapter.watch_owned(opts)
+      test_pid = opts[:test_pid]
       send(test_pid, {:owned_store, self()})
       {:ok, test_pid}
     end
@@ -127,11 +131,19 @@ defmodule Arbor.MCP.Server.RuntimeTest do
 
   defmodule StoreTree do
     use Supervisor
+    alias Arbor.MCP.Server.Runtime.ServiceAdapter
 
-    def start_link(test_pid), do: Supervisor.start_link(__MODULE__, test_pid)
+    def runtime_service_capabilities, do: %{bounded_startup: 1}
+
+    def start_link(opts),
+      do: ServiceAdapter.start_supervisor(__MODULE__, opts)
 
     @impl true
-    def init(test_pid), do: Supervisor.init([{BlockingStore, test_pid}], strategy: :one_for_one)
+    def init(opts) do
+      :ok = ServiceAdapter.watch_owned(opts)
+      opts = Keyword.put(opts, :runtime_service_starter, self())
+      Supervisor.init([{BlockingStore, opts}], strategy: :one_for_one)
+    end
   end
 
   test "stateful callbacks are serialized in separate supervised processes" do
@@ -866,7 +878,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
         block_terminate: true,
         shutdown_timeout_ms: 100,
         cancel_grace_ms: 10_000,
-        store_children: [{StoreTree, self()}]
+        store_children: [[adapter: StoreTree, options: [test_pid: self()]]]
       )
 
     assert_receive {:owned_store, store}
@@ -899,7 +911,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
       start_runtime(
         label: :parent_stop,
         shutdown_timeout_ms: 100,
-        store_children: [{StoreTree, self()}]
+        store_children: [[adapter: StoreTree, options: [test_pid: self()]]]
       )
 
     assert_receive {:owned_store, store}
@@ -1114,7 +1126,8 @@ defmodule Arbor.MCP.Server.RuntimeTest do
   end
 
   defp message(id, method), do: %{"jsonrpc" => "2.0", "id" => id, "method" => method}
-  defp input_bytes(message), do: :erlang.external_size(message) + :erlang.external_size([])
+  # Unscoped invocations also retain the fixed 64-byte outcome-cell allowance.
+  defp input_bytes(message), do: :erlang.external_size(message) + :erlang.external_size([]) + 64
 
   defp remote_pid do
     name = "arbor_runtime_test_remote@invalid"

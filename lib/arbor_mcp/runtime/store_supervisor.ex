@@ -3,13 +3,32 @@ defmodule Arbor.MCP.Server.Runtime.StoreSupervisor do
 
   use Supervisor
 
-  alias Arbor.MCP.Server.Runtime.{Deadline, ServiceBinding, ServiceStartup}
+  alias Arbor.MCP.Server.Runtime.{
+    Deadline,
+    Initialization,
+    OwnedChild,
+    ServiceBinding,
+    ServiceStartup
+  }
 
   def start_link(opts) do
     table = Keyword.fetch!(opts, :table)
     config = Keyword.fetch!(opts, :config)
+
+    case Initialization.current(table) do
+      {:ok, _context} ->
+        with {:ok, context} <- Initialization.begin(table, config, :cohort) do
+          start_cohort(opts, context.deadline, true)
+        end
+
+      _standalone ->
+        start_cohort(opts, Deadline.now() + config.init_timeout_ms, false)
+    end
+  end
+
+  defp start_cohort(opts, deadline, runtime?) do
+    table = Keyword.fetch!(opts, :table)
     generation = make_ref()
-    deadline = Deadline.now() + config.init_timeout_ms
     :ets.delete(table, :services_generation)
     :ets.insert(table, {:services_startup, generation, deadline, :starting})
 
@@ -26,7 +45,7 @@ defmodule Arbor.MCP.Server.Runtime.StoreSupervisor do
 
         result =
           if ServiceStartup.current?(table, generation, deadline),
-            do: Supervisor.start_link(__MODULE__, startup_opts),
+            do: Initialization.start_supervisor(__MODULE__, startup_opts, deadline),
             else: {:error, :service_start_timeout}
 
         case result do
@@ -39,7 +58,12 @@ defmodule Arbor.MCP.Server.Runtime.StoreSupervisor do
 
                 if Deadline.now() < deadline do
                   :ets.delete(table, {:service_owner, pid})
-                  {:ok, pid}
+
+                  if runtime? do
+                    with :ok <- Initialization.complete(table, :stores, pid), do: {:ok, pid}
+                  else
+                    {:ok, pid}
+                  end
                 else
                   ServiceStartup.abort_cohort(table, generation, deadline)
                   {:error, :service_start_timeout}
@@ -93,6 +117,8 @@ defmodule Arbor.MCP.Server.Runtime.StoreSupervisor do
         service_spec(descriptor, opts)
       end
 
+    children = children ++ Enum.map(config.store_children, &OwnedChild.specification(&1, opts))
+
     children =
       case config.services.subscriptions do
         %{ownership: :owned} = descriptor ->
@@ -133,7 +159,11 @@ defmodule Arbor.MCP.Server.Runtime.StoreSupervisor do
     generation = Keyword.fetch!(opts, :generation)
 
     with true <- ServiceStartup.current?(table, generation, deadline),
-         {:ok, pid} <- DynamicSupervisor.start_link(strategy: :one_for_one),
+         {:ok, pid} <-
+           DynamicSupervisor.start_link(
+             strategy: :one_for_one,
+             timeout: ServiceStartup.remaining(deadline)
+           ),
          :ok <- ServiceStartup.register(table, pid, self(), deadline),
          true <- ServiceStartup.current?(table, generation, deadline) do
       :ets.delete(table, {:service_owner, pid})

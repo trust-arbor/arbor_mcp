@@ -262,10 +262,13 @@ defmodule Arbor.MCP.Content.SchemaReplacementTest do
     assert {:ok, missing, _} = BoundaryHandler.handle_call_tool("default", %{}, %{count: 0})
     assert missing.structuredContent == %{count: 7}
 
-    assert {:ok, string, _} =
+    assert {:error, %Arbor.MCP.Error.ProtocolError{code: -32602}, %{count: 0}} =
              BoundaryHandler.handle_call_tool("default", %{"count" => "7"}, %{count: 0})
 
-    assert string.structuredContent == %{count: "7"}
+    assert {:ok, numeric, _} =
+             BoundaryHandler.handle_call_tool("default", %{"count" => 8}, %{count: 0})
+
+    assert numeric.structuredContent == %{count: 8}
   end
 
   defp compile_handler(kind, schema) do

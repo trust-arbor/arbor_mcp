@@ -19,7 +19,10 @@ defmodule Mix.Tasks.InteropServer do
   def run(args) do
     modern? = "modern" in args
 
-    Mix.Task.run("app.start")
+    app_start_args =
+      if "--no-compile" in args, do: ["--no-compile", "--no-deps-check"], else: []
+
+    Mix.Task.run("app.start", app_start_args)
 
     # Configure for STDIO mode
     Application.put_env(:arbor_mcp, :stdio_mode, true)

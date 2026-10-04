@@ -381,11 +381,26 @@ defmodule Arbor.MCP.SessionManager do
   def claim_request_id(%ServiceRef{} = service, lease, id, opts),
     do: Addressed.leased(service, lease, :claim_id, [id], opts)
 
-  @doc "Claims addressed initialization with an explicit owner and absolute deadline."
+  @doc """
+  Claims addressed initialization with an immutable invocation cutoff.
+
+  Runtime callbacks retain their actual request owner and original deadline.
+  An explicit `:owner` must match that owner; `:deadline` may shorten the original
+  cutoff. `:timeout` limits the service RPC wait and does not renew the claim.
+  Outside callbacks the explicit live owner defaults to the caller and the claim
+  uses the finite service-operation cutoff. Unauthenticated future deadline
+  integers cannot create a longer request lifetime.
+  """
   def claim_initialization(%ServiceRef{} = service, lease, opts),
     do: Addressed.claim_initialization(service, lease, opts)
 
-  @doc "Completes an addressed claim from a scheduled callback while its original owner is alive."
+  @doc """
+  Completes an addressed claim while its original owner and invocation are active.
+
+  A different worker can complete it. Each completion attempt has a separate
+  finite store wait, bounded by the unchanged claim cutoff and any shorter caller
+  deadline. Retrying a timed-out call does not refresh the claim's lifetime.
+  """
   def complete_initialization(%ServiceRef{} = service, claim, version, opts),
     do: Addressed.complete_initialization(service, claim, version, opts)
 

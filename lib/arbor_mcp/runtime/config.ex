@@ -1,7 +1,7 @@
 defmodule Arbor.MCP.Server.Runtime.Config do
   @moduledoc false
 
-  alias Arbor.MCP.Server.Runtime.ServiceConfig
+  alias Arbor.MCP.Server.Runtime.{OwnedChildConfig, ServiceConfig}
   @timer_limit 4_294_967_295
 
   defstruct handler: nil,
@@ -10,6 +10,7 @@ defmodule Arbor.MCP.Server.Runtime.Config do
             cancellation_tracker: nil,
             dispatch_opts: [],
             services: nil,
+            store_children: [],
             execution: :stateful,
             max_concurrency: 1,
             # Data permits include every batch member, retained until settlement.
@@ -33,16 +34,35 @@ defmodule Arbor.MCP.Server.Runtime.Config do
     keys = Map.keys(Map.from_struct(%__MODULE__{}))
     config = struct(__MODULE__, Keyword.take(opts, keys))
 
-    with :ok <- validate_legacy_services(opts),
+    with :ok <- validate_name(Keyword.get(opts, :name)),
+         :ok <- validate_legacy_services(opts),
          :ok <- validate_handler(config),
          :ok <- validate_execution(config),
          :ok <- validate_limits(config),
          :ok <- validate_timers(config),
          {:ok, services} <- ServiceConfig.new(opts),
+         {:ok, stores} <- OwnedChildConfig.new(Keyword.get(opts, :store_children, [])),
          :ok <- validate_replay_requirement(opts, services) do
-      {:ok, %{config | services: services}}
+      {:ok, %{config | services: services, store_children: stores}}
     end
   end
+
+  @doc false
+  def validate_name(nil), do: :ok
+  def validate_name(name) when is_atom(name), do: :ok
+  def validate_name({:global, _name}), do: :ok
+  def validate_name({:via, Registry, _name}), do: :ok
+
+  def validate_name({:via, module, _name}) when is_atom(module) do
+    if Code.ensure_loaded?(module) and function_exported?(module, :runtime_name_capabilities, 0) and
+         match?(%{finite_lookup: 1}, module.runtime_name_capabilities()) do
+      :ok
+    else
+      {:error, {:invalid_runtime_name, :finite_lookup_required}}
+    end
+  end
+
+  def validate_name(_invalid), do: {:error, {:invalid_runtime_name, :unsupported_shape}}
 
   defp validate_legacy_services(opts) do
     cond do

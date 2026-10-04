@@ -2,7 +2,7 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
   @moduledoc false
 
   alias Arbor.MCP.Internal.SessionStore
-  alias Arbor.MCP.Server.Runtime.{ServiceOperation, ServiceStore}
+  alias Arbor.MCP.Server.Runtime.{ServiceInvocation, ServiceOperation, ServiceStore}
 
   @identity [:principal_id, :tenant_id, :issuer, :audience]
   @metadata @identity ++ [:transport, :client_info]
@@ -159,29 +159,33 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
     with {:ok, row} <- epoch_row(model, key, epoch),
          false <- row.initialized,
          false <- row.initialization_claimed,
-         true <- Process.alive?(context.owner) and context.deadline > ServiceOperation.now(),
+         true <- ServiceInvocation.current?(context.invocation),
          :ok <- ServiceOperation.validate_context(context) do
       token = make_ref()
 
       claim = %{
         token: token,
-        owner: context.owner,
-        deadline: context.deadline,
-        monitor: Process.monitor(context.owner)
+        epoch: epoch,
+        owner: ServiceInvocation.owner(context.invocation),
+        deadline: ServiceInvocation.deadline(context.invocation),
+        invocation: context.invocation,
+        monitor: Process.monitor(ServiceInvocation.owner(context.invocation))
       }
 
       updated = %{row | initialization_claimed: true}
       next = %{model | claims: Map.put(model.claims, key, claim)}
 
       case with :ok <- row_capacity(next, key, updated),
-                do: ServiceOperation.validate_context(context) do
+                :ok <- ServiceOperation.validate_context(context),
+                true <- ServiceInvocation.current?(claim.invocation),
+                do: :ok do
         :ok ->
           SessionStore.insert(model.store, :sessions, {key, updated})
-          {{:ok, token, context.owner, context.deadline}, next}
+          {{:ok, token, claim.owner, claim.deadline}, next}
 
         error ->
           Process.demonitor(claim.monitor, [:flush])
-          {error, model}
+          {if(error == false, do: {:error, :operation_timeout}, else: error), model}
       end
     else
       true -> {{:error, :initialization_already_claimed_or_completed}, model}
@@ -199,7 +203,9 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
     key = {namespace, id}
 
     with {:ok, row} <- epoch_row(model, key, epoch),
-         %{token: ^token, owner: ^owner, deadline: ^original_deadline} <- model.claims[key],
+         %{token: ^token, owner: ^owner, deadline: ^original_deadline} = claim <-
+           model.claims[key],
+         true <- ServiceInvocation.current?(claim.invocation),
          true <- original_deadline > ServiceOperation.now() and Process.alive?(owner),
          true <- is_binary(version) and byte_size(version) in 1..128,
          true <- row.protocol_version in [nil, version] do
@@ -213,13 +219,15 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
       next = %{model | claims: Map.delete(model.claims, key)}
 
       case with :ok <- row_capacity(next, key, updated),
-                do: ServiceOperation.validate_context(context) do
+                :ok <- ServiceOperation.validate_context(context),
+                true <- ServiceInvocation.current?(claim.invocation),
+                do: :ok do
         :ok ->
           SessionStore.insert(model.store, :sessions, {key, updated})
           {:ok, drop_claim(model, key)}
 
         error ->
-          {error, model}
+          {if(error == false, do: {:error, :stale_initialization_claim}, else: error), model}
       end
     else
       {:error, _reason} = error -> {error, model}
@@ -357,7 +365,7 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
       claim = model.claims[key]
 
       if row.expires_at <= now or
-           (claim && (claim.deadline <= now or not Process.alive?(claim.owner))),
+           (claim && not ServiceInvocation.current?(claim.invocation)),
          do: retire(model, key, row.epoch),
          else: model
     end)
@@ -380,7 +388,7 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
 
           expired? =
             row.expires_at <= now or
-              (claim && (claim.deadline <= now or not Process.alive?(claim.owner)))
+              (claim && not ServiceInvocation.current?(claim.invocation))
 
           model = if expired?, do: retire(model, key, row.epoch), else: model
           {:cont, {model, processed + 1}}
@@ -396,10 +404,10 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
     case Enum.find(model.claims, fn {_key, claim} ->
            claim.monitor == monitor and claim.owner == owner
          end) do
-      {key, _claim} ->
-        case row(model, key) do
-          {:ok, row} -> retire(model, key, row.epoch)
-          _missing -> drop_claim(model, key)
+      {key, %{epoch: epoch}} ->
+        case SessionStore.lookup(model.store, :sessions, key) do
+          [{^key, %{epoch: ^epoch}}] -> retire(model, key, epoch)
+          _missing_or_replaced -> drop_claim(model, key)
         end
 
       nil ->
@@ -437,9 +445,12 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
   defp row(model, key) do
     case SessionStore.lookup(model.store, :sessions, key) do
       [{^key, row}] ->
-        if row.expires_at > ServiceOperation.now(),
-          do: {:ok, row},
-          else: {:error, :session_not_found}
+        claim = model.claims[key]
+
+        if row.expires_at > ServiceOperation.now() and
+             (is_nil(claim) or ServiceInvocation.current?(claim.invocation)),
+           do: {:ok, row},
+           else: {:error, :session_not_found}
 
       _missing ->
         {:error, :session_not_found}

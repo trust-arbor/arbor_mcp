@@ -1,5 +1,11 @@
 defmodule Arbor.MCP.Content.SchemaPolicy.Compiled do
-  @moduledoc false
+  @moduledoc """
+  Opaque modern JSON Schema artifact returned by `Arbor.MCP.Content.SchemaPolicy`.
+
+  Use `Arbor.MCP.Content.SchemaPolicy.compile/1,2` and
+  `Arbor.MCP.Content.SchemaPolicy.validate/2,3` to create and validate artifacts.
+  Their representation and validator backend are private.
+  """
 
   @enforce_keys [:root]
   defstruct [:root]
@@ -10,13 +16,16 @@ defmodule Arbor.MCP.Content.SchemaPolicy.Compiled do
   @max_text_bytes 256
   @fallback {"value does not conform to JSON Schema", "#"}
 
+  @doc false
   @spec new(JSV.Root.t()) :: t()
   def new(root), do: %__MODULE__{root: root}
 
+  @doc false
   @spec fetch(term()) :: {:ok, t()} | :error
   def fetch(%__MODULE__{} = compiled), do: {:ok, compiled}
   def fetch(_other), do: :error
 
+  @doc false
   @spec validate(t(), term()) :: :ok | {:error, [{String.t(), String.t()}]}
   def validate(%__MODULE__{root: root}, data) do
     case JSV.validate(data, root, cast: false, cast_formats: false) do

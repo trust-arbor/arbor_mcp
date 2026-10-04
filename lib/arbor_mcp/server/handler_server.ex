@@ -57,10 +57,11 @@ defmodule Arbor.MCP.Server.HandlerServer do
     RequestContext,
     RequestState,
     Runtime,
+    SubscriptionListener,
     Subscriptions
   }
 
-  alias Arbor.MCP.Server.Runtime.{Admission, OutputController, Ref, ShutdownGuard}
+  alias Arbor.MCP.Server.Runtime.{Admission, Initialization, OutputController, Ref, ShutdownGuard}
 
   alias Arbor.MCP.Transport.{Local, Test}
 
@@ -133,7 +134,18 @@ defmodule Arbor.MCP.Server.HandlerServer do
   end
 
   @doc false
-  def start_edge_link(opts), do: GenServer.start_link(__MODULE__, opts)
+  def start_edge_link(opts) do
+    table = opts |> Keyword.fetch!(:runtime) |> Ref.table()
+
+    startup =
+      if Keyword.get(opts, :transport, :test) in [:test, :beam],
+        do: Initialization.recover_edge(table),
+        else: Initialization.edge_start(table)
+
+    with :ok <- startup do
+      GenServer.start_link(__MODULE__, opts, timeout: Initialization.remaining(table))
+    end
+  end
 
   def child_spec(opts) do
     if Keyword.has_key?(opts, :runtime) do
@@ -160,7 +172,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
   end
 
   @doc false
-  def ingress(runtime, edge, connection, message) do
+  def ingress(runtime, edge, connection, message, opts \\ []) do
     if :ets.lookup(Ref.table(runtime), :edge_connection) == [{:edge_connection, edge, connection}] do
       case decode_transport_message(message) do
         {:ok,
@@ -199,7 +211,9 @@ defmodule Arbor.MCP.Server.HandlerServer do
                    edge: edge,
                    wire_ids: wire_ids(message),
                    uncancellable_ids: uncancellable_ids(message),
-                   batch?: is_list(message)
+                   batch?: is_list(message),
+                   timeout: ingress_timeout(runtime, opts),
+                   admission_deadline: Keyword.get(opts, :admission_deadline, :infinity)
                  ) do
             Runtime.publish_ingress(
               runtime,
@@ -215,6 +229,19 @@ defmodule Arbor.MCP.Server.HandlerServer do
     end
   rescue
     ArgumentError -> {:error, :runtime_unavailable}
+  end
+
+  defp ingress_timeout(runtime, opts) do
+    case Keyword.fetch(opts, :timeout) do
+      {:ok, timeout} ->
+        timeout
+
+      :error ->
+        case Admission.route(Ref.table(runtime)) do
+          {:ok, route} -> route.config.request_timeout_ms
+          _ -> 10_000
+        end
+    end
   end
 
   defp cancel_subscription(runtime, edge, connection, id) do
@@ -246,7 +273,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
     transport_type = Keyword.get(opts, :transport, :test)
     cancellation_tracker = Keyword.get(opts, :cancellation_tracker, CancellationTracker.Default)
     runtime = Keyword.fetch!(opts, :runtime)
-    :ok = ShutdownGuard.watch(Ref.table(runtime), self())
+    :ok = Initialization.watch(Ref.table(runtime), self())
     clear_retired_edge(Ref.table(runtime))
     :ets.insert(Ref.table(runtime), {:edge, self()})
     # Connect to the transport
@@ -284,8 +311,19 @@ defmodule Arbor.MCP.Server.HandlerServer do
           peer_monitor: nil,
           cancellation_tracker: cancellation_tracker,
           subscriptions: %{},
-          subscription_options: Subscriptions.runtime_options(opts, handler_module)
+          subscription_options: Subscriptions.runtime_options(opts, handler_module),
+          stdio_eof_timeout: Keyword.get(opts, :stdio_eof_timeout_ms, 15_000),
+          stdio_eof: nil,
+          stdio_active: nil,
+          stdio_finishing: MapSet.new(),
+          stdio_control_receipts: %{},
+          stdio_control_origin: nil
         }
+
+        state =
+          if transport_type == :stdio,
+            do: replace_peer(transport_state.writer, state),
+            else: state
 
         {:ok, state}
 
@@ -357,8 +395,85 @@ defmodule Arbor.MCP.Server.HandlerServer do
     end
   end
 
-  def handle_info({:DOWN, monitor, :process, _peer, _reason}, %{peer_monitor: monitor} = state),
-    do: {:noreply, replace_peer(nil, state)}
+  def handle_info({:DOWN, monitor, :process, _peer, _reason}, %{peer_monitor: monitor} = state) do
+    if stdio?(state) do
+      ShutdownGuard.request_stop(Ref.table(state.runtime), {:shutdown, :stdio_writer_down})
+      {:noreply, state}
+    else
+      {:noreply, replace_peer(nil, state)}
+    end
+  end
+
+  def handle_info(
+        {:stdio_input_closed, connection, :eof, deadline},
+        %{connection: connection} = state
+      ) do
+    for {_id, {from, :server_request}} <- state.pending_requests,
+        do: GenServer.reply(from, {:error, :connection_closed})
+
+    for {_id, timer} <- state.pending_timers, do: Process.cancel_timer(timer)
+    Subscriptions.remove_transport(self(), state.subscription_options)
+    send(self(), :stdio_drain)
+
+    {:noreply,
+     %{
+       state
+       | stdio_eof: deadline,
+         pending_requests: %{},
+         pending_timers: %{},
+         subscriptions: %{}
+     }}
+  end
+
+  def handle_info(
+        {:stdio_input_closed, connection, reason, _deadline},
+        %{connection: connection} = state
+      ) do
+    ShutdownGuard.request_stop(Ref.table(state.runtime), {:shutdown, reason})
+    {:noreply, state}
+  end
+
+  def handle_info({:stdio_write_failed, connection, reason}, %{connection: connection} = state) do
+    ShutdownGuard.request_stop(Ref.table(state.runtime), {:shutdown, reason})
+    {:noreply, state}
+  end
+
+  def handle_info({:stdio_output_settled, token, result}, state) do
+    state = settle_stdio_control(token, result, state)
+
+    state =
+      if MapSet.member?(state.stdio_finishing, token),
+        do:
+          do_finish_ingress(token, %{
+            state
+            | stdio_finishing: MapSet.delete(state.stdio_finishing, token)
+          }),
+        else: state
+
+    {:noreply, state}
+  end
+
+  def handle_info(:stdio_drain, state) do
+    table = Ref.table(state.runtime)
+
+    cond do
+      not stdio?(state) or is_nil(state.stdio_eof) ->
+        {:noreply, state}
+
+      state.stdio_eof <= System.monotonic_time(:millisecond) ->
+        ShutdownGuard.request_stop(table, {:shutdown, :stdio_eof_timeout})
+        {:noreply, state}
+
+      stdio_drained?(state) ->
+        :ets.insert(table, {:stdio_output_sealed, true})
+        ShutdownGuard.request_stop(table, :normal)
+        {:noreply, state}
+
+      true ->
+        Process.send_after(self(), :stdio_drain, 20)
+        {:noreply, state}
+    end
+  end
 
   def handle_info({:transport_message, message}, state) do
     # Raw Erlang send bypasses the supported ingress API's pre-mailbox bound.
@@ -388,7 +503,10 @@ defmodule Arbor.MCP.Server.HandlerServer do
       Subscriptions.delivered(listener)
       {:noreply, state}
     else
-      case send_message(message, state) do
+      case send_subscription_message(message, listener, kind, state) do
+        {:queued, new_state} ->
+          {:noreply, new_state}
+
         {:ok, new_state} ->
           Subscriptions.delivered(listener)
 
@@ -400,7 +518,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
           {:noreply, new_state}
 
         {:error, _reason} ->
-          Arbor.MCP.Server.SubscriptionListener.cancel(listener)
+          SubscriptionListener.cancel(listener)
           {:noreply, remove_subscription_by_listener(state, listener)}
       end
     end
@@ -409,6 +527,12 @@ defmodule Arbor.MCP.Server.HandlerServer do
   def handle_info({:subscription_listener_closed, listener, _token, _transport, _reason}, state) do
     {:noreply, remove_subscription_by_listener(state, listener)}
   end
+
+  def handle_info(
+        {:test_transport_connect, _client_pid},
+        %{transport: Arbor.MCP.Server.Stdio.Writer} = state
+      ),
+      do: {:noreply, state}
 
   def handle_info({:test_transport_connect, client_pid}, state) do
     {:noreply, replace_peer(client_pid, state)}
@@ -507,7 +631,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
       reservation.terminal ->
         fail_published(token, reservation, state)
 
-      (state.batch_active || state.initializing) &&
+      (state.batch_active || state.initializing || state.stdio_active) &&
           reservation.kind not in [:edge_control, :edge_response] ->
         state
 
@@ -546,8 +670,20 @@ defmodule Arbor.MCP.Server.HandlerServer do
     if active_origin?(origin, token, state) do
       result =
         case kind do
-          :edge_call -> handle_call(request, {self(), {:runtime_edge_reply, token}}, state)
-          :edge_cast -> handle_cast(request, state)
+          :edge_call ->
+            handle_call(request, {self(), {:runtime_edge_reply, token}}, %{
+              state
+              | stdio_control_origin: token
+            })
+
+          :edge_cast ->
+            handle_cast(request, %{state | stdio_control_origin: token})
+        end
+
+      result =
+        case result do
+          {:reply, reply, state} -> {:reply, reply, %{state | stdio_control_origin: nil}}
+          {:noreply, state} -> {:noreply, %{state | stdio_control_origin: nil}}
         end
 
       case result do
@@ -579,11 +715,8 @@ defmodule Arbor.MCP.Server.HandlerServer do
 
     connection_matches and
       case Admission.current(Ref.table(state.runtime), token) do
-        {:ok, %{origin: ^origin, origin_status: :completed}} ->
-          true
-
-        {:ok, %{origin: ^origin, origin_status: :active}} ->
-          Admission.origin_active?(Ref.table(state.runtime), origin)
+        {:ok, %{origin: ^origin, origin_output: proof}} ->
+          Admission.output_origin_valid?(Ref.table(state.runtime), proof)
 
         _ ->
           false
@@ -693,6 +826,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
     }
 
     state = put_in(state.ingress[token], ingress)
+    state = if stdio?(state), do: %{state | stdio_active: token}, else: state
     state = if batch?, do: %{state | batch_active: token}, else: state
 
     if state.initializing do
@@ -926,15 +1060,28 @@ defmodule Arbor.MCP.Server.HandlerServer do
   end
 
   defp finish_ingress(token, state) do
+    if stdio?(state) and OutputController.pending?(Ref.table(state.runtime), token) == true do
+      %{state | stdio_finishing: MapSet.put(state.stdio_finishing, token)}
+    else
+      do_finish_ingress(token, state)
+    end
+  end
+
+  defp do_finish_ingress(token, state) do
     :ets.delete(Ref.table(state.runtime), {:output_failure, token})
     :ets.delete(Ref.table(state.runtime), {:output_commit, token})
     Runtime.discard_ingress(state.runtime, token)
     state = %{state | ingress: Map.delete(state.ingress, token)}
 
-    if state.batch_active == token do
-      drain_published(%{state | batch_active: nil})
-    else
-      state
+    cond do
+      state.batch_active == token ->
+        drain_published(%{state | batch_active: nil, stdio_active: nil})
+
+      state.stdio_active == token ->
+        drain_published(%{state | stdio_active: nil})
+
+      true ->
+        state
     end
   end
 
@@ -1001,8 +1148,14 @@ defmodule Arbor.MCP.Server.HandlerServer do
 
     transport_state =
       case state.transport do
-        Test -> %{state.transport_state | peer_pid: peer}
-        Local -> %{state.transport_state | server_pid: peer, connected: not is_nil(peer)}
+        Test ->
+          %{state.transport_state | peer_pid: peer}
+
+        Local ->
+          %{state.transport_state | server_pid: peer, connected: not is_nil(peer)}
+
+        Arbor.MCP.Server.Stdio.Writer ->
+          %{state.transport_state | writer: peer, connected: not is_nil(peer)}
       end
 
     %{
@@ -1020,6 +1173,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
           ),
         initializing: nil,
         batch_active: nil,
+        stdio_active: nil,
         ingress_queue: :queue.new(),
         subscriptions: %{}
     }
@@ -1031,7 +1185,13 @@ defmodule Arbor.MCP.Server.HandlerServer do
   end
 
   defp connect_output_peer(peer, connection, state) do
-    transport = if state.transport == Local, do: :beam, else: :test
+    transport =
+      cond do
+        state.transport == Local -> :beam
+        stdio?(state) -> :stdio
+        true -> :test
+      end
+
     :ets.insert(Ref.table(state.runtime), {:output_peer, connection, peer, transport})
     OutputController.connect(Ref.table(state.runtime), connection, peer, transport)
   end
@@ -1064,6 +1224,14 @@ defmodule Arbor.MCP.Server.HandlerServer do
       {:reply, :ok, state}
     end
   end
+
+  def handle_call(
+        {:runtime_peer_connect, peer},
+        _from,
+        %{transport: Arbor.MCP.Server.Stdio.Writer, transport_state: transport} = state
+      )
+      when peer != transport.writer,
+      do: {:reply, {:error, :invalid_stdio_peer}, state}
 
   def handle_call({:runtime_peer_connect, peer}, _from, state) when is_pid(peer) do
     state = replace_peer(peer, state)
@@ -1300,6 +1468,18 @@ defmodule Arbor.MCP.Server.HandlerServer do
     end
   end
 
+  defp connect_transport(:stdio, opts) do
+    table = Ref.table(Keyword.fetch!(opts, :runtime))
+
+    case :ets.lookup(table, :stdio_writer) do
+      [{:stdio_writer, writer}] ->
+        {:ok, {Arbor.MCP.Server.Stdio.Writer, %{writer: writer, connected: true}}}
+
+      _ ->
+        {:error, :stdio_writer_unavailable}
+    end
+  end
+
   defp connect_transport(transport_type, _opts) do
     {:error, {:unsupported_transport, transport_type}}
   end
@@ -1504,6 +1684,76 @@ defmodule Arbor.MCP.Server.HandlerServer do
   defp protocol_version_from_result(%{"protocolVersion" => version}), do: version
   defp protocol_version_from_result(%{protocolVersion: version}), do: version
   defp protocol_version_from_result(_result), do: nil
+
+  defp stdio?(state), do: state.transport == Arbor.MCP.Server.Stdio.Writer
+
+  defp stdio_drained?(state) do
+    table = Ref.table(state.runtime)
+
+    with %{reserved: 0} <- Admission.stats(table),
+         %{frames: 0, jobs: 0, scopes: 0} <- OutputController.stats(table),
+         [{:route, %{scheduler: scheduler}}] <- :ets.lookup(table, :route),
+         %{active: 0, queued: 0} <- GenServer.call(scheduler, :stats, 1_000) do
+      map_size(state.ingress) == 0 and map_size(state.invocations) == 0 and
+        map_size(state.stdio_control_receipts) == 0
+    else
+      _ -> false
+    end
+  end
+
+  defp send_subscription_message(message, listener, kind, state) do
+    if stdio?(state) do
+      case OutputController.emit(
+             Ref.table(state.runtime),
+             state.connection,
+             message,
+             state.stdio_control_origin
+           ) do
+        {:ok, token} ->
+          {:queued,
+           %{
+             state
+             | stdio_control_receipts:
+                 Map.put(state.stdio_control_receipts, token, {listener, kind})
+           }}
+
+        error ->
+          error
+      end
+    else
+      send_message(message, state)
+    end
+  end
+
+  defp settle_stdio_control(token, result, state) do
+    case Map.pop(state.stdio_control_receipts, token) do
+      {nil, _receipts} ->
+        state
+
+      {{listener, kind}, receipts} ->
+        state = %{state | stdio_control_receipts: receipts}
+
+        if result == :ok do
+          Subscriptions.delivered(listener)
+          if kind == :complete, do: remove_subscription_by_listener(state, listener), else: state
+        else
+          SubscriptionListener.cancel(listener)
+          remove_subscription_by_listener(state, listener)
+        end
+    end
+  end
+
+  defp send_message(message, %{transport: Arbor.MCP.Server.Stdio.Writer} = state) do
+    case OutputController.emit(
+           Ref.table(state.runtime),
+           state.connection,
+           message,
+           state.stdio_control_origin
+         ) do
+      {:ok, _token} -> {:ok, state}
+      error -> error
+    end
+  end
 
   defp send_message(message, state) do
     outbound_message =

@@ -4,6 +4,11 @@ defmodule Arbor.MCP.SessionManager.InitializationClaim do
 
   The request owner must remain alive, but a scheduled callback can complete
   the claim. Completion never requires that callback to impersonate its caller.
+  In runtime callbacks the capability retains the actual invocation's original
+  cutoff and owner, independent of each finite service-operation wait. Explicit
+  `:deadline` can shorten that cutoff; `:timeout` bounds only the store call.
+  Cancellation, invocation retirement and cohort replacement revoke the retained
+  claim. Outside a callback the claim keeps its finite service-call cutoff.
   """
   alias Arbor.MCP.SessionManager.SessionLease
 

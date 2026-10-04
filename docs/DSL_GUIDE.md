@@ -84,10 +84,30 @@ See [the dialect contract](V2_SCHEMA_DIALECT.md) for reference restrictions,
 format semantics and qualification.
 
 Declared params retain existing atom-key convenience and missing-value defaults.
-Literal `input_schema` is checked at module compilation but does not add automatic
-runtime input validation, default insertion or type coercion. Use tagged
-`Content.SchemaPolicy.compile/2` and `validate/3` explicitly when your application
-requires standalone validation.
+Before a tool callback runs, its compiled input schema validates the arguments
+and any explicitly declared param defaults. Invalid arguments return JSON-RPC
+invalid params (`-32602`) with the handler state unchanged. Framework `_meta`
+is passed to the callback separately from schema validation. Literal schema
+`default` annotations do not insert values, and values are never coerced.
+
+Param constraints use Elixir option names and emit standard JSON Schema keys:
+
+```elixir
+param :count, :integer, minimum: 1, maximum: 100, multiple_of: 1
+param :name, :string, min_length: 1, max_length: 64, pattern: "^[a-z]+$"
+param :mode, :string, enum: ["fast", "safe"], default: "safe"
+param :tags, {:array, :string}, max_items: 10, unique_items: true, default: []
+param :settings, :object, additional_properties: false, max_properties: 0
+```
+
+Numeric options also include `exclusive_minimum` and `exclusive_maximum`;
+arrays support `min_items`; objects support `min_properties`. Unknown,
+duplicate, malformed or inapplicable options fail at the declaration line.
+Use `schema: %{...}` for nested properties, array items or nullable schemas;
+it replaces the generated property schema and cannot be mixed with constraint
+options. An explicit `default: nil` is retained and inserted when missing,
+alongside existing false and empty-array defaults. Defaults must satisfy the
+input schema when the tool is called.
 
 ### Response helpers and normalization
 

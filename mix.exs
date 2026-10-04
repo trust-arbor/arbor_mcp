@@ -226,6 +226,7 @@ defmodule Arbor.MCP.MixProject do
         "docs/guides/USER_GUIDE.md",
         "docs/guides/PHOENIX_GUIDE.md",
         "docs/DSL_GUIDE.md",
+        "docs/V2_SCHEMA_DIALECT.md",
         "docs/TRANSPORT_GUIDE.md",
         "docs/CONFIGURATION.md",
         "docs/HTTP_LISTENERS.md",
@@ -242,7 +243,7 @@ defmodule Arbor.MCP.MixProject do
       groups_for_extras: [
         Introduction: ~r/README/,
         Guides:
-          ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|TRANSPORT_GUIDE|HTTP_LISTENERS|PROTOCOL_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
+          ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|V2_SCHEMA_DIALECT|TRANSPORT_GUIDE|HTTP_LISTENERS|PROTOCOL_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
         Changelog: ~r/CHANGELOG/
       ],
       groups_for_modules: [

@@ -83,6 +83,7 @@ defmodule Arbor.MCP.Server.ResultNormalizer do
   """
   @spec protocol_result(map(), map(), keyword()) :: map()
   def protocol_result(result, request_context, opts \\ []) when is_map(result) do
+    result = canonical_tool_result(result, request_context)
     validate_structured_era!(result, request_context)
 
     if Map.get(request_context, :era) == :modern do
@@ -112,6 +113,15 @@ defmodule Arbor.MCP.Server.ResultNormalizer do
       result
     end
   end
+
+  defp canonical_tool_result(result, %{method: "tools/call"})
+       when is_map_key(result, :structuredOutput) or is_map_key(result, "structuredOutput") do
+    result = stringify_keys(result)
+    legacy = Map.fetch!(result, "structuredOutput")
+    result |> Map.delete("structuredOutput") |> Map.put_new("structuredContent", legacy)
+  end
+
+  defp canonical_tool_result(result, _context), do: result
 
   defp validate_structured_era!(result, %{method: "tools/call", era: :legacy}) do
     for key <- [:structuredContent, "structuredContent"], Map.has_key?(result, key) do

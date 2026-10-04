@@ -286,7 +286,15 @@ defmodule Arbor.MCP.Integration.ModernInteropTest do
       {output, exit_code} =
         System.cmd(
           node_path,
-          [@ts_client_script, mix_path, "interop_server", "modern"],
+          [
+            @ts_client_script,
+            mix_path,
+            "run",
+            "--no-compile",
+            "--no-deps-check",
+            "-e",
+            ~s|Mix.Tasks.InteropServer.run(["modern", "--no-compile"])|
+          ],
           cd: @project_dir,
           stderr_to_stdout: true,
           env: [{"MIX_ENV", "test"}]

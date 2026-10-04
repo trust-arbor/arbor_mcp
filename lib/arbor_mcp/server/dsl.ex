@@ -20,7 +20,11 @@ defmodule Arbor.MCP.Server.DSL do
 
   Param types include `:string`, `:integer`, `:number`, `:boolean`,
   `:object`/`:map`, and `{:array, item_type}`. Bare `:array` is rejected at
-  compile time.
+  compile time. Param options support numeric bounds, string lengths/patterns,
+  enums and array/object bounds. Use `schema: %{...}` for nested declarations.
+  Input schemas validate arguments before callbacks run, without type coercion.
+  Only explicit param defaults are inserted; schema default annotations remain
+  annotations.
 
   Invalid declarations fail at compile time with file/line and fix hints
   (missing handlers, duplicate names, wrong instructions per kind, etc.).
@@ -30,6 +34,7 @@ defmodule Arbor.MCP.Server.DSL do
   """
 
   alias Arbor.MCP.Content.SchemaPolicy
+  alias Arbor.MCP.Server.{DSL, ResultNormalizer}
   alias Arbor.MCP.Server.DSL.Builder
 
   # DSL schemas are trusted application declarations compiled while the module
@@ -166,10 +171,34 @@ defmodule Arbor.MCP.Server.DSL do
   defmacro size(_size), do: :ok
 
   @doc false
+  def prepare_tool_arguments(arguments, params, input_schema) when is_map(arguments) do
+    json = ResultNormalizer.stringify_keys(arguments)
+
+    json =
+      Enum.reduce(params, json, fn param, acc ->
+        if param.has_default,
+          do: Map.put_new(acc, Atom.to_string(param.name), param.default),
+          else: acc
+      end)
+
+    case SchemaPolicy.validate_optional(Map.drop(json, ["_meta"]), input_schema) do
+      :ok -> {:ok, Builder.normalize_arguments(arguments, params)}
+      {:error, _diagnostics} -> invalid_tool_arguments()
+    end
+  rescue
+    ArgumentError -> invalid_tool_arguments()
+  end
+
+  def prepare_tool_arguments(_arguments, _params, _input_schema), do: invalid_tool_arguments()
+
+  defp invalid_tool_arguments,
+    do: {:error, Arbor.MCP.Error.protocol_error(-32602, "Invalid tool arguments")}
+
+  @doc false
   def validate_tool_response(response, nil), do: {:ok, response}
 
   def validate_tool_response(response, output_schema) do
-    normalized = Arbor.MCP.Server.ResultNormalizer.stringify_keys(response)
+    normalized = ResultNormalizer.stringify_keys(response)
 
     case Map.fetch(normalized, "structuredContent") do
       :error ->
@@ -359,6 +388,8 @@ defmodule Arbor.MCP.Server.DSL do
     param_opts = eval_ast!(opts, env, "param options", meta)
     assert_param_type!(env, meta, param_name, param_type)
     Builder.param(param_name, param_type, param_opts)
+  rescue
+    error in ArgumentError -> compile_error!(env, meta, Exception.message(error))
   end
 
   defp parse_prompt_arg([name], env, meta), do: parse_prompt_arg([name, []], env, meta)
@@ -369,6 +400,8 @@ defmodule Arbor.MCP.Server.DSL do
       :string,
       eval_ast!(opts, env, "arg options", meta)
     )
+  rescue
+    error in ArgumentError -> compile_error!(env, meta, Exception.message(error))
   end
 
   defp assert_param_type!(env, meta, name, type) do
@@ -689,9 +722,9 @@ defmodule Arbor.MCP.Server.DSL do
       tools
       |> Enum.with_index()
       |> Map.new(fn {{definition, _handler, params}, index} ->
-        compile_tool_schema(definition[:inputSchema], :input)
+        input_schema = compile_tool_schema(definition[:inputSchema], :input)
         output_schema = compile_tool_schema(definition[:outputSchema], :output)
-        {definition.name, {:"__ex_mcp_dsl_tool_#{index}__", output_schema, params}}
+        {definition.name, {:"__ex_mcp_dsl_tool_#{index}__", input_schema, output_schema, params}}
       end)
 
     quote do
@@ -708,21 +741,26 @@ defmodule Arbor.MCP.Server.DSL do
         mapping = unquote(Macro.escape(mapping))
 
         case Map.get(mapping, name) do
-          {handler, output_schema, params} ->
-            arguments = Builder.normalize_arguments(arguments, params)
-            result = apply(__MODULE__, handler, [arguments, state])
+          {handler, input_schema, output_schema, params} ->
+            case DSL.prepare_tool_arguments(arguments, params, input_schema) do
+              {:ok, arguments} ->
+                result = apply(__MODULE__, handler, [arguments, state])
 
-            case Result.normalize_tool(result, state) do
-              {:ok, response, new_state} ->
-                validation =
-                  response
-                  |> Arbor.MCP.Server.DSL.validate_tool_response(output_schema)
-                  |> __ex_mcp_dsl_widen_validation__()
+                case Result.normalize_tool(result, state) do
+                  {:ok, response, new_state} ->
+                    validation =
+                      response
+                      |> DSL.validate_tool_response(output_schema)
+                      |> __ex_mcp_dsl_widen_validation__()
 
-                case validation do
-                  {:ok, response} -> {:ok, response, new_state}
-                  {:error, reason} -> {:ok, Result.error(reason), new_state}
+                    case validation do
+                      {:ok, response} -> {:ok, response, new_state}
+                      {:error, reason} -> {:ok, Result.error(reason), new_state}
+                    end
                 end
+
+              {:error, error} ->
+                {:error, error, state}
             end
 
           nil ->

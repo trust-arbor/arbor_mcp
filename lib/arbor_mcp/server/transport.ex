@@ -23,7 +23,6 @@ defmodule Arbor.MCP.Server.Transport do
 
   require Logger
 
-  alias Arbor.MCP.Internal.StdioLoggerConfig
   alias Arbor.MCP.Server.{Runtime, StdioServer}
   alias Arbor.MCP.Server.HTTP.{Bandit, Cowboy}
 
@@ -94,20 +93,7 @@ defmodule Arbor.MCP.Server.Transport do
   @spec start_stdio_server(module(), map(), list(), keyword()) ::
           {:ok, pid()} | {:error, term()}
   def start_stdio_server(module, _server_info, _tools, opts) do
-    # CRITICAL: Configure logging for STDIO transport before starting server
-    configure_stdio_logging()
-
-    # Use Arbor.MCP v1 StdioServer for now - this provides stdio transport
-    # In the future, this could be replaced with a version-specific implementation
-    case Code.ensure_loaded(StdioServer) do
-      {:module, StdioServer} ->
-        StdioServer.start_link([module: module] ++ opts)
-
-      {:error, _} ->
-        Logger.warning("StdioServer not available, starting basic GenServer")
-        # Fallback to basic server startup
-        module.start_link(opts)
-    end
+    StdioServer.start_link([module: module] ++ opts)
   end
 
   @doc """
@@ -382,11 +368,6 @@ defmodule Arbor.MCP.Server.Transport do
         description: "In-memory transport for testing"
       }
     }
-  end
-
-  # Configure logging for STDIO transport to prevent stdout contamination
-  defp configure_stdio_logging do
-    StdioLoggerConfig.configure()
   end
 
   @localhost_hosts ["localhost", "127.0.0.1", "::1", "[::1]"]

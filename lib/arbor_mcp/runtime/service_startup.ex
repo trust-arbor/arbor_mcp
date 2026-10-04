@@ -1,7 +1,7 @@
 defmodule Arbor.MCP.Server.Runtime.ServiceStartup do
   @moduledoc false
 
-  alias Arbor.MCP.Server.Runtime.{Deadline, ShutdownGuard}
+  alias Arbor.MCP.Server.Runtime.{Deadline, Initialization, ShutdownGuard}
 
   def arm(table, generation, deadline) do
     caller = self()
@@ -67,6 +67,7 @@ defmodule Arbor.MCP.Server.Runtime.ServiceStartup do
 
       with [{:service_start_observer, ^generation, observer}] <-
              :ets.lookup(table, :service_start_observer),
+           :ok <- Initialization.track(table, pid),
            :ok <- GenServer.call(observer, {:owned, generation, pid}, remaining(deadline)),
            true <- current?(table, generation, deadline) do
         ShutdownGuard.watch(table, pid, :worker, deadline)

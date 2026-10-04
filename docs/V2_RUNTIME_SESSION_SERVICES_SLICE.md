@@ -83,8 +83,16 @@ requires the same bound facts. Metadata retains only identity, transport and
 client-info fields.
 
 Initialization claims retain an explicit live local `owner` (default caller)
-and their original absolute deadline. A scheduled callback can complete a claim
-from another PID; it does not impersonate its caller. Owner exit or claim expiry
+and their original absolute deadline. Inside a runtime callback, the claim's
+owner and cutoff come from the actual admitted invocation, independently of the
+service RPC's shorter wait budget. `:timeout` bounds the individual store call;
+`:deadline` may shorten the retained cutoff. An explicit callback `:owner` must
+match the actual invocation owner. Cancellation, request retirement or cohort
+replacement revoke that proof. Outside callbacks claims retain their finite
+service-operation cutoff; an arbitrary future integer cannot extend it. A
+scheduled callback can complete a claim from another PID; it does not impersonate
+its caller. Completion respects any shorter caller deadline, and retries never
+renew the original claim cutoff. Owner exit or claim expiry
 retires the uninitialized session epoch. A lease itself remains independent of
 a GET process so future HTTP GET disconnects can preserve session resumability.
 

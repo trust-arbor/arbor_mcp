@@ -8,15 +8,6 @@ Logger.configure(level: :emergency)
 {:ok, _task_store} = Arbor.MCP.Tasks.Store.ETS.start_link()
 {:ok, _subscriptions} = Arbor.MCP.Server.Subscriptions.start_link()
 
-{:ok, _task} =
-  Arbor.MCP.Tasks.create(
-    "stdio_task",
-    %{},
-    id: "stdio-task",
-    owner: %{principal_id: nil, tenant_id: nil, audience: "stdio"},
-    notify: false
-  )
-
 defmodule Arbor.MCP.Test.ModernStdioServer do
   use Arbor.MCP.Server.Handler, tasks: :store
   use Arbor.MCP.Server.DSL, name: "modern-stdio-server", version: "1.0.0"
@@ -92,6 +83,18 @@ end
       active_key_id: "stdio-test",
       keys: %{"stdio-test" => :binary.copy(<<73>>, 32)}
     ]
+  )
+
+{:ok, task_service} = Arbor.MCP.Server.Runtime.service(server, :tasks)
+
+{:ok, _task} =
+  Arbor.MCP.Tasks.create(
+    "stdio_task",
+    %{},
+    id: "stdio-task",
+    owner: %{principal_id: nil, tenant_id: nil, audience: "stdio"},
+    service: task_service,
+    notify: false
   )
 
 # StdioServer stops normally when the parent closes stdin. A linked process does

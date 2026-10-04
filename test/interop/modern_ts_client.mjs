@@ -39,7 +39,7 @@ const waitFor = (promise, timeoutMs, label) =>
 // split-development overrides must also select the same RPC source/build/lock.
 function mixChildEnv() {
   const env = { MIX_ENV: process.env.MIX_ENV ?? "test" };
-  for (const name of ["MIX_HOME", "MIX_ARCHIVES", "ARBOR_RPC_PATH", "ARBOR_V2_DEPS", "ARBOR_V2_BUILD", "ARBOR_V2_LOCK"]) {
+  for (const name of ["MIX_HOME", "MIX_ARCHIVES", "MIX_DEPS_PATH", "ARBOR_RPC_PATH", "ARBOR_V2_DEPS", "ARBOR_V2_BUILD", "ARBOR_V2_LOCK"]) {
     if (process.env[name]) env[name] = process.env[name];
   }
   return env;

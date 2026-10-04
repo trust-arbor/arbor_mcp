@@ -1,7 +1,14 @@
 defmodule Arbor.MCP.Server.Runtime.ServiceOperation do
   @moduledoc false
 
-  alias Arbor.MCP.Server.Runtime.{Admission, CallbackContext, Deadline, Ref, Services}
+  alias Arbor.MCP.Server.Runtime.{
+    Admission,
+    CallbackContext,
+    Deadline,
+    Ref,
+    ServiceInvocation,
+    Services
+  }
 
   @max_wait 4_294_967_295
   @cas_attempts 32
@@ -35,7 +42,7 @@ defmodule Arbor.MCP.Server.Runtime.ServiceOperation do
     started = now()
 
     with {:ok, binding} <- Services.resolve(service, kind),
-         {:ok, context} <- context(binding, kind, opts, started) do
+         {:ok, context} <- context(binding, kind, operation, opts, started) do
       adapter_opts =
         binding.options
         |> Keyword.merge(server: binding.server, namespace: binding.namespace || "owned")
@@ -163,10 +170,25 @@ defmodule Arbor.MCP.Server.Runtime.ServiceOperation do
   def now, do: Deadline.now()
   def maintenance_deadline, do: now() + @cleanup_ms
 
-  defp context(binding, kind, opts, started) do
+  @doc false
+  def with_deadline(opts, cutoff) do
+    supplied = Keyword.get(opts, :deadline, :infinity)
+
+    with :ok <- validate_deadline(supplied) do
+      {:ok,
+       Keyword.put(
+         opts,
+         :deadline,
+         if(supplied == :infinity, do: cutoff, else: min(cutoff, supplied))
+       )}
+    end
+  end
+
+  defp context(binding, kind, operation, opts, started) do
     timeout = Keyword.get(opts, :timeout, binding.address.timeout)
-    owner = Keyword.get(opts, :owner, self())
     origin = CallbackContext.current()
+
+    owner = Keyword.get(opts, :owner, operation_owner(operation, origin))
 
     cond do
       not is_integer(timeout) or timeout <= 0 or timeout > @max_wait ->
@@ -178,7 +200,7 @@ defmodule Arbor.MCP.Server.Runtime.ServiceOperation do
       true ->
         deadline = min(started + timeout, started + binding.address.timeout)
         deadline = if origin, do: min(deadline, origin.deadline), else: deadline
-        supplied_deadline = Keyword.get(opts, :deadline, deadline)
+        supplied_deadline = Keyword.get(opts, :deadline, :infinity)
 
         with :ok <- validate_deadline(deadline),
              :ok <- validate_deadline(supplied_deadline) do
@@ -187,21 +209,33 @@ defmodule Arbor.MCP.Server.Runtime.ServiceOperation do
               do: deadline,
               else: min(deadline, supplied_deadline)
 
-          if deadline > now(),
-            do:
-              {:ok,
-               %{
-                 runtime: binding.runtime,
-                 kind: kind,
-                 generation: binding.generation,
-                 origin: origin,
-                 owner: owner,
-                 deadline: deadline
-               }},
-            else: {:error, :operation_timeout}
+          if deadline > now() do
+            context = %{
+              runtime: binding.runtime,
+              kind: kind,
+              generation: binding.generation,
+              origin: origin,
+              owner: owner,
+              deadline: deadline
+            }
+
+            attach_invocation(context, operation, supplied_deadline)
+          else
+            {:error, :operation_timeout}
+          end
         end
     end
   end
+
+  defp operation_owner(:claim_initialization, %{owner: owner}), do: owner
+  defp operation_owner(_operation, _origin), do: self()
+
+  defp attach_invocation(context, :claim_initialization, supplied_deadline) do
+    with {:ok, invocation} <- ServiceInvocation.capture(context, supplied_deadline),
+         do: {:ok, Map.put(context, :invocation, invocation)}
+  end
+
+  defp attach_invocation(context, _operation, _supplied_deadline), do: {:ok, context}
 
   defp validate_deadline(deadline),
     do:
@@ -215,7 +249,14 @@ defmodule Arbor.MCP.Server.Runtime.ServiceOperation do
   defp origin_current?(%{runtime: runtime, origin: origin}) do
     case Admission.route(Ref.table(runtime)) do
       {:ok, %{generation: generation}} when generation == origin.generation ->
-        Admission.origin_active?(Ref.table(runtime), origin)
+        table = Ref.table(runtime)
+
+        with true <- Admission.origin_active?(table, origin),
+             {:ok, reservation} <- Admission.current(table, origin.token) do
+          reservation.output_phase == origin.output_phase
+        else
+          _retired -> false
+        end
 
       _other ->
         false

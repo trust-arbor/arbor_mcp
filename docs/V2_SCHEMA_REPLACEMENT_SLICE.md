@@ -87,8 +87,11 @@ schema = %{
 `validate` does not insert schema defaults, coerce types, normalize instance keys
 or return transformed arguments. Applications migrating `Tools.Helpers.validate_arguments/2`
 must explicitly implement and test the default/coercion behavior they require.
-Static DSL params retain their existing missing-value defaults and atom-key
-convenience; this slice adds no runtime input validation or type coercion.
+At this slice's original checkpoint, static DSL params retained missing-value
+defaults and atom-key convenience without runtime input validation. The later
+DSL constraint integration validates the compiled input schema before invoking
+the callback, preserves declared defaults, and rejects wrong types without
+coercion. Standalone `SchemaPolicy` still never inserts defaults or coerces.
 
 ## DSL compiler and handler boundaries
 

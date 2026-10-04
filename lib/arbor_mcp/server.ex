@@ -41,7 +41,7 @@ defmodule Arbor.MCP.Server do
   """
 
   alias Arbor.MCP.Server.Runtime
-  alias Arbor.MCP.Server.Runtime.{CallbackContext, Ref}
+  alias Arbor.MCP.Server.Runtime.{Admission, CallbackContext, Ref}
 
   @type server :: Runtime.server()
 
@@ -242,47 +242,68 @@ defmodule Arbor.MCP.Server do
   end
 
   defp call_control(server, request, timeout \\ 5_000) do
-    case Runtime.ref(server) do
-      {:ok, runtime} ->
-        payload = {:edge_call, request, control_origin()}
+    with {:ok, server} <- control_server(server) do
+      case Runtime.ref(server) do
+        {:ok, runtime} ->
+          payload = {:edge_call, request, control_origin()}
 
-        case Runtime.request(runtime, %{"payload" => payload},
-               kind: :edge_control,
-               origin: control_origin(),
-               via_edge: true,
-               await_timeout: timeout
-             ) do
-          {:ok, reply} -> reply
-          error -> error
-        end
+          case Runtime.request(runtime, %{"payload" => payload},
+                 kind: :edge_control,
+                 origin: control_origin(),
+                 via_edge: true,
+                 await_timeout: timeout
+               ) do
+            {:ok, reply} -> reply
+            error -> error
+          end
 
-      {:error, _reason} ->
-        case Ref.address(server) do
-          {:ok, address} -> GenServer.call(address, request, timeout)
-          {:error, _reason} -> {:error, :runtime_unavailable}
-        end
+        {:error, _reason} ->
+          case Ref.address(server) do
+            {:ok, address} -> GenServer.call(address, request, timeout)
+            {:error, _reason} -> {:error, :runtime_unavailable}
+          end
+      end
     end
   end
 
   defp cast_control(server, request) do
-    case Runtime.edge(server) do
-      {:ok, edge} ->
-        payload = {:edge_cast, request, control_origin()}
+    with {:ok, server} <- control_server(server) do
+      case Runtime.edge(server) do
+        {:ok, edge} ->
+          payload = {:edge_cast, request, control_origin()}
 
-        case Runtime.submit(server, %{"payload" => payload},
-               kind: :edge_control,
-               origin: control_origin(),
-               via_edge: true,
-               reply_to: edge
-             ) do
-          {:ok, _token} -> :ok
-          error -> error
-        end
+          case Runtime.submit(server, %{"payload" => payload},
+                 kind: :edge_control,
+                 origin: control_origin(),
+                 via_edge: true,
+                 reply_to: edge
+               ) do
+            {:ok, _token} -> :ok
+            error -> error
+          end
 
-      {:error, _reason} ->
-        case Ref.address(server) do
-          {:ok, address} -> GenServer.cast(address, request)
-          {:error, _reason} -> {:error, :runtime_unavailable}
+        {:error, _reason} ->
+          case Ref.address(server) do
+            {:ok, address} -> GenServer.cast(address, request)
+            {:error, _reason} -> {:error, :runtime_unavailable}
+          end
+      end
+    end
+  end
+
+  # Legacy inline stdio callbacks used self() as the server. Only the exact
+  # active worker self target resolves through its original invocation.
+  defp control_server(server) do
+    case if(server == self(), do: CallbackContext.current()) do
+      nil ->
+        {:ok, server}
+
+      %{runtime: runtime} = invocation ->
+        with {:ok, runtime} <- Runtime.ref(runtime),
+             true <- Admission.origin_active?(Ref.table(runtime), invocation) do
+          {:ok, runtime}
+        else
+          _ -> {:error, :request_cancelled}
         end
     end
   end

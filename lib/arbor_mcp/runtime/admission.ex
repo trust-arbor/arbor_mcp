@@ -5,11 +5,22 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
 
   @cleanup_turn_ms 10
 
-  alias Arbor.MCP.Server.Runtime.{ByteBudget, Deadline, Failure, Ref, ShutdownGuard}
+  alias Arbor.MCP.Server.Runtime.{
+    ByteBudget,
+    Deadline,
+    Failure,
+    Initialization,
+    Ref,
+    ShutdownGuard
+  }
 
   def start_link(opts) do
-    with {:ok, pid} <- GenServer.start_link(__MODULE__, opts) do
-      :ok = ShutdownGuard.watch(Keyword.fetch!(opts, :table), pid)
+    table = Keyword.fetch!(opts, :table)
+
+    with {:ok, _context} <- Initialization.begin(table, opts[:config], :cohort),
+         {:ok, pid} <-
+           GenServer.start_link(__MODULE__, opts, timeout: Initialization.remaining(table)),
+         :ok <- Initialization.watch(table, pid) do
       {:ok, pid}
     end
   end
@@ -21,11 +32,37 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     table = Ref.table(runtime)
 
     with :ok <- Deadline.validate(Keyword.get(opts, :admission_deadline, :infinity)),
+         :ok <- input_open(table, opts),
          {:ok, route} <- route(table),
          {:ok, bytes} <- request_size(request, opts, route.config),
          {:ok, reservation} <- claim_slot(runtime, route, request, bytes, opts) do
       confirm_candidate(table, route, reservation)
     end
+  end
+
+  defp activate_scheduler(scheduler, config, context, state) do
+    state = drain(state, :runtime_restarted)
+    if state.scheduler_ref, do: Process.demonitor(state.scheduler_ref, [:flush])
+    generation = make_ref()
+    monitor = Process.monitor(scheduler)
+
+    route = %{
+      admission: self(),
+      scheduler: scheduler,
+      generation: generation,
+      config: config,
+      initialization_epoch: context.epoch
+    }
+
+    :ets.insert(state.table, [{:route, :closed}, {:prepared_route, route}])
+    :ok = ByteBudget.reset(state.table, generation, config)
+
+    result =
+      if Initialization.current?(state.table, context),
+        do: {:ok, generation},
+        else: {:error, :runtime_init_timeout}
+
+    {:reply, result, %{state | scheduler_ref: monitor, generation: generation, config: config}}
   end
 
   defp confirm_candidate(table, route, reservation) do
@@ -73,7 +110,50 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
 
   def activate(table, scheduler, config) do
     [{:admission, admission}] = :ets.lookup(table, :admission)
-    GenServer.call(admission, {:activate, scheduler, config})
+    {:ok, context} = Initialization.current(table)
+
+    if Initialization.current?(table, context) do
+      GenServer.call(
+        admission,
+        {:activate, scheduler, config, context},
+        Initialization.remaining(table)
+      )
+    else
+      {:error, :runtime_init_timeout}
+    end
+  catch
+    :exit, _reason -> {:error, :runtime_init_timeout}
+  end
+
+  def publish_ready(table, context) do
+    [{:admission, admission}] = :ets.lookup(table, :admission)
+
+    with :ok <-
+           GenServer.call(
+             admission,
+             {:publish_ready, context},
+             Deadline.remaining(context.deadline)
+           ),
+         do: Initialization.ready_return(table, context)
+  catch
+    :exit, _reason ->
+      Initialization.abort(table, context)
+      {:error, :runtime_init_timeout}
+  end
+
+  def prepare_edge(table, route, context) do
+    [{:admission, admission}] = :ets.lookup(table, :admission)
+
+    result =
+      GenServer.call(
+        admission,
+        {:prepare_edge, route, context},
+        Deadline.remaining(context.deadline)
+      )
+
+    if Initialization.current?(table, context), do: result, else: {:error, :runtime_init_timeout}
+  catch
+    :exit, _reason -> {:error, :runtime_init_timeout}
   end
 
   def bind(table, token), do: call(table, {:bind, token})
@@ -81,6 +161,8 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   def terminal(table, token, result), do: call(table, {:terminal, token, result})
   def release(table, token), do: call(table, {:release, token})
   def close(table, reason), do: call(table, {:close, reason})
+  def seal_input(table), do: call(table, :seal_input)
+  def seal_input(table, edge, connection), do: call(table, {:seal_input, edge, connection})
   def stats(table), do: call(table, :stats)
   def promote(table, token, request, opts), do: call(table, {:promote, token, request, opts})
   def release_step(table, token), do: call(table, {:release_step, token})
@@ -139,13 +221,64 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   def origin_active?(_table, nil), do: true
   def origin_active?(_table, _invalid), do: false
 
+  # A source outcome cell outlives only the charged input/control/output records
+  # retaining it. Completed success is immutable; cancelling a later reused ID
+  # cannot revoke a prior successful invocation's admitted control effects.
+  def complete_output_phase(table, token) do
+    case current(table, token) do
+      {:ok, reservation} -> settle_output_phase(reservation, :completed)
+      _ -> :ok
+    end
+  end
+
+  def control_output_origin(table, token, owner) do
+    case current(table, token) do
+      {:ok, %{kind: :edge_control, owner: ^owner, origin_output: proof}} -> {:ok, proof}
+      _ -> {:error, :request_cancelled}
+    end
+  end
+
+  def output_origin_valid?(_table, nil), do: true
+
+  def output_origin_valid?(table, %{
+        phase: phase,
+        token: token,
+        generation: generation,
+        scope: scope,
+        deadline: deadline
+      }) do
+    with {:ok, %{generation: ^generation}} <- route(table),
+         true <- deadline > System.monotonic_time(:millisecond) do
+      case :atomics.get(phase, 1) do
+        1 ->
+          case current(table, token) do
+            {:ok, %{output_phase: ^phase, generation: ^generation, scope: ^scope}} ->
+              not :ets.member(table, {:cancelled, token})
+
+            _ ->
+              false
+          end
+
+        2 ->
+          true
+
+        _ ->
+          false
+      end
+    else
+      _ -> false
+    end
+  rescue
+    ArgumentError -> false
+  end
+
   def key(scope, request_id, direction), do: {scope, direction, request_id}
 
   @impl true
   def init(opts) do
     table = Keyword.fetch!(opts, :table)
     supervisor = Keyword.fetch!(opts, :supervisor)
-    :ok = ShutdownGuard.watch(table, self())
+    :ok = Initialization.watch(table, self())
 
     for {{:reservation, token}, %{terminal: false} = reservation} <- :ets.tab2list(table) do
       deliver_reply(
@@ -155,7 +288,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
       )
     end
 
-    for object <- :ets.tab2list(table), elem(object, 0) not in [:shutdown_guard, :closing] do
+    for object <- :ets.tab2list(table), not Initialization.preserve_record?(object) do
       :ets.delete_object(table, object)
     end
 
@@ -182,31 +315,81 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     {:reply, {:ok, Ref.new(state.supervisor, state.table)}, state}
   end
 
-  def handle_call({:activate, scheduler, config}, _from, state) do
-    state = drain(state, :runtime_restarted)
-    if state.scheduler_ref, do: Process.demonitor(state.scheduler_ref, [:flush])
-    generation = make_ref()
-    monitor = Process.monitor(scheduler)
+  def handle_call({:activate, scheduler, config, context}, _from, state) do
+    if Initialization.current?(state.table, context) do
+      activate_scheduler(scheduler, config, context, state)
+    else
+      {:reply, {:error, :runtime_init_timeout}, state}
+    end
+  end
 
-    route = %{
-      admission: self(),
-      scheduler: scheduler,
-      generation: generation,
-      config: config
-    }
+  def handle_call({:publish_ready, context}, _from, state) do
+    result =
+      case :ets.lookup(state.table, :prepared_route) do
+        [{:prepared_route, %{initialization_epoch: epoch, scheduler: scheduler} = route}]
+        when epoch == context.epoch ->
+          if route.generation == state.generation and Process.alive?(scheduler),
+            do: Initialization.commit_ready(state.table, context, route),
+            else: {:error, :runtime_init_timeout}
 
-    :ets.insert(state.table, {:route, route})
-    :ok = ByteBudget.reset(state.table, generation, config)
+        _retired ->
+          {:error, :runtime_init_timeout}
+      end
 
-    {:reply, {:ok, generation},
-     %{state | scheduler_ref: monitor, generation: generation, config: config}}
+    {:reply, result, state}
+  end
+
+  def handle_call({:prepare_edge, route, context}, _from, state) do
+    if Initialization.current?(state.table, context) and state.generation == route.generation and
+         Process.alive?(route.scheduler) do
+      state =
+        Enum.reduce(state.reservations, state, fn {token, reservation}, current ->
+          if not Process.alive?(reservation.owner),
+            do: deliver_terminal(current, token, Failure.result(reservation, :owner_down)),
+            else: current
+        end)
+
+      :ets.insert(
+        state.table,
+        {:prepared_route, Map.put(route, :initialization_epoch, context.epoch)}
+      )
+
+      result =
+        if Initialization.current?(state.table, context),
+          do: :ok,
+          else: {:error, :runtime_init_timeout}
+
+      {:reply, result, state}
+    else
+      {:reply, {:error, :runtime_init_timeout}, state}
+    end
   end
 
   def handle_call({:confirm, token}, _from, state) do
     case ByteBudget.candidate(state.table, token) do
-      reservation when is_map(reservation) -> confirm_reservation(reservation, state)
-      _ -> {:reply, {:error, :admission_lost}, state}
+      reservation when is_map(reservation) ->
+        case input_open(state.table, Map.to_list(reservation)) do
+          :ok -> confirm_reservation(reservation, state)
+          error -> {:reply, error, state}
+        end
+
+      _ ->
+        {:reply, {:error, :admission_lost}, state}
     end
+  end
+
+  def handle_call({:seal_input, edge, connection}, _from, state) do
+    if :ets.lookup(state.table, :edge_connection) == [{:edge_connection, edge, connection}] do
+      :ets.insert(state.table, {:input_sealed, true})
+      {:reply, :ok, state}
+    else
+      {:reply, {:error, :connection_closed}, state}
+    end
+  end
+
+  def handle_call(:seal_input, _from, state) do
+    :ets.insert(state.table, {:input_sealed, true})
+    {:reply, :ok, state}
   end
 
   def handle_call({:checkout, token}, _from, state) do
@@ -234,8 +417,10 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
              (not reservation.terminal or reservation.request_id != id) do
           :ets.insert(state.table, {{:wire_cancel, token, id}, true})
 
-          if reservation.request_id == id and reservation.kind == :rpc,
-            do: :ets.insert(state.table, {{:cancelled, token}, true})
+          if reservation.request_id == id and reservation.kind == :rpc do
+            :ets.insert(state.table, {{:cancelled, token}, true})
+            settle_output_phase(reservation, :invalid)
+          end
         end
 
       _ ->
@@ -343,7 +528,8 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
             kind: :ingress,
             key: key,
             stage: :holding,
-            monitoring_owner: true
+            monitoring_owner: true,
+            output_phase: new_output_phase()
         }
 
         :ets.insert(state.table, {{:reservation, token}, reservation})
@@ -582,7 +768,8 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
             bound: false,
             terminal: false,
             monitoring_owner: false,
-            sequence: System.unique_integer([:monotonic, :positive])
+            sequence: System.unique_integer([:monotonic, :positive]),
+            output_phase: new_output_phase()
           })
 
         state = %{
@@ -696,7 +883,8 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
 
         available = available_slots(route.config, Keyword.get(opts, :kind))
 
-        with {:ok, slots} <-
+        with {:ok, origin_output} <- capture_output_origin(Ref.table(runtime), opts),
+             {:ok, slots} <-
                claim_work_slots(Ref.table(runtime), available, count, token, producer, limit) do
           reservation = %{
             token: token,
@@ -712,10 +900,16 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
             edge: Keyword.get(opts, :edge),
             origin: Keyword.get(opts, :origin),
             origin_status: :active,
+            origin_output: origin_output,
             wire_ids: Keyword.get(opts, :wire_ids, []),
             uncancellable_ids: Keyword.get(opts, :uncancellable_ids, []),
             batch?: Keyword.get(opts, :batch?, false),
-            bytes: bytes + work_metadata_bytes(request, slots, token, producer),
+            # One immutable outcome cell per retained invocation (including
+            # a batch's current member); copied source proofs add explicit
+            # control bytes. Failed candidates allocate no native cells.
+            bytes:
+              bytes + 64 + output_origin_bytes(origin_output) +
+                work_metadata_bytes(request, slots, token, producer),
             request_id: request_id,
             key: key,
             scope: scope,
@@ -738,6 +932,19 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
       not local_pid?(caller) -> :invalid_caller
       true -> nil
     end
+  end
+
+  defp input_open(table, opts) do
+    if :ets.member(table, :input_sealed) and
+         not (Keyword.get(opts, :kind) == :edge_control and
+                not is_nil(Keyword.get(opts, :origin)) and
+                origin_active?(table, Keyword.get(opts, :origin))) do
+      {:error, :runtime_input_sealed}
+    else
+      :ok
+    end
+  rescue
+    ArgumentError -> {:error, :runtime_unavailable}
   end
 
   defp claim_candidate(table, generation, reservation) do
@@ -868,14 +1075,52 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
 
   defp valid_origin?(_origin), do: false
 
-  defp settle_origin_controls(state, token, result) do
-    status =
-      if match?({:ok, _response}, result) or result == :notification,
-        do: :completed,
-        else: :invalid
+  defp new_output_phase do
+    phase = :atomics.new(1, signed: false)
+    :atomics.put(phase, 1, 1)
+    phase
+  end
+
+  defp settle_output_phase(%{output_phase: phase}, status) do
+    :atomics.compare_exchange(phase, 1, 1, if(status == :completed, do: 2, else: 3))
+    :ok
+  end
+
+  defp settle_output_phase(_candidate, _status), do: :ok
+
+  defp output_origin_bytes(nil), do: 0
+  defp output_origin_bytes(proof), do: :erlang.external_size(proof)
+
+  defp capture_output_origin(table, opts) do
+    case Keyword.get(opts, :origin) do
+      nil ->
+        {:ok, nil}
+
+      %{token: token, generation: generation, scope: scope} ->
+        case current(table, token) do
+          {:ok, %{output_phase: phase, generation: ^generation, scope: ^scope} = source} ->
+            {:ok,
+             %{
+               phase: phase,
+               token: token,
+               generation: generation,
+               scope: scope,
+               deadline: source.deadline
+             }}
+
+          _ ->
+            {:error, :request_cancelled}
+        end
+    end
+  end
+
+  defp settle_origin_controls(state, token) do
+    phase = state.reservations[token].output_phase
+
+    status = if :atomics.get(phase, 1) == 2, do: :completed, else: :invalid
 
     Enum.reduce(state.reservations, state, fn
-      {control, %{origin: %{token: ^token}}}, state ->
+      {control, %{origin: %{token: ^token}, origin_output: %{phase: ^phase}}}, state ->
         case :ets.lookup(state.table, {:reservation, control}) do
           [{key, stored}] ->
             stored = %{stored | origin_status: status}
@@ -894,7 +1139,11 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   defp deliver_terminal(state, token, result) do
     case Map.get(state.reservations, token) do
       %{terminal: false} = reservation ->
-        state = settle_origin_controls(state, token, result)
+        status =
+          if match?({:ok, _}, result) or result == :notification, do: :completed, else: :invalid
+
+        settle_output_phase(reservation, status)
+        state = settle_origin_controls(state, token)
 
         reservation =
           case :ets.lookup(state.table, {:reservation, token}) do
@@ -947,6 +1196,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
         state
 
       {reservation, reservations} ->
+        settle_output_phase(reservation, :invalid)
         if reservation.monitor, do: Process.demonitor(reservation.monitor, [:flush])
         if reservation.timer, do: Process.cancel_timer(reservation.timer)
         release_slot(state.table, reservation)

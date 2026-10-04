@@ -201,7 +201,15 @@ defmodule Arbor.MCP.Integration.InteropTest do
       {stderr_output, exit_code} =
         System.cmd(
           "node",
-          [@ts_client_script, mix_path, "interop_server"],
+          [
+            @ts_client_script,
+            mix_path,
+            "run",
+            "--no-compile",
+            "--no-deps-check",
+            "-e",
+            ~s|Mix.Tasks.InteropServer.run(["--no-compile"])|
+          ],
           cd: project_dir,
           stderr_to_stdout: true,
           env: [{"MIX_ENV", "test"}]

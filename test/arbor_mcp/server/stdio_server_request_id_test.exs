@@ -3,13 +3,18 @@ defmodule Arbor.MCP.Server.StdioServerRequestIdTest do
 
   import ExUnit.CaptureIO
 
-  alias Arbor.MCP.Server.StdioServer
+  alias Arbor.MCP.Server
+  alias Arbor.MCP.Server.{HandlerServer, Runtime, StdioServer}
+  alias Arbor.MCP.Server.Runtime.Ref
 
   defmodule CountingHandler do
     use Arbor.MCP.Server.Handler
 
     @impl true
     def init(_opts), do: {:ok, %{list_calls: 0}}
+
+    defoverridable handle_call: 3
+    def handle_call(:list_calls, _from, state), do: {:reply, state.list_calls, state}
 
     @impl true
     def handle_list_tools(_cursor, state) do
@@ -44,18 +49,21 @@ defmodule Arbor.MCP.Server.StdioServerRequestIdTest do
         Process.unlink(server)
 
         request = %{"jsonrpc" => "2.0", "id" => "stdio-duplicate", "method" => "tools/list"}
-        encoded = Jason.encode!(request)
+        {:ok, runtime} = Runtime.ref(server)
+        {:ok, edge} = Runtime.edge(runtime)
 
-        send(server, {:stdin_line, encoded})
-        send(server, {:stdin_line, encoded})
+        [{:edge_connection, ^edge, connection}] =
+          :ets.lookup(Ref.table(runtime), :edge_connection)
 
-        state = :sys.get_state(server)
-        assert state.handler_state.list_calls == 1
+        :ok = HandlerServer.ingress(runtime, edge, connection, request)
+        :ok = HandlerServer.ingress(runtime, edge, connection, request)
+        assert Server.call(runtime, :list_calls) == 1
+        state = :sys.get_state(edge)
         assert MapSet.size(state.validation_state.seen_request_ids) == 1
 
         monitor = Process.monitor(server)
-        Process.exit(server, :kill)
-        assert_receive {:DOWN, ^monitor, :process, ^server, :killed}
+        :ok = Runtime.stop(server)
+        assert_receive {:DOWN, ^monitor, :process, ^server, :normal}
       end)
 
     [first, duplicate] =

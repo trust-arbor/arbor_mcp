@@ -55,12 +55,18 @@ defmodule Arbor.MCP.Server.TransportTest do
 
   defmodule BlockingStore do
     use GenServer
+    alias Arbor.MCP.Server.Runtime.ServiceAdapter
 
-    def start_link(test_pid), do: GenServer.start_link(__MODULE__, test_pid)
+    def runtime_service_capabilities, do: %{bounded_startup: 1}
+
+    def start_link(opts),
+      do: GenServer.start_link(__MODULE__, opts, timeout: Keyword.fetch!(opts, :init_timeout_ms))
 
     @impl true
-    def init(test_pid) do
+    def init(opts) do
       Process.flag(:trap_exit, true)
+      :ok = ServiceAdapter.watch_owned(opts)
+      test_pid = Keyword.fetch!(opts, :test_pid)
       send(test_pid, {:blocking_store, self()})
       {:ok, test_pid}
     end
@@ -85,7 +91,7 @@ defmodule Arbor.MCP.Server.TransportTest do
              handler: BlockingShutdownHandler,
              handler_args: [test_pid: self()],
              shutdown_timeout_ms: 80,
-             store_children: [{BlockingStore, self()}]
+             store_children: [[adapter: BlockingStore, options: [test_pid: self()]]]
            ]},
           id: :bounded_stop,
           restart: :temporary
@@ -174,12 +180,12 @@ defmodule Arbor.MCP.Server.TransportTest do
       end
     end
 
-    test "starts stdio transport with fallback" do
-      # This should fall back to basic GenServer since StdioServer likely isn't available
+    test "starts an owned stdio runtime" do
       {:ok, pid} =
         Transport.start_server(TestServer, %{name: "test", version: "1.0.0"}, [],
           transport: :stdio,
-          name: :test_stdio_server
+          name: :test_stdio_server,
+          stdio_startup_delay: 60_000
         )
 
       assert Process.alive?(pid)
@@ -196,8 +202,12 @@ defmodule Arbor.MCP.Server.TransportTest do
       GenServer.stop(pid)
     end
 
-    test "start_stdio_server/4 with fallback" do
-      {:ok, pid} = Transport.start_stdio_server(TestServer, %{}, [], name: :test_stdio_individual)
+    test "start_stdio_server/4 returns the runtime root" do
+      {:ok, pid} =
+        Transport.start_stdio_server(TestServer, %{}, [],
+          name: :test_stdio_individual,
+          stdio_startup_delay: 60_000
+        )
 
       assert Process.alive?(pid)
       GenServer.stop(pid)

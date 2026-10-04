@@ -29,12 +29,13 @@ defmodule Arbor.MCP.SessionManager.Addressed do
 
   def complete_initialization(service, claim, version, opts) do
     with {:ok, key, token, owner, deadline} <- InitializationClaim.validate(claim, service),
+         {:ok, bounded_opts} <- ServiceOperation.with_deadline(opts, deadline),
          do:
            call(
              service,
              :complete_initialization,
              [key, token, owner, deadline, version],
-             Keyword.put(opts, :deadline, deadline)
+             bounded_opts
            )
   end
 

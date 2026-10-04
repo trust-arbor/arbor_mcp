@@ -2,7 +2,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
   @moduledoc false
   use GenServer
 
-  alias Arbor.MCP.Server.Runtime.{OutputCodec, OutputTicket}
+  alias Arbor.MCP.Server.Runtime.{Initialization, OutputCodec, OutputTicket}
 
   @enforce_keys [:pid, :table, :generation, :owner, :limits]
   defstruct [:pid, :table, :generation, :owner, :limits]
@@ -27,7 +27,11 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
-    GenServer.start_link(__MODULE__, Keyword.put_new(opts, :owner, self()))
+    GenServer.start_link(
+      __MODULE__,
+      Keyword.put_new(opts, :owner, self()),
+      Keyword.take(opts, [:timeout])
+    )
   end
 
   @spec ref(pid()) :: {:ok, t()} | error()
@@ -231,7 +235,8 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
     owner = Keyword.fetch!(opts, :owner)
     generation = Keyword.get(opts, :generation, make_ref())
 
-    with :ok <- pid_valid(owner),
+    with :ok <- watch_runtime(opts),
+         :ok <- pid_valid(owner),
          true <- is_reference(generation) || {:error, :invalid_generation},
          true <-
            (Enum.all?(limits, fn {_, n} -> is_integer(n) and n > 0 end) and
@@ -258,6 +263,13 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
       {:ok, %{ref: ref, owner_monitor: Process.monitor(owner), monitors: %{}}}
     else
       {:error, reason} -> {:stop, reason}
+    end
+  end
+
+  defp watch_runtime(opts) do
+    case Keyword.get(opts, :runtime_table) do
+      nil -> :ok
+      table -> Initialization.watch(table, self())
     end
   end
 

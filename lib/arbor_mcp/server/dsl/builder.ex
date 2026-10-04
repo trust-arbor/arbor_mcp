@@ -1,13 +1,16 @@
 defmodule Arbor.MCP.Server.DSL.Builder do
   @moduledoc false
 
+  alias Arbor.MCP.Server.DSL.ParamSchema
+
   @type param :: %{
           name: atom(),
           type: atom() | {atom(), any()},
           required: boolean(),
           default: any(),
+          has_default: boolean(),
           description: String.t() | nil,
-          schema: map() | nil
+          schema: map() | boolean()
         }
 
   @spec tool(String.t(), String.t() | nil, keyword()) :: map()
@@ -85,8 +88,9 @@ defmodule Arbor.MCP.Server.DSL.Builder do
       type: type,
       required: Keyword.get(opts, :required, false),
       default: Keyword.get(opts, :default),
+      has_default: Keyword.has_key?(opts, :default),
       description: Keyword.get(opts, :description),
-      schema: Keyword.get(opts, :schema)
+      schema: ParamSchema.build(type, opts)
     }
   end
 
@@ -99,7 +103,7 @@ defmodule Arbor.MCP.Server.DSL.Builder do
           param
           |> param_schema()
           |> put_optional(:description, param.description)
-          |> put_optional(:default, param.default)
+          |> put_default(param)
 
         {param.name, schema}
       end)
@@ -129,7 +133,7 @@ defmodule Arbor.MCP.Server.DSL.Builder do
         Map.has_key?(acc, string_key) ->
           Map.put(acc, atom_key, Map.fetch!(acc, string_key))
 
-        Map.has_key?(param, :default) and param.default != nil ->
+        Map.get(param, :has_default, param.default != nil) ->
           Map.put(acc, atom_key, param.default)
 
         true ->
@@ -159,7 +163,7 @@ defmodule Arbor.MCP.Server.DSL.Builder do
     end)
   end
 
-  defp param_schema(%{schema: schema}) when is_map(schema), do: schema
+  defp param_schema(%{schema: schema}) when is_map(schema) or is_boolean(schema), do: schema
   defp param_schema(%{type: type}), do: type_to_schema(type)
 
   @allowed_scalar_types [:string, :integer, :number, :boolean, :object, :map]
@@ -189,9 +193,12 @@ defmodule Arbor.MCP.Server.DSL.Builder do
     %{type: "array", items: type_to_schema(item_type)}
   end
 
-  # `default: []` is a valid JSON Schema default; only omit nil defaults.
-  defp put_optional(map, :default, nil), do: map
-  defp put_optional(map, :default, value), do: Map.put(map, :default, value)
+  defp put_default(map, param) do
+    if Map.get(param, :has_default, param.default != nil),
+      do: Map.put(map, :default, param.default),
+      else: map
+  end
+
   defp put_optional(map, _key, nil), do: map
   defp put_optional(map, _key, []), do: map
   defp put_optional(map, _key, %{} = value) when map_size(value) == 0, do: map

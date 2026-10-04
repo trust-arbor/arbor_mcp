@@ -7,7 +7,8 @@ defmodule Arbor.MCP.WirePrivacyTest do
   alias Arbor.MCP.HttpPlug.SSEHandler
   alias Arbor.MCP.MessageProcessor
   alias Arbor.MCP.Protocol.RequestTracker
-  alias Arbor.MCP.Server.{HandlerServer, StdioServer}
+  alias Arbor.MCP.Server.{HandlerServer, Runtime, StdioServer}
+  alias Arbor.MCP.Test.StdioRuntimeFixture.{Device, Handler}
 
   defmodule FailingNotificationHandler do
     def handle_log_message(_request_id, _params, state),
@@ -42,6 +43,8 @@ defmodule Arbor.MCP.WirePrivacyTest do
 
   test "peer-controlled IDs and malformed frames are summarized in logs" do
     secret = "wire-log-secret-#{System.unique_integer([:positive])}"
+    input = start_supervised!({Device, [owner: self()]}, id: make_ref())
+    output = start_supervised!({Device, [owner: self()]}, id: make_ref())
 
     log =
       capture_log([level: :debug], fn ->
@@ -54,7 +57,32 @@ defmodule Arbor.MCP.WirePrivacyTest do
         assert {:noreply, _state} =
                  HandlerServer.handle_info({:cancelled, secret}, %{pending_requests: %{}})
 
-        assert {:noreply, _state} = StdioServer.handle_info({:stdin_line, secret}, %{})
+        {:ok, root} =
+          StdioServer.start_link(
+            module: Handler,
+            handler_args: [test_pid: self()],
+            stdio_input: input,
+            stdio_output: output,
+            stdio_startup_delay: 0
+          )
+
+        Process.unlink(root)
+        on_exit(fn -> if Process.alive?(root), do: Runtime.stop(root) end)
+
+        valid = %{
+          "jsonrpc" => "2.0",
+          "id" => 1,
+          "method" => "tools/call",
+          "params" => %{"name" => "inc", "arguments" => %{}}
+        }
+
+        :ok =
+          GenServer.call(input, {:input, secret <> "\n" <> Jason.encode!(valid) <> "\n", false})
+
+        assert_receive {:invoked, 1}, 1_000
+        assert_receive {:written, frame}, 1_000
+        assert %{"id" => 1, "result" => %{}} = Jason.decode!(String.trim(frame))
+        assert :ok = Runtime.stop(root)
 
         assert {:noreply, _state} = SSEHandler.handle_info({:unexpected, secret}, %SSEHandler{})
       end)

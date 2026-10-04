@@ -7,6 +7,7 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
     Admission,
     CallbackContext,
     Failure,
+    Initialization,
     Lifecycle,
     OutputController,
     OutputLedger,
@@ -15,10 +16,11 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
   }
 
   def start_link(opts) do
-    config = Keyword.fetch!(opts, :config)
+    table = Keyword.fetch!(opts, :table)
 
-    with {:ok, pid} <- GenServer.start_link(__MODULE__, opts, timeout: config.init_timeout_ms) do
-      :ok = ShutdownGuard.watch(Keyword.fetch!(opts, :table), pid)
+    with {:ok, pid} <-
+           GenServer.start_link(__MODULE__, opts, timeout: Initialization.remaining(table)) do
+      :ok = Initialization.watch(table, pid)
       {:ok, pid}
     end
   end
@@ -38,7 +40,7 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
     Process.flag(:trap_exit, true)
     config = Keyword.fetch!(opts, :config)
     table = Keyword.fetch!(opts, :table)
-    :ok = ShutdownGuard.watch(table, self())
+    :ok = Initialization.watch(table, self())
 
     with {:ok, handler_state} <- config.handler.init(config.handler_args),
          {:ok, generation} <- Admission.activate(table, self(), config) do
@@ -296,6 +298,7 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
       generation: state.generation,
       deadline: work.reservation.deadline,
       scope: work.reservation.scope,
+      output_phase: work.reservation.output_phase,
       runtime: Keyword.fetch!(work.opts, :runtime),
       owner: work.reservation.owner,
       scheduler: self()

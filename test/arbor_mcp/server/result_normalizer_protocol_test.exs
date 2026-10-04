@@ -5,6 +5,36 @@ defmodule Arbor.MCP.Server.ResultNormalizerProtocolTest do
 
   alias Arbor.MCP.Server.ResultNormalizer
 
+  test "raw Handler structured aliases retain false/null and enforce the negotiated era" do
+    for value <- [false, nil, [1], "scalar"] do
+      result = %{content: [], structuredOutput: value}
+
+      assert %{"structuredContent" => ^value} =
+               ResultNormalizer.protocol_result(result, %{era: :modern, method: "tools/call"})
+
+      assert_raise ArgumentError, "Legacy structured tool content must be an object", fn ->
+        ResultNormalizer.protocol_result(result, %{era: :legacy, method: "tools/call"})
+      end
+    end
+
+    result = %{content: [], structuredOutput: %{count: 1}}
+
+    assert %{"structuredContent" => %{"count" => 1}} =
+             ResultNormalizer.protocol_result(result, %{era: :legacy, method: "tools/call"})
+  end
+
+  test "canonical structured content wins over its compatibility alias by presence" do
+    for value <- [false, nil] do
+      result = %{content: [], structuredContent: value, structuredOutput: %{ignored: true}}
+
+      normalized =
+        ResultNormalizer.protocol_result(result, %{era: :modern, method: "tools/call"})
+
+      assert Map.fetch(normalized, "structuredContent") == {:ok, value}
+      refute Map.has_key?(normalized, "structuredOutput")
+    end
+  end
+
   test "leaves legacy results unchanged" do
     result = %{"tools" => []}
 
