@@ -74,7 +74,9 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
           | {:schema_validation_failed, String.t()}
           | {:network_schema_error, atom()}
 
-  @type compile_result :: {:ok, term()} | {:error, policy_error()}
+  @type compiled :: ExJsonSchema.Schema.Root.t()
+  @type compile_result :: {:ok, compiled()} | {:error, policy_error()}
+  @type optional_compile_result :: {:ok, compiled() | nil} | {:error, policy_error()}
   @type validation_result :: :ok | {:error, term()}
 
   @doc "Returns the effective schema-policy options."
@@ -104,38 +106,37 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
 
   def json_compatible(value), do: value
 
-  @doc "Checks a raw schema without resolving references."
+  @doc "Checks a raw object/boolean schema without resolving references."
   @spec preflight(map() | boolean(), keyword()) :: :ok | {:error, policy_error()}
-  def preflight(schema, opts \\ [])
-
-  def preflight(schema, opts)
-      when (is_map(schema) and not is_struct(schema)) or is_boolean(schema) do
-    schema = json_compatible(schema)
-    opts = options(opts)
-
-    with :ok <- validate_options(opts),
-         :ok <- check_encoded_size(schema, opts),
-         {:ok, _count} <- walk(schema, 0, 0, 0, opts) do
-      :ok
-    end
+  def preflight(schema, opts \\ []) do
+    with {:ok, opts} <- policy_options(opts),
+         {:ok, schema} <- normalize_schema(schema, opts),
+         do: preflight_normalized(schema, opts)
   end
 
-  def preflight(_schema, _opts),
-    do: {:error, {:invalid_schema, "schema must be an object or boolean"}}
+  @doc """
+  Compiles an object/boolean JSON Schema to `{:ok, resolved}` or `{:error, reason}`.
 
-  @doc "Preflights and resolves a schema within the configured deadline."
+  `nil` is invalid; use `compile_optional/2` when absence deliberately disables
+  validation. Atom keys/values normalize to JSON strings. Conflicting normalized
+  keys and non-JSON schema terms reject before any application encoder runs.
+  The current validator supports drafts 4, 6 and 7; an omitted `$schema` selects
+  draft 7. This does not implement MCP's default draft 2020-12 semantics.
+
+  Retain the returned Root unchanged for repeated validation. Caller-created or
+  mutated Roots are trusted compiled artifacts, not raw schema declarations.
+  """
   @spec compile(map() | boolean(), keyword()) :: compile_result()
   def compile(schema, opts \\ []) do
-    schema = json_compatible(schema)
-    opts = options(opts)
-
-    with :ok <- preflight(schema, opts) do
+    with {:ok, opts} <- policy_options(opts),
+         {:ok, schema} <- normalize_schema(schema, opts),
+         :ok <- preflight_normalized(schema, opts) do
       run_bounded(
         fn ->
           try do
-            resolve_schema(schema, opts)
+            with :ok <- validate_schema_shape(schema), do: resolve_schema(schema, opts)
           rescue
-            exception -> {:error, {:invalid_schema, Exception.message(exception)}}
+            _exception -> {:error, {:invalid_schema, "schema resolution failed"}}
           catch
             _kind, _reason -> {:error, {:invalid_schema, "schema resolution failed"}}
           end
@@ -146,28 +147,203 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
     end
   end
 
-  @doc "Validates data with a resolved or raw schema within a hard deadline."
-  @spec validate(term(), term(), keyword()) :: validation_result()
-  def validate(data, schema, opts \\ []) do
-    opts = options(opts)
+  @doc """
+  Explicit optional compilation. Only `nil` returns `{:ok, nil}`; `false`
+  compiles an always-rejecting schema. Invalid schemas remain tagged errors.
+  """
+  @spec compile_optional(map() | boolean() | nil, keyword()) :: optional_compile_result()
+  def compile_optional(schema, opts \\ [])
 
-    with :ok <- validate_options(opts),
+  def compile_optional(nil, opts) do
+    with {:ok, _opts} <- policy_options(opts), do: {:ok, nil}
+  end
+
+  def compile_optional(schema, opts), do: compile(schema, opts)
+
+  @doc """
+  Validates data against a raw or unchanged compiled schema within a deadline.
+
+  Returns `:ok` or `{:error, reason}`; it does not insert defaults, coerce types,
+  normalize instance keys or return transformed data. `nil` is invalid. Instance
+  validation failures retain ExJsonSchema's error list; policy failures are tagged.
+  """
+  @spec validate(term(), map() | boolean() | compiled(), keyword()) :: validation_result()
+  def validate(data, schema, opts \\ []) do
+    with {:ok, opts} <- policy_options(opts),
          {:ok, resolved} <- ensure_compiled(schema, opts) do
       run_bounded(
         fn ->
           try do
             ExJsonSchema.Validator.validate(resolved, data)
           rescue
-            exception ->
-              {:error, {:schema_validation_failed, Exception.message(exception)}}
+            _exception -> {:error, {:schema_validation_failed, "schema validation failed"}}
           catch
-            _kind, _reason ->
-              {:error, {:schema_validation_failed, "schema validation failed"}}
+            _kind, _reason -> {:error, {:schema_validation_failed, "schema validation failed"}}
           end
         end,
         opts[:validation_timeout_ms],
         {:schema_validation_timeout, opts[:validation_timeout_ms]}
       )
+    end
+  end
+
+  @doc "Explicit optional validation: only `nil` bypasses; `false` rejects all data."
+  @spec validate_optional(term(), map() | boolean() | compiled() | nil, keyword()) ::
+          validation_result()
+  def validate_optional(data, schema, opts \\ [])
+
+  def validate_optional(_data, nil, opts) do
+    with {:ok, _opts} <- policy_options(opts), do: :ok
+  end
+
+  def validate_optional(data, schema, opts), do: validate(data, schema, opts)
+
+  defp policy_options(overrides) do
+    configured = Application.get_env(:arbor_mcp, :json_schema, [])
+
+    if Keyword.keyword?(overrides) and Keyword.keyword?(configured) do
+      opts = options(overrides)
+      with :ok <- validate_options(opts), do: {:ok, opts}
+    else
+      {:error, {:invalid_schema_policy_option, :options}}
+    end
+  end
+
+  defp preflight_normalized(schema, opts) do
+    with :ok <- check_encoded_size(schema, opts),
+         {:ok, _count} <- walk(schema, 0, 0, 0, opts),
+         do: :ok
+  end
+
+  defp normalize_schema(schema, opts)
+       when (is_map(schema) and not is_struct(schema)) or is_boolean(schema) do
+    case normalize_value(schema, 0, opts[:max_schema_bytes], Map.new(opts)) do
+      {:ok, schema, _remaining} -> {:ok, schema}
+      error -> error
+    end
+  end
+
+  defp normalize_schema(_schema, _opts),
+    do: {:error, {:invalid_schema, "schema must be an object or boolean"}}
+
+  defp normalize_value(_value, depth, _remaining, opts) when depth > opts.max_schema_depth,
+    do: {:error, {:schema_limit_exceeded, :max_schema_depth, depth}}
+
+  defp normalize_value(_value, _depth, remaining, opts) when remaining < 0,
+    do: {:error, {:schema_limit_exceeded, :max_schema_bytes, opts.max_schema_bytes + 1}}
+
+  defp normalize_value(value, depth, remaining, opts)
+       when is_map(value) and not is_struct(value) do
+    Enum.reduce_while(value, {:ok, %{}, remaining - 2}, fn {key, item}, {:ok, acc, remaining} ->
+      with {:ok, key} <- schema_key(key, remaining - 3, opts),
+           false <- Map.has_key?(acc, key),
+           {:ok, item, remaining} <-
+             normalize_value(
+               item,
+               depth + 1,
+               remaining - byte_size(key) - 3 - if(map_size(acc) == 0, do: 0, else: 1),
+               opts
+             ) do
+        {:cont, {:ok, Map.put(acc, key, item), remaining}}
+      else
+        true -> {:halt, {:error, {:invalid_schema, "conflicting normalized schema keys"}}}
+        error -> {:halt, error}
+      end
+    end)
+    |> normalized_budget(opts)
+  end
+
+  defp normalize_value(value, depth, remaining, opts) when is_list(value),
+    do: normalize_list(value, depth, remaining - 2, opts, [])
+
+  defp normalize_value(value, _depth, remaining, opts) when is_binary(value) do
+    with {:ok, _value, _remaining} = result <-
+           normalized_budget({:ok, value, remaining - byte_size(value) - 2}, opts) do
+      if String.valid?(value), do: result, else: invalid_json_schema()
+    end
+  end
+
+  defp normalize_value(value, depth, remaining, opts)
+       when is_atom(value) and value not in [true, false, nil],
+       do: normalize_value(Atom.to_string(value), depth, remaining, opts)
+
+  defp normalize_value(value, _depth, remaining, opts) when is_number(value),
+    do: normalized_budget({:ok, value, remaining - number_cost(value)}, opts)
+
+  defp normalize_value(value, _depth, remaining, opts) when value in [true, false, nil],
+    do: normalized_budget({:ok, value, remaining - if(value == false, do: 5, else: 4)}, opts)
+
+  defp normalize_value(_value, _depth, _remaining, _opts), do: invalid_json_schema()
+
+  defp number_cost(value) when is_integer(value), do: max(1, :erlang.external_size(value) - 5)
+  defp number_cost(_float), do: 1
+
+  defp normalize_list([], _depth, remaining, opts, acc),
+    do: normalized_budget({:ok, Enum.reverse(acc), remaining}, opts)
+
+  defp normalize_list([item | rest], depth, remaining, opts, acc) do
+    with {:ok, item, remaining} <-
+           normalize_value(item, depth + 1, remaining - if(acc == [], do: 0, else: 1), opts),
+         do: normalize_list(rest, depth, remaining, opts, [item | acc])
+  end
+
+  defp normalize_list(_invalid, _depth, _remaining, _opts, _acc), do: invalid_json_schema()
+
+  defp normalized_budget({:ok, _value, remaining}, opts) when remaining < 0,
+    do: {:error, {:schema_limit_exceeded, :max_schema_bytes, opts.max_schema_bytes + 1}}
+
+  defp normalized_budget(result, _opts), do: result
+
+  defp schema_key(key, remaining, opts) when is_atom(key),
+    do: schema_key(Atom.to_string(key), remaining, opts)
+
+  defp schema_key(key, remaining, opts) when is_binary(key) do
+    with {:ok, _key, _remaining} <-
+           normalized_budget({:ok, key, remaining - byte_size(key)}, opts) do
+      if String.valid?(key), do: {:ok, key}, else: invalid_json_schema()
+    end
+  end
+
+  defp schema_key(_key, _remaining, _opts), do: invalid_json_schema()
+
+  # ExJsonSchema skips its meta-schema check when $id resembles a meta-schema
+  # identifier. Validate every raw object explicitly so declarations cannot use
+  # that implementation shortcut to accept an invalid schema silently.
+  defp validate_schema_shape(schema) when is_boolean(schema), do: :ok
+
+  defp validate_schema_shape(schema) do
+    with {:ok, draft} <- schema_draft(schema),
+         :ok <-
+           ExJsonSchema.Validator.validate(ExJsonSchema.Schema.resolve(draft.schema()), schema) do
+      :ok
+    else
+      {:error, _errors} ->
+        {:error, {:invalid_schema, "schema declaration is invalid or unsupported"}}
+    end
+  end
+
+  defp schema_draft(schema) do
+    case schema["$schema"] do
+      nil ->
+        {:ok, ExJsonSchema.Schema.Draft7}
+
+      uri when uri in ["http://json-schema.org/schema#", "http://json-schema.org/schema"] ->
+        {:ok, ExJsonSchema.Schema.Draft7}
+
+      uri when is_binary(uri) ->
+        supported_draft(uri)
+
+      _ ->
+        {:error, :unsupported_schema_draft}
+    end
+  end
+
+  defp supported_draft(uri) do
+    case String.replace_prefix(uri, "https://", "http://") do
+      "http://json-schema.org/draft-04/schema" <> _ -> {:ok, ExJsonSchema.Schema.Draft4}
+      "http://json-schema.org/draft-06/schema" <> _ -> {:ok, ExJsonSchema.Schema.Draft6}
+      "http://json-schema.org/draft-07/schema" <> _ -> {:ok, ExJsonSchema.Schema.Draft7}
+      _ -> {:error, :unsupported_schema_draft}
     end
   end
 
@@ -287,8 +463,12 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
 
   defp resolve_schema(schema, opts) do
     if network_refs_enabled?(opts),
-      do: SchemaRemoteResolver.resolve(schema, opts, &preflight/2),
+      do: SchemaRemoteResolver.resolve(schema, opts, &preflight_document/2),
       else: {:ok, ExJsonSchema.Schema.resolve(schema)}
+  end
+
+  defp preflight_document(schema, opts) do
+    with :ok <- preflight(schema, opts), do: validate_schema_shape(schema)
   end
 
   defp network_refs_enabled?(opts), do: opts[:network_refs][:enabled] == true
@@ -359,7 +539,7 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
 
     valid? =
       is_function(callback, arity) or
-        (is_atom(callback) and Code.ensure_loaded?(callback) and
+        (is_atom(callback) and Code.ensure_compiled(callback) == {:module, callback} and
            function_exported?(callback, callback_function(key), arity))
 
     if valid?,
@@ -383,9 +563,14 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
 
   defp nested_options(options, key) do
     case Keyword.fetch(options, key) do
-      :error -> {:ok, []}
-      {:ok, nested} when is_list(nested) -> {:ok, nested}
-      {:ok, _invalid} -> {:error, :invalid}
+      :error ->
+        {:ok, []}
+
+      {:ok, nested} when is_list(nested) ->
+        if Keyword.keyword?(nested), do: {:ok, nested}, else: {:error, :invalid}
+
+      {:ok, _invalid} ->
+        {:error, :invalid}
     end
   end
 

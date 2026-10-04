@@ -29,7 +29,7 @@ defmodule Arbor.MCP.Server.DSL do
   See the project DSL guide for full details.
   """
 
-  alias Arbor.MCP.Content.{SchemaPolicy, SchemaValidator}
+  alias Arbor.MCP.Content.SchemaPolicy
   alias Arbor.MCP.Server.DSL.Builder
 
   # DSL schemas are trusted application declarations compiled while the module
@@ -690,7 +690,8 @@ defmodule Arbor.MCP.Server.DSL do
       tools
       |> Enum.with_index()
       |> Map.new(fn {{definition, _handler, params}, index} ->
-        output_schema = compile_output_schema(definition[:outputSchema])
+        compile_tool_schema(definition[:inputSchema], :input)
+        output_schema = compile_tool_schema(definition[:outputSchema], :output)
         {definition.name, {:"__ex_mcp_dsl_tool_#{index}__", output_schema, params}}
       end)
 
@@ -912,34 +913,43 @@ defmodule Arbor.MCP.Server.DSL do
     end
   end
 
-  defp compile_output_schema(nil), do: nil
+  defp compile_tool_schema(schema, kind) do
+    validate_descriptor_schema!(schema, kind)
 
-  defp compile_output_schema(schema) do
-    case SchemaValidator.compile_schema(schema,
+    case SchemaPolicy.compile_optional(schema,
            resolve_timeout_ms: @compile_time_schema_timeout_ms
          ) do
       {:ok, resolved} ->
         resolved
 
       {:error, reason} ->
-        raise ArgumentError, "invalid output_schema/1: " <> SchemaPolicy.format_error(reason)
+        raise ArgumentError,
+              "invalid #{kind}_schema/1: " <> SchemaPolicy.format_error(reason)
     end
   end
 
+  defp validate_descriptor_schema!(nil, :output), do: :ok
+
+  defp validate_descriptor_schema!(schema, kind) when is_map(schema) and not is_struct(schema) do
+    if kind == :input and
+         (Map.get(schema, :type) || Map.get(schema, "type")) not in ["object", :object],
+       do: raise(ArgumentError, "invalid input_schema/1: root type must be object"),
+       else: :ok
+  end
+
+  defp validate_descriptor_schema!(_schema, kind),
+    do: raise(ArgumentError, "invalid #{kind}_schema/1: Tool schema must be an object")
+
   defp validate_with_schema(data, schema) do
-    if schema do
-      case SchemaPolicy.validate(data, schema) do
-        :ok ->
-          :ok
+    case SchemaPolicy.validate_optional(data, schema) do
+      :ok ->
+        :ok
 
-        {:error, reason} when is_tuple(reason) or is_atom(reason) ->
-          {:error, [SchemaPolicy.format_error(reason)]}
+      {:error, reason} when is_tuple(reason) or is_atom(reason) ->
+        {:error, [SchemaPolicy.format_error(reason)]}
 
-        {:error, errors} ->
-          {:error, errors}
-      end
-    else
-      :ok
+      {:error, errors} ->
+        {:error, errors}
     end
   end
 

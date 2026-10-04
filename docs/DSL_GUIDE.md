@@ -69,12 +69,25 @@ param :scores, {:array, :number}, required: true
 Bare `:array` is **not** valid — the item type is required so the generated
 `inputSchema` is correct.
 
-You can also pass a full JSON Schema with `input_schema` (DSL instruction,
-snake_case). That becomes the MCP `inputSchema` field on the wire.
-`input_schema` and `output_schema` are **JSON Schema 2020-12** documents
-(`https://json-schema.org/draft/2020-12/schema`).
+Use literal schema maps with `input_schema` and `output_schema`. The input map
+must have root `type: "object"`; the output schema must also be a map. Standalone
+boolean JSON Schemas are valid for `Content.SchemaPolicy`, but `false` is not a
+valid MCP Tool descriptor and is rejected rather than replaced by a generated
+schema. An omitted or `nil` output schema deliberately disables output validation.
+Malformed declarations fail while the handler module compiles.
 
-Declared params are normalized so handlers can use atom keys and defaults.
+The pinned MCP 2026-07-28 schema specifies JSON Schema 2020-12, including its
+default dialect. The current local validator, ExJsonSchema, implements drafts 4,
+6 and 7 and defaults to draft 7 when `$schema` is omitted. Explicit 2020-12
+compilation fails; 2020-12-only keyword semantics are not implemented by this
+validator. Full modern-dialect validation is an open release gate, not a supported
+feature inferred from descriptor pass-through.
+
+Declared params retain existing atom-key convenience and missing-value defaults.
+Literal `input_schema` is checked at module compilation but does not add automatic
+runtime input validation, default insertion or type coercion. Use tagged
+`Content.SchemaPolicy.compile/2` and `validate/3` explicitly when your application
+requires standalone validation.
 
 ### Response helpers and normalization
 

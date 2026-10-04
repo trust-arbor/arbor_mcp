@@ -13,7 +13,12 @@ defmodule Arbor.MCP.Server.DSL.Builder do
   @spec tool(String.t(), String.t() | nil, keyword()) :: map()
   def tool(name, description, opts) when is_binary(name) do
     params = Keyword.get(opts, :params, [])
-    input_schema = Keyword.get(opts, :input_schema) || schema_from_params(params)
+
+    input_schema =
+      case Keyword.get(opts, :input_schema) do
+        nil -> schema_from_params(params)
+        schema -> schema
+      end
 
     %{
       name: name,
