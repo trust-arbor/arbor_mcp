@@ -1,0 +1,1532 @@
+{
+  "schema_version": 1,
+  "status": "planned retirement inventory; source-removal prerequisites and final release qualification remain open",
+  "baseline": {
+    "application": "ex_mcp",
+    "package_version": "1.5.0",
+    "source_digest": "abbea5c7e676184b4d6faaef4e337c042b24f4a454a4ac9b3c6c0257e8601e31",
+    "source_ref": "1808c56bd4fc7b000043c2775f61ecced6ed059f",
+    "toolchain": {
+      "elixir": "1.19.5",
+      "mix_environment": "dev",
+      "otp": "28"
+    },
+    "manifest_sha256": "a6a952ef2483f2490c13594e1a44bc4a47f96abc9efa19ab4829984b2234f0a8",
+    "summary": {
+      "callbacks": 136,
+      "deprecated_callables": 31,
+      "deprecated_modules": 2,
+      "documented_modules": 227,
+      "exports": 3137,
+      "functions": 3022,
+      "macros": 96,
+      "modules": 341,
+      "struct_fields": 629,
+      "structs": 63,
+      "types": 653
+    }
+  },
+  "main_head_at_read": "080322d58c4c90e976bf1da49573ff07bf4a9147",
+  "candidate_evidence_is_live_source_not_a_compiled_manifest": true,
+  "compiled_deprecations": {
+    "modules": [
+      "ExMCP.Transport.HTTPServer",
+      "ExMCP.Transport.HTTPServerWithVersion"
+    ],
+    "callables": [
+      {
+        "module": "ExMCP.Content.Builders",
+        "kind": "function",
+        "name": "compress",
+        "arity": 1,
+        "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0.",
+        "replacement_group": "media"
+      },
+      {
+        "module": "ExMCP.Content.Builders",
+        "kind": "function",
+        "name": "compress",
+        "arity": 2,
+        "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0.",
+        "replacement_group": "media"
+      },
+      {
+        "module": "ExMCP.Content.Builders",
+        "kind": "function",
+        "name": "resize",
+        "arity": 3,
+        "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0.",
+        "replacement_group": "media"
+      },
+      {
+        "module": "ExMCP.Content.Sanitizer",
+        "kind": "function",
+        "name": "remove_metadata",
+        "arity": 1,
+        "compiled_deprecation": "Not implemented for EXIF; not an MCP requirement. Planned for removal in 2.0.0.",
+        "replacement_group": "metadata"
+      },
+      {
+        "module": "ExMCP.Content.Transformer",
+        "kind": "function",
+        "name": "compress_image",
+        "arity": 2,
+        "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools.",
+        "replacement_group": "media"
+      },
+      {
+        "module": "ExMCP.Content.Transformer",
+        "kind": "function",
+        "name": "compress_image",
+        "arity": 3,
+        "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools.",
+        "replacement_group": "media"
+      },
+      {
+        "module": "ExMCP.Content.Transformer",
+        "kind": "function",
+        "name": "convert_encoding",
+        "arity": 1,
+        "compiled_deprecation": "Not implemented; not required by MCP/ACP. Planned for removal in 2.0.0.",
+        "replacement_group": "media"
+      },
+      {
+        "module": "ExMCP.Content.Transformer",
+        "kind": "function",
+        "name": "convert_encoding",
+        "arity": 2,
+        "compiled_deprecation": "Not implemented; not required by MCP/ACP. Planned for removal in 2.0.0.",
+        "replacement_group": "media"
+      },
+      {
+        "module": "ExMCP.Content.Transformer",
+        "kind": "function",
+        "name": "generate_thumbnail",
+        "arity": 2,
+        "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools.",
+        "replacement_group": "media"
+      },
+      {
+        "module": "ExMCP.Content.Transformer",
+        "kind": "function",
+        "name": "generate_thumbnail",
+        "arity": 3,
+        "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools.",
+        "replacement_group": "media"
+      },
+      {
+        "module": "ExMCP.Content.Transformer",
+        "kind": "function",
+        "name": "resize_image",
+        "arity": 3,
+        "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools.",
+        "replacement_group": "media"
+      },
+      {
+        "module": "ExMCP.HttpPlug",
+        "kind": "function",
+        "name": "start_link",
+        "arity": 0,
+        "compiled_deprecation": "The session table is owned by ExMCP.HttpPlug.SessionRegistry, started with the :ex_mcp application",
+        "replacement_group": "http_owner"
+      },
+      {
+        "module": "ExMCP.HttpPlug",
+        "kind": "function",
+        "name": "start_link",
+        "arity": 1,
+        "compiled_deprecation": "The session table is owned by ExMCP.HttpPlug.SessionRegistry, started with the :ex_mcp application",
+        "replacement_group": "http_owner"
+      },
+      {
+        "module": "ExMCP.Protocol.ErrorCodes",
+        "kind": "function",
+        "name": "legacy_consent_required",
+        "arity": 0,
+        "compiled_deprecation": "Use consent_required/0; -32002 is reserved as a historical MCP code",
+        "replacement_group": "consent"
+      },
+      {
+        "module": "ExMCP.Protocol.ErrorCodes",
+        "kind": "function",
+        "name": "resource_not_found",
+        "arity": 0,
+        "compiled_deprecation": "Use resource_not_found/1 so modern peers receive -32602",
+        "replacement_group": "resource_code"
+      },
+      {
+        "module": "ExMCP.Protocol.ErrorCodes",
+        "kind": "function",
+        "name": "url_elicitation_required",
+        "arity": 0,
+        "compiled_deprecation": "MCP 2026-07-28 retired -32042; use MRTR for modern peers",
+        "replacement_group": "url_code"
+      },
+      {
+        "module": "ExMCP.Protocol.VersionNegotiator",
+        "kind": "function",
+        "name": "build_capabilities",
+        "arity": 1,
+        "compiled_deprecation": "Use ExMCP.Protocol.Initialize or ExMCP.Server.Capabilities",
+        "replacement_group": "initialize"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "annotations",
+        "arity": 1,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "description",
+        "arity": 1,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "handle",
+        "arity": 1,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "input_schema",
+        "arity": 1,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "output_schema",
+        "arity": 1,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "param",
+        "arity": 2,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "param",
+        "arity": 3,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "title",
+        "arity": 1,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "tool",
+        "arity": 2,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl"
+      },
+      {
+        "module": "ExMCP.Server.Tools",
+        "kind": "macro",
+        "name": "tool",
+        "arity": 3,
+        "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+        "replacement_group": "tools_dsl"
+      },
+      {
+        "module": "ExMCP.Transport.HTTPServer",
+        "kind": "function",
+        "name": "call",
+        "arity": 2,
+        "compiled_deprecation": "Use ExMCP.HttpPlug instead. ExMCP.Transport.HTTPServer will be removed in 2.0.0.",
+        "replacement_group": "http_endpoint"
+      },
+      {
+        "module": "ExMCP.Transport.HTTPServer",
+        "kind": "function",
+        "name": "init",
+        "arity": 1,
+        "compiled_deprecation": "Use ExMCP.HttpPlug instead. ExMCP.Transport.HTTPServer will be removed in 2.0.0.",
+        "replacement_group": "http_endpoint"
+      },
+      {
+        "module": "ExMCP.Transport.HTTPServerWithVersion",
+        "kind": "function",
+        "name": "call",
+        "arity": 2,
+        "compiled_deprecation": "Use ExMCP.HttpPlug instead. ExMCP.Transport.HTTPServerWithVersion will be removed in 2.0.0.",
+        "replacement_group": "http_endpoint"
+      },
+      {
+        "module": "ExMCP.Transport.HTTPServerWithVersion",
+        "kind": "function",
+        "name": "init",
+        "arity": 1,
+        "compiled_deprecation": "Use ExMCP.HttpPlug instead. ExMCP.Transport.HTTPServerWithVersion will be removed in 2.0.0.",
+        "replacement_group": "http_endpoint"
+      }
+    ]
+  },
+  "replacement_groups": {
+    "tools_dsl": {
+      "replacement": "Arbor.MCP.Server.Handler + Server.DSL tool/2,3 and declaration macros",
+      "source_evidence": [
+        "lib/ex_mcp/server/handler.ex",
+        "lib/ex_mcp/server/dsl.ex"
+      ],
+      "prerequisites": "Rewrite use/deftool/compiler-generated consumer code; recompile; verify DSL callbacks and validation.",
+      "example_reference": "docs/V2_API_MIGRATION.md"
+    },
+    "tools_builder": {
+      "replacement": "Server.DSL or application-owned dynamic descriptor/dispatch maps; no replacement struct",
+      "source_evidence": [
+        "lib/ex_mcp/server/dsl.ex",
+        "lib/ex_mcp/server/handler.ex"
+      ],
+      "prerequisites": "Separate MCP descriptor data from handler functions; migrate Builder.Tool.t/0 and param/0.",
+      "example_reference": "docs/V2_API_MIGRATION.md"
+    },
+    "tools_registry": {
+      "replacement": "Handler.handle_list_tools/2 and handle_call_tool/3 with owned state; Handler.tool/0",
+      "source_evidence": [
+        "lib/ex_mcp/server/handler.ex"
+      ],
+      "prerequisites": "Implement/test dynamic mutation, default application, validation and list-change notification; no process-global registry replacement.",
+      "example_reference": "docs/V2_API_MIGRATION.md"
+    },
+    "tools_results": {
+      "replacement": "Server.DSL.Result.text/1, error/1, structured/2, normalize_tool/2, normalize_tool_result/1 or valid raw MCP content/result maps",
+      "source_evidence": [
+        "lib/ex_mcp/server/dsl/result.ex",
+        "lib/ex_mcp/server/dsl.ex"
+      ],
+      "prerequisites": "Account for complete result vs content-list shape, structuredContent normalization and revision-valid image/resource blocks.",
+      "example_reference": "docs/V2_API_MIGRATION.md"
+    },
+    "tools_schema": {
+      "replacement": "Content.SchemaPolicy.compile/1,2 and validate/2,3; literal JSON Schema; DSL schema macros",
+      "source_evidence": [
+        "lib/ex_mcp/content/schema_policy.ex",
+        "lib/ex_mcp/content/schema_validator.ex",
+        "lib/ex_mcp/server/dsl.ex"
+      ],
+      "prerequisites": "Tagged errors differ from compile-or-raise; validation does not duplicate Helpers default insertion/coercion; handle nil bypass explicitly.",
+      "example_reference": "docs/V2_API_MIGRATION.md"
+    },
+    "http_endpoint": {
+      "replacement": "Arbor.MCP.HttpPlug.init/1 and call/2",
+      "source_evidence": [
+        "lib/ex_mcp/http_plug.ex"
+      ],
+      "prerequisites": "Preserve forwarded mount, parsed-body, version, OAuth and SSE/session semantics; runtime-mounted HTTP remains pending.",
+      "example_reference": "docs/V2_API_MIGRATION.md"
+    },
+    "http_owner": {
+      "replacement": "1.x application-owned SessionRegistry; v2 explicit runtime-owned stores",
+      "source_evidence": [
+        "lib/ex_mcp/application.ex",
+        "lib/ex_mcp/http_plug/session_registry.ex",
+        "docs/V2_RUNTIME_CONTRACT.md"
+      ],
+      "prerequisites": "Do not start duplicate registry; runtime/session/HTTP convergence must be implemented and qualified.",
+      "example_reference": "docs/V2_API_MIGRATION.md"
+    },
+    "media": {
+      "replacement": "Application-owned media/encoding pipeline then Content.Builders.image/2,3; no image-processing drop-in",
+      "source_evidence": [
+        "lib/ex_mcp/content/builders.ex",
+        "lib/ex_mcp/content/transformer.ex"
+      ],
+      "prerequisites": "Choose application processing/decoding and test bytes; remove no-op tokens/options with agreed rejection behavior.",
+      "example_reference": "docs/V2_API_MIGRATION.md"
+    },
+    "metadata": {
+      "replacement": "Explicit application metadata map update and external EXIF processing",
+      "source_evidence": [
+        "lib/ex_mcp/content/sanitizer.ex"
+      ],
+      "prerequisites": "Clearing :metadata is not EXIF removal; preserve supported sanitizer operations.",
+      "example_reference": "docs/V2_API_MIGRATION.md"
+    },
+    "consent": {
+      "replacement": "Protocol.ErrorCodes.consent_required/0",
+      "source_evidence": [
+        "lib/ex_mcp/protocol/error_codes.ex"
+      ],
+      "prerequisites": "Preserve historical contextual decoding and legacy resource-not-found -32002; do not emit that code for new local consent errors.",
+      "example_reference": "docs/V2_API_MIGRATION.md"
+    },
+    "resource_code": {
+      "replacement": "Protocol.ErrorCodes.resource_not_found/1 with era or negotiated revision",
+      "source_evidence": [
+        "lib/ex_mcp/protocol/error_codes.ex"
+      ],
+      "prerequisites": "Use established peer era: legacy -32002, modern -32602; unknown revisions remain explicit errors.",
+      "example_reference": "docs/V2_API_MIGRATION.md"
+    },
+    "url_code": {
+      "replacement": "ErrorCodes.url_elicitation_required(:legacy); modern Server.DSL.Result.input_required/1,2",
+      "source_evidence": [
+        "lib/ex_mcp/protocol/error_codes.ex",
+        "lib/ex_mcp/server/dsl/result.ex"
+      ],
+      "prerequisites": "Preserve legacy URL elicitation -32042; modern MRTR replaces retired code, rather than re-emitting it.",
+      "example_reference": "docs/V2_API_MIGRATION.md"
+    },
+    "initialize": {
+      "replacement": "Server.Capabilities.build_capabilities/1,2; handler initialize result normalized by internal Protocol.Initialize.build_initialize_result/2",
+      "source_evidence": [
+        "lib/ex_mcp/server/capabilities.ex",
+        "lib/ex_mcp/protocol/initialize.ex"
+      ],
+      "prerequisites": "Capabilities-only and full string-keyed wrapper have different shape; assemble server fields deliberately; legacy negotiation does not discover modern MCP.",
+      "example_reference": "docs/V2_API_MIGRATION.md"
+    }
+  },
+  "removal_modules": [
+    {
+      "module": "ExMCP.Server.Tools",
+      "source": "lib/ex_mcp/server/tools.ex",
+      "compiled_module_deprecation": null,
+      "replacement_group": "tools_dsl",
+      "callables": [
+        {
+          "module": "ExMCP.Server.Tools",
+          "kind": "function",
+          "name": "__normalize_response__",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_results"
+        },
+        {
+          "module": "ExMCP.Server.Tools",
+          "kind": "function",
+          "name": "__tool__",
+          "arity": 4,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools",
+          "kind": "function",
+          "name": "__validate_and_normalize_response__",
+          "arity": 3,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_results"
+        },
+        {
+          "module": "ExMCP.Server.Tools",
+          "kind": "function",
+          "name": "compile_schema",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_schema"
+        },
+        {
+          "module": "ExMCP.Server.Tools",
+          "kind": "function",
+          "name": "validate_with_schema",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_schema"
+        },
+        {
+          "module": "ExMCP.Server.Tools",
+          "kind": "macro",
+          "name": "__before_compile__",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools",
+          "kind": "macro",
+          "name": "__using__",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools",
+          "kind": "macro",
+          "name": "annotations",
+          "arity": 1,
+          "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools",
+          "kind": "macro",
+          "name": "description",
+          "arity": 1,
+          "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools",
+          "kind": "macro",
+          "name": "handle",
+          "arity": 1,
+          "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools",
+          "kind": "macro",
+          "name": "input_schema",
+          "arity": 1,
+          "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools",
+          "kind": "macro",
+          "name": "output_schema",
+          "arity": 1,
+          "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools",
+          "kind": "macro",
+          "name": "param",
+          "arity": 2,
+          "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools",
+          "kind": "macro",
+          "name": "param",
+          "arity": 3,
+          "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools",
+          "kind": "macro",
+          "name": "title",
+          "arity": 1,
+          "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools",
+          "kind": "macro",
+          "name": "tool",
+          "arity": 2,
+          "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools",
+          "kind": "macro",
+          "name": "tool",
+          "arity": 3,
+          "compiled_deprecation": "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0.",
+          "replacement_group": "tools_dsl"
+        }
+      ],
+      "types": [],
+      "struct_fields": null
+    },
+    {
+      "module": "ExMCP.Server.Tools.ASTValidator",
+      "source": "lib/ex_mcp/server/tools/ast_validator.ex",
+      "compiled_module_deprecation": null,
+      "replacement_group": "tools_schema",
+      "callables": [
+        {
+          "module": "ExMCP.Server.Tools.ASTValidator",
+          "kind": "function",
+          "name": "validate_schema_ast",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_schema"
+        }
+      ],
+      "types": [],
+      "struct_fields": null
+    },
+    {
+      "module": "ExMCP.Server.Tools.Builder",
+      "source": "lib/ex_mcp/server/tools/builder.ex",
+      "compiled_module_deprecation": null,
+      "replacement_group": "tools_builder",
+      "callables": [
+        {
+          "module": "ExMCP.Server.Tools.Builder",
+          "kind": "function",
+          "name": "annotations",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_builder"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Builder",
+          "kind": "function",
+          "name": "build",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_builder"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Builder",
+          "kind": "function",
+          "name": "description",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_builder"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Builder",
+          "kind": "function",
+          "name": "handler",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_builder"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Builder",
+          "kind": "function",
+          "name": "input_schema",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_builder"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Builder",
+          "kind": "function",
+          "name": "new",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_builder"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Builder",
+          "kind": "function",
+          "name": "output_schema",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_builder"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Builder",
+          "kind": "function",
+          "name": "param",
+          "arity": 3,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_builder"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Builder",
+          "kind": "function",
+          "name": "param",
+          "arity": 4,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_builder"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Builder",
+          "kind": "function",
+          "name": "title",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_builder"
+        }
+      ],
+      "types": [],
+      "struct_fields": null
+    },
+    {
+      "module": "ExMCP.Server.Tools.Builder.Tool",
+      "source": "lib/ex_mcp/server/tools/builder.ex",
+      "compiled_module_deprecation": null,
+      "replacement_group": "tools_builder",
+      "callables": [
+        {
+          "module": "ExMCP.Server.Tools.Builder.Tool",
+          "kind": "function",
+          "name": "__struct__",
+          "arity": 0,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_builder"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Builder.Tool",
+          "kind": "function",
+          "name": "__struct__",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_builder"
+        }
+      ],
+      "types": [
+        {
+          "name": "param",
+          "arity": 0,
+          "definition": "param() :: %{\n  name: atom(),\n  type: atom() | {atom(), any()},\n  required: boolean(),\n  default: any(),\n  schema: map() | nil\n}",
+          "replacement_group": "tools_builder"
+        },
+        {
+          "name": "t",
+          "arity": 0,
+          "definition": "t() :: %ExMCP.Server.Tools.Builder.Tool{\n  annotations: map(),\n  description: String.t(),\n  handler: function(),\n  input_schema: map() | nil,\n  name: String.t(),\n  output_schema: map() | nil,\n  params: [param()],\n  title: String.t() | nil\n}",
+          "replacement_group": "tools_builder"
+        }
+      ],
+      "struct_fields": [
+        "annotations",
+        "description",
+        "handler",
+        "input_schema",
+        "name",
+        "output_schema",
+        "params",
+        "title"
+      ]
+    },
+    {
+      "module": "ExMCP.Server.Tools.Helpers",
+      "source": "lib/ex_mcp/server/tools/helpers.ex",
+      "compiled_module_deprecation": null,
+      "replacement_group": "tools_results",
+      "callables": [
+        {
+          "module": "ExMCP.Server.Tools.Helpers",
+          "kind": "function",
+          "name": "array_schema",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_schema"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Helpers",
+          "kind": "function",
+          "name": "array_schema",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_schema"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Helpers",
+          "kind": "function",
+          "name": "error_response",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_results"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Helpers",
+          "kind": "function",
+          "name": "image_response",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_results"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Helpers",
+          "kind": "function",
+          "name": "image_response",
+          "arity": 3,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_results"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Helpers",
+          "kind": "function",
+          "name": "multi_content_response",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_results"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Helpers",
+          "kind": "function",
+          "name": "number_schema",
+          "arity": 0,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_schema"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Helpers",
+          "kind": "function",
+          "name": "number_schema",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_schema"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Helpers",
+          "kind": "function",
+          "name": "object_schema",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_schema"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Helpers",
+          "kind": "function",
+          "name": "object_schema",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_schema"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Helpers",
+          "kind": "function",
+          "name": "resource_response",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_results"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Helpers",
+          "kind": "function",
+          "name": "string_schema",
+          "arity": 0,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_schema"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Helpers",
+          "kind": "function",
+          "name": "string_schema",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_schema"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Helpers",
+          "kind": "function",
+          "name": "structured_response",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_results"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Helpers",
+          "kind": "function",
+          "name": "text_response",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_results"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Helpers",
+          "kind": "function",
+          "name": "validate_arguments",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_schema"
+        }
+      ],
+      "types": [],
+      "struct_fields": null
+    },
+    {
+      "module": "ExMCP.Server.Tools.Registry",
+      "source": "lib/ex_mcp/server/tools/registry.ex",
+      "compiled_module_deprecation": null,
+      "replacement_group": "tools_registry",
+      "callables": [
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "call_tool",
+          "arity": 3,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "call_tool",
+          "arity": 4,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "child_spec",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "code_change",
+          "arity": 3,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "get_tool",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "get_tool",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "handle_call",
+          "arity": 3,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "handle_cast",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "handle_info",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "init",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "list_tools",
+          "arity": 0,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "list_tools",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "register_tool",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "register_tool",
+          "arity": 3,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "register_tools",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "register_tools",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "start_link",
+          "arity": 0,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "start_link",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Registry",
+          "kind": "function",
+          "name": "terminate",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_registry"
+        }
+      ],
+      "types": [
+        {
+          "name": "handler",
+          "arity": 0,
+          "definition": "handler() :: (map(), any() -> {:ok, any()} | {:ok, any(), any()} | {:error, any()})",
+          "replacement_group": "tools_registry"
+        },
+        {
+          "name": "tool_definition",
+          "arity": 0,
+          "definition": "tool_definition() :: %{\n  optional(atom()) => any(),\n  name: String.t(),\n  description: String.t(),\n  inputSchema: map() | boolean(),\n  outputSchema: map() | boolean() | nil\n}",
+          "replacement_group": "tools_registry"
+        }
+      ],
+      "struct_fields": null
+    },
+    {
+      "module": "ExMCP.Server.Tools.ResponseNormalizer",
+      "source": "lib/ex_mcp/server/tools/response_normalizer.ex",
+      "compiled_module_deprecation": null,
+      "replacement_group": "tools_results",
+      "callables": [
+        {
+          "module": "ExMCP.Server.Tools.ResponseNormalizer",
+          "kind": "function",
+          "name": "normalize",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_results"
+        },
+        {
+          "module": "ExMCP.Server.Tools.ResponseNormalizer",
+          "kind": "function",
+          "name": "normalize_error",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_results"
+        }
+      ],
+      "types": [],
+      "struct_fields": null
+    },
+    {
+      "module": "ExMCP.Server.Tools.Simplified",
+      "source": "lib/ex_mcp/server/tools/simplified.ex",
+      "compiled_module_deprecation": null,
+      "replacement_group": "tools_dsl",
+      "callables": [
+        {
+          "module": "ExMCP.Server.Tools.Simplified",
+          "kind": "function",
+          "name": "apply_default_description",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Simplified",
+          "kind": "function",
+          "name": "process_instructions",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Simplified",
+          "kind": "macro",
+          "name": "__before_compile__",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Simplified",
+          "kind": "macro",
+          "name": "__using__",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Simplified",
+          "kind": "macro",
+          "name": "annotations",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Simplified",
+          "kind": "macro",
+          "name": "deftool",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Simplified",
+          "kind": "macro",
+          "name": "deftool",
+          "arity": 3,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Simplified",
+          "kind": "macro",
+          "name": "description",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Simplified",
+          "kind": "macro",
+          "name": "input_schema",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Simplified",
+          "kind": "macro",
+          "name": "output_schema",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Simplified",
+          "kind": "macro",
+          "name": "param",
+          "arity": 2,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Simplified",
+          "kind": "macro",
+          "name": "param",
+          "arity": 3,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Simplified",
+          "kind": "macro",
+          "name": "run",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_dsl"
+        },
+        {
+          "module": "ExMCP.Server.Tools.Simplified",
+          "kind": "macro",
+          "name": "title",
+          "arity": 1,
+          "compiled_deprecation": null,
+          "replacement_group": "tools_dsl"
+        }
+      ],
+      "types": [],
+      "struct_fields": null
+    },
+    {
+      "module": "ExMCP.Transport.HTTPServer",
+      "source": "lib/ex_mcp/transport/http_server.ex",
+      "compiled_module_deprecation": "Use ExMCP.HttpPlug instead. ExMCP.Transport.HTTPServer will be removed in 2.0.0.",
+      "replacement_group": "http_endpoint",
+      "callables": [
+        {
+          "module": "ExMCP.Transport.HTTPServer",
+          "kind": "function",
+          "name": "call",
+          "arity": 2,
+          "compiled_deprecation": "Use ExMCP.HttpPlug instead. ExMCP.Transport.HTTPServer will be removed in 2.0.0.",
+          "replacement_group": "http_endpoint"
+        },
+        {
+          "module": "ExMCP.Transport.HTTPServer",
+          "kind": "function",
+          "name": "init",
+          "arity": 1,
+          "compiled_deprecation": "Use ExMCP.HttpPlug instead. ExMCP.Transport.HTTPServer will be removed in 2.0.0.",
+          "replacement_group": "http_endpoint"
+        }
+      ],
+      "types": [],
+      "struct_fields": null
+    },
+    {
+      "module": "ExMCP.Transport.HTTPServerWithVersion",
+      "source": "lib/ex_mcp/transport/http_server_with_version.ex",
+      "compiled_module_deprecation": "Use ExMCP.HttpPlug instead. ExMCP.Transport.HTTPServerWithVersion will be removed in 2.0.0.",
+      "replacement_group": "http_endpoint",
+      "callables": [
+        {
+          "module": "ExMCP.Transport.HTTPServerWithVersion",
+          "kind": "function",
+          "name": "call",
+          "arity": 2,
+          "compiled_deprecation": "Use ExMCP.HttpPlug instead. ExMCP.Transport.HTTPServerWithVersion will be removed in 2.0.0.",
+          "replacement_group": "http_endpoint"
+        },
+        {
+          "module": "ExMCP.Transport.HTTPServerWithVersion",
+          "kind": "function",
+          "name": "init",
+          "arity": 1,
+          "compiled_deprecation": "Use ExMCP.HttpPlug instead. ExMCP.Transport.HTTPServerWithVersion will be removed in 2.0.0.",
+          "replacement_group": "http_endpoint"
+        }
+      ],
+      "types": [],
+      "struct_fields": null
+    }
+  ],
+  "removal_callables": [
+    {
+      "module": "ExMCP.Content.Builders",
+      "kind": "function",
+      "name": "compress",
+      "arity": 1,
+      "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0.",
+      "replacement_group": "media"
+    },
+    {
+      "module": "ExMCP.Content.Builders",
+      "kind": "function",
+      "name": "compress",
+      "arity": 2,
+      "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0.",
+      "replacement_group": "media"
+    },
+    {
+      "module": "ExMCP.Content.Builders",
+      "kind": "function",
+      "name": "resize",
+      "arity": 3,
+      "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0.",
+      "replacement_group": "media"
+    },
+    {
+      "module": "ExMCP.Content.Sanitizer",
+      "kind": "function",
+      "name": "remove_metadata",
+      "arity": 1,
+      "compiled_deprecation": "Not implemented for EXIF; not an MCP requirement. Planned for removal in 2.0.0.",
+      "replacement_group": "metadata"
+    },
+    {
+      "module": "ExMCP.Content.Transformer",
+      "kind": "function",
+      "name": "compress_image",
+      "arity": 2,
+      "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools.",
+      "replacement_group": "media"
+    },
+    {
+      "module": "ExMCP.Content.Transformer",
+      "kind": "function",
+      "name": "compress_image",
+      "arity": 3,
+      "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools.",
+      "replacement_group": "media"
+    },
+    {
+      "module": "ExMCP.Content.Transformer",
+      "kind": "function",
+      "name": "convert_encoding",
+      "arity": 1,
+      "compiled_deprecation": "Not implemented; not required by MCP/ACP. Planned for removal in 2.0.0.",
+      "replacement_group": "media"
+    },
+    {
+      "module": "ExMCP.Content.Transformer",
+      "kind": "function",
+      "name": "convert_encoding",
+      "arity": 2,
+      "compiled_deprecation": "Not implemented; not required by MCP/ACP. Planned for removal in 2.0.0.",
+      "replacement_group": "media"
+    },
+    {
+      "module": "ExMCP.Content.Transformer",
+      "kind": "function",
+      "name": "generate_thumbnail",
+      "arity": 2,
+      "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools.",
+      "replacement_group": "media"
+    },
+    {
+      "module": "ExMCP.Content.Transformer",
+      "kind": "function",
+      "name": "generate_thumbnail",
+      "arity": 3,
+      "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools.",
+      "replacement_group": "media"
+    },
+    {
+      "module": "ExMCP.Content.Transformer",
+      "kind": "function",
+      "name": "resize_image",
+      "arity": 3,
+      "compiled_deprecation": "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools.",
+      "replacement_group": "media"
+    },
+    {
+      "module": "ExMCP.HttpPlug",
+      "kind": "function",
+      "name": "start_link",
+      "arity": 0,
+      "compiled_deprecation": "The session table is owned by ExMCP.HttpPlug.SessionRegistry, started with the :ex_mcp application",
+      "replacement_group": "http_owner"
+    },
+    {
+      "module": "ExMCP.HttpPlug",
+      "kind": "function",
+      "name": "start_link",
+      "arity": 1,
+      "compiled_deprecation": "The session table is owned by ExMCP.HttpPlug.SessionRegistry, started with the :ex_mcp application",
+      "replacement_group": "http_owner"
+    },
+    {
+      "module": "ExMCP.Protocol.ErrorCodes",
+      "kind": "function",
+      "name": "legacy_consent_required",
+      "arity": 0,
+      "compiled_deprecation": "Use consent_required/0; -32002 is reserved as a historical MCP code",
+      "replacement_group": "consent"
+    },
+    {
+      "module": "ExMCP.Protocol.ErrorCodes",
+      "kind": "function",
+      "name": "resource_not_found",
+      "arity": 0,
+      "compiled_deprecation": "Use resource_not_found/1 so modern peers receive -32602",
+      "replacement_group": "resource_code"
+    },
+    {
+      "module": "ExMCP.Protocol.ErrorCodes",
+      "kind": "function",
+      "name": "url_elicitation_required",
+      "arity": 0,
+      "compiled_deprecation": "MCP 2026-07-28 retired -32042; use MRTR for modern peers",
+      "replacement_group": "url_code"
+    },
+    {
+      "module": "ExMCP.Protocol.VersionNegotiator",
+      "kind": "function",
+      "name": "build_capabilities",
+      "arity": 1,
+      "compiled_deprecation": "Use ExMCP.Protocol.Initialize or ExMCP.Server.Capabilities",
+      "replacement_group": "initialize"
+    }
+  ],
+  "type_option_narrowing": [
+    {
+      "module": "ExMCP.Content.Transformer",
+      "type": "transformation_op/0",
+      "retire": [
+        ":convert_encoding",
+        "{:convert_encoding, from}",
+        ":compress_images",
+        ":resize_images",
+        "{:resize_images, opts}",
+        ":generate_thumbnails"
+      ],
+      "status": "agree/test rejection semantics; type remains; no-op catch-all must not silently validate retirement"
+    },
+    {
+      "module": "ExMCP.Content.Sanitizer",
+      "type": "sanitization_op/0",
+      "retire": [
+        ":remove_metadata",
+        ":compress_media"
+      ],
+      "status": "agree/test rejection semantics; supported sanitizers and type remain"
+    },
+    {
+      "module": "ExMCP.Content.Builders",
+      "type": "file_opts/0",
+      "review_unimplemented_options": [
+        ":auto_resize",
+        ":quality"
+      ],
+      "status": "not an additional accepted export removal; decide explicit rejection/type/example narrowing"
+    }
+  ],
+  "namespace_package_moves": [
+    {
+      "match": "ExMCP and remaining ExMCP.* MCP modules",
+      "package": "arbor_mcp",
+      "target": "Arbor.MCP and Arbor.MCP.*",
+      "exclude": [
+        "ExMCP.Server.Tools",
+        "ExMCP.Server.Tools.ASTValidator",
+        "ExMCP.Server.Tools.Builder",
+        "ExMCP.Server.Tools.Builder.Tool",
+        "ExMCP.Server.Tools.Helpers",
+        "ExMCP.Server.Tools.Registry",
+        "ExMCP.Server.Tools.ResponseNormalizer",
+        "ExMCP.Server.Tools.Simplified",
+        "ExMCP.Transport.HTTPServer",
+        "ExMCP.Transport.HTTPServerWithVersion",
+        "ExMCP.Internal.JSONRPC",
+        "ExMCP.Internal.StdioFraming",
+        "ExMCP.Internal.PortEnvironment",
+        "ExMCP.Internal.LogSummary",
+        "ExMCP.Internal.LineBuffer",
+        "ExMCP.Internal.NameValue",
+        "ExMCP.Internal.WorkspacePath"
+      ],
+      "evidence": "tmp/arbor-mcp-v2/lib",
+      "exclude_prefixes": [
+        "ExMCP.ACP"
+      ]
+    },
+    {
+      "match": "ExMCP.ACP and ACP core descendants",
+      "package": "arbor_acp",
+      "target": "Arbor.ACP and Arbor.ACP.*",
+      "evidence": "tmp/arbor-acp-v2/packages/arbor_acp/lib"
+    },
+    {
+      "match": "ExMCP.ACP.Adapters.*",
+      "package": "arbor_acp_adapters",
+      "target": "Arbor.ACP.Adapters.*",
+      "evidence": "tmp/arbor-acp-v2/packages/arbor_acp_adapters/lib"
+    },
+    {
+      "match": "ExMCP.ACP.PromptQueue",
+      "package": "arbor_acp_adapters",
+      "target": "Arbor.ACP.Adapters.Internal.PromptQueue",
+      "evidence": "tmp/arbor-acp-v2/packages/arbor_acp_adapters/lib/arbor_acp/adapters/internal/prompt_queue.ex"
+    },
+    {
+      "match": "ExMCP.Internal.JSONRPC, StdioFraming, PortEnvironment, LogSummary",
+      "package": "arbor_rpc",
+      "target": "Arbor.RPC.JSONRPC, StdioFraming, PortEnvironment, LogSummary",
+      "evidence": "tmp/arbor-acp-v2/packages/arbor_rpc/lib/arbor_rpc"
+    },
+    {
+      "match": "ExMCP.Internal.LineBuffer",
+      "package": "arbor_rpc",
+      "target": "Arbor.RPC.Internal.LineBuffer",
+      "internal": true,
+      "evidence": "tmp/arbor-acp-v2/packages/arbor_rpc/lib/arbor_rpc/internal/line_buffer.ex"
+    },
+    {
+      "match": "ExMCP.Internal.NameValue, WorkspacePath",
+      "package": "arbor_acp",
+      "target": "Arbor.ACP.AdapterSupport.NameValue, WorkspacePath",
+      "evidence": "tmp/arbor-acp-v2/packages/arbor_acp/lib/arbor_acp/adapter_support"
+    },
+    {
+      "match": "ExMCP.ACP.Envelope",
+      "package": "arbor_acp",
+      "target": "Arbor.ACP.Envelope, delegating to Arbor.RPC.JSONRPC",
+      "internal": true,
+      "evidence": "tmp/arbor-acp-v2/packages/arbor_acp/lib/arbor_acp/envelope.ex"
+    },
+    {
+      "match": "ExMCP.ACP.AdapterBridge.PortRunner.open/4,command/2,close/1,safe_env/2",
+      "package": "arbor_acp",
+      "target": "Arbor.ACP.AdapterSupport.Subprocess same signatures; opaque Arbor.RPC.Subprocess handle instead of raw Port",
+      "evidence": "tmp/arbor-acp-v2/packages/arbor_acp/lib/arbor_acp/adapter_support/subprocess.ex"
+    }
+  ],
+  "runtime_candidate_changes": [
+    {
+      "old": "HandlerServer.start_link/1 and generated Test/BEAM startup handler PID/child spec",
+      "new": "runtime supervisor PID and supervisor child spec; root names and opaque Runtime.ref/1",
+      "evidence": [
+        "tmp/arbor-mcp-v2/lib/arbor_mcp/server/handler_server.ex",
+        "tmp/arbor-mcp-v2/lib/arbor_mcp/runtime.ex"
+      ],
+      "gate": "stdio/HTTP/stores/full pressure and lifecycle qualification outstanding"
+    },
+    {
+      "old": "callback self() and direct GenServer calls/casts to handler/transport",
+      "new": "supervised callback tasks; new Server.call/2,3 and cast/2; immediate reply/noreply state forms only",
+      "evidence": [
+        "tmp/arbor-mcp-v2/lib/arbor_mcp/runtime/scheduler.ex",
+        "tmp/arbor-mcp-v2/lib/arbor_mcp/server.ex"
+      ],
+      "gate": "deferred reply/continuation/stop not supported; resource ownership and consumer migration need tests",
+      "baseline_note": "Server.call/2,3 and cast/2 are additive; the frozen ExMCP.Server exposes neither. The old usage being migrated is direct GenServer access."
+    },
+    {
+      "old": "PID-state inspection and wire-ID-only cancellation assumptions",
+      "new": "opaque ref, Runtime.edge/1 diagnostic access, scoped Context.cancelled?/0 and opaque Context.scope/0",
+      "evidence": [
+        "tmp/arbor-mcp-v2/lib/arbor_mcp/runtime/ref.ex",
+        "tmp/arbor-mcp-v2/docs/V2_HANDLER_RUNTIME_MIGRATION.md"
+      ],
+      "gate": "direct edge sends bypass supported admission; explicit non-symbol inventory required"
+    }
+  ],
+  "non_symbol_inventory_gaps": [
+    "application config keys/module-valued configuration",
+    "transport option names/defaults/values and handler_opts semantics",
+    "registered process and ETS/DETS names/files",
+    "telemetry events/measurements/metadata",
+    "internal messages and ACK/ownership handoff",
+    "links/child specs/callback PID and resource lifetime",
+    "result/error shapes and timeout/cancellation semantics",
+    "consumer installation/tooling/examples and wire/storage identifiers"
+  ],
+  "retained_wire_features": [
+    "MCP legacy revisions and modern server/discover era",
+    "tools/resources/prompts and valid content blocks",
+    "tasks/subscriptions/progress/cancellation",
+    "Streamable HTTP/request-owned SSE and explicitly supported legacy HTTP+SSE",
+    "OAuth/schema policy/MRTR/legacy URL elicitation",
+    "legacy resource error -32002 versus modern -32602",
+    "protocol-deprecated Roots/Sampling/Logging pending separate explicit feature decision",
+    "ACP protocol/wire _meta.ex_mcp, _ex_mcp.pi/*, native IDs/client information defaults, ~/.ex_mcp/pi/session-map.json"
+  ],
+  "coverage": {
+    "compiled_deprecated_modules": 2,
+    "compiled_deprecated_callables": 31,
+    "planned_removed_modules": 10,
+    "planned_removed_callables": 102,
+    "planned_removed_types": 4,
+    "tools_family_modules": 8,
+    "tools_family_callables": 81,
+    "unexpected_manifest_difference_policy": "review, not automatically authorize removal"
+  },
+  "namespace_move_rule_interpretation": "Exact helper overrides and ACP/vendor rules precede the remaining MCP fallback; not an executable blanket string replacement."
+}

@@ -1,6 +1,6 @@
 # ExMCP v2 Release Assessment
 
-- **Reviewed:** 2026-10-03
+- **Reviewed:** 2026-10-04
 - **Released baseline:** `v1.5.0`
 - **Integrated source baseline:** `e4d2fc3`
 - **Status:** Full v2 scope, adapter split and Arbor namespaces accepted; GitHub MCP transfer complete; implementation and qualification in progress
@@ -35,7 +35,7 @@ library-v2 release requirement; retain the gates in
 | Post-1.5 adapter behavior | Claude mode kinds/quota, message-specific forks and chunk message IDs, plus Pi correlation/order fixes are integrated. |
 | Post-1.5 security/lifecycle | Trust-store deadlines, client shutdown/link/deadline/delivery behavior, metadata checks, redaction and raised Mint/Cowlib floors are integrated. See `CHANGELOG.md` for migration effects. |
 | Claude MCP launch fix | `e4d2fc3` stops claiming unsupported session-supplied MCP transports and keeps launch-time MCP configuration out of argv through a private configuration file. Extraction must include this commit. |
-| Pi subprocess test cleanup | Adapted the remaining stdout suppression from `014beb6` into the managed-model confirmation test. #71 already made the child exit on stdin EOF; suppressing its output also avoids EPIPE noise during teardown. |
+| Pi subprocess test cleanup | Preserved the orphan-child correction from `014beb6`/#71. Later qualification replaced the stdout-suppressing shell fixture with a direct managed `cat` child and a real model-confirmation RPC exchange; early stdout closure is covered separately. |
 
 Local validation of the integrated tree passed compilation with warnings as
 errors, formatting of changed code/tests, strict Credo, documentation generation,
@@ -56,7 +56,7 @@ removed after verifying their changes:
 | `fix/cacerts-deadline` | `e1d311a` | Complete tree equals squash merge `5b0e116` (#74). |
 | `claude/fervent-swanson-44cd3d` | `15c33f8` | Complete tree equals squash merge `fc61f84` (#72). |
 | `claude/wizardly-cerf-11dfd4` | `e4d2fc3` | Fast-forwarded into `master`. |
-| `claude/heuristic-driscoll-2fc2f7` | `014beb6` | Orphan-child correction already in #71; remaining stdout suppression adapted and tested. |
+| `claude/heuristic-driscoll-2fc2f7` | `014beb6` | Orphan-child correction already in #71; remaining fixture behavior reconciled, then strengthened with the direct-child model-confirmation test. |
 | `co` | `3294d12` | Already an ancestor of `master`. |
 
 Two clean Claude worktrees were removed. Their ignored local settings were
@@ -115,11 +115,33 @@ extraction tooling independently passed 29 primitive, 321 core and 1,434 bundle
 tests. These counts differ because the canonical workspace also contains new
 bounded-framing and extraction regressions added after the generated snapshot.
 
-No Hex package is published. Shared Port ownership, bounded delivery and cleanup
-remain implementation gates; the current subprocess wrappers are temporary.
-MCP v2 is being prepared in an isolated branch with `Arbor.MCP.*`. Its scheduler
-foundation still needs review and transport/store integration; main remains the
-supported `ExMCP` 1.x source and the frozen API inventory retains those identities.
+No Hex package was published at that checkpoint. The subsequent October 4
+checkpoint below supersedes its temporary subprocess implementation status.
+Main remains the supported `ExMCP` 1.x source, and the frozen API inventory
+retains those identities.
+
+## October 4 implementation checkpoint
+
+The namespace decision is settled as `Arbor.MCP.*`, `Arbor.ACP.*` and
+`Arbor.RPC.*`; package and OTP application names retain underscores. The
+repository migration is complete. Main remains a supported 1.x package; the
+latest main CI passed at `080322d` after the Mint floor was raised to `1.10.2`
+and the Pi fixture was corrected.
+
+| Slice | Reviewable evidence | Remaining work |
+|---|---|---|
+| MCP package/runtime foundation | [Draft PR #76](https://github.com/trust-arbor/arbor_mcp/pull/76), committed through `46b4f86`; independent MCP package and scheduler foundation. [Complete CI](https://github.com/trust-arbor/arbor_mcp/actions/runs/37183380769) passes all ten jobs, including Elixir 1.17–1.20, coverage, conformance, SDK interoperability, performance and Dialyzer. | This CI snapshot precedes the local handler-runtime and optional-listener integration. Requalify the exact combined commit. |
+| Neutral shared subprocess | [ACP draft PR #1](https://github.com/trust-arbor/arbor_acp/pull/1), committed through `25fc8d1`; stable owner, generation events, explicit frame credit, bounded managed queues/writes, absolute read deadlines and finite cleanup. Its 74 tests pass on minimum, current and newest toolchains, including fast-child metadata and stale-PID cleanup. | Raw Port-driver mailbox pressure, process-group/platform behavior and full packaged-consumer qualification remain release gates. Fast group startup requires measured ownership proof and can return an explicit proof error. |
+| ACP bridge, Pi and native stdio/client | Shared-handle adoption, explicit cleanup errors and adapter frame-receipt extension in [draft PR #1](https://github.com/trust-arbor/arbor_acp/pull/1). RPC 74, core 352, adapter 1,447 and six pinned SDK tests passed on minimum/current toolchains; production compilation, formatting, boundaries and all three archive inspections passed. Original golden transcripts were unchanged. [Package CI](https://github.com/trust-arbor/arbor_acp/actions/runs/37183152160) and [SDK CI](https://github.com/trust-arbor/arbor_acp/actions/runs/37183149767) pass at `25fc8d1`. | Remaining vendor utility subprocess paths, pressure/platform behavior and full release qualification need evidence. |
+| MCP child stdio/client | Committed through `46b4f86` in [draft PR #76](https://github.com/trust-arbor/arbor_mcp/pull/76), with shared RPC pinned at `25fc8d1`: frame credit until protocol processing, one absolute read deadline and known cleanup failures across repeated disconnect. All 13 legacy/modern SDK cases and 28 focused lifecycle cases pass; complete CI is green. | This integrates client-owned children. Server stdio still needs the runtime cutover, output pressure and finite EOF drain. |
+| Handler runtime integration | Local Test/BEAM candidate moves callbacks and committed state into the scheduler, scopes peer generations/cancellation, and uses bounded ETS ingress plus independent incoming/outgoing control lanes. The combined default run passes 20 doctests, 34 properties and 3,695 tests (207 excluded); 110 focused runtime/caller cases also pass. | Final quality gates and immutable checkpoint are in progress. HTTP, server stdio, output/batch budgets, public stores and complete cross-transport equivalence remain unfinished. |
+| Optional HTTP listeners | Local integrated candidate has optional Cowboy/Cowlib/Bandit dependencies, bounded listener shutdown and missing-adapter diagnostics. Each minimum/current listener suite passes 34 tests. Six real packaged consumers cover core-only, Cowboy-only and Bandit-only graphs across both toolchains; ExDoc, strict Credo and audit checks pass. The stdio/listener composite also compiles on Elixir 1.20.3/OTP 29 and passes 118 focused tests. | Requalify the final combined commit. Runtime-mounted HTTP, per-session routing/stores, Phoenix consumption and full release conformance remain separate gates. |
+
+Test counts describe their named snapshots and slices; they are not an aggregate
+release certificate. No RC, stable Hex artifact or final API/default freeze has
+occurred. The accepted full runtime/scheduler scope, store/result/API work,
+package-only consumer matrix, complete qualification and final-RC soak still
+govern the October 9 target.
 
 ## Decisions required before moving the public contract
 
@@ -127,7 +149,7 @@ supported `ExMCP` 1.x source and the frozen API inventory retains those identiti
 |---|---|
 | Identity | Accepted: `arbor_mcp` / `Arbor.MCP.*`, `arbor_acp` / `Arbor.ACP.*`, optional `arbor_acp_adapters`. App/config/telemetry migration is specified in the package contract; GitHub redirects do not migrate these identities. |
 | Repository topology | MCP repository transferred to `trust-arbor/arbor_mcp`; separate ACP repository with independently published core and adapter packages. Release order/ranges are recorded in the package contract. |
-| Shared mechanics | Decide whether a small neutral framing/subprocess contract merits a shared package; avoid making ACP depend on the full MCP package. Trivial helpers alone do not justify a third package. |
+| Shared mechanics | Implemented candidate: neutral RPC framing, environment and owned subprocess mechanics are shared by both protocols. Qualify the documented bounds/platforms and freeze its ABI/defaults; ACP never depends on the full MCP package. |
 | MCP integration | Keep ACP `mcpServers` descriptors as ACP-owned data; place MCP runtime integration and BEAM-specific extensions in an optional bridge. |
 | Vendor adapters | Accepted on 2026-10-03: generic adapter execution remains in ACP; Claude/Codex/Pi/ZCode implementations move to one optional `arbor_acp_adapters` bundle, with explicit core compatibility ranges. |
 | Migration | Decide whether a final 1.x release supplies forwarding modules, their support period, and which compatibility names disappear in v2. |
@@ -198,12 +220,11 @@ is specified in [V2_PACKAGE_CONTRACT.md](./V2_PACKAGE_CONTRACT.md).
    supervised callbacks, cancellation/deadlines, queue policy and serialized
    state-commit rules. Run cross-transport, isolation and pressure gates.
    Consolidate configuration and result contracts before removing old APIs.
-4. **Make HTTP listeners optional.** Rework draft PR #21 against the current
-   source on the v2 branch. It conflicts; despite its title/body, its current
-   dependency diff keeps Cowboy required and only adds optional Bandit. It is
-   useful groundwork, not the completed optional-server change. Provide Cowboy
-   and Bandit adapters, missing-adapter diagnostics, listener ownership and
-   shutdown behavior, retaining Cowboy `:ranch_ref` where selected.
+4. **Complete HTTP integration.** The optional-listener candidate supplies
+   Cowboy/Bandit adapters, missing-package diagnostics and bounded shutdown,
+   retaining Cowboy `:ranch_ref`. Integrate scoped HTTP runtime/session routing
+   and qualify the final packaged consumers. Draft PR #21 is preserved as
+   historical groundwork; it is not the implementation source of truth.
 5. **Remove accepted deprecated APIs.** Verify replacements before removing
    `Server.Tools` and companions, `HTTPServer` / `HTTPServerWithVersion`,
    content transformation stubs and agreed aliases. Every removal needs an
@@ -218,19 +239,18 @@ is specified in [V2_PACKAGE_CONTRACT.md](./V2_PACKAGE_CONTRACT.md).
 
 | Phase | Remaining implementation |
 |---|---|
-| 1: contracts | Proposed removal/replacement manifest; runtime/state/concurrency/legacy-support decisions; validated runtime configuration and reducer/effect contracts. Existing client builders are not this completed contract. |
-| 2: runtime | Explicit server supervision subtree and reference; scoped session/subscription/cancellation/replay ownership; crash/restart/stop isolation. `ExMCP.Application` still starts singleton owners. |
-| 3: dispatch/scheduler | One request pipeline and bounded supervised work, queue policy, cancellation/deadline propagation and state-commit guarantees. Stdio/test share `Server.Dispatch`; HTTP retains separate `MessageProcessor` lifecycle semantics. |
+| 1: contracts | Review and finish the [removal/replacement inventory](./V2_API_MIGRATION.md), non-symbol migration, result/configuration contracts and final public defaults. The runtime candidate validates its scheduling configuration, but not every transport/configuration option. |
+| 2: runtime | Extend the implemented Test/BEAM supervisor/reference and scoped cancellation to server stdio and HTTP. Replace application-singleton session/subscription/replay/task owners; qualify store lifecycle and cross-runtime crash/restart/stop isolation. |
+| 3: dispatch/scheduler | The Test/BEAM candidate now schedules supervised callbacks with bounded ingress, deadlines, cancellation and serialized commits. Server stdio and HTTP still need the same path, bounded output/batch accumulation and full cross-transport qualification. |
 | 4: stores | Deliberate public contracts, runtime-owned adapter lifecycle and payload-safe store telemetry. The internal ETS/DETS seam is groundwork, not the whole target. |
 | 5: public API | Unified `Server.Result`, selected DSL constraints/composition, and bracketed client connection ownership. No `with_connection` helper or unified result facade exists. |
 | 6–7: migration/release | Accepted removals, final API diff/guide, cross-transport equivalence, runtime pressure/isolation/upgrade evidence and v2 RC/soak. |
 
-The accepted v2 contract must specify callback PID/links, state order,
-cancellation, runtime ownership and restart behavior. Existing tests show a
-HandlerServer client timeout leaves its callback running, while HTTP
-`MessageProcessor` has temporary-handler timeout semantics; the v2 scheduler
-must resolve that difference explicitly. Later 2.x changes preserve the
-qualified v2 contract or introduce compatible opt-in behavior.
+The accepted runtime contract specifies callback PID/links, state order,
+cancellation, ownership and restart behavior. The Test/BEAM candidate implements
+those scheduling semantics; server stdio and HTTP must converge before release.
+A client wait timeout and a server execution deadline remain distinct. Later
+2.x changes preserve the qualified contract or introduce compatible opt-in behavior.
 
 ## Release evidence required
 

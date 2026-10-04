@@ -1,7 +1,7 @@
 # v2 Release Plan: October 3–9, 2026
 
 - **Target:** Friday, October 9, 2026, in `America/Chicago`
-- **Status:** Foundation work underway; implementation and release qualification outstanding
+- **Status:** Package and runtime foundations committed; transport integration and release qualification underway
 - **Scope:** Full accepted v2, including runtime/scheduler and transport integration
 - **Names:** `Arbor.MCP.*`, `Arbor.ACP.*`; optional `arbor_acp_adapters` bundle accepted
 - **Repository:** `trust-arbor/arbor_mcp`, transferred with repository ID `989917799` preserved
@@ -50,10 +50,9 @@ soak period.
 
 ## Package dependency and publication order
 
-The planned shared package still needs its final contract/qualification decision;
-do not restore duplicated security-sensitive mechanics to meet the date.
-Once qualified, use this exact topological publication order for both RCs and
-stable artifacts:
+The shared package candidate is implemented and used by both protocol packages;
+its final ABI/default freeze and release-wide qualification remain gates.
+Use this exact topological publication order for both RCs and stable artifacts:
 
 | Order | Package | Required predecessors |
 |---:|---|---|
@@ -121,12 +120,16 @@ the current extraction has not completed this evidence.
   contracts and deprecated cleanup remain implementation work.
 - Shared package qualification, exact subprocess ABI/defaults, independent CI,
   version ranges, release owners and final soak duration must be frozen.
-- Refresh stale extraction/overlays from current main; remove post-cutover
-  regeneration, private cross-package calls and stale `:ex_mcp` interop startup.
-- Create/qualify ACP repository publishing metadata and restore its workflows;
-  update links, Hex ownership/credentials and namespace/config/telemetry migration.
-- Rework conflicting draft PR #21 for v2's optional HTTP/listener contract;
-  qualify package-only consumers, conformance, adapter compatibility and RC soak.
+- Qualify the shared-handle integration candidates and their exact immutable
+  dependency pins. Canonical v2 ACP is now in its own repository; preserve the
+  original extraction and dirty spike as migration evidence, without regenerating
+  over the canonical implementation.
+- Complete packaged consumer, extension/range and publishing qualification.
+  Independent ACP manifests and CI exist; Hex ownership/credentials, final
+  links and namespace/config/telemetry migration still need release evidence.
+- Finish HTTP runtime/session integration and requalify the optional-listener
+  candidate at the final package commit. Qualify Phoenix, combined/OTP-release
+  consumers, conformance, adapter compatibility and RC soak.
 
 Stable publication requires all blockers cleared and the final RC's full evidence
 reviewed. Keep the frozen 1.x manifest and preserved migration worktrees available
