@@ -558,12 +558,12 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
   test "cancelling a future batch ID does not cancel its currently running member" do
     {root, transport} = start_pair()
     assert {:ok, transport} = Test.send_message([tool(1, "hold"), tool(2, "inc")], transport)
-    assert_receive {:holding, 1, callback, 0}
+    assert_receive {:holding, 1, callback, 0}, 1_000
     assert {:ok, _transport} = Test.send_message(cancel(2), transport)
     send(callback, :probe)
-    assert_receive {:cancel_probe, ^callback, false}
+    assert_receive {:cancel_probe, ^callback, false}, 1_000
     send(callback, :release)
-    assert_receive {:transport_message, encoded_batch}
+    assert_receive {:transport_message, encoded_batch}, 1_000
     assert [first, second] = response_map(encoded_batch)
     assert %{"id" => 1, "result" => %{"structuredContent" => %{"count" => 1}}} = first
     assert %{"id" => 2, "error" => %{"code" => -32001}} = second

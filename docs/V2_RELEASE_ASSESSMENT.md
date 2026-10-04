@@ -210,7 +210,14 @@ performance job exposed an existing service-restart fixture dereferencing
 `:runtime_unavailable` before the replacement execution cohort was ready. The
 fixture now waits for an available changed generation, preserving its store
 and stale-reference assertions; the 108-case selection includes that correction.
-This correction needs a fresh complete remote run.
+The next remote run at `63486d3` also passed eleven of twelve jobs, including
+both archive consumers and every toolchain. Its performance job reached the
+future-batch cancellation test but exceeded that fixture's default 100 ms wait
+for the held callback to start. The three coordination waits in that test now
+use a finite 1,000 ms budget; held-worker ordering, cancellation, committed state
+and released-reservation assertions are unchanged. The complete 25-case runtime
+edge selection passes on minimum/current at the failing CI seed `242598`.
+A fresh complete remote run remains required for this correction.
 
 Test counts describe their named snapshots and slices; they are not an aggregate
 release certificate. No RC, stable Hex artifact or final API/default freeze has
