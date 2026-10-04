@@ -1,8 +1,8 @@
 # V2 Result replacement slice
 
-Status: integrated into the unpublished MCP v2 draft after qualification against
-canonical MCP source `47fe089c507b7fc3b776cb26250700d035a55caa`. No public
-export is removed here. The supported 1.x source, frozen baseline and accepted retirement
+Status: isolated additive implementation and normalization guard prepared for review, based on canonical
+MCP source `cc7ee20db7c3f9d51d4495060c0482547c86df17`. No public export is
+removed here. The supported 1.x source, frozen baseline and accepted retirement
 plan are unchanged. This slice does not qualify all API retirements or the
 production output integration being implemented separately.
 
@@ -75,6 +75,41 @@ protocol output codec before Scheduler state commit. This module does not
 serialize them or invoke their custom encoders. A direct handler call is not an
 output admission boundary; production reservation, publication and state-commit
 integration is a separate slice.
+
+### Reject collisions before lossy normalization
+
+A subsequent independent output review found that the codec's duplicate-key
+check could be bypassed by earlier normalization: `ResultNormalizer.stringify_keys/1`
+used `Map.new` to collapse atom/string wire aliases before the codec saw them.
+A direct isolated normalize-to-codec probe confirmed both top-level
+`structuredContent` and nested `:is_error` / `"isError"` collisions became one
+key and were accepted. The codec's own guard is correct, but it cannot recover
+information discarded earlier.
+
+The narrowly authorized follow-up updates only `Server.ResultNormalizer` and a
+new focused collision test. Plain-map normalization now rejects duplicate keys
+**after** the existing protocol alias mapping and **before** inserting them in
+the normalized map. This applies recursively to nested maps/lists and catches
+both ordinary atom/string spellings and aliases such as `:is_error`,
+`:is_error?`, `:input_schema` and `:mime_type`. `tool_result/2` normalizes the
+original complete map before wrapping its content; deleting/replacing `:content`
+first would otherwise erase a top-level `:content` / `"content"` collision.
+
+The fixed `ArgumentError` text is `Conflicting normalized result keys`. Keys and
+values are not inspected or included in it; no user JSON/Inspect protocol runs.
+This is a malformed-handler-result programming failure with no Scheduler state
+commit, rather than an authored `isError` result. Valid-input outputs and public
+normalizer exports remain unchanged. Nested unsupported terms still pass through
+normalization for the protocol codec to reject. The shared normalizer also serves
+stdio, HTTP, descriptor preparation and RequestProcessor; those consumers inherit
+strict rejection when they normalize malformed conflicting maps. Their broad
+runtime/transport regression gates remain required before release.
+
+The output integration owner is adding actual Runtime regressions for safe
+terminal error and unchanged committed handler state. This isolated follow-up's
+direct Dispatcher fixtures prove that conflicting raw callback maps cannot
+return proposed state; they do not independently qualify production output
+publication/lifecycle or HTTP/stdio.
 
 The output implementation owner confirmed compatibility with its bounded native
 `:protocol` walk of ordinary maps/lists and protocol atom values; arbitrary
@@ -167,7 +202,16 @@ pin. Cached dependency compilation still emits existing dependency warnings;
 project warnings-as-errors compilation passed. No network consumer, broad runtime
 or port suite is claimed by this evidence.
 
+The normalization follow-up additionally passed 53 pure cases on both toolchains:
+new collision/direct-dispatch tests, retained protocol-normalizer tests, and the
+34 Result/DSL cases above. Both toolchains passed forced project warnings-as-errors compilation and
+owned-file formatting. Current strict Credo checked 639 source files with the
+unchanged configuration and found no issues. This evidence and the exact
+follow-up hashes are frozen separately from the initial constructor snapshot;
+no broad transport or Runtime suite is claimed by this follow-up.
+
 Broader output integration must still assert safe client errors and no state
-commit for malformed returns or nested bad protocol JSON. Transport, consumer
+commit for malformed returns, normalized wire-key collisions or nested bad
+protocol JSON. Transport, consumer
 archive and all accepted retirement release gates remain outside this additive
 slice.

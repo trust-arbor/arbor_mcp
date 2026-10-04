@@ -33,15 +33,21 @@ defmodule Arbor.MCP.Server.ResultNormalizer do
 
   Known MCP protocol fields such as `:input_schema`, `:mime_type` and
   `:is_error` are mapped to their lower-camel-case wire names so raw Handler
-  implementations may use idiomatic Elixir keys.
+  implementations may use idiomatic Elixir keys. A plain map with keys that
+  normalize to the same wire key raises a fixed `ArgumentError`, including
+  nested maps. Malformed callback results must fail before state commit.
   """
   @spec stringify_keys(term()) :: term()
   def stringify_keys(list) when is_list(list), do: Enum.map(list, &stringify_keys/1)
 
   def stringify_keys(map) when is_map(map) and not is_struct(map) do
-    Map.new(map, fn
-      {key, value} when is_atom(key) -> {stringify_key(key), stringify_keys(value)}
-      {key, value} -> {key, stringify_keys(value)}
+    Enum.reduce(map, %{}, fn {key, value}, normalized ->
+      key = if is_atom(key), do: stringify_key(key), else: key
+
+      if Map.has_key?(normalized, key),
+        do: raise(ArgumentError, "Conflicting normalized result keys")
+
+      Map.put(normalized, key, stringify_keys(value))
     end)
   end
 
@@ -254,18 +260,8 @@ defmodule Arbor.MCP.Server.ResultNormalizer do
     %{"content" => [%{"type" => "text", "text" => result}]}
   end
 
-  def tool_result(%{content: content} = result, _opts) do
-    result
-    |> Map.delete(:content)
-    |> Map.put("content", stringify_keys(List.wrap(content)))
-    |> stringify_keys()
-  end
-
-  def tool_result(%{"content" => content} = result, _opts) do
-    result
-    |> Map.put("content", stringify_keys(List.wrap(content)))
-    |> stringify_keys()
-  end
+  def tool_result(%{content: _content} = result, _opts), do: content_result(result)
+  def tool_result(%{"content" => _content} = result, _opts), do: content_result(result)
 
   def tool_result(result, _opts)
       when is_map(result) and
@@ -279,6 +275,14 @@ defmodule Arbor.MCP.Server.ResultNormalizer do
     else
       stringify_keys(result)
     end
+  end
+
+  defp content_result(result) do
+    # Normalize before replacing content: deleting the atom key first would
+    # erase an atom/string collision before the generic guard could reject it.
+    result
+    |> stringify_keys()
+    |> Map.update!("content", &List.wrap/1)
   end
 
   @doc """
