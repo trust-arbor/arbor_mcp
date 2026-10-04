@@ -413,8 +413,7 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
 
         {:callback, :call} ->
           if function_exported?(config.handler, :handle_call, 3),
-            do:
-              config.handler.handle_call(work.request["payload"], {self(), make_ref()}, snapshot),
+            do: invoke_custom_call(config.handler, work, snapshot),
             else: {:reply, {:error, {:unknown_call, work.request["payload"]}}, snapshot}
 
         {:callback, :cast} ->
@@ -430,6 +429,23 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
     _exception -> {:runtime_failure, :handler_crash}
   catch
     _kind, _reason -> {:runtime_failure, :handler_crash}
+  end
+
+  # OTP gen.reply/2 routes alias tags using this intentional improper list.
+  # Mirror gen.do_send_request/3's targeted annotation; callback reply payloads
+  # and every other function retain normal Dialyzer checks.
+  @dialyzer {:no_improper_lists, invoke_custom_call: 3}
+  defp invoke_custom_call(handler, work, snapshot) do
+    reply_alias = :erlang.alias()
+    from = {work.reservation.caller, [:alias | reply_alias]}
+
+    try do
+      handler.handle_call(work.request["payload"], from, snapshot)
+    after
+      # Deferred replies cannot bypass the scheduler's state commit. The tag
+      # addresses this callback worker, never the original caller's mailbox.
+      :erlang.unalias(reply_alias)
+    end
   end
 
   defp start_failure(state, work) do

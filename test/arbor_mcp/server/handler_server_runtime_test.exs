@@ -125,6 +125,17 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     @impl true
     def handle_call(:read, _from, state), do: {:reply, state.count, state}
     def handle_call(:cancellations, _from, state), do: {:reply, state.cancelled_requests, state}
+    def handle_call(:caller, {caller, _tag}, state), do: {:reply, {caller, self()}, state}
+    def handle_call(:reply_proxy, from, state), do: {:reply, from, state}
+
+    def handle_call(:hold_reply_proxy, from, state) do
+      GenServer.reply(from, :premature_reply)
+      send(state.test_pid, {:reply_proxy_waiting, self(), from})
+
+      receive do
+        :release -> {:reply, state.count + 1, %{state | count: state.count + 1}}
+      end
+    end
 
     def handle_call({:add, count}, _from, state),
       do: {:reply, state.count + count, %{state | count: state.count + count}}
@@ -230,6 +241,36 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     assert response_map(response)["result"]["structuredContent"]["count"] == 1
     assert Task.await(call) == 111
     assert Server.call(root, :read) == 111
+  end
+
+  test "scheduled custom callbacks retain the original caller PID through both ingress APIs" do
+    {root, _transport} = start_pair()
+    caller = self()
+    assert {^caller, worker} = Server.call(root, :caller)
+    {:ok, edge} = Runtime.edge(root)
+    refute worker in [caller, root, edge]
+    assert {^caller, other_worker} = GenServer.call(edge, :caller)
+    refute other_worker in [caller, root, edge]
+  end
+
+  test "a proxy reply cannot settle the original caller before the scheduler commits" do
+    {root, _transport} = start_pair()
+    call = Task.async(fn -> Server.call(root, :hold_reply_proxy) end)
+    caller = call.pid
+    assert_receive {:reply_proxy_waiting, worker, {^caller, _tag}}
+    assert Task.yield(call, 20) == nil
+    assert {:messages, []} = Process.info(caller, :messages)
+    send(worker, :release)
+    assert Task.await(call) == 1
+    assert Server.call(root, :read) == 1
+  end
+
+  test "a proxy reply after callback completion does not enter the original caller mailbox" do
+    {root, _transport} = start_pair()
+    caller = self()
+    assert {^caller, proxy_tag} = from = Server.call(root, :reply_proxy)
+    assert :ok = GenServer.reply(from, :late_reply)
+    refute_receive {^proxy_tag, :late_reply}, 30
   end
 
   test "supported ingress reserves count before a suspended edge can receive another payload" do

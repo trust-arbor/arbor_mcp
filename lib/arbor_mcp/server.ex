@@ -190,6 +190,9 @@ defmodule Arbor.MCP.Server do
   The callback returns `{:reply, reply, next_state}`. Deferred `GenServer.reply/2`,
   continuation and process-stop return forms are unsupported. A finite caller
   timeout ends the wait without cancelling accepted work or leaking late replies.
+  Its `from` retains the original caller PID with a callback-owned proxy reply
+  tag. Treat that tag as opaque; a direct reply to it cannot settle the caller's
+  request or bypass the scheduler's state commit.
   """
   def call(server, request, timeout \\ 5_000) do
     case Runtime.ref(server) do

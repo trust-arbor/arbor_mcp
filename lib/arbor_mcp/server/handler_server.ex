@@ -1031,6 +1031,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
   def handle_call(request, from, state) do
     case Runtime.submit(state.runtime, %{"payload" => request},
            kind: :call,
+           caller: elem(from, 0),
            owner: self(),
            reply_to: self(),
            scope: {:control, self()}

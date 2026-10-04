@@ -40,6 +40,7 @@ defmodule Arbor.MCP.Client.ModernStdioTest do
       for name <- [
             "MIX_HOME",
             "MIX_ARCHIVES",
+            "MIX_DEPS_PATH",
             "ARBOR_RPC_PATH",
             "ARBOR_V2_DEPS",
             "ARBOR_V2_BUILD",

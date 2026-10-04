@@ -607,6 +607,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   defp claim_slot(runtime, route, request, bytes, opts) do
     token = make_ref()
     producer = self()
+    caller = Keyword.get(opts, :caller, producer)
     owner = Keyword.get(opts, :owner, producer)
     target = Keyword.get(opts, :reply_to, producer)
     timeout = Keyword.get(opts, :timeout, route.config.request_timeout_ms)
@@ -614,10 +615,11 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     direction = Keyword.get(opts, :direction, :inbound)
     request_id = Map.get(request, "id")
     key = key(scope, request_id || {:notification, token}, direction)
+    participant_error = participant_error(owner, caller)
 
     cond do
-      not local_pid?(owner) ->
-        {:error, :invalid_owner}
+      participant_error ->
+        {:error, participant_error}
 
       not local_reply_target?(target) ->
         {:error, :invalid_reply_target}
@@ -646,6 +648,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
             token: token,
             slot: slot,
             producer: producer,
+            caller: caller,
             owner: owner,
             reply_to: target,
             kind: Keyword.get(opts, :kind, :rpc),
@@ -672,6 +675,14 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     end
   rescue
     ArgumentError -> {:error, :runtime_unavailable}
+  end
+
+  defp participant_error(owner, caller) do
+    cond do
+      not local_pid?(owner) -> :invalid_owner
+      not local_pid?(caller) -> :invalid_caller
+      true -> nil
+    end
   end
 
   defp claim_candidate(table, generation, reservation) do
