@@ -11,12 +11,7 @@ defmodule Arbor.MCP.DeprecationCompatibilityTest do
     Arbor.MCP.Server.Tools.ASTValidator
   ]
 
-  @deprecated_metadata_modules [
-    Arbor.MCP.Server.Tools,
-    Arbor.MCP.Content.Builders,
-    Arbor.MCP.Content.Sanitizer,
-    Arbor.MCP.Content.Transformer
-  ]
+  @deprecated_metadata_modules [Arbor.MCP.Server.Tools]
 
   @retained_protocol_functions [
     {Arbor.MCP.Server, :send_log_message, 4},
@@ -47,7 +42,7 @@ defmodule Arbor.MCP.DeprecationCompatibilityTest do
     end
   end
 
-  test "compiled deprecation metadata schedules public removals for 2.0" do
+  test "remaining compiled deprecation metadata schedules Tools removal for 2.0" do
     for module <- @deprecated_metadata_modules do
       assert {:docs_v1, _, _, _, _, _, docs} = Code.fetch_docs(module)
 
