@@ -62,6 +62,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
   }
 
   alias Arbor.MCP.Server.Runtime.{Admission, Initialization, OutputController, Ref, ShutdownGuard}
+  alias Arbor.MCP.Server.Subscriptions.Origin
 
   alias Arbor.MCP.Transport.{Local, Test}
 
@@ -493,6 +494,18 @@ defmodule Arbor.MCP.Server.HandlerServer do
     )
 
     {:noreply, state}
+  end
+
+  def handle_info(
+        {:ex_mcp_subscription_ready, listener, delivery, deadline},
+        state
+      ) do
+    if listener in Map.values(state.subscriptions) do
+      consume_subscription_delivery(listener, delivery, deadline, state)
+    else
+      SubscriptionListener.discard(listener, delivery)
+      {:noreply, state}
+    end
   end
 
   def handle_info(
@@ -1725,10 +1738,91 @@ defmodule Arbor.MCP.Server.HandlerServer do
     end
   end
 
+  defp consume_subscription_delivery(listener, delivery, deadline, state) do
+    case SubscriptionListener.checkout(listener, delivery, deadline) do
+      {:ok, kind, message, origin} ->
+        scoped_subscription_message(message, listener, kind, delivery, origin, state)
+
+      {:error, :source_retired} ->
+        {:noreply, state}
+
+      {:error, _reason} ->
+        SubscriptionListener.cancel(listener)
+        {:noreply, remove_subscription_by_listener(state, listener)}
+    end
+  end
+
+  defp scoped_subscription_message(message, listener, kind, delivery, origin, state) do
+    if Origin.valid_for?(origin, Ref.table(state.runtime), state.connection, self()) do
+      case emit_subscription(message, origin, state) do
+        {:queued, token} ->
+          {:noreply,
+           %{
+             state
+             | stdio_control_receipts:
+                 Map.put(state.stdio_control_receipts, token, {listener, kind, delivery, origin})
+           }}
+
+        {:ok, new_state} ->
+          SubscriptionListener.delivered(listener, delivery)
+
+          new_state =
+            if kind == :complete,
+              do: remove_subscription_by_listener(new_state, listener),
+              else: new_state
+
+          {:noreply, new_state}
+
+        {:error, _reason} ->
+          failed_subscription_delivery(listener, delivery, origin, state)
+      end
+    else
+      SubscriptionListener.discard(listener, delivery)
+      {:noreply, state}
+    end
+  end
+
+  defp emit_subscription(message, origin, state) do
+    if stdio?(state) do
+      case OutputController.emit_origin(
+             Ref.table(state.runtime),
+             state.connection,
+             message,
+             origin
+           ) do
+        {:ok, token} -> {:queued, token}
+        error -> error
+      end
+    else
+      send_message(message, state)
+    end
+  end
+
+  defp failed_subscription_delivery(listener, delivery, origin, state) do
+    if Origin.valid?(origin) do
+      SubscriptionListener.cancel(listener)
+      {:noreply, remove_subscription_by_listener(state, listener)}
+    else
+      SubscriptionListener.discard(listener, delivery)
+      {:noreply, state}
+    end
+  end
+
   defp settle_stdio_control(token, result, state) do
     case Map.pop(state.stdio_control_receipts, token) do
       {nil, _receipts} ->
         state
+
+      {{listener, kind, delivery, origin}, receipts} ->
+        state = %{state | stdio_control_receipts: receipts}
+
+        if result == :ok do
+          SubscriptionListener.delivered(listener, delivery)
+          if kind == :complete, do: remove_subscription_by_listener(state, listener), else: state
+        else
+          {:noreply, state} = failed_subscription_delivery(listener, delivery, origin, state)
+          state
+        end
 
       {{listener, kind}, receipts} ->
         state = %{state | stdio_control_receipts: receipts}
@@ -1836,7 +1930,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
         Subscriptions.publish(
           method,
           params,
-          Keyword.put(state.subscription_options, :transport_ref, self())
+          subscription_publication_options(state)
         )
 
       {:noreply, state}
@@ -1848,6 +1942,19 @@ defmodule Arbor.MCP.Server.HandlerServer do
         {:error, _reason} -> {:noreply, state}
       end
     end
+  end
+
+  defp subscription_publication_options(state) do
+    opts = Keyword.put(state.subscription_options, :transport_ref, self())
+
+    if state.stdio_control_origin,
+      do:
+        Keyword.put(opts, :subscription_control, {
+          Ref.table(state.runtime),
+          state.stdio_control_origin,
+          state.connection
+        }),
+      else: opts
   end
 
   defp modern_connection?(%{connection_era: :modern}), do: true

@@ -10,8 +10,8 @@ defmodule Arbor.MCP.Server.Subscriptions do
   use GenServer
 
   alias Arbor.MCP.Server.SubscriptionListener
-  alias Arbor.MCP.Server.Runtime.{ServiceAdapter, Services}
-  alias Arbor.MCP.Server.Subscriptions.{Entry, ETS}
+  alias Arbor.MCP.Server.Runtime.{Deadline, ServiceAdapter, Services}
+  alias Arbor.MCP.Server.Subscriptions.{Entry, ETS, Mailbox, Origin}
   alias Arbor.MCP.SubscriptionFilter
   alias Arbor.MCP.Tasks.Extension, as: TasksExtension
   alias Arbor.MCP.Tasks.StoreCall
@@ -22,6 +22,8 @@ defmodule Arbor.MCP.Server.Subscriptions do
     :adapter,
     :adapter_state,
     :runtime_table,
+    :publication_mailbox,
+    :publication_timeout_ms,
     :listener_supervisor,
     :filter_authorizer,
     :publication_authorizer,
@@ -99,23 +101,74 @@ defmodule Arbor.MCP.Server.Subscriptions do
           }
           | {:error, term()}
   def publish(method, params \\ %{}, opts \\ []) do
-    call_service(opts, :publish, [method, params], fn opts ->
-      registry = Keyword.get(opts, :registry, __MODULE__)
-      transport_ref = Keyword.get(opts, :transport_ref)
-      GenServer.call(registry, {:publish, method, params, transport_ref})
-    end)
+    publication(method, params, opts, :sync)
   end
 
   @doc false
   @spec publish_async(String.t(), map(), keyword()) :: :ok | {:error, term()}
   def publish_async(method, params \\ %{}, opts \\ []) do
-    call_service(opts, :publish_async, [method, params], fn opts ->
-      registry = Keyword.get(opts, :registry, __MODULE__)
-      transport_ref = Keyword.get(opts, :transport_ref)
-      GenServer.cast(registry, {:publish, method, params, transport_ref})
-    end)
+    publication(method, params, opts, :async)
+  end
+
+  defp publication(method, params, opts, mode) when is_binary(method) and is_map(params) do
+    started = Deadline.now()
+
+    with {:ok, origin} <- Origin.capture(opts),
+         {:ok, adapter, resolved} <- Services.subscription_options(opts) do
+      cond do
+        adapter == __MODULE__ ->
+          bounded_publication(method, params, resolved, origin, mode, started)
+
+        is_nil(origin) ->
+          adapter_publication(adapter, method, params, resolved, mode)
+
+        true ->
+          {:error, :bounded_publication_required}
+      end
+    end
+  end
+
+  defp publication(_method, _params, _opts, _mode),
+    do: {:error, :invalid_subscription_publication}
+
+  defp adapter_publication(adapter, method, params, opts, mode) do
+    operation = if mode == :async, do: :publish_async, else: :publish
+    apply(adapter, operation, [method, params, opts])
+  end
+
+  defp bounded_publication(method, params, opts, origin, mode, started) do
+    registry = Keyword.get(opts, :registry, __MODULE__)
+    deadline = Origin.deadline(origin, started + 5_000)
+
+    with true <- Deadline.remaining(deadline) > 0,
+         {:ok, mailbox, timeout} <-
+           GenServer.call(registry, :publication_mailbox, Deadline.remaining(deadline)),
+         deadline = min(deadline, Origin.deadline(origin, started + timeout)),
+         payload = %{"method" => method, "params" => params},
+         target = Keyword.get(opts, :transport_ref),
+         {:ok, id} <- Mailbox.offer(mailbox, payload, origin, deadline, {mode, target}) do
+      complete_publication(registry, mailbox, id, deadline, mode)
+    else
+      false -> {:error, :subscription_expired}
+      error -> error
+    end
   catch
-    :exit, _reason -> :ok
+    :exit, _ -> {:error, :subscription_unavailable}
+  end
+
+  defp complete_publication(_registry, mailbox, _id, _deadline, :async),
+    do: Mailbox.wake(mailbox)
+
+  defp complete_publication(registry, mailbox, id, deadline, :sync) do
+    result = GenServer.call(registry, {:publication, id}, Deadline.remaining(deadline))
+
+    if Deadline.remaining(deadline) > 0,
+      do: result,
+      else: {:error, :subscription_expired}
+  catch
+    :exit, _ ->
+      Mailbox.abort(mailbox, id)
+      {:error, :subscription_expired}
   end
 
   @spec entries(keyword()) :: [Entry.t()] | {:error, term()}
@@ -205,6 +258,15 @@ defmodule Arbor.MCP.Server.Subscriptions do
          {:ok, limits} <- validate_limits(opts),
          :ok <- validate_filter_authorizer(Keyword.get(opts, :authorize_filter)),
          :ok <- validate_publication_authorizer(Keyword.get(opts, :authorize_publication)) do
+      mailbox =
+        Mailbox.new(
+          max_count: limits.max_publications,
+          max_bytes: limits.max_publication_bytes,
+          max_message_bytes: limits.max_publication_message_bytes
+        )
+
+      Process.send_after(self(), :publication_reap, 20)
+
       {:ok,
        struct!(__MODULE__,
          adapter: adapter,
@@ -212,6 +274,8 @@ defmodule Arbor.MCP.Server.Subscriptions do
          listener_supervisor:
            Keyword.get(opts, :listener_supervisor, Arbor.MCP.DynamicSupervisor),
          runtime_table: Keyword.get(opts, :runtime_table),
+         publication_mailbox: mailbox,
+         publication_timeout_ms: limits.publication_timeout_ms,
          filter_authorizer: Keyword.get(opts, :authorize_filter),
          publication_authorizer: Keyword.get(opts, :authorize_publication),
          supported_notifications: Keyword.get(opts, :supported_notifications, @default_supported),
@@ -230,6 +294,21 @@ defmodule Arbor.MCP.Server.Subscriptions do
   end
 
   @impl true
+  def handle_call(:publication_mailbox, _from, state) do
+    {:reply, {:ok, state.publication_mailbox, state.publication_timeout_ms}, state}
+  end
+
+  def handle_call({:publication, id}, {caller, _}, state) do
+    case Mailbox.entry(state.publication_mailbox, id) do
+      {:ok, %{producer: ^caller, mode: {:sync, _target}}} ->
+        {result, state} = consume_publication(id, state)
+        {:reply, result, state}
+
+      _ ->
+        {:reply, {:error, :subscription_expired}, state}
+    end
+  end
+
   def handle_call({:listen, subscription_id, requested, transport_ref, opts}, _from, state) do
     opts = ensure_authorization_context(opts)
     {entries, state} = all_entries(state)
@@ -302,23 +381,13 @@ defmodule Arbor.MCP.Server.Subscriptions do
     {:reply, :ok, state}
   end
 
-  def handle_call({:publish, method, params, transport_ref}, _from, state) do
-    {result, state} = publish_to_matching(method, params, transport_ref, state)
-    {:reply, result, broadcast(method, params, transport_ref, state)}
-  end
-
   def handle_call(:entries, _from, state) do
     {entries, state} = all_entries(state)
     {:reply, entries, state}
   end
 
-  @impl true
-  def handle_cast({:publish, method, params, transport_ref}, state) do
-    {_result, state} = publish_to_matching(method, params, transport_ref, state)
-    {:noreply, broadcast(method, params, transport_ref, state)}
-  end
-
-  defp publish_to_matching(method, params, transport_ref, state) do
+  defp publish_to_matching(method, params, transport_ref, state, origin \\ nil, deadline \\ nil) do
+    deadline = deadline || Deadline.after_ms(state.publication_timeout_ms)
     {entries, state} = all_entries(state)
 
     matching =
@@ -332,7 +401,7 @@ defmodule Arbor.MCP.Server.Subscriptions do
         matching,
         %{subscribers: length(matching), enqueued: 0, coalesced: 0, closed: 0},
         fn entry, counts ->
-          case SubscriptionListener.enqueue(entry.listener_pid, method, params) do
+          case SubscriptionListener.enqueue(entry.listener_pid, method, params, origin, deadline) do
             :ok -> Map.update!(counts, :enqueued, &(&1 + 1))
             :coalesced -> Map.update!(counts, :coalesced, &(&1 + 1))
             {:closed, _reason} -> Map.update!(counts, :closed, &(&1 + 1))
@@ -343,7 +412,52 @@ defmodule Arbor.MCP.Server.Subscriptions do
     {result, state}
   end
 
+  defp consume_publication(id, state) do
+    mailbox = state.publication_mailbox
+
+    result =
+      with {:ok, entry} <- Mailbox.take(mailbox, id),
+           true <- Mailbox.active?(mailbox, id) and Origin.valid?(entry.origin) do
+        %{"method" => method, "params" => params} = entry.payload
+        {_mode, target} = entry.mode
+        target = Origin.target(entry.origin, target)
+
+        {counts, state} =
+          publish_to_matching(method, params, target, state, entry.origin, entry.deadline)
+
+        {counts, broadcast(method, params, target, state)}
+      else
+        false -> {{:error, :subscription_origin_retired}, state}
+        error -> {error, state}
+      end
+
+    Mailbox.finish(mailbox, id)
+    result
+  end
+
   @impl true
+  def handle_info({:subscription_mailbox_ready, identity}, state) do
+    if identity == Mailbox.identity(state.publication_mailbox) do
+      Mailbox.clear_wake(state.publication_mailbox)
+
+      state =
+        Enum.reduce(Mailbox.pending(state.publication_mailbox, :async), state, fn id, state ->
+          {_result, state} = consume_publication(id, state)
+          state
+        end)
+
+      {:noreply, state}
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_info(:publication_reap, state) do
+    Mailbox.reap(state.publication_mailbox)
+    Process.send_after(self(), :publication_reap, 20)
+    {:noreply, state}
+  end
+
   def handle_info(
         {:subscription_listener_closed, listener, token, _transport_ref, _reason},
         state
@@ -417,6 +531,7 @@ defmodule Arbor.MCP.Server.Subscriptions do
       max_queue: max_queue,
       max_message_bytes: max_message_bytes,
       max_queue_bytes: max_queue_bytes,
+      publication_timeout_ms: state.publication_timeout_ms,
       max_lifetime_ms: max_lifetime_ms
     ]
 
@@ -729,12 +844,18 @@ defmodule Arbor.MCP.Server.Subscriptions do
       max_lifetime_ms: Keyword.get(opts, :max_lifetime_ms, 3_600_000),
       max_filter_uris: Keyword.get(opts, :max_filter_uris, 256),
       max_filter_task_ids: Keyword.get(opts, :max_filter_task_ids, 256),
-      max_filter_bytes: Keyword.get(opts, :max_filter_bytes, 65_536)
+      max_filter_bytes: Keyword.get(opts, :max_filter_bytes, 65_536),
+      max_publications: Keyword.get(opts, :max_publications, 128),
+      max_publication_bytes: Keyword.get(opts, :max_publication_bytes, 8_388_608),
+      max_publication_message_bytes: Keyword.get(opts, :max_publication_message_bytes, 2_097_152),
+      publication_timeout_ms: Keyword.get(opts, :publication_timeout_ms, 5_000)
     }
 
-    if Enum.all?(limits, fn {_key, value} -> is_integer(value) and value > 0 end),
-      do: {:ok, limits},
-      else: {:error, :invalid_subscription_limits}
+    if Enum.all?(limits, fn {_key, value} -> is_integer(value) and value > 0 end) and
+         limits.max_lifetime_ms <= 4_294_967_295 and
+         limits.publication_timeout_ms <= 4_294_967_295,
+       do: {:ok, limits},
+       else: {:error, :invalid_subscription_limits}
   end
 
   defp adapter_spec({adapter, opts}) when is_atom(adapter) and is_list(opts), do: {adapter, opts}

@@ -3,6 +3,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
   use GenServer
 
   alias Arbor.MCP.Server.Runtime.{Admission, Failure, Initialization, OutputLedger, OutputTicket}
+  alias Arbor.MCP.Server.Subscriptions.Origin
 
   def start_link(opts),
     do: GenServer.start_link(__MODULE__, opts, timeout: Initialization.remaining(opts[:table]))
@@ -46,9 +47,15 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
   def write_complete(table, ticket, result), do: call(table, {:write_complete, ticket, result})
 
   def emit(table, connection, value, source_token \\ nil) do
-    token = make_ref()
+    emit_registered(table, {:register_control, make_ref(), connection, source_token}, value)
+  end
 
-    with {:ok, context} <- call(table, {:register_control, token, connection, source_token}),
+  def emit_origin(table, connection, value, origin) do
+    emit_registered(table, {:register_origin, make_ref(), connection, origin}, value)
+  end
+
+  defp emit_registered(table, {kind, token, connection, source}, value) do
+    with {:ok, context} <- call(table, {kind, token, connection, source}),
          {:ok, ticket} <- prepare(context, value),
          :ok <- call(table, {:edge_prepared, token, ticket}),
          do: {:ok, token}
@@ -284,45 +291,16 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
     do: {:reply, Map.has_key?(state.jobs, token), state}
 
   def handle_call({:register_control, token, connection, source_token}, {caller, _}, state) do
-    output = %{edge: caller, connection: connection, batch?: false, control?: true}
-
-    with {:ok, proof} <- control_origin(state.table, source_token, caller),
-         true <- Admission.output_origin_valid?(state.table, proof),
-         true <- not :ets.member(state.table, :stdio_output_sealed),
-         true <- active_peer?(output, state),
-         deadline = control_deadline(proof, state),
-         scope = {:control, connection, token, proof},
-         :ok <- OutputLedger.open_scope(state.ledger, scope, deadline),
-         :ok <- OutputLedger.subscribe(state.ledger, scope, self()) do
-      job = %{
-        scope: scope,
-        scheduler: caller,
-        output: output,
-        deadline: deadline,
-        committed?: false,
-        stdio?: true,
-        source_proof: proof
-      }
-
-      context = %{
-        ledger: state.ledger,
-        scope: scope,
-        owner: self(),
-        group: false,
-        codec: :protocol,
-        deadline: deadline
-      }
-
-      {:reply, {:ok, context},
-       %{
-         state
-         | jobs: Map.put(state.jobs, token, job),
-           scopes: Map.put(state.scopes, scope, token)
-       }}
-    else
-      false -> {:reply, {:error, :connection_closed}, state}
+    case control_origin(state.table, source_token, caller) do
+      {:ok, proof} -> register_control(token, connection, proof, nil, caller, state)
       error -> {:reply, error, state}
     end
+  end
+
+  def handle_call({:register_origin, token, connection, origin}, {caller, _}, state) do
+    if Origin.valid_for?(origin, state.table, connection, caller),
+      do: register_control(token, connection, Origin.proof(origin), origin, caller, state),
+      else: {:reply, {:error, :subscription_origin_retired}, state}
   end
 
   def handle_call({:write_payload, ticket}, {caller, _}, state) do
@@ -688,6 +666,48 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
     end
   end
 
+  defp register_control(token, connection, proof, origin, caller, state) do
+    output = %{edge: caller, connection: connection, batch?: false, control?: true}
+
+    with true <- Admission.output_origin_valid?(state.table, proof),
+         true <- not :ets.member(state.table, :stdio_output_sealed),
+         true <- active_peer?(output, state),
+         deadline = Origin.deadline(origin, control_deadline(proof, state)),
+         scope = {:control, connection, token, origin || proof},
+         :ok <- OutputLedger.open_scope(state.ledger, scope, deadline),
+         :ok <- OutputLedger.subscribe(state.ledger, scope, self()) do
+      job = %{
+        scope: scope,
+        scheduler: caller,
+        output: output,
+        deadline: deadline,
+        committed?: false,
+        stdio?: true,
+        source_proof: proof,
+        source_origin: origin
+      }
+
+      context = %{
+        ledger: state.ledger,
+        scope: scope,
+        owner: self(),
+        group: false,
+        codec: :protocol,
+        deadline: deadline
+      }
+
+      {:reply, {:ok, context},
+       %{
+         state
+         | jobs: Map.put(state.jobs, token, job),
+           scopes: Map.put(state.scopes, scope, token)
+       }}
+    else
+      false -> {:reply, {:error, :connection_closed}, state}
+      error -> {:reply, error, state}
+    end
+  end
+
   defp control_origin(_table, nil, _caller), do: {:ok, nil}
 
   defp control_origin(table, token, caller),
@@ -699,7 +719,8 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
   defp valid_write_origin?(job, state),
     do:
       active_peer?(job.output, state) and
-        Admission.output_origin_valid?(state.table, Map.get(job, :source_proof))
+        Admission.output_origin_valid?(state.table, Map.get(job, :source_proof)) and
+        Origin.valid?(Map.get(job, :source_origin))
 
   defp reject_write(token, state) do
     job = state.jobs[token]
