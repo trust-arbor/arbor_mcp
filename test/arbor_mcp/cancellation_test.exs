@@ -217,21 +217,10 @@ defmodule Arbor.MCP.CancellationTest do
       # Get the pending request ID from the client
       [request_id] = Client.get_pending_requests(client)
 
-      # Send cancellation from server side (simulating server-initiated cancellation)
-      # In practice, this would come from the server's client connection
-      # Send the cancellation notification to the client
-      send(
-        client,
-        {:transport_message,
-         Jason.encode!(%{
-           "jsonrpc" => "2.0",
-           "method" => "notifications/cancelled",
-           "params" => %{
-             "requestId" => request_id,
-             "reason" => "Server initiated cancellation"
-           }
-         })}
-      )
+      send_server_notification(server, "notifications/cancelled", %{
+        "requestId" => request_id,
+        "reason" => "Server initiated cancellation"
+      })
 
       # The task should return cancellation error
       assert {:error, :cancelled} = Task.await(task, 1000)
@@ -299,18 +288,7 @@ defmodule Arbor.MCP.CancellationTest do
       wait_until(fn -> length(Client.get_pending_requests(client)) > 0 end)
       [request_id] = Client.get_pending_requests(client)
 
-      # Send cancellation without reason
-      send(
-        client,
-        {:transport_message,
-         Jason.encode!(%{
-           "jsonrpc" => "2.0",
-           "method" => "notifications/cancelled",
-           "params" => %{
-             "requestId" => request_id
-           }
-         })}
-      )
+      send_server_notification(server, "notifications/cancelled", %{"requestId" => request_id})
 
       # Request should still be cancelled
       assert {:error, :cancelled} = Task.await(task, 1000)
@@ -349,6 +327,14 @@ defmodule Arbor.MCP.CancellationTest do
       GenServer.stop(client)
       assert :ok = Runtime.stop(server)
     end
+  end
+
+  defp send_server_notification(server, method, params) do
+    {:ok, edge} = Runtime.edge(server)
+    state = :sys.get_state(edge)
+    message = Jason.encode!(%{"jsonrpc" => "2.0", "method" => method, "params" => params})
+
+    assert {:ok, _} = state.transport.send_message(message, state.transport_state)
   end
 
   describe "bidirectional cancellation" do

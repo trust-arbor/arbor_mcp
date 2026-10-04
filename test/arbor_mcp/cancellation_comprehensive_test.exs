@@ -15,6 +15,7 @@ defmodule Arbor.MCP.CancellationComprehensiveTest do
   alias Arbor.MCP.Internal.Protocol
   alias Arbor.MCP.Server.Handler
   alias Arbor.MCP.Server.HandlerServer, as: Server
+  alias Arbor.MCP.Server.Runtime
 
   defmodule SlowHandler do
     @behaviour Handler
@@ -622,36 +623,28 @@ defmodule Arbor.MCP.CancellationComprehensiveTest do
       {:ok, client: client, server: server}
     end
 
-    test "malformed cancellation notifications are ignored", %{client: client} do
-      # Send malformed notification directly
-      send(client, {:transport_message,
-       Jason.encode!(%{
-         "jsonrpc" => "2.0",
-         "method" => "notifications/cancelled",
-         "params" => %{
-           # Missing requestId
-           "reason" => "Malformed"
-         }
-       })})
+    test "malformed cancellation notifications are ignored", %{client: client, server: server} do
+      # Omit requestId, but deliver through the connected transport's current generation.
+      send_server_notification(server, %{
+        "jsonrpc" => "2.0",
+        "method" => "notifications/cancelled",
+        "params" => %{"reason" => "Malformed"}
+      })
 
       # Client should continue functioning
       assert {:ok, _} = Client.list_tools(client)
     end
 
-    test "cancellation with invalid request ID type is handled", %{client: client} do
+    test "cancellation with invalid request ID type is handled", %{client: client, server: server} do
       # Send cancellation with wrong type
-      send(
-        client,
-        {:transport_message,
-         Jason.encode!(%{
-           "jsonrpc" => "2.0",
-           "method" => "notifications/cancelled",
-           "params" => %{
-             "requestId" => %{"not" => "a string or number"},
-             "reason" => "Invalid type"
-           }
-         })}
-      )
+      send_server_notification(server, %{
+        "jsonrpc" => "2.0",
+        "method" => "notifications/cancelled",
+        "params" => %{
+          "requestId" => %{"not" => "a string or number"},
+          "reason" => "Invalid type"
+        }
+      })
 
       # Should be ignored gracefully
       assert {:ok, _} = Client.list_tools(client)
@@ -715,6 +708,12 @@ defmodule Arbor.MCP.CancellationComprehensiveTest do
       # The implementation logs: "Request X cancelled: reason"
       assert true
     end
+  end
+
+  defp send_server_notification(server, message) do
+    {:ok, edge} = Runtime.edge(server)
+    state = :sys.get_state(edge)
+    assert {:ok, _} = state.transport.send_message(Jason.encode!(message), state.transport_state)
   end
 
   defp start_indexed_request(client, index, known_request_ids) do

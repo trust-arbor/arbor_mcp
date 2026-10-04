@@ -32,6 +32,7 @@ defmodule Arbor.MCP.Transport.HTTP.LegacySSE do
 
   require Logger
 
+  alias Arbor.MCP.Client.{Deadline, Lifetime}
   alias Arbor.MCP.Internal.{DNSResolver, Options}
   alias Arbor.MCP.Transport.HTTP.{BoundedClient, TargetPolicy}
   alias Arbor.MCP.Transport.SSEClient
@@ -39,6 +40,7 @@ defmodule Arbor.MCP.Transport.HTTP.LegacySSE do
 
   defstruct [
     :base_url,
+    :deadline,
     :sse_url,
     :post_url,
     :session_id,
@@ -178,7 +180,8 @@ defmodule Arbor.MCP.Transport.HTTP.LegacySSE do
         transport_opts: [],
         dns_timeout_ms: state.dns_timeout_ms,
         dns_resolver: state.dns_resolver,
-        allowed_private_hosts: state.allowed_private_hosts
+        allowed_private_hosts: state.allowed_private_hosts,
+        deadline: state.deadline
       )
 
     case result do
@@ -216,8 +219,12 @@ defmodule Arbor.MCP.Transport.HTTP.LegacySSE do
       session_id_hash: if(state.session_id, do: LogSummary.fingerprint(state.session_id))
     })
 
-    stop_sse(sse_pid)
-    :ok
+    Lifetime.native_stop(
+      sse_pid,
+      SSEClient,
+      fn timeout -> GenServer.stop(sse_pid, :normal, timeout) end,
+      state.deadline || Deadline.after_ms(1_000)
+    )
   end
 
   @impl true
@@ -257,64 +264,83 @@ defmodule Arbor.MCP.Transport.HTTP.LegacySSE do
       do_await_endpoint(sse_pid, deadline, base_url)
     catch
       :error, reason ->
-        stop_sse(sse_pid)
-        {:error, reason}
+        endpoint_failure(sse_pid, reason)
     else
       {:ok, _, _} = ok ->
         ok
 
-      {:error, _reason} = error ->
-        stop_sse(sse_pid)
-        error
+      {:error, reason} ->
+        endpoint_failure(sse_pid, reason)
     end
   end
 
   defp do_await_endpoint(sse_pid, deadline, base_url) do
     receive do
-      {:sse_connected, ^sse_pid} ->
-        do_await_endpoint(sse_pid, deadline, base_url)
+      {:client_lifetime_event, epoch, event}
+      when is_tuple(event) and tuple_size(event) >= 2 and elem(event, 1) == sse_pid ->
+        if Lifetime.event?(epoch),
+          do: endpoint_message(event, sse_pid, deadline, base_url),
+          else: do_await_endpoint(sse_pid, deadline, base_url)
 
-      {:sse_event, ^sse_pid, event} ->
-        send(sse_pid, {:sse_event_ack, self()})
-
-        case endpoint_event?(event) do
-          true -> parse_endpoint_event(event.data, base_url)
-          false -> do_await_endpoint(sse_pid, deadline, base_url)
-        end
-
-      {:sse_error, ^sse_pid, reason} ->
-        {:error, {:sse_error, reason}}
-
-      {:sse_closed, ^sse_pid} ->
-        {:error, :connection_closed}
-
-      {:sse_not_supported, ^sse_pid} ->
-        {:error, :sse_not_supported}
+      event when is_tuple(event) and tuple_size(event) >= 2 and elem(event, 1) == sse_pid ->
+        endpoint_message(event, sse_pid, deadline, base_url)
     after
-      remaining(deadline) ->
-        {:error, :endpoint_timeout}
+      remaining(deadline) -> {:error, :endpoint_timeout}
     end
   end
+
+  defp endpoint_message({:sse_connected, _pid}, pid, deadline, base_url),
+    do: do_await_endpoint(pid, deadline, base_url)
+
+  defp endpoint_message({:sse_event, _pid, event}, pid, deadline, base_url) do
+    send(pid, {:sse_event_ack, self()})
+
+    if endpoint_event?(event),
+      do: parse_endpoint_event(event.data, base_url),
+      else: do_await_endpoint(pid, deadline, base_url)
+  end
+
+  defp endpoint_message({:sse_error, _source, reason}, _pid, _deadline, _base_url),
+    do: {:error, {:sse_error, reason}}
+
+  defp endpoint_message({:sse_closed, _pid}, _pid2, _deadline, _base_url),
+    do: {:error, :connection_closed}
+
+  defp endpoint_message({:sse_not_supported, _pid}, _pid2, _deadline, _base_url),
+    do: {:error, :sse_not_supported}
+
+  defp endpoint_message(_other, pid, deadline, base_url),
+    do: do_await_endpoint(pid, deadline, base_url)
 
   defp do_receive(state, deadline) do
     receive do
-      {:sse_event, pid, event} when pid == state.sse_pid ->
-        send(pid, {:sse_event_ack, self()})
-        handle_sse_event(event, state, deadline)
+      {:client_lifetime_event, epoch, event}
+      when is_tuple(event) and tuple_size(event) >= 2 and elem(event, 1) == state.sse_pid ->
+        if Lifetime.event?(epoch),
+          do: receive_event(event, state, deadline),
+          else: do_receive(state, deadline)
 
-      {:sse_error, pid, reason} when pid == state.sse_pid ->
-        {:error, {:sse_error, reason}}
-
-      {:sse_closed, pid} when pid == state.sse_pid ->
-        {:error, :closed}
-
-      {:sse_not_supported, pid} when pid == state.sse_pid ->
-        {:error, :sse_not_supported}
+      event when is_tuple(event) and tuple_size(event) >= 2 and elem(event, 1) == state.sse_pid ->
+        receive_event(event, state, deadline)
     after
-      remaining(deadline) ->
-        {:error, :timeout}
+      remaining(deadline) -> {:error, :timeout}
     end
   end
+
+  defp receive_event({:sse_event, pid, event}, state, deadline) do
+    send(pid, {:sse_event_ack, self()})
+    handle_sse_event(event, state, deadline)
+  end
+
+  defp receive_event({:sse_error, _pid, reason}, _state, _deadline),
+    do: {:error, {:sse_error, reason}}
+
+  defp receive_event({:sse_closed, _pid}, _state, _deadline), do: {:error, :closed}
+
+  defp receive_event({:sse_not_supported, _pid}, _state, _deadline),
+    do: {:error, :sse_not_supported}
+
+  defp receive_event(_other, state, deadline), do: do_receive(state, deadline)
 
   defp handle_sse_event(event, state, deadline) do
     cond do
@@ -437,13 +463,20 @@ defmodule Arbor.MCP.Transport.HTTP.LegacySSE do
     max(deadline - System.monotonic_time(:millisecond), 0)
   end
 
-  defp stop_sse(pid) when is_pid(pid) do
-    GenServer.stop(pid, :normal, 1_000)
-  catch
-    :exit, _ -> :ok
-  end
+  defp endpoint_failure(pid, reason) do
+    cleanup =
+      Lifetime.native_stop(
+        pid,
+        SSEClient,
+        fn timeout -> GenServer.stop(pid, :normal, timeout) end,
+        Deadline.after_ms(1_000)
+      )
 
-  defp stop_sse(_pid), do: :ok
+    case cleanup do
+      :ok -> {:error, reason}
+      {:error, _} -> {:error, {:cleanup_failed, reason, cleanup}}
+    end
+  end
 end
 
 defimpl Inspect, for: Arbor.MCP.Transport.HTTP.LegacySSE do

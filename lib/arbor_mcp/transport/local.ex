@@ -29,6 +29,7 @@ defmodule Arbor.MCP.Transport.Local do
 
   @behaviour Arbor.MCP.Transport
 
+  alias Arbor.MCP.Client.{Deadline, Lifetime}
   alias Arbor.MCP.Server.HandlerServer
   alias Arbor.MCP.Transport.Error
 
@@ -40,7 +41,8 @@ defmodule Arbor.MCP.Transport.Local do
     :subscriber,
     :forwarder_pid,
     :runtime,
-    :connection
+    :connection,
+    :peer_event_context
   ]
 
   @type t :: %__MODULE__{
@@ -62,7 +64,9 @@ defmodule Arbor.MCP.Transport.Local do
       Keyword.has_key?(opts, :server) ->
         server_pid = Keyword.fetch!(opts, :server)
 
-        case HandlerServer.connect(server_pid, self()) do
+        case HandlerServer.connect(server_pid, self(),
+               peer_event_context: Lifetime.peer_context()
+             ) do
           {:ok, edge, runtime, connection} ->
             transport = %__MODULE__{
               server_pid: edge,
@@ -167,7 +171,17 @@ defmodule Arbor.MCP.Transport.Local do
                 role: transport.role
               })
 
-              Kernel.send(transport.server_pid, {:transport_message, message})
+              case transport.peer_event_context do
+                %{owner: peer, epoch: epoch} when peer == transport.server_pid ->
+                  Kernel.send(
+                    peer,
+                    {:client_lifetime_event, epoch, {:transport_message, message}}
+                  )
+
+                nil ->
+                  Kernel.send(transport.server_pid, {:transport_message, message})
+              end
+
               {:ok, transport}
             else
               # No client connected yet
@@ -185,29 +199,38 @@ defmodule Arbor.MCP.Transport.Local do
     receive_message(transport, transport.timeout)
   end
 
-  def receive_message(%__MODULE__{} = transport, _timeout) do
+  def receive_message(%__MODULE__{} = transport, timeout) do
     case Error.validate_connection(transport, &connected?/1) do
-      :ok ->
-        receive do
-          {:transport_message, message} ->
-            :telemetry.execute([:arbor_mcp, :transport, :message, :received], %{}, %{
-              transport: :beam
-            })
-
-            {:ok, message, transport}
-
-          {:test_transport_connect, client_pid} when transport.role == :server ->
-            # Server accepting client connection
-            new_transport = %{transport | server_pid: client_pid, connected: true}
-            # Continue waiting for actual message
-            receive_message(new_transport, nil)
-
-          {:transport_error, reason} ->
-            Error.transport_error(reason)
-        end
-
-      error ->
-        error
+      :ok -> receive_until(transport, Deadline.after_ms(timeout || :infinity))
+      error -> error
     end
+  end
+
+  defp receive_until(transport, deadline) do
+    receive do
+      {:client_lifetime_event, epoch, {:transport_message, message}} ->
+        if Lifetime.event?(epoch),
+          do: received(message, transport),
+          else: receive_until(transport, deadline)
+
+      {:transport_message, message} ->
+        if Lifetime.peer_context(),
+          do: receive_until(transport, deadline),
+          else: received(message, transport)
+
+      {:test_transport_connect, client_pid} when transport.role == :server ->
+        new_transport = %{transport | server_pid: client_pid, connected: true}
+        receive_until(new_transport, deadline)
+
+      {:transport_error, reason} ->
+        Error.transport_error(reason)
+    after
+      Deadline.remaining(deadline) -> Error.timeout_error(:receive_timeout)
+    end
+  end
+
+  defp received(message, transport) do
+    :telemetry.execute([:arbor_mcp, :transport, :message, :received], %{}, %{transport: :beam})
+    {:ok, message, transport}
   end
 end

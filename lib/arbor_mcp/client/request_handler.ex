@@ -7,7 +7,7 @@ defmodule Arbor.MCP.Client.RequestHandler do
   """
 
   require Logger
-  alias Arbor.MCP.Client.ConnectionScope
+  alias Arbor.MCP.Client.{ConnectionScope, Lifetime}
   alias Arbor.MCP.Client.{Deadline, InputDispatcher, MRTR, NotificationListener}
   alias Arbor.MCP.Error
   alias Arbor.MCP.Internal.{Maps, Protocol, RequestParams, VersionRegistry}
@@ -1470,7 +1470,7 @@ defmodule Arbor.MCP.Client.RequestHandler do
               kind, value -> {:error, {:client_handler_caught, {kind, value}}, handler_state}
             end
 
-          send(parent, {:mrtr_fulfillment_result, self(), outcome})
+          Lifetime.deliver(parent, {:mrtr_fulfillment_result, self(), outcome})
         end)
 
       tasks = Map.put(state.mrtr_tasks || %{}, pid, {ref, from, scope_ref})
@@ -1578,7 +1578,7 @@ defmodule Arbor.MCP.Client.RequestHandler do
             thrown_kind, value -> {:handler_caught, {thrown_kind, value}}
           end
 
-        send(parent, {:server_request_result, self(), outcome})
+        Lifetime.deliver(parent, {:server_request_result, self(), outcome})
       end)
 
     tasks = Map.put(state.server_request_tasks || %{}, pid, {ref, request_id, kind})

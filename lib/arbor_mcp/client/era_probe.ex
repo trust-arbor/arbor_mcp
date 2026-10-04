@@ -272,7 +272,10 @@ defmodule Arbor.MCP.Client.EraProbe do
   end
 
   defp receive_via_task(transport_mod, transport_state, timeout) do
-    task = Task.async(fn -> transport_mod.receive_message(transport_state) end)
+    task =
+      Arbor.MCP.Client.ConnectionScope.async(fn ->
+        transport_mod.receive_message(transport_state)
+      end)
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
       {:ok, result} -> result

@@ -546,10 +546,12 @@ defmodule Arbor.MCP.Server.Runtime.Initialization do
 
     case Enum.find(known, fn {_pid, role} -> role == :guard end) do
       {guard, :guard} ->
+        # Root death is another startup failure path, not a new shutdown phase.
+        # A delayed DOWN must retain this observer's original initialization cutoff.
         receive do
           {:DOWN, _monitor, :process, ^guard, _reason} -> :ok
         after
-          context.shutdown_timeout + 50 -> Process.exit(guard, :kill)
+          Deadline.remaining(context.deadline) -> Process.exit(guard, :kill)
         end
 
       nil ->

@@ -5,6 +5,7 @@ defmodule Arbor.MCP.Client.Deadline do
 
   alias Arbor.MCP.Testing.MockTransport
   alias Arbor.MCP.Transport.{HTTP, ReliabilityWrapper}
+  alias Arbor.MCP.Transport.HTTP.LegacySSE
 
   @type t :: integer() | nil
 
@@ -55,6 +56,9 @@ defmodule Arbor.MCP.Client.Deadline do
   @spec put_on_transport(module() | nil, term(), t()) :: term()
   def put_on_transport(HTTP, %HTTP{} = state, deadline), do: HTTP.put_deadline(state, deadline)
 
+  def put_on_transport(LegacySSE, %LegacySSE{} = state, deadline),
+    do: %{state | deadline: deadline}
+
   def put_on_transport(MockTransport, %MockTransport{} = state, deadline),
     do: %{state | deadline: deadline}
 
@@ -70,6 +74,8 @@ defmodule Arbor.MCP.Client.Deadline do
   @doc "The deadline currently held by `transport_state`, if any."
   @spec on_transport(module() | nil, term()) :: t()
   def on_transport(HTTP, %HTTP{deadline: deadline}), do: deadline
+
+  def on_transport(LegacySSE, %LegacySSE{deadline: deadline}), do: deadline
 
   def on_transport(MockTransport, %MockTransport{deadline: deadline}), do: deadline
 

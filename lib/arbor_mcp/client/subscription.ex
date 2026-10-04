@@ -14,6 +14,7 @@ defmodule Arbor.MCP.Client.Subscription do
 
   use GenServer
 
+  alias Arbor.MCP.Client.{ConnectionScope, Deadline, Lifetime}
   alias Arbor.MCP.SubscriptionFilter
 
   @subscription_id_key "io.modelcontextprotocol/subscriptionId"
@@ -57,11 +58,15 @@ defmodule Arbor.MCP.Client.Subscription do
     timeout = Keyword.get(opts, :timeout, 5_000)
 
     with {:ok, pid} <-
-           GenServer.start(__MODULE__,
-             client: client,
-             owner: owner,
-             filter: filter,
-             open_timeout: timeout
+           ConnectionScope.start_process(
+             __MODULE__,
+             [
+               client: client,
+               owner: owner,
+               filter: filter,
+               open_timeout: timeout
+             ],
+             :unlinked
            ) do
       try do
         case GenServer.call(pid, :await_acknowledgment, timeout) do
@@ -102,6 +107,13 @@ defmodule Arbor.MCP.Client.Subscription do
 
   @impl true
   def init(opts) do
+    :ok =
+      ConnectionScope.register_process(
+        Keyword.get(opts, :_connection_scope),
+        Keyword.get(opts, :_client_lifetime),
+        Keyword.get(opts, :_client_lifetime_deadline, Deadline.after_ms(1_000))
+      )
+
     owner = Keyword.fetch!(opts, :owner)
 
     state = %__MODULE__{
@@ -169,16 +181,10 @@ defmodule Arbor.MCP.Client.Subscription do
         {:noreply,
          %{state | status: :resyncing, acknowledged_filter: acknowledged, open_error: nil}}
       else
-        state = %{
-          state
-          | status: :active,
-            acknowledged_filter: acknowledged,
-            open_error: nil,
-            reconnect_attempts: 0
-        }
-
-        reply_waiters(state.waiters, {:ok, reference(state)})
-        {:noreply, %{state | waiters: []}}
+        case Lifetime.persist_subscription() do
+          :ok -> activate_acknowledged(state, acknowledged)
+          {:error, reason} -> fail_open(state, reason)
+        end
       end
     else
       _invalid -> fail_open(state, :invalid_subscription_acknowledgment)
@@ -297,6 +303,19 @@ defmodule Arbor.MCP.Client.Subscription do
   end
 
   def terminate(_reason, _state), do: :ok
+
+  defp activate_acknowledged(state, acknowledged) do
+    state = %{
+      state
+      | status: :active,
+        acknowledged_filter: acknowledged,
+        open_error: nil,
+        reconnect_attempts: 0
+    }
+
+    reply_waiters(state.waiters, {:ok, reference(state)})
+    {:noreply, %{state | waiters: []}}
+  end
 
   defp open_on_client(state) do
     case GenServer.call(

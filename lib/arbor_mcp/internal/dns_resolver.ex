@@ -15,7 +15,7 @@ defmodule Arbor.MCP.Internal.DNSResolver do
 
   defp resolve_hostname(host, timeout_ms) do
     task =
-      Task.async(fn ->
+      Arbor.MCP.Client.ConnectionScope.async(fn ->
         hostname = String.to_charlist(host)
 
         addresses =

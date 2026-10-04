@@ -29,8 +29,8 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
   def retire(table, token, reason), do: call(table, {:retire, token, reason})
   def failed(table, token, reason), do: call(table, {:failed, token, reason})
 
-  def connect(table, connection, peer, transport),
-    do: call(table, {:connect, connection, peer, transport})
+  def connect(table, connection, peer, transport, event_context \\ nil),
+    do: call(table, {:connect, connection, peer, transport, event_context})
 
   def connect_startup(table, context) do
     result =
@@ -177,6 +177,13 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
 
       state =
         case :ets.lookup(table, :output_peer) do
+          [{:output_peer, connection, peer, transport, event_context}] ->
+            %{
+              state
+              | peer: peer_context(connection, peer, transport, event_context),
+                monitor: Process.monitor(peer)
+            }
+
           [{:output_peer, connection, peer, transport}] ->
             %{
               state
@@ -278,9 +285,12 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
     end
   end
 
-  def handle_call({:connect, connection, peer, transport}, _from, state) do
-    {:reply, :ok, connect_peer(connection, peer, transport, state)}
+  def handle_call({:connect, connection, peer, transport, context}, _from, state) do
+    {:reply, :ok, connect_peer(connection, peer, transport, state, context)}
   end
+
+  def handle_call({:connect, connection, peer, transport}, from, state),
+    do: handle_call({:connect, connection, peer, transport, nil}, from, state)
 
   def handle_call({:connect_startup, context}, _from, state) do
     if Initialization.current?(state.table, context) do
@@ -429,13 +439,22 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
 
   def handle_info(_message, state), do: {:noreply, state}
 
-  defp connect_peer(connection, peer, transport, state) do
+  defp connect_peer(connection, peer, transport, state, event_context \\ nil) do
     if state.monitor, do: Process.demonitor(state.monitor, [:flush])
     state = retire_all(state, :connection_closed)
-    peer = if peer, do: %{connection: connection, pid: peer, transport: transport}, else: nil
+    peer = if peer, do: peer_context(connection, peer, transport, event_context), else: nil
 
     %{state | peer: peer, monitor: if(peer, do: Process.monitor(peer.pid), else: nil)}
   end
+
+  defp peer_context(connection, peer, transport, event_context) do
+    %{connection: connection, pid: peer, transport: transport, event_context: event_context}
+  end
+
+  defp send_peer(%{pid: peer, event_context: %{owner: peer, epoch: epoch}}, message),
+    do: send(peer, {:client_lifetime_event, epoch, {:transport_message, message}})
+
+  defp send_peer(%{pid: peer}, message), do: send(peer, {:transport_message, message})
 
   defp handle_ready_call({:register, token, output, owner}, {caller, _}, state) do
     with {:ok, route} <- Admission.route(state.table),
@@ -600,7 +619,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
          true <- job.deadline > now(),
          {:ok, ^ticket, term, wire} <- checkout_or_current(ticket, job.scope, state) do
       message = if(transport == :beam, do: term, else: wire)
-      send(peer, {:transport_message, message})
+      send_peer(state.peer, message)
       {OutputLedger.ack(ticket), state}
     else
       false -> {{:error, :output_expired}, state}

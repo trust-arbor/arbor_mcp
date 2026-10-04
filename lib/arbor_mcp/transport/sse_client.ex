@@ -18,7 +18,7 @@ defmodule Arbor.MCP.Transport.SSEClient do
   use GenServer
   require Logger
 
-  alias Arbor.MCP.Client.ConnectionScope
+  alias Arbor.MCP.Client.{ConnectionScope, Deadline, Lifetime}
   alias Arbor.MCP.Internal.{Headers, Redaction, SSE}
   alias Arbor.MCP.Transport.HTTP.BoundedStream
   alias Arbor.RPC.LogSummary
@@ -148,7 +148,14 @@ defmodule Arbor.MCP.Transport.SSEClient do
 
   @impl true
   def init(opts) do
-    :ok = ConnectionScope.register_process(Keyword.get(opts, :_connection_scope))
+    :ok =
+      ConnectionScope.register_process(
+        Keyword.get(opts, :_connection_scope),
+        Keyword.get(opts, :_client_lifetime),
+        Keyword.get(opts, :_client_lifetime_deadline, Deadline.after_ms(1_000))
+      )
+
+    Process.put({Lifetime, :native_parent}, Keyword.get(opts, :parent))
     url = Keyword.fetch!(opts, :url)
     headers = Keyword.get(opts, :headers, [])
     ssl_opts = Keyword.get(opts, :ssl_opts, [])
@@ -242,7 +249,7 @@ defmodule Arbor.MCP.Transport.SSEClient do
       endpoint_hash: LogSummary.fingerprint(state.url)
     })
 
-    send(state.parent, {:sse_connected, self()})
+    Lifetime.deliver(state.parent, {:sse_connected, self()})
 
     # Start heartbeat monitoring using configurable idle timeout
     heartbeat_ref = Process.send_after(self(), :check_heartbeat, state.idle_timeout)
@@ -284,13 +291,13 @@ defmodule Arbor.MCP.Transport.SSEClient do
 
           {:error, reason, new_state} ->
             BoundedStream.cancel(ref)
-            send(state.parent, {:sse_error, self(), reason})
+            Lifetime.deliver(state.parent, {:sse_error, self(), reason})
             {:stop, :normal, new_state}
         end
 
       {:error, :stream_buffer_limit_exceeded} ->
         BoundedStream.cancel(state.ref)
-        send(state.parent, {:sse_error, self(), :stream_buffer_limit_exceeded})
+        Lifetime.deliver(state.parent, {:sse_error, self(), :stream_buffer_limit_exceeded})
         {:stop, :normal, state}
     end
   end
@@ -304,7 +311,7 @@ defmodule Arbor.MCP.Transport.SSEClient do
     })
 
     Logger.info("SSE stream ended, reconnecting...")
-    send(state.parent, {:sse_closed, self()})
+    Lifetime.deliver(state.parent, {:sse_closed, self()})
     schedule_reconnect(state)
   end
 
@@ -316,7 +323,7 @@ defmodule Arbor.MCP.Transport.SSEClient do
     state = cancel_handshake_timer(state)
 
     Logger.info("SSE: server returned 405 — SSE not supported, disabling")
-    send(state.parent, {:sse_not_supported, self()})
+    Lifetime.deliver(state.parent, {:sse_not_supported, self()})
     {:noreply, %{state | ref: nil}}
   end
 
@@ -328,7 +335,7 @@ defmodule Arbor.MCP.Transport.SSEClient do
     state = cancel_handshake_timer(state)
 
     Logger.warning("SSE: server returned HTTP #{status}")
-    send(state.parent, {:sse_error, self(), {:http_error, status}})
+    Lifetime.deliver(state.parent, {:sse_error, self(), {:http_error, status}})
     schedule_reconnect(state)
   end
 
@@ -337,7 +344,7 @@ defmodule Arbor.MCP.Transport.SSEClient do
         %{ref: ref} = state
       ) do
     state = cancel_handshake_timer(state)
-    send(state.parent, {:sse_error, self(), {:invalid_sse_response, status}})
+    Lifetime.deliver(state.parent, {:sse_error, self(), {:invalid_sse_response, status}})
     schedule_reconnect(state)
   end
 
@@ -346,7 +353,7 @@ defmodule Arbor.MCP.Transport.SSEClient do
         %{ref: ref} = state
       ) do
     state = cancel_handshake_timer(state)
-    send(state.parent, {:sse_error, self(), :response_too_large})
+    Lifetime.deliver(state.parent, {:sse_error, self(), :response_too_large})
     {:stop, :normal, state}
   end
 
@@ -357,7 +364,7 @@ defmodule Arbor.MCP.Transport.SSEClient do
       reason_shape: LogSummary.describe(reason)
     )
 
-    send(state.parent, {:sse_error, self(), reason})
+    Lifetime.deliver(state.parent, {:sse_error, self(), reason})
     schedule_reconnect(state)
   end
 
@@ -375,7 +382,7 @@ defmodule Arbor.MCP.Transport.SSEClient do
   def handle_info(:handshake_timeout, %{ref: ref, heartbeat_ref: nil} = state)
       when not is_nil(ref) do
     BoundedStream.cancel(ref)
-    send(state.parent, {:sse_error, self(), :stream_handshake_timeout})
+    Lifetime.deliver(state.parent, {:sse_error, self(), :stream_handshake_timeout})
     schedule_reconnect(%{state | handshake_ref: nil})
   end
 
@@ -534,7 +541,7 @@ defmodule Arbor.MCP.Transport.SSEClient do
     })
 
     # Send to parent
-    send(
+    Lifetime.deliver(
       state.parent,
       {:sse_event, self(),
        %{

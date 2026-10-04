@@ -44,6 +44,7 @@ defmodule Arbor.MCP.Client do
     ConnectionScope,
     Deadline,
     EraCache,
+    Lifetime,
     MRTR,
     NotificationListener,
     RequestHandler,
@@ -318,6 +319,7 @@ defmodule Arbor.MCP.Client do
   def start_link(opts) do
     {name_opts, start_opts} = Keyword.split(opts, [:name])
 
+    start_opts = Keyword.put(start_opts, :_lifetime_parent, self())
     normalize_start_result(GenServer.start_link(__MODULE__, start_opts, name_opts))
   end
 
@@ -1062,15 +1064,24 @@ defmodule Arbor.MCP.Client do
   """
   @spec disconnect(t()) :: :ok | {:error, term()}
   def disconnect(client) do
-    GenServer.call(client, :disconnect, 10_000)
+    deadline = Deadline.after_ms(Lifetime.client_cleanup_ms(client))
+    Lifetime.request_cleanup(client, deadline)
+    GenServer.call(client, {:ordinary_disconnect, deadline}, Deadline.remaining(deadline))
+  catch
+    :exit, {:timeout, _call} -> {:error, :client_cleanup_timeout}
   end
 
   @doc """
   Stops the client.
   """
-  @spec stop(t(), term()) :: :ok
+  @spec stop(t(), term()) :: :ok | {:error, term()}
   def stop(client, reason \\ :normal) do
-    GenServer.stop(client, reason)
+    deadline = Deadline.after_ms(Lifetime.client_cleanup_ms(client))
+    Lifetime.request_cleanup(client, deadline)
+    GenServer.call(client, {:ordinary_stop, reason, deadline}, Deadline.remaining(deadline))
+  catch
+    :exit, {:timeout, _call} -> {:error, :client_cleanup_timeout}
+    :exit, {:noproc, _call} -> {:error, :client_not_alive}
   end
 
   @doc """
@@ -1153,6 +1164,7 @@ defmodule Arbor.MCP.Client do
     Process.flag(:trap_exit, true)
     Process.put({__MODULE__, :client}, true)
 
+    :ok = Lifetime.install(opts)
     :ok = ConnectionScope.register_client(Keyword.get(opts, :_connection_scope))
 
     # Build initial state from options
@@ -1262,6 +1274,9 @@ defmodule Arbor.MCP.Client do
   defp normalize_connection_error(:invalid_request) do
     {:initialize_error, %{"code" => ErrorCodes.invalid_request()}}
   end
+
+  defp normalize_connection_error({:cleanup_failed, _reason, {:error, _}} = reason),
+    do: {:transport_connect_failed, reason}
 
   defp normalize_connection_error(:connection_refused) do
     {:transport_connect_failed, :connection_refused}
@@ -1459,7 +1474,23 @@ defmodule Arbor.MCP.Client do
     handle_call(:disconnect, from, state)
   end
 
+  def handle_call({:ordinary_disconnect, deadline}, from, state) do
+    Process.put({__MODULE__, :cleanup_deadline}, deadline)
+    handle_call(:disconnect, from, state)
+  end
+
+  def handle_call({:ordinary_stop, reason, deadline}, from, state) do
+    Process.put({__MODULE__, :cleanup_deadline}, deadline)
+    {:reply, result, state} = handle_call(:disconnect, from, state)
+    {:stop, reason, result, state}
+  end
+
   def handle_call(:disconnect, _from, state) do
+    deadline = cleanup_deadline()
+    quiesce_result = Lifetime.quiesce(deadline)
+    state = %{state | cleanup_result: remember_cleanup(state.cleanup_result, quiesce_result)}
+    state = retire_callback_work(state)
+
     :telemetry.execute(
       [:arbor_mcp, :client, :disconnected],
       %{},
@@ -1525,7 +1556,10 @@ defmodule Arbor.MCP.Client do
         :ok
     end)
 
-    cleanup_result = remember_cleanup(state.cleanup_result, close_transport(state))
+    cleanup_result =
+      state.cleanup_result
+      |> remember_cleanup(close_transport(state))
+      |> remember_cleanup(Lifetime.cleanup(deadline))
 
     NotificationListener.close_all(state.notification_listeners, :disconnected)
     reset_notification_worker(state)
@@ -1550,12 +1584,17 @@ defmodule Arbor.MCP.Client do
         async_post_tasks: %{},
         subscriptions: %{},
         subscription_monitors: %{},
-        resource_subscriptions: %{desired: %{}, active: nil, generation: 0},
+        resource_subscriptions: %{
+          desired: %{},
+          active: nil,
+          generation: resource_subscription_state(state).generation + 1
+        },
         resource_subscriber_monitors: %{},
         notification_listeners: %{},
         notification_listener_monitors: %{}
     }
 
+    Process.delete({__MODULE__, :cleanup_deadline})
     {:reply, cleanup_result, new_state}
   end
 
@@ -1670,6 +1709,15 @@ defmodule Arbor.MCP.Client do
   end
 
   @impl GenServer
+  def handle_info({:transport_message, message}, %{transport_mod: mod} = state)
+      when mod in [Arbor.MCP.Transport.Test, Arbor.MCP.Transport.Local] do
+    # These standard peers opt into an immutable lifetime event-context during
+    # connect; raw frames cannot authenticate a retired/replaced connection.
+    if is_nil(Lifetime.current()),
+      do: RequestHandler.parse_transport_message(message, state),
+      else: {:noreply, state}
+  end
+
   def handle_info({:transport_message, message}, state) do
     RequestHandler.parse_transport_message(message, state)
   end
@@ -1788,21 +1836,48 @@ defmodule Arbor.MCP.Client do
   # flows. `meta` carries the request id the task served plus the durable
   # transport-state fields the POST changed (session rotation, OAuth token
   # refresh), which are merged back into our copy of the transport state.
+  def handle_info({:client_lifetime_event, epoch, {:transport_message, message}}, state) do
+    if Lifetime.event?(epoch),
+      do: RequestHandler.parse_transport_message(message, state),
+      else: {:noreply, state}
+  end
+
+  def handle_info({:client_lifetime_event, epoch, message}, state) do
+    if Lifetime.event?(epoch), do: handle_info(message, state), else: {:noreply, state}
+  end
+
   def handle_info({:async_post_result, result, meta}, state) when is_map(meta) do
-    state = merge_async_transport_state(state, meta)
-    handle_async_post_result(result, Map.get(meta, :request_id), state)
+    if current_async_post?(state, meta) do
+      state = merge_async_transport_state(state, meta)
+      state = finish_async_post(state, meta)
+      handle_async_post_result(result, Map.get(meta, :request_id), state)
+    else
+      {:noreply, state}
+    end
   end
 
   # Legacy 2-tuple shape (no metadata) kept for compatibility.
   def handle_info({:async_post_result, result}, state) do
-    handle_async_post_result(result, nil, state)
+    if is_nil(Lifetime.current()),
+      do: handle_async_post_result(result, nil, state),
+      else: {:noreply, state}
   end
 
   # Async POST task registration: maps the task's monitor ref to the request
   # id it serves so a crashed task can fail that request.
-  def handle_info({:async_post_task, ref, request_id}, state) when is_reference(ref) do
-    tasks = Map.put(state.async_post_tasks || %{}, ref, request_id)
+  def handle_info({:async_post_task, ref, pid, request_id}, state)
+      when is_reference(ref) and is_pid(pid) do
+    tasks = Map.put(state.async_post_tasks || %{}, ref, {pid, request_id})
     {:noreply, %{state | async_post_tasks: tasks}}
+  end
+
+  def handle_info({:async_post_task, ref, request_id}, state) when is_reference(ref) do
+    if is_nil(Lifetime.current()) do
+      tasks = Map.put(state.async_post_tasks || %{}, ref, request_id)
+      {:noreply, %{state | async_post_tasks: tasks}}
+    else
+      {:noreply, state}
+    end
   end
 
   def handle_info(
@@ -1882,7 +1957,14 @@ defmodule Arbor.MCP.Client do
   # request the task was serving instead of leaving it to hang until timeout.
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{async_post_tasks: tasks} = state)
       when is_map(tasks) and is_map_key(tasks, ref) do
-    {request_id, remaining} = Map.pop(tasks, ref)
+    {entry, remaining} = Map.pop(tasks, ref)
+
+    request_id =
+      case entry do
+        {_pid, id} -> id
+        id -> id
+      end
+
     state = %{state | async_post_tasks: remaining}
 
     if reason == :normal do
@@ -2151,8 +2233,33 @@ defmodule Arbor.MCP.Client do
     end
   end
 
+  defp current_async_post?(state, %{task_pid: pid, request_id: id}) do
+    Enum.any?(state.async_post_tasks, fn {_ref, entry} -> entry == {pid, id} end)
+  end
+
+  defp current_async_post?(_state, _meta), do: is_nil(Lifetime.current())
+
+  defp finish_async_post(state, %{task_pid: pid}) do
+    tasks =
+      Map.reject(state.async_post_tasks, fn
+        {ref, {^pid, _id}} ->
+          Process.demonitor(ref, [:flush])
+          true
+
+        _entry ->
+          false
+      end)
+
+    %{state | async_post_tasks: tasks}
+  end
+
+  defp finish_async_post(state, _meta), do: state
+
   defp known_async_post_request?(%{async_post_tasks: tasks}, request_id) when is_map(tasks) do
-    Enum.any?(tasks, fn {_ref, id} -> id == request_id end)
+    Enum.any?(tasks, fn
+      {_ref, {_pid, id}} -> id == request_id
+      {_ref, id} -> id == request_id
+    end)
   end
 
   defp known_async_post_request?(_state, _request_id), do: false
@@ -2236,23 +2343,16 @@ defmodule Arbor.MCP.Client do
   # disconnect/1 or the client loop for the transport's request timeout.
   defp close_transport(%{transport_mod: mod, transport_state: transport_state})
        when not is_nil(mod) and not is_nil(transport_state) do
-    cleanup_state =
-      case Process.get({ConnectionScope, :cleanup_deadline}) do
-        nil -> Deadline.for_cleanup(mod, transport_state)
-        deadline -> Deadline.put_on_transport(mod, transport_state, deadline)
-      end
+    deadline = cleanup_deadline()
+    cleanup_state = Deadline.put_on_transport(mod, transport_state, deadline)
 
     result =
-      try do
-        case mod.close(cleanup_state) do
-          :ok -> :ok
-          {:error, _reason} = error -> error
-          other -> {:error, {:invalid_close_result, other}}
-        end
-      rescue
-        error -> {:error, {:cleanup_exception, error.__struct__}}
-      catch
-        kind, reason -> {:error, {:cleanup_failure, kind, reason}}
+      if ConnectionScope.current() do
+        # The explicit bracket already supplies an independent bounded owner;
+        # retain its native close-callback caller contract.
+        perform_transport_close(mod, cleanup_state)
+      else
+        bounded_transport_close(mod, cleanup_state, deadline)
       end
 
     ConnectionScope.closed(mod, transport_state, result)
@@ -2260,6 +2360,59 @@ defmodule Arbor.MCP.Client do
   end
 
   defp close_transport(_state), do: :ok
+
+  defp perform_transport_close(mod, cleanup_state) do
+    case mod.close(cleanup_state) do
+      :ok -> :ok
+      {:error, _reason} = error -> error
+      other -> {:error, {:invalid_close_result, other}}
+    end
+  rescue
+    error -> {:error, {:cleanup_exception, error.__struct__}}
+  catch
+    kind, reason -> {:error, {:cleanup_failure, kind, reason}}
+  end
+
+  defp bounded_transport_close(mod, cleanup_state, deadline) do
+    task = Lifetime.close_async(fn -> perform_transport_close(mod, cleanup_state) end)
+    Process.unlink(task.pid)
+
+    case Task.yield(task, Deadline.remaining(deadline)) do
+      {:ok, result} ->
+        result
+
+      _unfinished ->
+        Process.exit(task.pid, :kill)
+        Process.demonitor(task.ref, [:flush])
+        {:error, :client_cleanup_timeout}
+    end
+  end
+
+  defp cleanup_deadline do
+    Deadline.earliest(
+      Process.get({__MODULE__, :cleanup_deadline}),
+      Process.get({ConnectionScope, :cleanup_deadline})
+    ) || begin_cleanup_deadline()
+  end
+
+  defp begin_cleanup_deadline do
+    deadline = Deadline.after_ms(Lifetime.cleanup_timeout())
+    Process.put({__MODULE__, :cleanup_deadline}, deadline)
+    deadline
+  end
+
+  defp retire_callback_work(state) do
+    Enum.each(state.server_request_tasks, fn {_pid, {ref, _id, _kind}} ->
+      Process.demonitor(ref, [:flush])
+    end)
+
+    Enum.each(state.mrtr_tasks, fn {_pid, {ref, from, _scope}} ->
+      Process.demonitor(ref, [:flush])
+      GenServer.reply(from, {:error, :client_disconnected})
+    end)
+
+    %{state | server_request_tasks: %{}, mrtr_tasks: %{}}
+  end
 
   defp terminal_cleanup({:cleanup_failed, _reason, {:error, _} = result}), do: result
   defp terminal_cleanup({:connection_error, reason}), do: terminal_cleanup(reason)
@@ -2281,6 +2434,10 @@ defmodule Arbor.MCP.Client do
   end
 
   defp handle_transport_down(reason, state) do
+    deadline = cleanup_deadline()
+    quiesce_result = Lifetime.quiesce(deadline, :transport)
+    state = %{state | cleanup_result: remember_cleanup(state.cleanup_result, quiesce_result)}
+    state = retire_callback_work(state)
     state = retire_links(state)
     reply_pending_with_close_error(reason, state)
     notify_subscription_processes(state, {:client_subscription_disconnected, reason})
@@ -2297,6 +2454,10 @@ defmodule Arbor.MCP.Client do
       Process.exit(state.receiver_task.pid, :shutdown)
     end
 
+    cleanup_result =
+      remember_cleanup(state.cleanup_result, Lifetime.cleanup(deadline, :transport))
+
+    Process.delete({__MODULE__, :cleanup_deadline})
     previous_status = state.connection_status
 
     # The health check is re-armed by the reconnect success path; leaving the
@@ -2306,6 +2467,7 @@ defmodule Arbor.MCP.Client do
     cleared_state = %{
       state
       | connection_status: :disconnected,
+        cleanup_result: cleanup_result,
         transport_mod: nil,
         transport_state: nil,
         receiver_task: nil,
@@ -2529,6 +2691,10 @@ defmodule Arbor.MCP.Client do
 
   @impl true
   def terminate(reason, state) do
+    deadline = cleanup_deadline()
+    Lifetime.quiesce(deadline)
+    retire_callback_work(state)
+
     state
     |> Map.get(:notification_listeners, %{})
     |> NotificationListener.close_all({:shutdown, reason})
@@ -2536,6 +2702,7 @@ defmodule Arbor.MCP.Client do
     # However the client stops (stop/2, its starter's exit, a linked
     # process's crash), the connection and any child process go with it.
     close_transport(state)
+    Lifetime.cleanup(deadline)
     :ok
   end
 

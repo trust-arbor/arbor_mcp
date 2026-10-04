@@ -258,10 +258,47 @@ a stats map while all control slots were occupied; it now retries the valid
 `:stdio_output_busy` response. Fresh combined CI, host-owned stdio logger
 migration, complete cross-transport privacy and final release qualification remain.
 
+The ordinary Client lifetime and peer-generation overlay now passes **201
+affected cases on minimum/current**, including 23 new cases. Native Client
+parent/link identity remains intact. Early bounded observers and authenticated
+construction reservations own known library workers; disconnect/stop uses one
+cleanup cutoff and requires actual worker death. Acknowledged resource
+subscriptions retain logical lifetime across reconnect. Native Test/BEAM
+controls carry captured connection epochs, so queued old controls cannot act on
+a new connection. Custom close callbacks now run in a registered cleanup worker;
+borrowed peers and arbitrary callback-created children are outside this ownership
+proof. See [ordinary Client migration](./V2_ORDINARY_CLIENT_LIFETIME.md).
+
+[CI at `40f65d1`](https://github.com/trust-arbor/arbor_mcp/actions/runs/37231121905)
+passes six jobs, including both archive consumers, SDK interoperability,
+conformance and Dialyzer. All six failed jobs share an obsolete fixture requiring
+printable child startup arguments; the fixture now verifies actual native
+supervision and facade module identity. The current unit lane also exposed a
+startup cleanup defect: consuming root DOWN could renew a suspended guard's wait
+by 5,050 ms. The observer now retains its original initialization cutoff. A
+deterministic native-root regression fails against the old source and passes
+the fix; the original 200 ms cutoff and 500 ms cleanup assertions remain.
+
+The combined Client/guard checkpoint passes **5,048 executed tests, 20 doctests
+and 34 properties on each supported toolchain**, zero failures (82 excluded;
+minimum reports the 5,130-test inventory). The 46 cancellation/native-transport
+cases pass both. Production compilation treats warnings as errors on both;
+minimum Dialyzer retains 66 existing filtered warnings with no new filters.
+Cancellation fixtures use the real connected server transport, preserving
+current-generation delivery and malformed-notification coverage.
+
+[The API migration](./V2_API_MIGRATION.md) and
+[behavior/ownership migration](./V2_NON_SYMBOL_MIGRATION.md) preserve the frozen
+1.x baseline and historical census, and distinguish the accepted 96 removals,
+ACP facade move and seven required internal runtime retirements. They identify
+wire/storage literals that must survive the rename. Final compiled graphs,
+HTTP cutover, full diagnostic privacy, host-owned logger migration and RC
+qualification remain release gates. Fresh combined CI is required.
+
 | Slice | Reviewable evidence | Remaining work |
 |---|---|---|
 | Installed HTTP writer authority | The exact 13-path slice passes canonical minimum/current full selections, all 27 pinned SDK cases and production warnings-as-errors compilation. Runtime starts an owned proxy under the original initialization epoch/cutoff, retaining a separate IO domain across proxy/Admission/execution replacement. Entry bindings derive actual writer identity and original deadline; session claims verify addressed lease/epoch. Root stop reports unresolved borrowed IO explicitly. | Gateway/Controller routing, complete legacy batch authority and actual Bandit/Cowboy delivery remain; the integrated 41 focused and 84 retained cases do not clear those routing/physical transport gates. |
-| Client connection bracket | The exact 13-path helper slice passes canonical minimum/current full selections, all 27 pinned SDK cases and production warnings-as-errors compilation. A new client has an independent observer and actual native guardian parent; the callback runs in the original caller. Registered workers and typed stdio cleanup proofs remain owned; finite establishment and cleanup results are explicit. | Final combined/installed-package acceptance and ordinary Client.stop/disconnect worker lifecycle fixes remain. Legacy HTTP cleanup explicitly cannot prove remote session termination. |
+| Client connection bracket and ordinary lifetime | The exact 13-path helper slice passes its canonical minimum/current full selections and all 27 pinned SDK cases. The later ordinary Client overlay passes 201 affected cases on both toolchains; its combined Client/guard full suites pass 5,048 executed tests each. The explicit bracket preserves callback caller and native guardian construction; ordinary clients preserve their native parent and own known workers with finite cleanup. | Fresh complete CI, final installed-package acceptance and full diagnostic/privacy qualification remain. Legacy HTTP cleanup explicitly cannot prove remote session termination. |
 | Dynamic tool consumer migration | The exact seven-file application example passes the canonical minimum/current full selections: bounded owned descriptors/compiled schemas/MFA dispatch, explicit defaults without coercion, atomic registration/replacement/removal and scoped list-change admission. Its source-qualified selection passes 60 cases on minimum/current, including 13 new migration cases. | Fresh complete CI and installed-package consumer compilation remain. |
 | Complete Tools-family retirement | The exact 16-path retirement removes 81 callables, eight modules and four types. Dynamic and DSL/Result/SchemaPolicy consumers replace global registry/helper behavior. Thirty-eight old implementation-only cases retire; two unknown-name callback/wire cases and retained protocol Roots/Sampling/Logging remain. The source-qualified 180 cases pass both toolchains. Canonical full selections pass 4,995 executed tests on each (minimum reports 5,077 including 82 excluded), plus 20 doctests and 34 properties. Production compilation, formatting, strict Credo and ExDoc pass; minimum Dialyzer filters 66 existing warnings with no new filters. Compiled BEAM inspection confirms 96 total accepted callable removals, eight modules and four types. | Fresh complete CI remains. Six HTTP callables and two deprecated wrappers still await gateway cutover; the final four-package public API comparison remains. |
 | Stdio restart liability | A private actual IO-protocol probe reproduces retained borrowed-device writes after the native Writer dies and its parent permanently replaces the Runtime. Fresh per-root output credits do not account for those old writes. | A bounded logical output-device authority must survive Runtime replacement and fail closed until actual IO completion; the separate followup is in progress. Borrowed device/host processes must survive. |
@@ -438,10 +475,10 @@ is specified in [V2_PACKAGE_CONTRACT.md](./V2_PACKAGE_CONTRACT.md).
 | Phase | Remaining implementation |
 |---|---|
 | 1: contracts | Review and finish the [removal/replacement inventory](./V2_API_MIGRATION.md), non-symbol migration, result/configuration contracts and final public defaults. The runtime candidate validates its scheduling configuration, but not every transport/configuration option. |
-| 2: runtime | Finish installed HTTP gateway/session routing and ordinary Client worker cleanup. Server stdio dispatch and retained physical liability across Runtime replacement are integrated, including clean device retirement. Qualify all remaining singleton boundaries, store lifecycle and cross-runtime crash/restart/stop isolation. |
+| 2: runtime | Finish installed HTTP gateway/session routing. Ordinary Client worker cleanup and captured peer generations pass the combined full suites. Server stdio dispatch and retained physical liability across Runtime replacement are integrated, including clean device retirement. Qualify all remaining singleton boundaries, store lifecycle and cross-runtime crash/restart/stop isolation. |
 | 3: dispatch/scheduler | Test/BEAM, server stdio and custom calls prepare bounded output before serialized state commit, with grouped batch accounting and actual stdio IO receipts. HTTP still needs gateway/Controller delivery, complete legacy batches and real socket acknowledgements. Complete cross-transport and crash-log privacy qualification. |
 | 4: stores | Deliberate public contracts, runtime-owned adapter lifecycle and payload-safe store telemetry. The internal ETS/DETS seam is groundwork, not the whole target. |
-| 5: public API | Shared `Server.Result`, default 2020-12 validation, selected DSL composition, media/options migration, dynamic owned tools and `with_connection` pass their integrated selections. The first 96 callable removals are implemented. Finish HTTP retirement, configuration/default contracts and ordinary Client cleanup. |
+| 5: public API | Shared `Server.Result`, default 2020-12 validation, selected DSL composition, media/options migration, dynamic owned tools, `with_connection` and ordinary Client cleanup pass their integrated selections. The first 96 callable removals are implemented. Finish HTTP retirement and final configuration/default contracts. |
 | 6–7: migration/release | Final four-package compiled API and non-symbol migration comparison, HTTP retirement, cross-transport equivalence, runtime pressure/isolation/privacy/upgrade evidence and v2 RC/soak. |
 
 The accepted runtime contract specifies callback PID/links, state order,

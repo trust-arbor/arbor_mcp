@@ -314,10 +314,19 @@ defmodule Arbor.MCP.Server.TransportTest do
       spec = TestServer.child_spec(transport: :beam)
 
       assert spec.id == TestServer
-      assert spec.start == {TestServer, :start_link, [[transport: :beam]]}
+      assert spec.modules == [TestServer]
       assert spec.type == :supervisor
       assert spec.restart == :permanent
       assert spec.shutdown == 5_000
+
+      root = start_supervised!(spec)
+      assert {:ok, parent} = ExUnit.fetch_test_supervisor()
+      assert {TestServer, root, :supervisor, [TestServer]} in Supervisor.which_children(parent)
+      {:dictionary, dictionary} = Process.info(root, :dictionary)
+      assert hd(Keyword.fetch!(dictionary, :"$ancestors")) == parent
+      assert {:ok, _runtime} = Runtime.ref(root)
+      assert {:ok, edge} = Runtime.edge(root)
+      assert Process.alive?(edge)
     end
   end
 end

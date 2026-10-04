@@ -1,7 +1,7 @@
 defmodule Arbor.MCP.Client.MRTR do
   @moduledoc false
 
-  alias Arbor.MCP.Client.InputDispatcher
+  alias Arbor.MCP.Client.{InputDispatcher, Lifetime}
   alias Arbor.MCP.Error
   alias Arbor.MCP.Protocol.ErrorCodes
 
@@ -80,7 +80,7 @@ defmodule Arbor.MCP.Client.MRTR do
   defp fulfill_concurrently(input_requests, handler, handler_state, capabilities, concurrency) do
     input_requests
     |> Enum.sort_by(fn {id, _request} -> id end)
-    |> Task.async_stream(
+    |> Lifetime.async_stream(
       fn {id, request} ->
         {id, dispatch(request, handler, handler_state, capabilities)}
       end,

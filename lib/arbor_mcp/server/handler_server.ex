@@ -181,9 +181,15 @@ defmodule Arbor.MCP.Server.HandlerServer do
   end
 
   @doc false
-  def connect(server, peer) do
+  def connect(server, peer, opts \\ []) do
+    request =
+      case Keyword.get(opts, :peer_event_context) do
+        nil -> {:runtime_peer_connect, peer}
+        context -> {:runtime_peer_connect, peer, context}
+      end
+
     with {:ok, edge} <- Runtime.edge(server),
-         {:ok, runtime, connection} <- GenServer.call(edge, {:runtime_peer_connect, peer}) do
+         {:ok, runtime, connection} <- GenServer.call(edge, request) do
       {:ok, edge, runtime, connection}
     end
   end
@@ -1156,7 +1162,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
     end
   end
 
-  defp replace_peer(peer, state) do
+  defp replace_peer(peer, state, event_context \\ nil) do
     if state.peer_monitor, do: Process.demonitor(state.peer_monitor, [:flush])
     if state.connection, do: Runtime.cancel_scope(state.runtime, {:connection, state.connection})
 
@@ -1173,15 +1179,20 @@ defmodule Arbor.MCP.Server.HandlerServer do
     connection = if peer, do: make_ref(), else: nil
     :ets.insert(Ref.table(state.runtime), {:edge_connection, self(), connection})
 
-    connect_output_peer(peer, connection, state)
+    connect_output_peer(peer, connection, state, event_context)
 
     transport_state =
       case state.transport do
         Test ->
-          %{state.transport_state | peer_pid: peer}
+          %{state.transport_state | peer_pid: peer, peer_event_context: event_context}
 
         Local ->
-          %{state.transport_state | server_pid: peer, connected: not is_nil(peer)}
+          %{
+            state.transport_state
+            | server_pid: peer,
+              connected: not is_nil(peer),
+              peer_event_context: event_context
+          }
 
         Arbor.MCP.Server.Stdio.Writer ->
           %{state.transport_state | writer: peer, connected: not is_nil(peer)}
@@ -1208,12 +1219,12 @@ defmodule Arbor.MCP.Server.HandlerServer do
     }
   end
 
-  defp connect_output_peer(nil, _connection, state) do
+  defp connect_output_peer(nil, _connection, state, _event_context) do
     :ets.delete(Ref.table(state.runtime), :output_peer)
     OutputController.connect(Ref.table(state.runtime), nil, nil, nil)
   end
 
-  defp connect_output_peer(peer, connection, state) do
+  defp connect_output_peer(peer, connection, state, event_context) do
     transport =
       cond do
         state.transport == Local -> :beam
@@ -1221,8 +1232,12 @@ defmodule Arbor.MCP.Server.HandlerServer do
         true -> :test
       end
 
-    :ets.insert(Ref.table(state.runtime), {:output_peer, connection, peer, transport})
-    OutputController.connect(Ref.table(state.runtime), connection, peer, transport)
+    :ets.insert(
+      Ref.table(state.runtime),
+      {:output_peer, connection, peer, transport, event_context}
+    )
+
+    OutputController.connect(Ref.table(state.runtime), connection, peer, transport, event_context)
   end
 
   # Batches are allowed up to (but not including) the version that removed
@@ -1261,6 +1276,23 @@ defmodule Arbor.MCP.Server.HandlerServer do
       )
       when peer != transport.writer,
       do: {:reply, {:error, :invalid_stdio_peer}, state}
+
+  def handle_call({:runtime_peer_connect, peer, nil}, from, state),
+    do: handle_call({:runtime_peer_connect, peer}, from, state)
+
+  def handle_call(
+        {:runtime_peer_connect, peer, %{owner: peer, epoch: epoch} = context},
+        {peer, _tag},
+        %{transport: transport} = state
+      )
+      when is_pid(peer) and node(peer) == node() and is_reference(epoch) and
+             transport in [Test, Local] and map_size(context) == 2 do
+    state = replace_peer(peer, state, context)
+    {:reply, {:ok, state.runtime, state.connection}, state}
+  end
+
+  def handle_call({:runtime_peer_connect, _peer, _context}, _from, state),
+    do: {:reply, {:error, :invalid_peer_event_context}, state}
 
   def handle_call({:runtime_peer_connect, peer}, _from, state) when is_pid(peer) do
     state = replace_peer(peer, state)

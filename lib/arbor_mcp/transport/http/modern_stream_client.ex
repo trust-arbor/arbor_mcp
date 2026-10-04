@@ -3,7 +3,7 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
 
   use GenServer
 
-  alias Arbor.MCP.Client.ConnectionScope
+  alias Arbor.MCP.Client.{ConnectionScope, Deadline, Lifetime}
   alias Arbor.MCP.Internal.{Headers, Redaction, SSE}
   alias Arbor.MCP.Transport.HTTP.BoundedStream
 
@@ -64,11 +64,14 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
   def start(opts),
     do: ConnectionScope.start_process(__MODULE__, opts, :unlinked)
 
-  @spec cancel(pid()) :: :ok
-  def cancel(pid) do
-    GenServer.call(pid, :cancel, 1_000)
-  catch
-    :exit, _reason -> :ok
+  @spec cancel(pid(), integer()) :: :ok | {:error, term()}
+  def cancel(pid, deadline \\ Deadline.after_ms(1_000)) do
+    Lifetime.native_stop(
+      pid,
+      __MODULE__,
+      fn timeout -> GenServer.call(pid, :cancel, timeout) end,
+      deadline
+    )
   end
 
   @doc false
@@ -77,8 +80,15 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
 
   @impl true
   def init(opts) do
-    :ok = ConnectionScope.register_process(Keyword.get(opts, :_connection_scope))
+    :ok =
+      ConnectionScope.register_process(
+        Keyword.get(opts, :_connection_scope),
+        Keyword.get(opts, :_client_lifetime),
+        Keyword.get(opts, :_client_lifetime_deadline, Deadline.after_ms(1_000))
+      )
+
     parent = Keyword.fetch!(opts, :parent)
+    Process.put({Lifetime, :native_parent}, parent)
     profile = httpc_profile()
     ensure_httpc_profile!(profile)
 
@@ -156,7 +166,12 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
         cond do
           state.completed? ->
             cancel_request(state)
-            send(state.parent, {:modern_http_stream_finished, self(), state.request_id})
+
+            Lifetime.deliver(
+              state.parent,
+              {:modern_http_stream_finished, self(), state.request_id}
+            )
+
             {:stop, :normal, cancel_idle_timer(state)}
 
           state.failed? ->
@@ -185,7 +200,7 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
     state = state |> cancel_handshake_timer() |> cancel_idle_timer()
 
     if state.completed? do
-      send(state.parent, {:modern_http_stream_finished, self(), state.request_id})
+      Lifetime.deliver(state.parent, {:modern_http_stream_finished, self(), state.request_id})
       {:stop, :normal, state}
     else
       {:stop, :normal, notify_closed(state, :stream_ended)}
@@ -259,7 +274,10 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
     cancel_idle_timer(state)
 
     unless state.cancelled? or state.completed? or state.close_notified? do
-      send(state.parent, {:modern_http_stream_closed, self(), state.request_id, :stream_stopped})
+      Lifetime.deliver(
+        state.parent,
+        {:modern_http_stream_closed, self(), state.request_id, :stream_stopped}
+      )
     end
 
     :ok
@@ -280,7 +298,7 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
         state = handle_complete_response(status, body, state)
 
         if state.completed? do
-          send(state.parent, {:modern_http_stream_finished, self(), state.request_id})
+          Lifetime.deliver(state.parent, {:modern_http_stream_finished, self(), state.request_id})
         end
 
         {:stop, :normal, state}
@@ -350,7 +368,7 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
   end
 
   defp deliver_message(message, state) do
-    send(
+    Lifetime.deliver(
       state.parent,
       {:modern_http_stream_message, self(), state.request_id, message}
     )
@@ -408,7 +426,7 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
       {:ok, token, provider_state} when is_binary(token) ->
         case sanitize_retry_headers(put_bearer_header(state.headers, token), state) do
           {:ok, headers} ->
-            send(
+            Lifetime.deliver(
               state.parent,
               {:modern_http_stream_auth_updated, self(), state.request_id,
                %{access_token: token, auth_provider_state: provider_state}}
@@ -503,7 +521,7 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
   defp notify_closed(%{close_notified?: true} = state, _reason), do: state
 
   defp notify_closed(state, reason) do
-    send(state.parent, {:modern_http_stream_closed, self(), state.request_id, reason})
+    Lifetime.deliver(state.parent, {:modern_http_stream_closed, self(), state.request_id, reason})
     %{state | close_notified?: true}
   end
 

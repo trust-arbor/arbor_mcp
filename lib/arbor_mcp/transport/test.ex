@@ -25,11 +25,20 @@ defmodule Arbor.MCP.Transport.Test do
 
   @behaviour Arbor.MCP.Transport
 
+  alias Arbor.MCP.Client.{Deadline, Lifetime}
   alias Arbor.MCP.Server.HandlerServer
   alias Arbor.MCP.Transport.Error
 
   # State for server side (when acting as server transport)
-  defstruct [:peer_pid, :role, :subscriber, :forwarder_pid, :runtime, :connection]
+  defstruct [
+    :peer_pid,
+    :role,
+    :subscriber,
+    :forwarder_pid,
+    :runtime,
+    :connection,
+    :peer_event_context
+  ]
 
   @impl true
   def connect(opts) do
@@ -37,7 +46,7 @@ defmodule Arbor.MCP.Transport.Test do
 
     if server_pid do
       # Client connecting to server
-      case HandlerServer.connect(server_pid, self()) do
+      case HandlerServer.connect(server_pid, self(), peer_event_context: Lifetime.peer_context()) do
         {:ok, edge, runtime, connection} ->
           state = %__MODULE__{
             peer_pid: edge,
@@ -72,19 +81,29 @@ defmodule Arbor.MCP.Transport.Test do
   def receive_message(%__MODULE__{} = state, timeout) do
     case Error.validate_connection(state, &connected?/1) do
       :ok ->
-        receive do
-          {:transport_message, message} ->
-            {:ok, message, state}
-
-          {:transport_error, reason} ->
-            Error.transport_error(reason)
-        after
-          timeout ->
-            Error.timeout_error(:receive_timeout)
-        end
+        receive_until(state, Deadline.after_ms(timeout))
 
       error ->
         error
+    end
+  end
+
+  defp receive_until(state, deadline) do
+    receive do
+      {:client_lifetime_event, epoch, {:transport_message, message}} ->
+        if Lifetime.event?(epoch),
+          do: {:ok, message, state},
+          else: receive_until(state, deadline)
+
+      {:transport_message, message} ->
+        if Lifetime.peer_context(),
+          do: receive_until(state, deadline),
+          else: {:ok, message, state}
+
+      {:transport_error, reason} ->
+        Error.transport_error(reason)
+    after
+      Deadline.remaining(deadline) -> Error.timeout_error(:receive_timeout)
     end
   end
 
@@ -108,7 +127,17 @@ defmodule Arbor.MCP.Transport.Test do
             {:error, reason} -> Error.transport_error(reason)
           end
         else
-          Kernel.send(peer_pid, {:transport_message, message})
+          case state.peer_event_context do
+            %{owner: ^peer_pid, epoch: epoch} ->
+              Kernel.send(
+                peer_pid,
+                {:client_lifetime_event, epoch, {:transport_message, message}}
+              )
+
+            nil ->
+              Kernel.send(peer_pid, {:transport_message, message})
+          end
+
           {:ok, state}
         end
 

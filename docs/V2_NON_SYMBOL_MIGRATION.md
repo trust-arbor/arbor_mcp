@@ -1,0 +1,418 @@
+# V2 behavior and ownership migration
+
+This is the consumer migration record for behavior that an export comparison
+cannot establish. It accompanies [the API inventory](./V2_API_MIGRATION.md),
+[package ownership](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/docs/V2_PACKAGE_CONTRACT.md) and
+[the runtime contract](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/docs/V2_RUNTIME_CONTRACT.md). V2 is still an unpublished
+candidate; the final compiled graph, HTTP cutover and RC gates remain open.
+
+## Source checkpoints and evidence boundaries
+
+| Checkpoint | What it establishes |
+| --- | --- |
+| Frozen supported source `1808c56bd4fc7b000043c2775f61ecced6ed059f` | The unchanged [1.x compiled baseline](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/docs/v2/api_baseline_1_5_plus.json), including hidden symbols. |
+| MCP `69b0a39ab889f8b8af19707873c9066614b68cf8`, ACP/RPC `0e4cfd1efdb7437eb6cf4c944ed6fa04553da7bb` | Historical 64-entry semantic census. MCP reflection reused `f16660b58d69982ed50b014f22319e16c291b345` and explicitly excluded the later DSL source delta, privacy and ordinary Client overlays. It is not a fresh final build. |
+| MCP `111a3c70421206a0d6b96184523ffa1db9d209d6` | Source basis for this document. Stdio authority and subscription-origin followups are present. Source links below describe this checkpoint unless explicitly marked supplementary. |
+| Ordinary Client lifetime freeze, combined manifest `4b2707ffc4fe597293b764ccbea3e10420dd6fa49a9fbb72e201ca0820b2d6bf` | Separate nineteen-path lifetime and seven-path peer-event patches on `f4d8534` plus the exact scoped-helper prerequisite; 201 affected cases on each supported toolchain, zero failures. Integration/final graph comparison remains required. |
+| Runtime privacy freeze, manifest `24eeccc6bb017d98a20ef313bf44c9dda86c23e9838b986e9312bda9337e0970`; integration `40f65d14b437c8da1cb1b0ac55f761980ca1fa70` | Thirty-path diagnostics patch plus separate clean stdio-domain retirement correction. Frozen privacy cases: 245/toolchain; combined integration: 248/toolchain, zero failures. It remains supplementary to the original census and does not establish whole-library Client/HTTP diagnostic privacy. |
+
+The historical census is retained under
+`tmp/v2-semantic-census-69b0a39/{SEMANTIC_CENSUS.md,semantic-inventory.json,REVIEW_NOTES.md}`.
+The two supplementary freezes are retained under
+`tmp/arbor-mcp-client-lifetime-qa/tmp/ordinary-client-freeze` and
+`tmp/arbor-mcp-privacy-qa/tmp/runtime-privacy-freeze-1`. These are development
+evidence locations, not files installed by the packages. Do not overwrite the
+old census or baseline with results from these overlays.
+
+## Packages, configuration and identifiers
+
+Replace the dependency/application `:ex_mcp` and `ExMCP.*` code references with
+the owner below. Update aliases, imports, behaviours, dynamic module references,
+child specifications and module-valued configuration too. A GitHub repository
+redirect does not rename a Hex package, application or Elixir module.
+
+| Owner | Application and modules |
+| --- | --- |
+| MCP | `:arbor_mcp`, `Arbor.MCP.*` |
+| ACP core and generic adapter contract | `:arbor_acp`, `Arbor.ACP.*` |
+| Optional vendor implementations | `:arbor_acp_adapters`, `Arbor.ACP.Adapters.*`; core ACP does not depend on the bundle. |
+| Shared framing, environment and child lifecycle | `:arbor_rpc`, `Arbor.RPC.*`; neither protocol package depends on the other. |
+
+Move application keys to their actual owner. OAuth/task/subscription settings
+keyed by a module must use the new module as well. Codex's
+`:codex_legacy_auth_methods` remains under `:arbor_acp` even though the vendor
+implementation lives in the optional bundle. Host `:logger` and `:phoenix`
+settings remain host settings. A dependency's `config/config.exs` is not loaded
+automatically into its consumer. Package splitting does not broaden security,
+trusted-host or protocol defaults. See [application boot](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/application.ex),
+[security configuration](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/internal/security_config.ex) and
+[package declarations](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/mix.exs).
+
+**Preserve wire and storage identities.** Legacy ACP `_meta.ex_mcp`,
+`_ex_mcp.pi/*` methods, existing generated IDs and client-information defaults,
+`~/.ex_mcp/pi/session-map.json`, OAuth's `:ex_mcp_oauth_credential` key namespace,
+`__ex_mcp_sequence__` event fields and legacy storage filenames are unchanged.
+Selected ETS/profile/internal-message names and `"ex-mcp-default-logger"`
+attachment ID also remain. Do not mechanically replace `ex_mcp` inside peer
+data, credential keys or persisted terms. References: [credential keys](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/authorization/credential_store.ex),
+[event storage](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/session_manager.ex), [telemetry attachment](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/telemetry.ex),
+and [Pi source at the ACP checkpoint](https://github.com/trust-arbor/arbor_acp/blob/0e4cfd1efdb7437eb6cf4c944ed6fa04553da7bb/packages/arbor_acp_adapters/lib/arbor_acp/adapters/pi.ex).
+
+## Runtime identity, callbacks and state
+
+`HandlerServer.start_link/1`, generated DSL startup and `StdioServer.start_link/1`
+return the real native Runtime supervisor PID. Its registered name addresses
+the root; `:sys.get_state(root)` is supervisor state. Use `Server.call/cast`
+and supported control/transport helpers. `Runtime.ref/1` returns an opaque
+logical reference; `Runtime.edge/1` is explicit diagnostic access. Raw calls or
+payload sends to the root/edge do not become bounded ingress merely because
+they once worked against the handler GenServer. See [HandlerServer](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/server/handler_server.ex),
+[Runtime](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/runtime.ex) and [stdio facade](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/server/stdio_server.ex).
+
+Scheduler owns handler `init/1`, committed state and `terminate/2`. Callbacks run
+in supervised tasks, so callback `self()`, process-dictionary context and
+worker-owned ETS have invocation lifetime. Links, spawned processes and other
+callback-created resources require explicit ownership: do not assume they
+persist or are automatically reaped when the callback task exits. Private ETS
+created in `init/1` belongs to Scheduler and
+cannot be read by callback tasks; protected ETS cannot be written by them.
+Keep persistent state explicit or use a properly owned host process. Callback
+process-dictionary context is not inherited by arbitrary tasks. Stateful work
+is serialized; `execution: :stateless` is explicit and cannot return changed
+state. Backend effects are not transactionally rolled back. See
+[Scheduler](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/runtime/scheduler.ex) and
+[callback context](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/runtime/callback_context.ex).
+
+Custom `handle_call/3` receives `{original_caller_pid, proxy_reply_tag}`.
+Caller-based authorization can retain `elem(from, 0)`; the reply tag is opaque
+and must not be retained. Calls return `{:reply, reply, next_state}` and casts
+return `{:noreply, next_state}`. Deferred `GenServer.reply/2`, continuations and
+stop tuples are unsupported. Early/late proxy replies cannot bypass output
+preparation or state commit. See [caller migration](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/docs/V2_CALLER_IDENTITY_SLICE.md).
+
+A logical Runtime/ServiceRef follows supported child replacement, never a new
+whole root. Test/BEAM edge recovery preserves state and scheduler generation;
+execution/service-cohort replacement reinitializes state and retires old work.
+Do not cache edge or store PIDs. Test/BEAM has one peer per runtime, so it is not
+a multi-session HTTP gateway. Reconnection retires the former peer scope even
+when the new peer reuses wire IDs. See [Initialization](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/runtime/initialization.ex).
+
+One original initialization cutoff covers configuration, native construction,
+owned service registration, handler initialization, edge and readiness. A
+custom `:via` module must declare `runtime_name_capabilities/0` with
+`%{finite_lookup: 1}` and provide pure, finite `whereis_name/1`: that lookup runs
+in the initiating caller before OTP's native constructor timeout and cannot be
+preempted by it. Arbitrary blocking lookup implementations are unsupported;
+registration and subsequent initialization retain the original cutoff. See
+[the native-name contract](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/runtime.ex).
+Shutdown has one finite overall budget. A genuine replacement gets one new
+epoch; a poll/child operation cannot refresh the current budget. Forced owned
+cleanup can interrupt termination or persistence hooks. Use the parent
+supervisor's child-termination API when restart policy must not restart an
+endpoint. Borrowed devices/services/listeners survive. See
+[owned startup contracts](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/runtime/service_adapter.ex).
+
+## Admission, deadlines, cancellation and output
+
+These current defaults describe managed counters, not measured whole-VM memory
+or production capacity. Configure and qualify them for the actual workload.
+
+| Runtime setting | Default and meaning |
+| --- | --- |
+| `max_concurrency`, `max_queue` | 1 and 128; stateful concurrency must stay 1. Every legacy batch member consumes a work permit, including notifications/invalid members. |
+| `max_request_bytes`, `max_pending_bytes` | 1,000,000 and 8,000,000 input bytes; candidates and admitted work share accounting. |
+| `max_control_queue`, `max_control_bytes` | 32 and 65,536 **per lane**; incoming reverse responses and outgoing controls are separate, giving twice each configured aggregate limit. |
+| `max_output_frame_bytes`, `max_output_term_bytes` | 1,048,576 each; wire frame limit includes the framing newline. |
+| `max_output_frames`, `max_output_bytes` | 128 and 4,194,304 shared across candidate/prepared/queued/in-flight output. |
+| `request_timeout_ms`, `init_timeout_ms` | 10,000 ms each, absolute per operation/epoch. |
+| `output_timeout_ms`, `shutdown_timeout_ms`, `cancel_grace_ms` | 5,000 ms, 5,000 ms and 100 ms; finite timer validation applies, with zero allowed for cancellation grace. |
+
+See [authoritative configuration](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/runtime/config.ex). Supported
+ingress and helpers reserve count/bytes before publishing payloads; coalesced
+wakes carry tokens, not request bodies. Overload is explicit `:server_busy`.
+Arbitrary raw BEAM sends, consumer mailboxes, handler state, custom effects and
+kernel buffers remain outside these counters. See [Admission](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/runtime/admission.ex).
+
+`Runtime.request` has one API-entry caller-wait cutoff. An `:await_timeout`
+abandons waiting and drops late replies; it does not cancel already accepted
+work or prove a mutation failed. A server request deadline includes queue time.
+Use `Context.cancelled?/0` and opaque `Context.scope/0` instead of a global bare-ID
+tracker. Active cancellation prevents that invocation's state commit and stops
+unresponsive work after grace. A completed successful origin stays valid only
+through its original cutoff; retired peer/generation invalidates queued controls
+independently. Reused IDs cannot revoke an unrelated completed origin.
+See [absolute waits](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/docs/V2_ABSOLUTE_WAIT_SLICE.md) and
+[subscription source proof](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/docs/V2_SUBSCRIPTION_ORIGIN_SLICE.md).
+
+Protocol output must be valid bounded JSON before state commit. Synchronous
+custom replies use a separate bounded term policy, preserving supported PID/ref
+terms rather than silently JSON-encoding them. Prepared ownership transfers to
+Scheduler before the callback worker exits. Stateful work remains held through
+the documented staged/output settlement. Publication failure after commit is
+terminal and cannot retry the callback. Legacy batches charge member and
+prospective grouped output before each member commit, retain envelope input
+through final settlement, and return an explicit whole-envelope error when a
+later member/output fails. Earlier sequential effects remain committed.
+See [output integration](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/docs/V2_OUTPUT_INTEGRATION_SLICE.md).
+
+An ACK has a specific proof boundary:
+
+| Transport/domain | What completion establishes |
+| --- | --- |
+| Test/BEAM | Native `send/2` returned after local mailbox handoff; consumer processing/mailbox capacity is not proved. |
+| Batch member | Staged handoff into a charged output group, not delivery of the final array to the peer. |
+| Stdio | Authenticated local IO result **and** physical sender DOWN; runtime/Writer DOWN alone cannot release a borrowed device's retained write. Remote consumption is not proved. |
+| HTTP | Borrowed socket-writer liability must persist until actual adapter return/socket DOWN. Production Gateway integration remains pending at this source checkpoint. |
+
+Stdio seals input only after the final admitted frame publication, drains
+accepted work under original deadlines and one EOF cutoff, then stops owned
+children. Reader bounds framing before newline allocation and retains at most
+one capped pre-admission frame. In-flight IO timeout is terminal, uncertain and
+nonretryable. The retained authority allows 64 output device domains/aliases,
+128 control slots and one physical sender/unsettled frame per device. Another
+live endpoint on that device returns `:stdio_output_in_use`; unresolved output
+blocks replacement. Sticky uncertainty/default-authority loss has no reset API.
+Only live local PID/atom or captured standard-IO devices are supported. Clean
+idle retirement and final cross-cohort qualification must be distinguished from
+uncertain poison retention. See [stdio liability](./V2_STDIO_OUTPUT_LIABILITY.md),
+[Reader](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/server/stdio/reader.ex) and
+[OutputAuthority](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/server/stdio/output_authority.ex).
+
+## Results, schemas, callbacks, types and structs
+
+`Server.Result` is the complete-result implementation; `Server.DSL.Result`
+forwards its existing surface. Constructors return complete plain maps, not
+content entries. Embedded resources need a URI plus text or blob; media needs
+explicit base64/MIME. Modern `structuredContent` supports any JSON value;
+legacy results require an object. Omitted values differ from explicit null/false.
+Conflicting normalized keys reject before information loss. Unsupported
+top-level DSL returns fail safely; nested invalid JSON/oversized output rejects
+before state commit. Authored `Result.error` remains an explicit tool failure.
+See [Result](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/server/result.ex) and
+[normalization](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/server/result_normalizer.ex).
+
+SchemaPolicy defaults to draft 2020-12 with opaque JSV compiled artifacts;
+explicit supported drafts 4/6/7 retain ExJsonSchema behavior. Unknown dialects
+reject. `compile_optional` bypasses only `nil`; boolean `false` compiles and
+rejects every instance. Validation does not coerce values or insert defaults;
+default 2020-12 `format` is an annotation. Tool descriptor input schemas still
+require an object with root `type: "object"`, and output schemas require an
+object. Standalone boolean validators do not relax descriptor requirements.
+Network references remain disabled unless the bounded allowlisted resolver is
+explicitly enabled. See [SchemaPolicy](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/content/schema_policy.ex)
+and [dialect migration](./V2_SCHEMA_DIALECT.md).
+
+DSL/default maps add explicit presence information (`has_default`); omitted,
+nil and false must be distinguished. Constraints validate before the callback.
+Components reuse the same DSL, compiled descriptors and declaring-module
+handlers under host state/context; they do not initialize another component
+server. Dynamic tools keep descriptors/compiled validation/dispatch in owned
+Handler state with an explicit duplicate/replacement policy. No global Tools
+Registry or Builder.Tool struct replacement exists. See
+[DSL Builder](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/server/dsl/builder.ex),
+[components](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/docs/V2_DSL_COMPONENTS_SLICE.md) and
+[dynamic tools migration](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/docs/V2_DYNAMIC_TOOLS_MIGRATION_SLICE.md).
+
+Removed media/encoding operations reject before custom pipeline effects.
+File-builder `:auto_resize` and `:quality` reject by presence even for false/nil;
+supported `:max_size` and `:mime_types` enforce loading policy. Perform media/EXIF
+processing in the application, then construct content. Removing a metadata map
+never stripped EXIF. See [retirement policies](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/docs/V2_API_RETIREMENTS_SLICE.md).
+
+The historical reflected graph had no missing callbacks, four accepted Tools
+types absent, seven retained type definitions changed, and eight existing
+structs with additional fields. Those counts do not cover the final overlays.
+MCP `Transport.close` now reports errors; ACP optional `shutdown/1` accepts plain
+state, `{:ok, state}` or `{:error, reason, state}`, and managed adapters may use
+the pure `subprocess_receipt/2` callback. Broad `any()` specs can hide a semantic
+result expansion in reflection. Recompile consumers and use owner APIs; a Pi
+field named `port` now holds an opaque child handle, and retained field names
+do not promise persisted-term/hot-upgrade compatibility. Runtime/ServiceRef,
+leases, claims, output tickets and modern schema artifacts are opaque.
+
+| Retained type at the historical checkpoint | Semantic change after namespace normalization |
+| --- | --- |
+| `Content.Builders.file_opts/0` | Removes `auto_resize` and `quality`; supported size/MIME options remain. |
+| `Content.Sanitizer.sanitization_op/0` | Removes named media/metadata operations; an existing broad atom type does not make retired tokens executable. |
+| `Content.Transformer.transformation_op/0` | Removes named media/encoding operations; retained text/custom operations remain. |
+| `Content.SchemaPolicy.compile_result/0` | Successful value becomes explicit `compiled/0`, including opaque modern artifacts and retained legacy Roots. |
+| `Server.DSL.Builder.param/0` | Adds `has_default`; schema permits a plain object or boolean rather than treating nil as a declaration. |
+| `Server.HandlerServer.state/0` | Replaces inline `handler_state` with an opaque Runtime reference; Scheduler owns committed handler state. |
+| `Transport.Local.t/0` | Adds runtime/connection identities; a server PID alone no longer describes the active transport generation. |
+
+These abbreviated names use `Arbor.MCP.*`. Whitespace-only reflected changes
+are excluded from the seven semantic type changes. Fresh final reflection must
+still include the later Client, privacy and HTTP source checkpoints.
+
+The eight historical struct additions are recorded here for consumer review,
+not as a final field-diff claim after subsequent patches:
+
+| Struct | Added fields at the census checkpoint |
+| --- | --- |
+| `Arbor.ACP.Adapters.Pi` | `framing`, `port_monitor`, `subprocess_error`; retained `port` now represents an opaque child handle. |
+| `Arbor.MCP.Client` | `cleanup_result` |
+| `Server.SubscriptionListener` | `runtime_delivery` |
+| `Server.Subscriptions` | `publication_mailbox`, `publication_timeout_ms`, `runtime_table` |
+| `Testing.MockTransport` | `deadline` |
+| `Transport.Local`, `Transport.Test` | `runtime`, `connection` |
+| `Transport.Stdio` | `monitor`, `subprocess` |
+
+MCP table names after the first two rows abbreviate `Arbor.MCP.*`. The ordinary
+event overlay later adds captured peer context to Test/Local; privacy later
+adds diagnostic callbacks. Include those in the fresh final manifest.
+
+Use `transport: :mock` for `Testing.MockServer` and `transport: :test` for a
+supported Runtime-backed server. Test cannot silently fall back to an arbitrary
+mock GenServer. Mock replies use caller-owned bounded handoff and original
+deadline. See [ConnectionManager](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/client/connection_manager.ex)
+and [mock implementation](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/testing/mock_server.ex).
+
+## Client, adapter and subprocess ownership
+
+The committed scoped helper accepts a **connection specification**, creates its
+own Client and runs the callback in the original calling process. It does not
+adopt an existing Client PID or borrowed BEAM server/listener. Its native Client
+parent is the construction guardian; ordinary `Client.start_link` keeps its
+native caller parent. Establishment and cleanup have separate single cutoffs.
+Success is `{:ok, value}`; known cleanup failure preserves reason/value; callback
+exceptions/throws/exits re-raise after finite cleanup. See
+[connection scope](./V2_CLIENT_CONNECTION_SCOPE.md).
+
+Helper defaults are `establish_timeout: 12_000`, `cleanup_timeout: 1_000` and
+`max_scope_workers: 256`; helper names must be local. The ordinary lifetime
+freeze separately adds `max_client_workers: 256` (1–4096) and
+`client_cleanup_timeout: 1_000` (positive finite OTP-timer range). These are
+different ownership domains and options, not interchangeable timeout aliases.
+
+The **separate ordinary lifetime freeze** registers library workers before
+effects, bounds reverse/MRTR/resource/HTTP/DNS/receiver work and uses an
+independent owner/worker observer. Stop/disconnect/transport loss retire maps
+and generation before reconnection; stale PID/ref/epoch completions cannot
+change fresh handler state. An acknowledged internal resource Subscription can
+transfer into logical Client lifetime for resubscription. Ordinary custom close
+runs in a registered cleanup worker, so its `self()` changes; scoped close stays
+inline. `stop`/disconnect retain explicit known timeout/cleanup errors. Test/BEAM
+adds a constant captured peer event context so already-queued old controls drop
+after reconnect; raw non-Client peers keep their legacy tuple. These semantics
+are a named supplementary checkpoint, not guarantees inferred from the old census.
+
+ACP AdapterSupport returns an opaque RPC child handle instead of a Port. Capture
+the intended persistent local owner before opening from a temporary task.
+Use public event/identity/monitor/write/ACK/receipt helpers. Managed adapter ACK
+follows bounded Bridge outbox admission, including skipped/partial translation;
+translation cannot prematurely grant another frame credit. Close and shutdown
+retain known cleanup failures. Environment policy remains generic isolation,
+then vendor defaults and explicit caller overrides; effective child PATH/CD
+decides executable lookup. See [adapter support source](https://github.com/trust-arbor/arbor_acp/blob/0e4cfd1efdb7437eb6cf4c944ed6fa04553da7bb/packages/arbor_acp/lib/arbor_acp/adapter_support/subprocess.ex)
+and [Adapter behaviour](https://github.com/trust-arbor/arbor_acp/blob/0e4cfd1efdb7437eb6cf4c944ed6fa04553da7bb/packages/arbor_acp/lib/arbor_acp/adapter.ex).
+
+Guardian owns the actual helper Port from launch; the native helper remains the
+vendor's OS parent. Vendor status, helper status, final bytes/EOF and cleanup
+completion are distinct. Typed receipts separately report direct-child reaping
+and targeted-group absence, with five-second retained observation. Receipt
+loss/expiry is unconfirmed, and Actor/Client DOWN never substitutes for a receipt.
+No TERM/KILL occurs after owned-leader reaping and no numeric-PID fallback exists.
+Escaped groups/arbitrary descendant trees are not contained. Pull reads retain
+the original absolute cutoff; push events carry generation/token and explicit
+ACK. Native data credit bounds one 16 KiB chunk plus reserved control traffic;
+OS/driver buffers and write pressure still need qualification. See
+[Subprocess](https://github.com/trust-arbor/arbor_acp/blob/0e4cfd1efdb7437eb6cf4c944ed6fa04553da7bb/packages/arbor_rpc/lib/arbor_rpc/subprocess.ex)
+and [Receipt](https://github.com/trust-arbor/arbor_acp/blob/0e4cfd1efdb7437eb6cf4c944ed6fa04553da7bb/packages/arbor_rpc/lib/arbor_rpc/subprocess/receipt.ex).
+
+The RPC source package requires a build-time C17 compiler on qualified Linux/
+macOS installations. Reviewed C source ships; generated host binaries do not.
+Installed releases must include built `priv` artifacts, resolved through
+`:code.priv_dir`; there is no runtime compiler or NIF. Windows/missing helper
+fails clearly for subprocess opening; framing does not need a running helper.
+Advertise only the actually qualified platform/architecture matrix. See
+[RPC compiler/package](https://github.com/trust-arbor/arbor_acp/blob/0e4cfd1efdb7437eb6cf4c944ed6fa04553da7bb/packages/arbor_rpc/mix.exs).
+
+## Stores, HTTP and persistence
+
+Owned runtime Tasks/Subscriptions are defaults; replay/session/resource services
+are opt-in descriptors. `ServiceRef` follows child replacement and rejects
+retired/wrong-kind capabilities without global fallback. Raw subscription/replay
+overrides reject. Borrowed adapters must implement actual namespaced operations
+with a stable host logical key (1–256 bytes) and proven live address; adding a
+namespace string to an unnamed legacy ETS service is insufficient. Owned adapters
+register before blocking effects and cannot override injected addresses/namespaces.
+See [service descriptors](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/runtime/service_config.ex) and
+[ServiceRef](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/runtime/service_ref.ex).
+
+Session leases/initialization claims bind service cohort and session epoch;
+reused wire session IDs do not reuse authority. Addressed operations have finite
+count/byte/phase admission and paged results. Timeouts may occur after accepted
+mutation, so terminal/reapable credit does not authorize re-execution. Do not
+serialize process-local leases or use PID/ref/generation as a durable namespace.
+Runtime durable sessions reject non-ETS backends as
+`:runtime_durable_sessions_unqualified`. Standalone DETS support is not runtime
+isolation certification. Preserve paths/keys while qualifying exclusive files,
+static table allocation, finite open/sync/close and restart recovery.
+See [session store](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/session_manager/runtime_store.ex) and
+[session leases](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/session_manager/session_lease.ex).
+
+Optional Cowboy/Bandit listeners are implemented, with explicit backend selection,
+missing-dependency diagnostics and finite shutdown. Mounted host listeners remain
+borrowed. Runtime-mounted HttpPlug/Gateway routing, legacy session/progress/
+reverse/replay convergence and six remaining HTTP API removals are separate gates.
+Do not mount a claimed final `runtime:` replacement before that routing is
+qualified, or reconnect a singleton HandlerServer for every POST. Preserve
+forwarded mounts, parsed bodies, host/origin/OAuth, modern discovery, legacy
+initialization, request-owned SSE and opt-in `legacy_http_sse`. Deprecated
+`:sse_enabled` option retirement is separate from that retained wire feature.
+See [listener adapters](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/server/transport.ex) and
+[current HttpPlug](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/http_plug.ex).
+
+Tasks retained payload bytes, Replay aggregate retention and notification
+fanout/physical output still need final convergence/pressure evidence. Owned
+service addressing alone does not bound those payloads. A modern subscription
+must capture authoritative registered-edge/runtime origin, not arbitrary caller
+proof; callbacks should use Context's notification path. Its bounded registry/
+listener proof preserves successful origins and drops cancelled/expired/retired
+ones without killing a healthy subscription. See
+[Origin](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/server/subscriptions/origin.ex).
+
+## Telemetry, diagnostics and final qualification
+
+Attach consumers to `[:arbor_mcp, ...]` and `[:arbor_acp, ...]`. The old server
+`request/received` event is replaced in managed runtime ingress by
+`request/admitted`: `count: 1` counts reservation envelopes and `request_bytes`
+measures admitted input, with runtime PID metadata rather than old method data.
+`request/completed` reports count, `duration_ms` and outcome classification at
+terminal settlement, not remote consumption. Update dashboards instead of only
+renaming a prefix; legacy MessageProcessor spans describe their own path.
+See [actual emit sites](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/runtime/admission.ex). Retain the existing
+default logger attachment ID when replacing handlers to avoid duplicate attachment.
+
+The StdioServer facade does not configure global Logger. Application `:stdio_mode`
+and StdioLauncher still invoke global logger setup, and ACP agent setup has its
+own global entry path. Configure diagnostic stderr before host boot and audit
+those entry paths separately. See [Application](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/application.ex),
+[launcher](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/stdio_launcher.ex) and
+[logger helper](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/internal/stdio_logger_config.ex).
+
+The **separate privacy freeze** formats diagnostic status as fixed component
+names/counts, retains opaque native constructor arguments, uses fixed
+`:handler_init_failed`/`:callback_error` and `:stdin_error` reasons, and omits
+handler state/error payloads from supported native reports. Failed termination
+logs a fixed message then continues remaining cleanup under its original bound.
+Native parent/module identity, links, restart policies and cutoffs are preserved.
+Explicit trusted `:sys.get_state` and raw `:sys.log` debugging remain raw; host
+names/IDs, source locations and custom logging are not erased. This source
+checkpoint is distinct from host-global logging migration and from old census
+counts. Its [diagnostics record](https://github.com/trust-arbor/arbor_mcp/blob/40f65d14b437c8da1cb1b0ac55f761980ca1fa70/docs/V2_RUNTIME_DIAGNOSTICS.md)
+is integrated at `40f65d1`.
+Whole-library Client/HTTP error-log and native client-child-spec diagnostics
+still require broad privacy qualification; runtime report formatting is not
+proof of that larger claim.
+
+Before RC, rebuild immutable MCP/ACP/adapters/RPC manifests and reconcile every
+unexpected callable, callback, type and struct change, including the seven
+deliberate hidden retirements and privacy callbacks. Complete HTTP replacement
+before its final removal audit. Qualify installed archives/releases, native build
+and priv lookup, package-only consumers, final published dependency constraints,
+both wire eras, cancellation/EOF/output/borrowed survival, physical pressure,
+durable stores, coverage/conformance/SDKs and the supported toolchain/platform
+matrix. Run the required soak and coordinated versions/tags/publication only
+after those gates pass. See [release plan](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/docs/V2_RELEASE_PLAN.md); this document
+does not make the release complete.

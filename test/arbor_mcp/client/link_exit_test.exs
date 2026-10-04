@@ -9,12 +9,21 @@ defmodule Arbor.MCP.Client.LinkExitTest do
   use ExUnit.Case, async: true
 
   alias Arbor.MCP.Client
+  alias Arbor.MCP.Client.Lifetime
 
   defmodule PullTransport do
     @behaviour Arbor.MCP.Transport
 
     @impl true
-    def connect(opts), do: {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid), helper: nil}}
+    def connect(opts),
+      do:
+        {:ok,
+         %{
+           test_pid: Keyword.fetch!(opts, :test_pid),
+           helper: nil,
+           native_owner: self(),
+           lifetime: Lifetime.current()
+         }}
 
     @impl true
     def send_message(message, state) do
@@ -53,7 +62,15 @@ defmodule Arbor.MCP.Client.LinkExitTest do
 
     @impl true
     def close(state) do
-      send(state.test_pid, {:link_transport_closed, self()})
+      context = Lifetime.current()
+      {observer, _token, _epoch} = context
+      registered_before_effect? = Map.has_key?(:sys.get_state(observer).workers, self())
+
+      send(
+        state.test_pid,
+        {:link_transport_closed, state.native_owner, self(), context, registered_before_effect?}
+      )
+
       :ok
     end
 
@@ -101,7 +118,7 @@ defmodule Arbor.MCP.Client.LinkExitTest do
         send(foreign, {:exit, :boom})
 
         assert_receive {:DOWN, ^monitor, :process, ^client, :boom}, 2_000
-        assert_receive {:link_transport_closed, ^client}, 2_000
+        assert_closed_by_owned_worker(client)
       end
 
       test "a foreign link's normal exit is ignored" do
@@ -113,7 +130,7 @@ defmodule Arbor.MCP.Client.LinkExitTest do
         assert_receive {:DOWN, ^foreign_monitor, :process, ^foreign, :normal}, 2_000
 
         assert %{connection_status: :ready} = :sys.get_state(client)
-        refute_received {:link_transport_closed, _client}
+        refute_received {:link_transport_closed, _client, _worker, _context, _registered}
       end
 
       test "the receiver the client retires on transport loss cannot stop it" do
@@ -137,7 +154,7 @@ defmodule Arbor.MCP.Client.LinkExitTest do
     Process.exit(receiver, :kill)
 
     assert_receive {:client_disconnected, {:receiver_task_died, :killed}}, 2_000
-    assert_receive {:link_transport_closed, ^client}, 2_000
+    assert_closed_by_owned_worker(client)
     assert %{connection_status: :disconnected} = :sys.get_state(client)
   end
 
@@ -149,7 +166,7 @@ defmodule Arbor.MCP.Client.LinkExitTest do
     send(helper, {:exit, :helper_crashed})
 
     assert_receive {:client_disconnected, {:transport_forwarder_died, :helper_crashed}}, 2_000
-    assert_receive {:link_transport_closed, ^client}, 2_000
+    assert_closed_by_owned_worker(client)
     assert %{connection_status: :disconnected} = :sys.get_state(client)
   end
 
@@ -183,7 +200,17 @@ defmodule Arbor.MCP.Client.LinkExitTest do
     send(starter, :exit)
 
     assert_receive {:DOWN, ^monitor, :process, ^client, :starter_gone}, 2_000
-    assert_receive {:link_transport_closed, ^client}, 2_000
+    assert_closed_by_owned_worker(client)
+  end
+
+  defp assert_closed_by_owned_worker(client) do
+    assert_receive {:link_transport_closed, ^client, worker, {observer, token, epoch}, true},
+                   2_000
+
+    assert is_pid(worker) and worker != client
+    assert is_pid(observer) and is_reference(token) and is_reference(epoch)
+    monitor = Process.monitor(worker)
+    assert_receive {:DOWN, ^monitor, :process, ^worker, _reason}, 1_000
   end
 
   defp start_client(transport) do

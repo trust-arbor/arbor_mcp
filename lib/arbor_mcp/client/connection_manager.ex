@@ -8,7 +8,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
 
   require Logger
   # alias Arbor.MCP.TransportManager  # Not using full manager for now
-  alias Arbor.MCP.Client.{ConnectionScope, Deadline, EraCache, EraProbe}
+  alias Arbor.MCP.Client.{ConnectionScope, Deadline, EraCache, EraProbe, Lifetime}
   alias Arbor.MCP.Internal.{Protocol, VersionInfo, VersionRegistry}
   alias Arbor.MCP.Reliability.Retry
   alias Arbor.MCP.Testing.MockTransport
@@ -88,6 +88,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
 
     with :ok <- check_deadline(deadline),
          {:ok, transport_manager_opts} <- prepare_transport_config(opts),
+         :ok <- Lifetime.opening(),
          :ok <- ConnectionScope.opening(),
          {:ok, {transport_mod, transport_state}} <- connect_transport(transport_manager_opts),
          :ok <- ConnectionScope.transport(transport_mod, transport_state),
@@ -482,11 +483,11 @@ defmodule Arbor.MCP.Client.ConnectionManager do
           %{}
         )
 
-        send(parent, {:transport_message, message})
+        Lifetime.deliver(parent, {:transport_message, message})
         receive_loop(parent, transport_mod, new_state)
 
       {:error, :closed} ->
-        send(parent, {:transport_closed, :normal})
+        Lifetime.deliver(parent, {:transport_closed, :normal})
         :ok
 
       {:error, :waiting_for_session} ->
@@ -501,7 +502,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
 
       {:error, reason} ->
         Logger.error("Transport error in receive loop: #{inspect(reason)}")
-        send(parent, {:transport_closed, reason})
+        Lifetime.deliver(parent, {:transport_closed, reason})
         :ok
     end
   end

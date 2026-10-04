@@ -87,7 +87,7 @@ defmodule Arbor.MCP.Transport.HTTP do
   @behaviour Arbor.MCP.Transport
   require Logger
 
-  alias Arbor.MCP.Client.ConnectionScope
+  alias Arbor.MCP.Client.{ConnectionScope, Deadline, Lifetime}
   alias Arbor.MCP.Authorization.{FullOAuthFlow, LogSanitizer}
 
   alias Arbor.MCP.Internal.{CACerts, DNSResolver, Headers, Options, Security, SecurityConfig, SSE}
@@ -371,14 +371,21 @@ defmodule Arbor.MCP.Transport.HTTP do
     # the POST response. The response arrives as {:async_post_result, result, meta}.
     parent = self()
     request_id = extract_request_id(message)
+    nonce = make_ref()
 
     # spawn_monitor rather than Task.start: the parent (the Arbor.MCP.Client
     # GenServer) owns the monitor, so a crashed POST task produces a
     # {:DOWN, ref, ...} the client maps back to the pending request instead
     # of leaving it hanging until timeout. No link is created, so the
     # exit-trapping client's {:EXIT, ...} transport handling is untouched.
-    {_task_pid, task_ref} =
+    {task_pid, task_ref} =
       ConnectionScope.spawn_monitor(fn ->
+        receive do
+          {^nonce, :run} -> :ok
+        after
+          1_000 -> exit(:client_generation_retired)
+        end
+
         result =
           case perform_and_maybe_auth(message, state) do
             {:ok, response} -> handle_http_response(response, state, message)
@@ -389,12 +396,18 @@ defmodule Arbor.MCP.Transport.HTTP do
         # Report the durable transport-state fields this POST changed
         # (session rotation, OAuth token refresh) so the client can merge
         # them into its copy of the transport state instead of discarding.
-        meta = %{request_id: request_id, state_changes: result_state_changes(state, result)}
-        send(parent, {:async_post_result, result, meta})
+        meta = %{
+          request_id: request_id,
+          task_pid: self(),
+          state_changes: result_state_changes(state, result)
+        }
+
+        Lifetime.deliver(parent, {:async_post_result, result, meta})
       end)
 
     # Let the client associate the monitored task with the request it serves.
-    send(parent, {:async_post_task, task_ref, request_id})
+    Lifetime.deliver(parent, {:async_post_task, task_ref, task_pid, request_id})
+    send(task_pid, {nonce, :run})
 
     # Return without response data — it will arrive via :async_post_result
     # or via the GET SSE stream (for SSE-formatted POST responses)
@@ -1010,24 +1023,23 @@ defmodule Arbor.MCP.Transport.HTTP do
     send(sse_pid, {:change_parent, self()})
 
     receive do
+      {:client_lifetime_event, epoch, {:sse_event, ^sse_pid, %{data: data} = event}} ->
+        if Lifetime.event?(epoch),
+          do: receive_sse_event(data, event, state),
+          else: receive_message(state)
+
+      {:client_lifetime_event, epoch, {:sse_error, ^sse_pid, reason}} ->
+        if Lifetime.event?(epoch),
+          do: {:error, {:sse_error, reason}},
+          else: receive_message(state)
+
+      {:client_lifetime_event, epoch, {:sse_closed, ^sse_pid}} ->
+        if Lifetime.event?(epoch),
+          do: {:error, :connection_closed},
+          else: receive_message(state)
+
       {:sse_event, ^sse_pid, %{data: data} = event} ->
-        send(sse_pid, {:sse_event_ack, self()})
-
-        # The enhanced SSE client sends structured events
-        event_id = Map.get(event, :id)
-        new_state = if event_id, do: %{state | last_event_id: event_id}, else: state
-
-        case Jason.decode(data) do
-          {:ok, %{"type" => "keep-alive"}} ->
-            # Ignore keep-alive messages and continue receiving
-            receive_message(new_state)
-
-          {:ok, message} ->
-            {:ok, message, new_state}
-
-          {:error, reason} ->
-            {:error, {:json_decode_error, reason}}
-        end
+        receive_sse_event(data, event, state)
 
       {:sse_error, ^sse_pid, reason} ->
         {:error, {:sse_error, reason}}
@@ -1067,6 +1079,18 @@ defmodule Arbor.MCP.Transport.HTTP do
 
   def receive_message(%__MODULE__{} = _state) do
     {:error, :not_connected}
+  end
+
+  defp receive_sse_event(data, event, state) do
+    send(state.sse_pid, {:sse_event_ack, self()})
+    event_id = Map.get(event, :id)
+    next = if event_id, do: %{state | last_event_id: event_id}, else: state
+
+    case Jason.decode(data) do
+      {:ok, %{"type" => "keep-alive"}} -> receive_message(next)
+      {:ok, message} -> {:ok, message, next}
+      {:error, reason} -> {:error, {:json_decode_error, reason}}
+    end
   end
 
   @doc """
@@ -1136,22 +1160,18 @@ defmodule Arbor.MCP.Transport.HTTP do
       session_id_hash: if(state.session_id, do: LogSummary.fingerprint(state.session_id))
     })
 
-    # Best-effort session termination before closing
+    deadline = state.deadline || Deadline.after_ms(Deadline.cleanup_timeout())
+    state = put_deadline(state, deadline)
+
+    results =
+      Enum.map(state.modern_streams, fn {_request_id, pid} ->
+        ModernStreamClient.cancel(pid, deadline)
+      end)
+
+    sse_result = if is_pid(state.sse_pid), do: stop_sse_client(state.sse_pid, deadline), else: :ok
+    # Remote DELETE remains best effort; it never establishes rollback/remote reaping.
     terminate_session(state)
-
-    Enum.each(state.modern_streams, fn {_request_id, pid} ->
-      ModernStreamClient.cancel(pid)
-    end)
-
-    # Stop SSE connection if active. SSEClient is a GenServer that does not
-    # trap exits, so Process.exit(pid, :normal) would be silently ignored and
-    # leak the process. GenServer.stop runs its terminate/2 (cancelling the
-    # httpc request); tolerate an already-dead or slow-to-stop client.
-    if is_pid(state.sse_pid) do
-      stop_sse_client(state.sse_pid)
-    end
-
-    :ok
+    Enum.find(results ++ [sse_result], :ok, &match?({:error, _}, &1))
   end
 
   @doc false
@@ -1211,10 +1231,13 @@ defmodule Arbor.MCP.Transport.HTTP do
     :ok
   end
 
-  defp stop_sse_client(pid) do
-    GenServer.stop(pid, :normal, 1_000)
-  catch
-    :exit, _ -> :ok
+  defp stop_sse_client(pid, deadline \\ Deadline.after_ms(1_000)) do
+    Lifetime.native_stop(
+      pid,
+      SSEClient,
+      fn timeout -> GenServer.stop(pid, :normal, timeout) end,
+      deadline
+    )
   end
 
   @doc false
@@ -1367,6 +1390,13 @@ defmodule Arbor.MCP.Transport.HTTP do
         handshake_timeout = state.timeouts.stream_handshake
 
         receive do
+          {:client_lifetime_event, epoch, {:sse_connected, ^sse_pid}} ->
+            if Lifetime.event?(epoch), do: %{state | sse_pid: sse_pid}, else: state
+
+          {:client_lifetime_event, _epoch, {:sse_error, ^sse_pid, _reason}} ->
+            stop_sse_client(sse_pid)
+            state
+
           {:sse_connected, ^sse_pid} ->
             Logger.debug("Deferred SSE connection established")
             %{state | sse_pid: sse_pid}

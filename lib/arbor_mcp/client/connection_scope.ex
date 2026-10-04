@@ -4,7 +4,7 @@ defmodule Arbor.MCP.Client.ConnectionScope do
 
   alias Arbor.MCP.Client
   alias Arbor.MCP.Client.ConnectionScope.{Observer, Ref}
-  alias Arbor.MCP.Client.Deadline
+  alias Arbor.MCP.Client.{Deadline, Lifetime}
 
   @max_timeout 2_147_483_647
   @key {__MODULE__, :scope}
@@ -148,7 +148,9 @@ defmodule Arbor.MCP.Client.ConnectionScope do
   def start_worker(fun) do
     case current() do
       nil ->
-        Task.start(fun)
+        {pid, monitor} = Lifetime.spawn_monitor(fun)
+        Process.demonitor(monitor, [:flush])
+        {:ok, pid}
 
       _scope ->
         {pid, monitor} = spawn_monitor(fun)
@@ -168,14 +170,14 @@ defmodule Arbor.MCP.Client.ConnectionScope do
   def async(fun) do
     case current() do
       nil ->
-        Task.async(fun)
+        Lifetime.async(fun)
 
       scope ->
         owner = self()
         nonce = make_ref()
 
         task =
-          Task.async(fn ->
+          Lifetime.async(fn ->
             Process.put(@key, scope)
             watch_owned(self(), owner, Ref.observer(scope))
 
@@ -198,7 +200,7 @@ defmodule Arbor.MCP.Client.ConnectionScope do
   @doc false
   def spawn_monitor(fun) do
     case current() do
-      nil -> Kernel.spawn_monitor(fun)
+      nil -> Lifetime.spawn_monitor(fun)
       scope -> start_owned_worker(scope, fun)
     end
   end
@@ -207,7 +209,7 @@ defmodule Arbor.MCP.Client.ConnectionScope do
   def spawn_link(fun) do
     case current() do
       nil ->
-        Kernel.spawn_link(fun)
+        Lifetime.spawn_link(fun)
 
       scope ->
         {pid, monitor} = start_owned_worker(scope, fun, true)
@@ -225,7 +227,7 @@ defmodule Arbor.MCP.Client.ConnectionScope do
       # registers and arms the owned child before its acknowledgement; only
       # then can the modern stream resume its ordinary unlinked lifetime.
       result =
-        GenServer.start_link(module, opts, timeout: Deadline.remaining(control_deadline(scope)))
+        Lifetime.start_process(module, opts, :linked, control_deadline(scope))
 
       if mode == :unlinked and match?({:ok, _pid}, result) do
         {:ok, pid} = result
@@ -235,16 +237,20 @@ defmodule Arbor.MCP.Client.ConnectionScope do
       result
     else
       case mode do
-        :unlinked -> GenServer.start(module, opts)
-        :linked -> GenServer.start_link(module, opts)
+        :unlinked -> Lifetime.start_process(module, opts, :unlinked)
+        :linked -> Lifetime.start_process(module, opts, :linked)
       end
     end
   end
 
   @doc false
-  def register_process(nil), do: :ok
+  def register_process(scope, lifetime \\ nil, deadline \\ Deadline.after_ms(1_000)) do
+    with :ok <- Lifetime.register_process(lifetime, deadline), do: register_scoped_process(scope)
+  end
 
-  def register_process(scope) do
+  defp register_scoped_process(nil), do: :ok
+
+  defp register_scoped_process(scope) do
     Process.put(@key, scope)
 
     case call(scope, {:native_worker, self()}, Deadline.after_ms(1_000)) do
@@ -276,7 +282,7 @@ defmodule Arbor.MCP.Client.ConnectionScope do
     nonce = make_ref()
 
     {pid, monitor} =
-      Kernel.spawn_monitor(fn ->
+      Lifetime.spawn_monitor(fn ->
         Process.put(@key, scope)
         watch_owned(self(), owner, Ref.observer(scope))
         owner_monitor = Process.monitor(owner)

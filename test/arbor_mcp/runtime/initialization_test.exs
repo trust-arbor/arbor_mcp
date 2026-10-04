@@ -614,6 +614,47 @@ defmodule Arbor.MCP.Server.RuntimeInitializationTest do
     assert :undefined == :ets.info(table)
   end
 
+  test "root death before startup expiry cannot renew a suspended guard's cleanup budget" do
+    sibling = runtime(label: :root_death_sibling)
+
+    caller =
+      start_async(
+        label: :root_death_guard_stall,
+        init_timeout_ms: 200,
+        services: [replay_cache: [adapter: Replay, options: [parent: self(), hold: true]]]
+      )
+
+    assert_receive {:replay_initializing, service}, 500
+    {:dictionary, dictionary} = Process.info(service, :dictionary)
+    [_cohort, root | _] = Keyword.fetch!(dictionary, :"$ancestors")
+    {:ok, ref} = Runtime.ref(root)
+    table = Ref.table(ref)
+    [{:shutdown_guard, guard}] = :ets.lookup(table, :shutdown_guard)
+    {:ok, context} = Initialization.current(table)
+
+    # Force root DOWN to be queued before the delayed observer's timeout. The
+    # native caller still returns against its original 200ms cutoff; the guard
+    # must not acquire a fresh normal-shutdown budget when that DOWN is read.
+    :sys.suspend(guard)
+    :erlang.suspend_process(context.observer)
+    :erlang.suspend_process(caller)
+    on_exit(fn -> safe_resume(context.observer) end)
+    on_exit(fn -> safe_resume(caller) end)
+    on_exit(fn -> Process.exit(guard, :kill) end)
+    Process.exit(root, :kill)
+    sleep_until(context.deadline)
+    :erlang.resume_process(caller)
+    assert_receive {:startup_result, ^caller, {:error, :runtime_init_timeout}}, 500
+    :erlang.resume_process(context.observer)
+
+    eventually(fn ->
+      Enum.all?([root, guard, service, context.observer], &(not Process.alive?(&1)))
+    end)
+
+    assert Process.alive?(sibling)
+    assert Process.alive?(caller)
+  end
+
   test "repeated genuine replacements retain only current proofs and reject retired epochs" do
     root = runtime(label: :retention, init_timeout_ms: 500)
     {:ok, ref} = Runtime.ref(root)

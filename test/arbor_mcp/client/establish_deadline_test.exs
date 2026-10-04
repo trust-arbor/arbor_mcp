@@ -10,6 +10,7 @@ defmodule Arbor.MCP.Client.EstablishDeadlineTest do
   use ExUnit.Case, async: true
 
   alias Arbor.MCP.Client
+  alias Arbor.MCP.Client.Lifetime
 
   # Far below the 30 s a synchronous POST was allowed before, and loose
   # enough for a loaded CI host.
@@ -196,12 +197,29 @@ defmodule Arbor.MCP.Client.EstablishDeadlineTest do
         request_timeout: 10_000
       )
 
-    {elapsed, :ok} = timed(fn -> Client.stop(client) end)
+    client_monitor = Process.monitor(client)
+    {observer, _token, _epoch} = Lifetime.from_client(client)
+    observer_monitor = Process.monitor(observer)
 
-    # The DELETE went out, and the stop did not wait out the 10 s request
-    # timeout for its answer.
+    workers =
+      for pid <- Map.keys(:sys.get_state(observer).workers), do: {pid, Process.monitor(pid)}
+
+    {elapsed, {:error, :client_cleanup_timeout}} = timed(fn -> Client.stop(client) end)
+
+    # The DELETE went out under the original cleanup cutoff, and an exhausted
+    # cutoff reports uncertainty instead of pretending the remote peer replied.
     assert_receive {:session_deleted, "session-from-initialize"}, 2_000
     assert elapsed < 3_000
+    assert_receive {:DOWN, ^client_monitor, :process, ^client, _reason}, 1_000
+    assert_receive {:DOWN, ^observer_monitor, :process, ^observer, _reason}, 1_000
+
+    for {pid, monitor} <- workers do
+      assert_receive {:DOWN, ^monitor, :process, ^pid, _reason}, 1_000
+    end
+
+    # The remote listener is borrowed; only this Client's connection was closed.
+    assert {:ok, socket} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false], 500)
+    :gen_tcp.close(socket)
   end
 
   test "a prefer_legacy fallback ends the session a failed initialize opened" do
