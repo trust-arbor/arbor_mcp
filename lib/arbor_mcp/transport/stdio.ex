@@ -54,8 +54,6 @@ defmodule Arbor.MCP.Transport.Stdio do
 
   @behaviour Arbor.MCP.Transport
 
-  require Logger
-
   alias Arbor.MCP.Internal.{Options, SecurityConfig}
   alias Arbor.MCP.Transport.{Error, SecurityGuard}
   alias Arbor.RPC.{FramedStream, LogSummary, PortEnvironment, StdioFraming, Subprocess}
