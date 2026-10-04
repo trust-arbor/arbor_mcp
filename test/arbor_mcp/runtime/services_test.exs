@@ -142,7 +142,17 @@ defmodule Arbor.MCP.Server.RuntimeServicesTest do
       :ok = ServiceAdapter.watch_owned(opts)
       table = Keyword.fetch!(opts, :runtime_table)
       [{:shutdown_guard, guard}] = :ets.lookup(table, :shutdown_guard)
-      send(opts[:parent], {:service_initializing, self(), table, guard})
+
+      # Snapshot while startup owns the table: a failed init can delete it
+      # before the test process receives this message.
+      owned =
+        :ets.tab2list(table)
+        |> Enum.flat_map(fn
+          {{:service, _kind}, %{server: pid}} -> [pid]
+          _other -> []
+        end)
+
+      send(opts[:parent], {:service_initializing, self(), table, guard, owned})
 
       case opts[:mode] do
         :block_init -> receive do: (:release -> {:ok, opts})
@@ -543,14 +553,8 @@ defmodule Arbor.MCP.Server.RuntimeServicesTest do
         send(parent, {:startup_finished, result, System.monotonic_time(:millisecond) - started})
       end)
 
-      assert_receive {:service_initializing, service, table, guard}
-
-      owned =
-        :ets.tab2list(table)
-        |> Enum.flat_map(fn
-          {{:service, _kind}, %{server: pid}} -> [pid]
-          _other -> []
-        end)
+      assert_receive {:service_initializing, service, table, guard, owned}
+      assert owned != []
 
       assert_receive {:startup_finished, {:error, _reason}, elapsed}, 1_000
       assert elapsed < 500
@@ -573,7 +577,7 @@ defmodule Arbor.MCP.Server.RuntimeServicesTest do
         ]
       )
 
-    assert_receive {:service_initializing, service, _table, guard}
+    assert_receive {:service_initializing, service, _table, guard, _owned}
     {:ok, task_binding} = Services.resolve(runtime, :tasks)
     {:ok, subscription_binding} = Services.resolve(runtime, :subscriptions)
     started = System.monotonic_time(:millisecond)
