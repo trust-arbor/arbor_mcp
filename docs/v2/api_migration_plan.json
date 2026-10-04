@@ -1480,12 +1480,12 @@
     },
     {
       "old": "callback self() and direct GenServer calls/casts to handler/transport",
-      "new": "supervised callback tasks; new Server.call/2,3 and cast/2; immediate reply/noreply state forms only",
+      "new": "supervised callback tasks; new Server.call/2,3 and cast/2; immediate reply/noreply state forms only; current handle_call from is synthetic worker PID/reference",
       "evidence": [
         "tmp/arbor-mcp-v2/lib/arbor_mcp/runtime/scheduler.ex",
         "tmp/arbor-mcp-v2/lib/arbor_mcp/server.ex"
       ],
-      "gate": "deferred reply/continuation/stop not supported; resource ownership and consumer migration need tests",
+      "gate": "deferred reply/continuation/stop not supported; resolve original caller identity semantics and qualify resource ownership/consumer migration before RC",
       "baseline_note": "Server.call/2,3 and cast/2 are additive; the frozen ExMCP.Server exposes neither. The old usage being migrated is direct GenServer access."
     },
     {
@@ -1506,6 +1506,7 @@
     "internal messages and ACK/ownership handoff",
     "links/child specs/callback PID and resource lifetime",
     "result/error shapes and timeout/cancellation semantics",
+    "legacy per-member batch work admission and aggregate output accounting",
     "consumer installation/tooling/examples and wire/storage identifiers"
   ],
   "retained_wire_features": [
