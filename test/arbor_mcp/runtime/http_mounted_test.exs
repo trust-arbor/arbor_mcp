@@ -142,7 +142,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPMountedTest do
 
     for method <- [:get, :delete] do
       conn = Plug.Test.conn(method, "/mcp") |> HttpPlug.call(opts)
-      assert conn.status == 501
+      assert conn.status == 400
     end
 
     {:ok, service} = Runtime.service(runtime, :sessions)

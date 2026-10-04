@@ -2,7 +2,7 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
   @moduledoc false
 
   alias Arbor.MCP.Internal.SessionStore
-  alias Arbor.MCP.Server.Runtime.{ServiceInvocation, ServiceOperation, ServiceStore}
+  alias Arbor.MCP.Server.Runtime.{OutputCodec, ServiceInvocation, ServiceOperation, ServiceStore}
 
   @identity [:principal_id, :tenant_id, :issuer, :audience]
   @metadata @identity ++ [:transport, :client_info]
@@ -104,8 +104,8 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
     key = {namespace, id}
 
     with {:ok, row} <- row(model, key),
-         true <- identity_matches?(row.metadata, metadata),
-         true <- not initialized? or row.initialized do
+         :ok <- ensure_identity(row.metadata, metadata),
+         :ok <- ensure_initialized(row, initialized?) do
       updated = %{
         row
         | metadata: Map.merge(row.metadata, Map.take(metadata, [:client_info, :transport])),
@@ -122,7 +122,6 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
           {error, model}
       end
     else
-      false -> {{:error, :session_identity_or_initialization_mismatch}, model}
       error -> {error, model}
     end
   end
@@ -157,8 +156,8 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
     key = {namespace, id}
 
     with {:ok, row} <- epoch_row(model, key, epoch),
-         false <- row.initialized,
-         false <- row.initialization_claimed,
+         false <- row.initialized && {:error, :session_already_initialized},
+         false <- row.initialization_claimed && {:error, :initialization_in_progress},
          true <- ServiceInvocation.current?(context.invocation),
          true <- ServiceInvocation.matches_session?(context.invocation, namespace, id, epoch),
          :ok <- ServiceOperation.validate_context(context) do
@@ -190,7 +189,6 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
           {if(error == false, do: {:error, :operation_timeout}, else: error), model}
       end
     else
-      true -> {{:error, :initialization_already_claimed_or_completed}, model}
       false -> {{:error, :initialization_owner_unavailable}, model}
       error -> {error, model}
     end
@@ -242,10 +240,22 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
 
     with {:ok, row} <- epoch_row(model, key, epoch),
          true <- is_binary(type) and byte_size(type) in 1..128,
-         {:ok, encoded} <- Jason.encode(%{type: type, data: data}),
+         {:ok, %{wire: encoded, term: retained}} <-
+           OutputCodec.prepare(%{type: type, data: data},
+             codec: :protocol,
+             deadline: context.deadline,
+             max_frame_bytes: model.limits.max_event_bytes + 1,
+             max_term_bytes: model.limits.max_event_bytes
+           ),
          true <- byte_size(encoded) <= model.limits.max_event_bytes do
       sequence = row.sequence + 1
-      event = %{id: cursor(epoch, sequence), session_id: id, type: type, data: data}
+
+      event = %{
+        id: cursor(epoch, sequence),
+        session_id: id,
+        type: retained.type,
+        data: retained.data
+      }
 
       bytes =
         max(
@@ -294,9 +304,14 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
           {{:ok, event}, model}
       end
     else
-      false -> {{:error, :event_too_large_or_invalid}, model}
-      {:error, %Jason.EncodeError{}} -> {{:error, :event_not_json_encodable}, model}
-      error -> {error, model}
+      false ->
+        {{:error, :event_too_large_or_invalid}, model}
+
+      {:error, reason} when reason in [:invalid_output, :output_term_too_large] ->
+        {{:error, :event_not_json_encodable}, model}
+
+      error ->
+        {error, model}
     end
   end
 
@@ -327,6 +342,14 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
 
   def apply(:get, [namespace, {id, epoch}], _context, model),
     do: {epoch_row(model, {namespace, id}, epoch), model}
+
+  def apply(:cursor, [namespace, {id, epoch}], _context, model) do
+    reply =
+      with {:ok, row} <- epoch_row(model, {namespace, id}, epoch),
+           do: {:ok, if(row.sequence == 0, do: nil, else: cursor(epoch, row.sequence))}
+
+    {reply, model}
+  end
 
   def apply(:terminate, [namespace, {id, epoch}], context, model) do
     case epoch_row(model, {namespace, id}, epoch) do
@@ -468,6 +491,16 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
 
   defp identity_matches?(bound, supplied),
     do: is_map(supplied) and Enum.all?(@identity, &(Map.get(bound, &1) == Map.get(supplied, &1)))
+
+  defp ensure_identity(bound, supplied) do
+    if identity_matches?(bound, supplied),
+      do: :ok,
+      else: {:error, :session_identity_mismatch}
+  end
+
+  defp ensure_initialized(_row, false), do: :ok
+  defp ensure_initialized(%{initialized: true}, true), do: :ok
+  defp ensure_initialized(_row, _required), do: {:error, :session_not_initialized}
 
   defp valid_id?(id), do: is_binary(id) and byte_size(id) in 1..128
 

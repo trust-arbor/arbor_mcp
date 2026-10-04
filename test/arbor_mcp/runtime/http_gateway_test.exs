@@ -237,7 +237,13 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayTest do
     wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
     wait(fn -> map_size(:sys.get_state(gateway).jobs) == 0 end)
     assert {:ok, %{"result" => 0}} = Runtime.request(runtime, message(2))
-    assert :empty = HTTPWriterRegistry.checkout(binding)
+    assert %{frames: 0, in_flight: 0} = HTTPWriterRegistry.stats(domain)
+
+    assert HTTPWriterRegistry.checkout(binding) in [
+             :empty,
+             {:error, :http_invocation_closed},
+             {:error, :http_failure_expired}
+           ]
   end
 
   test "socket death cancels its accepted response work without mutating other invocation state" do

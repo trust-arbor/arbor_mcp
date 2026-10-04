@@ -424,11 +424,26 @@ defmodule Arbor.MCP.SessionManager do
     do: Addressed.complete_initialization(service, claim, version, opts)
 
   @doc "Appends a bounded replay event before any downstream delivery."
-  def append_event(%ServiceRef{} = service, lease, type, data, opts),
+  @spec append_event(
+          ServiceRef.t(),
+          Arbor.MCP.SessionManager.SessionLease.t(),
+          binary(),
+          term(),
+          keyword()
+        ) ::
+          {:ok, map()} | {:error, term()}
+  def append_event(service, lease, type, data, opts),
     do: Addressed.leased(service, lease, :append, [type, data], opts)
 
   @doc "Reads a bounded replay page with tagged evicted, foreign and unknown cursor outcomes."
-  def replay_page(%ServiceRef{} = service, lease, cursor, opts),
+  @spec replay_page(
+          ServiceRef.t(),
+          Arbor.MCP.SessionManager.SessionLease.t(),
+          binary() | nil,
+          keyword()
+        ) ::
+          {:ok, map()} | {:error, term()}
+  def replay_page(service, lease, cursor, opts),
     do:
       Addressed.leased(
         service,
@@ -438,12 +453,22 @@ defmodule Arbor.MCP.SessionManager do
         opts
       )
 
+  @doc "Returns the latest store-owned replay cursor for one addressed session epoch."
+  @spec replay_cursor(ServiceRef.t(), Arbor.MCP.SessionManager.SessionLease.t(), keyword()) ::
+          {:ok, binary() | nil} | {:error, term()}
+  def replay_cursor(service, lease, opts),
+    do: Addressed.leased(service, lease, :cursor, [], opts)
+
   @doc "Closes one addressed session epoch; stale leases cannot close its replacement."
-  def terminate_session(%ServiceRef{} = service, lease, opts),
+  @spec terminate_session(ServiceRef.t(), Arbor.MCP.SessionManager.SessionLease.t(), keyword()) ::
+          :ok | {:error, term()}
+  def terminate_session(service, lease, opts),
     do: Addressed.leased(service, lease, :terminate, [], opts)
 
   @doc "Reads an active addressed session."
-  def get_session(%ServiceRef{} = service, lease, opts),
+  @spec get_session(ServiceRef.t(), Arbor.MCP.SessionManager.SessionLease.t(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def get_session(service, lease, opts),
     do: Addressed.leased(service, lease, :get, [], opts)
 
   @doc "Reads aggregate addressed session service accounting."

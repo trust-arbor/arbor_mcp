@@ -138,6 +138,7 @@ defmodule Arbor.MCP.HttpPlug do
   alias Arbor.MCP.HttpPlug.ModernStream
   alias Arbor.MCP.HttpPlug.RequestStream
   alias Arbor.MCP.HttpPlug.RuntimeSession
+  alias Arbor.MCP.HttpPlug.RuntimeSessionStream
   alias Arbor.MCP.HttpPlug.RuntimeWriter
   alias Arbor.MCP.HttpPlug.SessionRegistry
   alias Arbor.MCP.HttpPlug.SSEHandler
@@ -343,12 +344,7 @@ defmodule Arbor.MCP.HttpPlug do
         |> send_resp(405, Jason.encode!(%{"error" => "Method not allowed"}))
 
       mounted_session_method?(conn, opts) ->
-        conn
-        |> put_resp_content_type("application/json")
-        |> send_resp(
-          501,
-          Jason.encode!(%{"error" => "Runtime session stream routing unavailable"})
-        )
+        handle_runtime_session_method(conn, opts)
 
       conn.method == "GET" and legacy_http_sse_path?(conn, opts) ->
         if legacy_http_sse_enabled?(opts) do
@@ -366,7 +362,10 @@ defmodule Arbor.MCP.HttpPlug do
     conn.method in ["GET", "DELETE"] and mcp_endpoint_path?(conn, opts)
   end
 
-  defp modern_only_disallowed_method?(_conn, _opts), do: false
+  defp modern_only_disallowed_method?(conn, opts) do
+    conn.method in ["GET", "DELETE"] and mcp_endpoint_path?(conn, opts) and
+      modern_protocol_header?(conn)
+  end
 
   defp mounted_session_method?(conn, %{runtime: runtime} = opts) when not is_nil(runtime),
     do:
@@ -375,6 +374,105 @@ defmodule Arbor.MCP.HttpPlug do
            (mcp_endpoint_path?(conn, opts) or legacy_http_sse_path?(conn, opts)))
 
   defp mounted_session_method?(_conn, _opts), do: false
+
+  defp handle_runtime_session_method(conn, opts) do
+    if legacy_http_sse_path?(conn, opts) do
+      if legacy_http_sse_enabled?(opts) do
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(
+          501,
+          Jason.encode!(%{"error" => "Runtime legacy endpoint routing unavailable"})
+        )
+      else
+        send_resp(conn, 404, "SSE not enabled")
+      end
+    else
+      handle_runtime_session_endpoint(conn, opts)
+    end
+  end
+
+  defp handle_runtime_session_endpoint(conn, opts) do
+    request = %{
+      "method" => if(conn.method == "GET", do: "session/listen", else: "session/delete")
+    }
+
+    with :ok <- RuntimeWriter.current(conn),
+         {:ok, {:existing_session, id}} <- get_or_create_session_id(conn, request),
+         {:ok, conn} <- validate_request_origin(conn, opts),
+         {:ok, token_info} <- authorize_request(conn, request, opts),
+         :ok <- RuntimeWriter.current(conn),
+         {:ok, resolved} <- resolve_mrtr_identity(conn, request, token_info, opts),
+         {:ok, session} <-
+           RuntimeSession.addressed(
+             RuntimeWriter.runtime(conn),
+             RuntimeWriter.binding(conn),
+             id,
+             session_metadata(resolved, token_info, :http),
+             conn.method == "GET"
+           ),
+         {:ok, conn} <- runtime_protocol_version(conn, request, session),
+         :ok <- RuntimeWriter.current(conn) do
+      conn = conn |> maybe_add_cors_headers(opts) |> add_protocol_version_header()
+      serve_runtime_session_method(conn, resolved, session)
+    else
+      error -> reject_mcp_request(error, conn, opts, nil, nil, nil)
+    end
+  end
+
+  defp serve_runtime_session_method(%{method: "DELETE"} = conn, _opts, session) do
+    # The response is reserved while its entry authority is still valid. Its
+    # session lease is separately checked by the store's final mutation guard.
+    case RuntimeSession.delete(session, RuntimeWriter.binding(conn)) do
+      {:ok, effect, _session} ->
+        RuntimeWriter.perform(conn, effect, "", &Plug.Conn.send_resp(&1, 204, &2))
+
+      _failure ->
+        raise RuntimeWriter.AdmissionError
+    end
+  end
+
+  defp serve_runtime_session_method(conn, opts, session) do
+    with true <- accepts_event_stream?(conn) || {:error, :event_stream_required},
+         {:ok, cursor} <- runtime_replay_header(conn),
+         {:ok, stream} <- RuntimeSessionStream.prepare(conn, session, cursor, opts.sse_mode) do
+      conn
+      |> put_resp_header("content-type", "text/event-stream")
+      |> put_resp_header("x-accel-buffering", "no")
+      |> put_resp_header("cache-control", "no-cache")
+      |> RuntimeSessionStream.serve(stream)
+    else
+      {:error, reason}
+      when reason in [
+             :unknown_cursor,
+             :foreign_cursor,
+             :cursor_evicted,
+             :invalid_replay_header,
+             :event_stream_required
+           ] ->
+        status = if reason == :cursor_evicted, do: 410, else: 400
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(
+          status,
+          Jason.encode!(
+            JSONRPC.error(nil, ErrorCodes.invalid_request(), "Invalid session replay request")
+          )
+        )
+
+      error ->
+        reject_mcp_request(error, conn, opts, nil, nil, nil)
+    end
+  end
+
+  defp runtime_replay_header(conn) do
+    case get_req_header(conn, "last-event-id") do
+      [] -> {:ok, nil}
+      [cursor] when byte_size(cursor) in 1..256 -> {:ok, cursor}
+      _invalid -> {:error, :invalid_replay_header}
+    end
+  end
 
   # The MCP endpoint is the plug's mount root. `path_info` is relative to the
   # mount (Phoenix and Plug.Router `forward` strip the prefix into

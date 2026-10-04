@@ -217,6 +217,53 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
          else: (_ -> false)
   end
 
+  # The existing charged writer row is the session stream registration. A
+  # replacement retires the old binding; it never kills a borrowed socket PID
+  # or releases an IO liability that has already started.
+  @spec register_session_stream(HTTPWriterBinding.t()) :: :ok | error()
+  def register_session_stream(binding) do
+    with {:ok, {domain, token}} <- HTTPWriterBinding.address(binding),
+         {:ok, proof} <- proof(binding),
+         result <-
+           update(domain, proof.deadline, fn gate ->
+             register_session_stream_current(gate, domain, token)
+           end) do
+      wake(domain)
+      result
+    end
+  end
+
+  defp register_session_stream_current(gate, domain, token) do
+    with {:ok, info} <- open_binding(gate, token),
+         true <- info.writer == self() and captured_current?(domain, info),
+         true <- info.authority.lease_bound and info.authority.work == nil,
+         false <- Map.get(info.authority, :session_stream, false) do
+      next = %{info | authority: Map.put(info.authority, :session_stream, true), bytes: 0}
+      next = %{next | bytes: :erlang.external_size(next) + 256}
+      bytes = gate.metadata_bytes - info.bytes + next.bytes
+
+      if bytes <= domain.limits.max_writer_metadata_bytes do
+        gate = %{gate | bindings: Map.put(gate.bindings, token, next), metadata_bytes: bytes}
+
+        gate =
+          Enum.reduce(gate.bindings, gate, fn {old_token, old}, gate ->
+            if old_token != token and Map.get(old.authority || %{}, :session_stream, false) and
+                 old.proof.lease == info.proof.lease do
+              elem(retire_binding(gate, old_token, :session_stream_replaced), 1)
+            else
+              gate
+            end
+          end)
+
+        {:ok, gate, :ok}
+      else
+        {:error, :http_writer_busy}
+      end
+    else
+      _invalid -> {:error, :invalid_http_session_stream}
+    end
+  end
+
   @spec bind_work(HTTPWriterBinding.t(), reference()) :: :ok | error()
   def bind_work(binding, token) when is_reference(token) do
     mutate_capture(binding, fn domain, info ->
@@ -1162,6 +1209,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
   end
 
   defp claim(gate, entry, domain) do
+    gate = reap_returned_claims(gate)
+
     with {:ok, info} <- claim_binding(gate, entry, domain),
          :ok <- generation_valid(domain, info.proof.generation) do
       gate =

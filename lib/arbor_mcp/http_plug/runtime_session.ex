@@ -1,7 +1,7 @@
 defmodule Arbor.MCP.HttpPlug.RuntimeSession do
   @moduledoc false
   alias Arbor.MCP.Server.Runtime
-  alias Arbor.MCP.Server.Runtime.{HTTPWriterBinding, HTTPWriterRegistry}
+  alias Arbor.MCP.Server.Runtime.{HTTPWriterBinding, HTTPWriterRegistry, Services}
   alias Arbor.MCP.SessionManager
   alias Arbor.MCP.SessionManager.SessionLease
 
@@ -33,8 +33,64 @@ defmodule Arbor.MCP.HttpPlug.RuntimeSession do
 
   defp bind(binding, lease), do: HTTPWriterRegistry.bind_lease(binding, lease)
 
-  defp claim(service, lease, %{"method" => "initialize"}, opts),
-    do: SessionManager.claim_initialization(service, lease, opts)
+  def addressed(runtime, binding, id, metadata, bind? \\ true) do
+    with {:ok, service} <- Runtime.service(runtime, :sessions),
+         {:ok, proof} <- HTTPWriterBinding.validate(binding, runtime),
+         opts = [deadline: proof.deadline],
+         {:ok, lease} <- SessionManager.ensure_initialized_session(service, id, metadata, opts),
+         :ok <- if(bind?, do: bind(binding, lease), else: :ok) do
+      {:ok, %{service: service, lease: lease, claim: nil, opts: opts}}
+    end
+  end
+
+  # Capture the existing store cursor before the GET handshake. A first GET
+  # does not replay historical events unless Last-Event-ID requests them.
+  def replay_cursor(session),
+    do: SessionManager.replay_cursor(session.service, session.lease, session.opts)
+
+  def replay_page(session, cursor) do
+    with {:ok, service} <- Services.resolve(session.service, :sessions) do
+      opts =
+        Keyword.merge(session.opts,
+          max_events: min(32, Keyword.get(service.options, :max_replay_page_events, 32)),
+          max_bytes: min(65_536, Keyword.get(service.options, :max_replay_page_bytes, 65_536))
+        )
+
+      SessionManager.replay_page(session.service, session.lease, cursor, opts)
+    end
+  end
+
+  def delete(session, binding) do
+    with {:ok, effect} <-
+           HTTPWriterRegistry.prepare(binding, "", metadata: %{operation: :session_delete}) do
+      case terminate(session) do
+        :ok ->
+          case HTTPWriterRegistry.publish(effect) do
+            :ok ->
+              {:ok, effect, session}
+
+            error ->
+              HTTPWriterRegistry.release(effect)
+              error
+          end
+
+        error ->
+          HTTPWriterRegistry.release(effect)
+          error
+      end
+    end
+  end
+
+  defp claim(service, lease, %{"method" => "initialize"} = request, opts) do
+    case SessionManager.claim_initialization(service, lease, opts) do
+      {:error, reason}
+      when reason in [:session_already_initialized, :initialization_in_progress] ->
+        {:error, {:session_lifecycle_rejected, request["id"], reason}}
+
+      result ->
+        result
+    end
+  end
 
   defp claim(_service, _lease, _request, _opts), do: {:ok, nil}
 

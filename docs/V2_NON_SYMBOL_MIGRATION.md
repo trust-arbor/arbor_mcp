@@ -18,6 +18,7 @@ candidate; the final compiled graph, HTTP cutover and RC gates remain open.
 | Host logging freezes: MCP manifest `4496515f751d22dc946b166e75014ddacc6ce5e1ab5f6dbe5e9ee9299c170050`, ACP manifest `47b9ced480a79726ba64e16a28de66e6db8a26d9d7096f09a94c570db2905d45` | Ten MCP and eight ACP paths remove automatic global logger changes. Canonical MCP passes 46 native stdio cases and 5,052 executed full cases on both supported toolchains; ACP passes 359 core cases on both. ACP integration is `cc8b2078855148f390e899c7122fa56c8275da17`. These do not establish arbitrary host-handler privacy. |
 | Mounted Gateway freeze, manifest `2b6fcb4fe34a705993316a555d182d9a93573f6d651a0baf9f56a33b3ca0c9e3` | Twenty-six HTTP POST/request-SSE paths, merged with current privacy, stdio and Client context. A separate topology fixture and native Gateway report correction accompany it. Canonical combined runtime/stdIO/privacy selection passes 329 cases on both. Full HTTP lifecycle cutover remains open. |
 | Client diagnostics freeze, manifest `135a1a25ba69ea80315b8a5fc2a1ce146025e49d375d5c4fa1e969b97d0aa8da` | Fourteen Client/HTTP diagnostic paths; canonical affected selection passes 228 cases on both. Exact typed startup errors remain available to callers and trusted host logging; private MRTR callback failure now completes its Task normally. This does not establish arbitrary custom callback report privacy. |
+| Retained HTTP session freeze, manifest `f52627b2f5e0976473881f7feb592b454c4121b4bb8fed9c128f3ad96f57e4a4` | Twelve-path addressed legacy GET/replay/DELETE overlay merged with the committed Gateway/Client source. Canonical retained session/wire selection passes 19 cases and broader actual Gateway wire selection passes 40 on each toolchain. Notification-array continuation, subscriptions, cancellation, MRTR, initialization arrays and aliases remain separate gates. |
 
 The historical census is retained under
 `tmp/v2-semantic-census-69b0a39/{SEMANTIC_CENSUS.md,semantic-inventory.json,REVIEW_NOTES.md}`.
@@ -358,8 +359,14 @@ Optional Cowboy/Bandit listeners are implemented, with explicit backend selectio
 missing-dependency diagnostics and finite shutdown. Mounted host listeners remain
 borrowed. Runtime-mounted HttpPlug/Gateway routing, legacy session/progress/
 reverse/replay convergence and six remaining HTTP API removals are separate gates.
-Do not mount a claimed final `runtime:` replacement before that routing is
-qualified, or reconnect a singleton HandlerServer for every POST. Preserve
+Mounted POST/request-owned SSE and addressed legacy GET/replay/DELETE now have
+separate qualified source slices. They share the existing initialized Runtime;
+each POST does not reconnect a singleton HandlerServer. Full subscriptions,
+cross-session cancellation, MRTR, notification and initialization arrays, aliases
+and listener API migration remain required. The retained stream keeps its original
+HTTP entry cutoff and a reconnect preserves its typed session. Modern GET/DELETE
+remain sessionless 405. See [session streams](./V2_HTTP_SESSION_STREAM_SLICE.md).
+Preserve
 forwarded mounts, parsed bodies, host/origin/OAuth, modern discovery, legacy
 initialization, request-owned SSE and opt-in `legacy_http_sse`. Deprecated
 `:sse_enabled` option retirement is separate from that retained wire feature.

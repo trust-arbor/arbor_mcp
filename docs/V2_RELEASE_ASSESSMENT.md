@@ -353,6 +353,31 @@ remain. Both supported toolchains pass the stdio regression selection at its
 failing seed. Documentation publication also replaces a hidden OTP-module link
 with a description of the native Task worker. Fresh combined CI remains required.
 
+The combined Gateway/Client checkpoint is committed and pushed at `c1ae91b`.
+[Fresh CI](https://github.com/trust-arbor/arbor_mcp/actions/runs/37238956403)
+completed ten of twelve jobs successfully; current-test and performance failures share one Gateway
+fixture. After the original invocation expires and actual borrowed IO returns,
+checkout may correctly report either empty output or typed retired authority.
+The fixture now accepts only those outcomes and explicitly verifies zero retained
+frames/in-flight IO. All original timeout, observation, state and no-retry checks
+remain; the change does not renew a deadline or alter production behavior.
+Its thirteen focused cases pass on both supported toolchains at the failing
+current CI seed. Fresh combined CI is required for the corrected source.
+The full local and physical results above qualify this named source, not the RC.
+
+The later twelve-path retained session-stream integration adds addressed legacy
+GET/replay/DELETE, bounded store-owned replay pages and cursor rejection, charged
+stream replacement, and an empty DELETE response reserved before mutation.
+Modern sessionless GET/DELETE remain 405. Canonical minimum/current selections
+pass all **19 retained session/wire cases** and all **40 broader Gateway wire
+cases** with zero failures. See [session streams](./V2_HTTP_SESSION_STREAM_SLICE.md).
+The final store mutation guard retains the original cutoff and typed epoch;
+actual unresolved writes remain charged across stream replacement or root exit.
+Notification-array continuation after its early 202, subscriptions, cross-session
+cancellation, MRTR, initialization arrays and deprecated aliases/listener API
+retirement remain HTTP release gates. A separate continuation fix is in progress;
+none of those features is deferred to v3.
+
 | Slice | Reviewable evidence | Remaining work |
 |---|---|---|
 | Installed HTTP writer authority | The exact 13-path slice passes canonical minimum/current full selections, all 27 pinned SDK cases and production warnings-as-errors compilation. Runtime starts an owned proxy under the original initialization epoch/cutoff, retaining a separate IO domain across proxy/Admission/execution replacement. Entry bindings derive actual writer identity and original deadline; session claims verify addressed lease/epoch. Root stop reports unresolved borrowed IO explicitly. | Gateway/Controller routing, complete legacy batch authority and actual Bandit/Cowboy delivery remain; the integrated 41 focused and 84 retained cases do not clear those routing/physical transport gates. |
