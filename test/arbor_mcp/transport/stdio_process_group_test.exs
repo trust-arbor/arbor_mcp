@@ -64,7 +64,8 @@ defmodule Arbor.MCP.Transport.StdioProcessGroupTest do
 
       tell_server_to_exit(state)
 
-      assert_receive {:transport_closed, {:process_exited, 0}}, 10_000
+      generation = Stdio.identity(state)
+      assert_receive {:arbor_rpc, ^generation, {:closed, {:exit_status, 0}, ""}}, 10_000
       assert_stopped(child, state.os_pid)
     end
 
@@ -100,13 +101,14 @@ defmodule Arbor.MCP.Transport.StdioProcessGroupTest do
     # Not on the VM's PATH, only on the child's.
     assert System.find_executable("ex-mcp-path-probe") == nil
 
-    assert {:ok, %Stdio{port: port}} =
+    assert {:ok, state} =
              Stdio.connect(
                command: ["ex-mcp-path-probe"],
                env: [{"PATH", "#{bin}:/usr/bin:/bin"}]
              )
 
-    assert_receive {^port, {:exit_status, 7}}, 2_000
+    assert {:error, {:connection_error, {:process_exited, 7}}} =
+             Stdio.receive_message(state, 2_000)
   end
 
   defp server_with_child(pid_file), do: sh("sleep 30 & echo $! > \"$1\"; wait", pid_file)

@@ -65,7 +65,7 @@ defmodule Arbor.MCP.Client do
   alias Arbor.MCP.Reliability.Retry
   alias Arbor.MCP.Response
   alias Arbor.MCP.Server.Discover
-  alias Arbor.MCP.Transport.HTTP
+  alias Arbor.MCP.Transport.{HTTP, ReliabilityWrapper, Stdio}
 
   # Reconnection defaults ported from the former state machine implementation:
   # exponential backoff starting at 1s, doubling per attempt, capped at 60s,
@@ -111,6 +111,8 @@ defmodule Arbor.MCP.Client do
     # dropped, and that were still alive when it did. Their exit signals are
     # expected and are ignored rather than read as a foreign link's exit.
     retired_links: MapSet.new(),
+    # Preserve a known cleanup failure until a new connection succeeds.
+    cleanup_result: :ok,
     # Memoized client handler: nil (not yet initialized), :none (no handler
     # configured) or {module, handler_state}. Initialized once; callback
     # returns update handler_state, so stateful client handlers work.
@@ -981,12 +983,16 @@ defmodule Arbor.MCP.Client do
   - Stopping the receiver task
   - Replying to any pending requests with an error
 
+  Returns `{:error, reason}` if the transport reports a cleanup failure. The
+  client still becomes disconnected and settles its pending requests. Repeated
+  disconnect calls preserve that failure until a new connection succeeds.
+
   ## Examples
 
       {:ok, client} = Arbor.MCP.Client.connect("http://localhost:8080/mcp")
       :ok = Arbor.MCP.Client.disconnect(client)
   """
-  @spec disconnect(t()) :: :ok
+  @spec disconnect(t()) :: :ok | {:error, term()}
   def disconnect(client) do
     GenServer.call(client, :disconnect, 10_000)
   end
@@ -1444,7 +1450,7 @@ defmodule Arbor.MCP.Client do
         :ok
     end)
 
-    close_transport(state)
+    cleanup_result = remember_cleanup(state.cleanup_result, close_transport(state))
 
     NotificationListener.close_all(state.notification_listeners, :disconnected)
     reset_notification_worker(state)
@@ -1456,6 +1462,7 @@ defmodule Arbor.MCP.Client do
     new_state = %{
       state
       | connection_status: :disconnected,
+        cleanup_result: cleanup_result,
         transport_state: nil,
         pending_requests: %{},
         pending_batches: %{},
@@ -1474,7 +1481,7 @@ defmodule Arbor.MCP.Client do
         notification_listener_monitors: %{}
     }
 
-    {:reply, :ok, new_state}
+    {:reply, cleanup_result, new_state}
   end
 
   def handle_call(:get_status, _from, state) do
@@ -1839,6 +1846,17 @@ defmodule Arbor.MCP.Client do
     RequestHandler.handle_server_request_down(pid, reason, state)
   end
 
+  # Shared stdio delivery keeps its one frame of credit until protocol processing completes.
+  def handle_info({:arbor_rpc, _generation, _event} = message, state) do
+    case stdio_transport(state) do
+      %Stdio{} = transport ->
+        handle_stdio_event(Stdio.event(transport, message), transport, state)
+
+      nil ->
+        {:noreply, state}
+    end
+  end
+
   # Push model: transport sends pre-parsed messages directly
   def handle_info({:transport_event, message}, state) do
     RequestHandler.parse_transport_message(message, state)
@@ -1917,7 +1935,24 @@ defmodule Arbor.MCP.Client do
 
   def handle_info({:transport_closed, reason}, state) do
     Logger.error("Transport closed: #{inspect(reason)}")
+
+    state = %{
+      state
+      | cleanup_result: remember_cleanup(state.cleanup_result, terminal_cleanup(reason))
+    }
+
     {:noreply, handle_transport_down(reason, state)}
+  end
+
+  def handle_info({:DOWN, ref, :process, pid, reason}, state) do
+    case stdio_transport(state) do
+      %Stdio{monitor: {^ref, ^pid}} ->
+        state = abandon_transport(state)
+        {:noreply, handle_transport_down({:subprocess_down, reason}, state)}
+
+      _other ->
+        {:noreply, state}
+    end
   end
 
   def handle_info(:attempt_reconnect, %{connection_status: :reconnecting} = state) do
@@ -1934,6 +1969,56 @@ defmodule Arbor.MCP.Client do
   end
 
   # Async POST support (Streamable HTTP transport)
+
+  defp handle_stdio_event({:frame, token, bytes}, transport, state) do
+    outcome =
+      case Stdio.frame(bytes) do
+        {:ok, json} ->
+          Stdio.received(json)
+          RequestHandler.parse_transport_message(json, state)
+
+        :ignore ->
+          {:noreply, state}
+      end
+
+    finish_stdio_frame(outcome, transport, Stdio.ack(transport, token))
+  end
+
+  defp handle_stdio_event({:closed, reason, _unfinished}, _transport, state) do
+    state = %{
+      state
+      | cleanup_result: remember_cleanup(state.cleanup_result, terminal_cleanup(reason))
+    }
+
+    {:noreply, handle_transport_down(Stdio.closed_reason(reason), state)}
+  end
+
+  defp handle_stdio_event(:ignore, _transport, state), do: {:noreply, state}
+
+  defp finish_stdio_frame(outcome, _transport, :ok), do: outcome
+
+  defp finish_stdio_frame({:noreply, state} = outcome, transport, {:error, reason}) do
+    current = stdio_transport(state)
+
+    if reason == :closed and
+         (is_nil(current) or Stdio.identity(current) != Stdio.identity(transport)) do
+      outcome
+    else
+      state = abandon_transport(state)
+      {:noreply, handle_transport_down({:frame_ack_failed, reason}, state)}
+    end
+  end
+
+  defp stdio_transport(%{transport_mod: Stdio, transport_state: %Stdio{} = transport}),
+    do: transport
+
+  defp stdio_transport(%{
+         transport_mod: ReliabilityWrapper,
+         transport_state: %ReliabilityWrapper{wrapped_module: Stdio, wrapped_state: transport}
+       }),
+       do: transport
+
+  defp stdio_transport(_state), do: nil
 
   defp handle_async_post_result({:ok, _new_ts, response_data}, _request_id, state) do
     # POST response contains data — parse it as a transport message
@@ -2031,8 +2116,7 @@ defmodule Arbor.MCP.Client do
 
   defp abandon_transport(state) do
     state = retire_links(state)
-    close_transport(state)
-    state
+    %{state | cleanup_result: remember_cleanup(state.cleanup_result, close_transport(state))}
   end
 
   # Remembers the links of the transport and receiver this client is about
@@ -2062,7 +2146,7 @@ defmodule Arbor.MCP.Client do
             0 -> :ok
           end
 
-          retired
+          MapSet.delete(retired, link)
         end
       end)
 
@@ -2077,15 +2161,26 @@ defmodule Arbor.MCP.Client do
   # disconnect/1 or the client loop for the transport's request timeout.
   defp close_transport(%{transport_mod: mod, transport_state: transport_state})
        when not is_nil(mod) and not is_nil(transport_state) do
-    mod.close(Deadline.for_cleanup(mod, transport_state))
-    :ok
+    case mod.close(Deadline.for_cleanup(mod, transport_state)) do
+      :ok -> :ok
+      {:error, _reason} = error -> error
+      other -> {:error, {:invalid_close_result, other}}
+    end
   rescue
-    _error -> :ok
+    error -> {:error, {:cleanup_exception, error.__struct__}}
   catch
-    :exit, _reason -> :ok
+    kind, reason -> {:error, {:cleanup_failure, kind, reason}}
   end
 
   defp close_transport(_state), do: :ok
+
+  defp terminal_cleanup({:cleanup_failed, _reason, {:error, _} = result}), do: result
+  defp terminal_cleanup({:connection_error, reason}), do: terminal_cleanup(reason)
+  defp terminal_cleanup({:transport_error, reason}), do: terminal_cleanup(reason)
+  defp terminal_cleanup({:transport_closed, reason}), do: terminal_cleanup(reason)
+  defp terminal_cleanup(_reason), do: :ok
+  defp remember_cleanup({:error, _} = previous, _result), do: previous
+  defp remember_cleanup(:ok, result), do: result
 
   # Transport teardown and reconnection
 
@@ -2465,6 +2560,7 @@ defmodule Arbor.MCP.Client do
             | connection_status: :ready,
               initialized: true,
               reconnect_attempts: 0,
+              cleanup_result: :ok,
               health_check_id: nil
           })
 

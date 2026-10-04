@@ -197,17 +197,49 @@ defmodule Arbor.MCP.Transport.ReliabilityWrapper do
 
   @impl true
   def close(%__MODULE__{} = state) do
-    # Close reliability components first
-    if state.circuit_breaker_pid do
-      GenServer.stop(state.circuit_breaker_pid)
-    end
+    # Always attempt the actual transport cleanup, even after a component dies.
+    result = close_wrapped(state)
+    components = Enum.map([state.circuit_breaker_pid, state.health_check_pid], &stop_component/1)
 
-    if state.health_check_pid do
-      GenServer.stop(state.health_check_pid)
+    case result do
+      :ok -> Enum.find(components, :ok, &(&1 != :ok))
+      {:error, _reason} = error -> error
     end
+  end
 
-    # Then close wrapped transport
-    state.wrapped_module.close(state.wrapped_state)
+  defp close_wrapped(state) do
+    case state.wrapped_module.close(state.wrapped_state) do
+      :ok -> :ok
+      {:error, _reason} = error -> error
+      other -> {:error, {:invalid_close_result, other}}
+    end
+  rescue
+    error -> {:error, {:cleanup_exception, error.__struct__}}
+  catch
+    kind, reason -> {:error, {:cleanup_failure, kind, reason}}
+  end
+
+  defp stop_component(nil), do: :ok
+
+  defp stop_component(pid) do
+    GenServer.stop(pid, :normal, 500)
+  catch
+    :exit, {:noproc, _call} -> :ok
+    :exit, _reason -> kill_component(pid)
+  end
+
+  defp kill_component(pid) do
+    monitor = Process.monitor(pid)
+    Process.unlink(pid)
+    Process.exit(pid, :kill)
+
+    receive do
+      {:DOWN, ^monitor, :process, ^pid, _reason} -> :ok
+    after
+      500 ->
+        Process.demonitor(monitor, [:flush])
+        {:error, :reliability_cleanup_timeout}
+    end
   end
 
   @impl true
@@ -247,6 +279,18 @@ defmodule Arbor.MCP.Transport.ReliabilityWrapper do
       state.wrapped_module.capabilities(state.wrapped_state)
     else
       []
+    end
+  end
+
+  @impl true
+  def subscribe(subscriber, %__MODULE__{} = state) do
+    if function_exported?(state.wrapped_module, :subscribe, 2) do
+      case state.wrapped_module.subscribe(subscriber, state.wrapped_state) do
+        {:ok, wrapped} -> {:ok, %{state | wrapped_state: wrapped}}
+        {:error, _reason} = error -> error
+      end
+    else
+      {:error, :push_not_supported}
     end
   end
 

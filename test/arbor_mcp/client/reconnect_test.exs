@@ -145,6 +145,22 @@ defmodule Arbor.MCP.Client.ReconnectTest do
       assert status.reconnect_attempts == 0
     end
 
+    test "a successful new connection clears the previous generation's cleanup failure" do
+      agent = start_agent(10)
+      client = start_client(agent, reconnect_backoff: [initial: 10, max: 40, multiplier: 2])
+      assert_receive {:transport_connect, 1}
+
+      :sys.replace_state(client, &%{&1 | cleanup_result: {:error, :cleanup_denied}})
+      send(client, {:transport_closed, :connection_lost})
+
+      assert_receive {:telemetry, [:arbor_mcp, :client, :reconnect, :success], %{attempt: 1},
+                      %{pid: ^client}},
+                     1_000
+
+      assert :sys.get_state(client).cleanup_result == :ok
+      assert :ok = Client.disconnect(client)
+    end
+
     test "gives up after max attempts and emits :timeout" do
       # Only the initial connect succeeds; every reconnect attempt fails
       agent = start_agent(1)

@@ -131,9 +131,10 @@ defmodule Arbor.MCP.Transport do
   @doc """
   Closes the transport connection.
 
-  Should clean up any resources and return `:ok`.
+  Cleans up owned resources and returns `:ok`, or `{:error, reason}` when
+  cleanup fails. A caller must preserve a known cleanup failure.
   """
-  @callback close(state()) :: :ok
+  @callback close(state()) :: :ok | {:error, term()}
 
   @doc """
   Optional callback to check if the transport is still connected.
@@ -148,6 +149,10 @@ defmodule Arbor.MCP.Transport do
   When implemented, the transport pushes messages to the subscriber pid as:
   - `{:transport_event, message}` — a received message (JSON string or map)
   - `{:transport_closed, reason}` — transport connection closed
+
+  Stdio instead delivers generation-tagged `Arbor.RPC.FramedStream` events.
+  Its subscriber must acknowledge a frame after processing it to release
+  delivery credit; see `Arbor.MCP.Transport.Stdio.subscribe/2`.
   - `{:transport_error, reason}` — transport error occurred
 
   This enables the push (event-driven) model, eliminating the need for a

@@ -8,7 +8,41 @@ defmodule Arbor.MCP.ClientDisconnectTest do
   alias Arbor.MCP.Client
   alias Arbor.MCP.Transport.Test, as: TestTransport
 
+  defmodule CleanupTransport do
+    def close({owner, result}) do
+      send(owner, :cleanup_attempted)
+      result
+    end
+  end
+
   describe "disconnect/1" do
+    test "disconnect reports a cleanup failure while settling pending work" do
+      {:ok, client} = GenServer.start_link(Client, transport: :test, _skip_connect: true)
+      owner = self()
+      ref = make_ref()
+
+      :sys.replace_state(client, fn state ->
+        %{
+          state
+          | transport_mod: CleanupTransport,
+            transport_state: {owner, {:error, :cleanup_denied}},
+            connection_status: :connected,
+            pending_requests: %{1 => {{owner, ref}, :single, "ping"}}
+        }
+      end)
+
+      assert {:error, :cleanup_denied} = Client.disconnect(client)
+      assert_receive :cleanup_attempted
+      assert_receive {^ref, {:error, %Arbor.MCP.Error{code: :connection_error}}}
+
+      assert {:ok, %{connection_status: :disconnected, pending_requests: 0}} =
+               Client.get_status(client)
+
+      assert {:error, :cleanup_denied} = Client.disconnect(client)
+      refute_receive :cleanup_attempted
+      GenServer.stop(client)
+    end
+
     test "disconnect cleans up resources and updates state" do
       # Create a mock transport
       transport_state = %TestTransport{role: :client, peer_pid: self()}

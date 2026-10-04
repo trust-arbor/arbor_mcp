@@ -32,10 +32,11 @@ defmodule Arbor.MCP.Transport.StdioIsolationTest do
     shell = System.find_executable("sh") || flunk("sh executable is required for stdio test")
     probe = ~s(test -z "${#{key}+x}")
 
-    assert {:ok, %Stdio{port: port}} =
+    assert {:ok, state} =
              Stdio.connect(command: [shell, "-c", probe], env: [{key, false}])
 
-    assert_receive {^port, {:exit_status, 0}}, 1_000
+    assert {:error, {:connection_error, {:process_exited, 0}}} =
+             Stdio.receive_message(state, 1_000)
   end
 
   test "stdio environment is isolated by default" do
@@ -50,8 +51,10 @@ defmodule Arbor.MCP.Transport.StdioIsolationTest do
     shell = System.find_executable("sh") || flunk("sh executable is required for stdio test")
     probe = ~s(test -z "${#{key}+x}")
 
-    assert {:ok, %Stdio{port: port}} = Stdio.connect(command: [shell, "-c", probe])
-    assert_receive {^port, {:exit_status, 0}}, 1_000
+    assert {:ok, state} = Stdio.connect(command: [shell, "-c", probe])
+
+    assert {:error, {:connection_error, {:process_exited, 0}}} =
+             Stdio.receive_message(state, 1_000)
   end
 
   test "trusted deployments can explicitly inherit the parent environment" do
@@ -66,10 +69,11 @@ defmodule Arbor.MCP.Transport.StdioIsolationTest do
     shell = System.find_executable("sh") || flunk("sh executable is required for stdio test")
     probe = ~s(test "$#{key}" = "inherited-value")
 
-    assert {:ok, %Stdio{port: port}} =
+    assert {:ok, state} =
              Stdio.connect(command: [shell, "-c", probe], environment_policy: :inherit)
 
-    assert_receive {^port, {:exit_status, 0}}, 1_000
+    assert {:error, {:connection_error, {:process_exited, 0}}} =
+             Stdio.receive_message(state, 1_000)
   end
 
   test "rejects unknown environment policies" do
@@ -995,7 +999,7 @@ defmodule Arbor.MCP.Transport.StdioIsolationTest do
   end
 
   describe "Stdio Transport close/1 cleanup" do
-    test "close terminates the push-mode reader process" do
+    test "close terminates the stable shared actor in push mode" do
       cat = System.find_executable("cat") || flunk("cat executable is required for stdio test")
 
       assert {:ok, state} = Stdio.connect(command: [cat])
@@ -1007,20 +1011,19 @@ defmodule Arbor.MCP.Transport.StdioIsolationTest do
 
       assert :ok = Stdio.close(subscribed)
 
-      # The reader is a plain receive loop that does not trap exits, so close
-      # must kill it outright; a :normal exit signal would leak the process.
-      assert_receive {:DOWN, ^ref, :process, ^reader_pid, :killed}, 1_000
+      assert_receive {:DOWN, ^ref, :process, ^reader_pid, :normal}, 1_000
       refute Process.alive?(reader_pid)
     end
 
-    test "close without a reader closes the port" do
+    test "close in pull mode cleans up the shared actor" do
       cat = System.find_executable("cat") || flunk("cat executable is required for stdio test")
 
-      assert {:ok, %Stdio{port: port} = state} = Stdio.connect(command: [cat])
-      assert Port.info(port) != nil
+      assert {:ok, %Stdio{reader_pid: actor} = state} = Stdio.connect(command: [cat])
+      assert Process.alive?(actor)
 
       assert :ok = Stdio.close(state)
-      assert Port.info(port) == nil
+      refute Process.alive?(actor)
+      assert :ok = Stdio.close(state)
     end
 
     test "close terminates the spawned OS process" do

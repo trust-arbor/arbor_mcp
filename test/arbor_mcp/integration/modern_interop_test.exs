@@ -314,7 +314,8 @@ defmodule Arbor.MCP.Integration.ModernInteropTest do
                "form" => %{}
              }
 
-      assert results["onboard"] == "TypeScript Client:arbor_mcp"
+      # Continuation data is fixture protocol state, independent of package naming.
+      assert results["onboard"] == "TypeScript Client:ex_mcp"
       assert results["elicitation_message"] == "Choose an Arbor.MCP interop display name"
       assert "test://greeting" in results["resources"]
       assert results["resource_text"] == "Hello from Elixir!"

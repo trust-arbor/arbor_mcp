@@ -63,7 +63,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 06d153f0bcb515f132b3ab7b439f9b21b503868c
+        ref: 62c006001ac98eed493f743718c1bbf282fbd273
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -147,7 +147,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 06d153f0bcb515f132b3ab7b439f9b21b503868c
+        ref: 62c006001ac98eed493f743718c1bbf282fbd273
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -201,7 +201,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 06d153f0bcb515f132b3ab7b439f9b21b503868c
+        ref: 62c006001ac98eed493f743718c1bbf282fbd273
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -246,7 +246,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 06d153f0bcb515f132b3ab7b439f9b21b503868c
+        ref: 62c006001ac98eed493f743718c1bbf282fbd273
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -324,7 +324,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 06d153f0bcb515f132b3ab7b439f9b21b503868c
+        ref: 62c006001ac98eed493f743718c1bbf282fbd273
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -383,7 +383,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 06d153f0bcb515f132b3ab7b439f9b21b503868c
+        ref: 62c006001ac98eed493f743718c1bbf282fbd273
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -437,7 +437,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 06d153f0bcb515f132b3ab7b439f9b21b503868c
+        ref: 62c006001ac98eed493f743718c1bbf282fbd273
         path: .arbor-v2/acp
         persist-credentials: false
 

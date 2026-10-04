@@ -167,9 +167,10 @@ defmodule Arbor.MCP.Client.EraCache do
     {:http, digest({endpoint, configuration})}
   end
 
-  defp transport_identity(Stdio, %Stdio{os_pid: os_pid, port: port}, _opts) do
-    process_identity({:stdio, os_pid, port})
-  end
+  defp transport_identity(Stdio, %Stdio{subprocess: nil}, _opts), do: :none
+
+  defp transport_identity(Stdio, %Stdio{} = state, _opts),
+    do: {:process, digest({:stdio, Stdio.identity(state)})}
 
   defp transport_identity(Local, %Local{server_pid: server_pid}, _opts) do
     process_identity({:local, server_pid})
