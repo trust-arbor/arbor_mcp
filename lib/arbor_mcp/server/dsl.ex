@@ -812,6 +812,22 @@ defmodule Arbor.MCP.Server.DSL do
 
     mapping = tools |> Enum.with_index() |> Map.new(&tool_callback_entry/1)
 
+    dispatch =
+      generate_callback_case(
+        quote(do: Map.get(mapping, name)),
+        tools,
+        quote do
+          {:component, module, id} -> module.handle_call_tool(id, arguments, state)
+        end,
+        quote do
+          {handler, input_schema, output_schema, params} ->
+            unquote(generate_local_tool_execution())
+        end,
+        quote do
+          nil -> {:error, Arbor.MCP.Error.protocol_error(-32602, "Unknown tool: #{name}"), state}
+        end
+      )
+
     quote do
       alias Arbor.MCP.Server.DSL.Builder
       alias Arbor.MCP.Server.Result
@@ -825,20 +841,24 @@ defmodule Arbor.MCP.Server.DSL do
       def handle_call_tool(name, arguments, state) do
         mapping = unquote(Macro.escape(mapping))
 
-        case Map.get(mapping, name) do
-          {:component, module, id} ->
-            module.handle_call_tool(id, arguments, state)
-
-          {handler, input_schema, output_schema, params} ->
-            unquote(generate_local_tool_execution())
-
-          nil ->
-            {:error, Arbor.MCP.Error.protocol_error(-32602, "Unknown tool: #{name}"), state}
-        end
+        unquote(dispatch)
       end
 
       defp __ex_mcp_dsl_widen_validation__(validation), do: validation
     end
+  end
+
+  defp generate_callback_case(value, entries, component_clauses, local_clauses, missing_clauses) do
+    {components, locals} =
+      Enum.split_with(entries, fn {_definition, handler, _params} ->
+        match?({:component, _module, _id, _source}, handler)
+      end)
+
+    clauses =
+      if(components == [], do: [], else: component_clauses) ++
+        if(locals == [], do: [], else: local_clauses) ++ missing_clauses
+
+    {:case, [], [value, [do: clauses]]}
   end
 
   defp generate_resource_handlers(entries, kind) do
@@ -892,6 +912,24 @@ defmodule Arbor.MCP.Server.DSL do
            definition[:mimeType], params}
       end)
 
+    dispatch =
+      generate_callback_case(
+        quote(do: Map.get(resource_mapping, uri)),
+        resources,
+        quote do
+          {{:component, module}, _mime_type} -> module.handle_read_resource(uri, state)
+        end,
+        quote do
+          {handler, mime_type} ->
+            params = %{uri: uri}
+            result = apply(__MODULE__, handler, [params, state])
+            Result.normalize_resource(result, uri, mime_type, state)
+        end,
+        quote do
+          nil -> read_resource_template(uri, template_mapping, state)
+        end
+      )
+
     quote do
       alias Arbor.MCP.Server.DSL.{Builder, Matcher}
       alias Arbor.MCP.Server.Result
@@ -905,18 +943,7 @@ defmodule Arbor.MCP.Server.DSL do
         resource_mapping = unquote(Macro.escape(resource_mapping))
         template_mapping = unquote(Macro.escape(template_mapping))
 
-        case Map.get(resource_mapping, uri) do
-          {{:component, module}, _mime_type} ->
-            module.handle_read_resource(uri, state)
-
-          {handler, mime_type} ->
-            params = %{uri: uri}
-            result = apply(__MODULE__, handler, [params, state])
-            Result.normalize_resource(result, uri, mime_type, state)
-
-          nil ->
-            read_resource_template(uri, template_mapping, state)
-        end
+        unquote(dispatch)
       end
 
       defp read_resource_template(uri, template_mapping, state) do
@@ -1025,6 +1052,25 @@ defmodule Arbor.MCP.Server.DSL do
           {definition.name, {:"__ex_mcp_dsl_prompt_#{index}__", args}}
       end)
 
+    dispatch =
+      generate_callback_case(
+        quote(do: Map.get(mapping, name)),
+        prompts,
+        quote do
+          {:component, module, id} -> module.handle_get_prompt(id, arguments, state)
+        end,
+        quote do
+          {handler, args} ->
+            arguments = Builder.normalize_arguments(arguments, args)
+            result = apply(__MODULE__, handler, [arguments, state])
+            Result.normalize_prompt(result, state)
+        end,
+        quote do
+          nil ->
+            {:error, Arbor.MCP.Error.protocol_error(-32602, "Prompt not found: #{name}"), state}
+        end
+      )
+
     quote do
       alias Arbor.MCP.Server.DSL.Builder
       alias Arbor.MCP.Server.Result
@@ -1040,18 +1086,7 @@ defmodule Arbor.MCP.Server.DSL do
       def handle_get_prompt(name, arguments, state) do
         mapping = unquote(Macro.escape(mapping))
 
-        case Map.get(mapping, name) do
-          {:component, module, id} ->
-            module.handle_get_prompt(id, arguments, state)
-
-          {handler, args} ->
-            arguments = Builder.normalize_arguments(arguments, args)
-            result = apply(__MODULE__, handler, [arguments, state])
-            Result.normalize_prompt(result, state)
-
-          nil ->
-            {:error, Arbor.MCP.Error.protocol_error(-32602, "Prompt not found: #{name}"), state}
-        end
+        unquote(dispatch)
       end
     end
   end

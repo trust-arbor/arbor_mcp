@@ -212,6 +212,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     assert_receive {:cancel_probe, ^callback, true}
     assert Task.await(request).response["error"]["code"] == -32001
     assert Server.call(root, :read) == 0
+    wait_for(fn -> Runtime.stats(root).reserved == 0 end)
 
     next =
       tool(17, "inc")

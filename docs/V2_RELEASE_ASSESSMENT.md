@@ -195,6 +195,20 @@ passes six of twelve jobs; its failures are those obsolete placeholders and one
 150 ms stdio constructor fixture exhausting its budget before its held edge.
 Fresh complete CI remains required after these migrations.
 
+The complete HTTP/client/dynamic/Tools checkpoint is committed at `f16660b`.
+Both full selections pass 4,995 executed tests, 20 doctests and 34 properties
+with no failures. Normal hooks pass with 34 existing dev Dialyzer filters;
+minimum-test Dialyzer retains 66 existing filters, with none added.
+[Its fresh CI](https://github.com/trust-arbor/arbor_mcp/actions/runs/37223674121)
+passes ten of twelve jobs, including both four-package archive consumers,
+minimum/current testing, performance, SDK interop and external conformance.
+Coverage exposes immediate request-ID reuse before canceled work releases its
+reservation; newest-Elixir compilation exposes impossible generated component
+clauses in local-only DSL consumers. The followup waits for actual reservation
+release and emits only the dispatch variants present in the compiled declarations.
+All 56 affected component/runtime cases pass on minimum/current/newest; all three
+warnings-as-errors builds pass. Fresh combined CI remains required.
+
 | Slice | Reviewable evidence | Remaining work |
 |---|---|---|
 | Installed HTTP writer authority | The exact 13-path slice passes canonical minimum/current full selections, all 27 pinned SDK cases and production warnings-as-errors compilation. Runtime starts an owned proxy under the original initialization epoch/cutoff, retaining a separate IO domain across proxy/Admission/execution replacement. Entry bindings derive actual writer identity and original deadline; session claims verify addressed lease/epoch. Root stop reports unresolved borrowed IO explicitly. | Gateway/Controller routing, complete legacy batch authority and actual Bandit/Cowboy delivery remain; the integrated 41 focused and 84 retained cases do not clear those routing/physical transport gates. |
