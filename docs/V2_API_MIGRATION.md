@@ -274,6 +274,18 @@ aggregate batch output, store recovery, stdio, HTTP and shutdown across all
 transports remain qualification gates. Do not equate bounded admission with a
 hard bound on arbitrary Erlang sends, all callback memory or application state.
 
+The current scheduled custom `handle_call/3` receives a synthetic
+`{callback_task_pid, reference}` as `from`, rather than the original caller's
+PID/tag. This differs from direct GenServer caller-identity semantics as well
+as callback `self()`. Deferred `GenServer.reply/2` remains unsupported. Record
+and resolve the caller-identity contract with representative consumers before
+RC; namespace renaming alone does not migrate handlers that use `from`.
+
+Legacy batches currently reserve one input envelope in the Test/BEAM candidate.
+The accepted runtime contract requires individual work capacity and prohibits
+bypassing the queue count with a batch. Per-member work admission and aggregate
+response accounting remain prerequisites before cross-transport release qualification.
+
 ## Non-symbol migration inventory and release prerequisites
 
 The frozen symbol manifest does not describe configuration keys, accepted
