@@ -234,61 +234,53 @@ defmodule Arbor.MCP.Stress.LoadTest do
     end
 
     test "error recovery under stress" do
-      MockServer.with_server([error_rate: 0.3], fn _client ->
-        # Test that system remains stable even with 30% error rate
-        {_time, results} =
-          :timer.tc(fn ->
-            1..200
-            |> Task.async_stream(
-              fn i ->
-                # Make multiple requests, some will fail due to error rate
-                request_results =
-                  Enum.map(1..5, fn j ->
-                    _request = Builders.request("tools/list", id: i * 100 + j)
+      {:ok, server} = MockServer.start_link([])
 
-                    # In real test, would send request and handle errors
-                    # For now, simulate that some requests fail
-                    if rem(i + j, 3) == 0 do
-                      {:error, "simulated_error"}
-                    else
-                      {:ok, %{"tools" => []}}
-                    end
-                  end)
+      {:ok, client} =
+        Arbor.MCP.Client.start_link(
+          transport: [type: :mock, server_pid: server, timeout: 5_000],
+          auto_initialize: true,
+          health_check_interval: nil
+        )
 
-                # Count successful vs failed requests
-                successes = Enum.count(request_results, &match?({:ok, _}, &1))
-                failures = Enum.count(request_results, &match?({:error, _}, &1))
-
-                {successes, failures}
-              end,
-              max_concurrency: @medium_concurrency,
-              timeout: 30_000
-            )
-            |> Enum.to_list()
-          end)
-
-        # Verify all tasks completed (even with errors)
-        completed_tasks = length(results)
-
-        assert completed_tasks == 200,
-               "Expected 200 completed tasks, got #{completed_tasks}"
-
-        # Calculate overall success/failure rates
-        {total_successes, total_failures} =
-          results
-          |> Enum.reduce({0, 0}, fn {:ok, {successes, failures}}, {acc_s, acc_f} ->
-            {acc_s + successes, acc_f + failures}
-          end)
-
-        total_requests = total_successes + total_failures
-        success_rate = total_successes / total_requests
-
-        IO.puts("Error recovery stress test: #{success_rate * 100}% success rate")
-
-        # Should have reasonable success rate despite errors
-        assert success_rate > 0.5,
-               "Success rate #{success_rate} too low, expected > 50%"
+      # Initialization must succeed before failures are injected into real
+      # concurrent requests. Seed inside the server process for reproducibility.
+      :sys.replace_state(server, fn state ->
+        :rand.seed(:exsss, {101, 202, 303})
+        %{state | error_rate: 0.3}
       end)
+
+      try do
+        results =
+          1..200
+          |> Task.async_stream(
+            fn _index ->
+              Enum.map(1..5, fn _request ->
+                Arbor.MCP.Client.list_tools(client, format: :map, timeout: 5_000)
+              end)
+            end,
+            max_concurrency: @medium_concurrency,
+            timeout: 30_000
+          )
+          |> Enum.flat_map(fn {:ok, requests} -> requests end)
+
+        assert length(results) == 1_000
+        successes = Enum.count(results, &match?({:ok, %{"tools" => []}}, &1))
+        failures = Enum.count(results, &match?({:error, _reason}, &1))
+        assert successes + failures == 1_000
+        assert failures > 0
+        assert successes > 500
+        assert Process.alive?(client)
+        assert %{"tools/list" => ^successes} = MockServer.get_call_count(server)
+
+        :sys.replace_state(server, &%{&1 | error_rate: 0.0})
+
+        assert {:ok, %{"tools" => []}} =
+                 Arbor.MCP.Client.list_tools(client, format: :map, timeout: 5_000)
+      after
+        if Process.alive?(client), do: GenServer.stop(client)
+        if Process.alive?(server), do: GenServer.stop(server)
+      end
     end
   end
 
