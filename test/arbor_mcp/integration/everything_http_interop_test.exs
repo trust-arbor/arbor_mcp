@@ -41,14 +41,14 @@ defmodule Arbor.MCP.Integration.EverythingHTTPInteropTest do
       ExUnit.Assertions.flunk("Node.js not available, skipping interop tests")
     end
 
-    # Start the everything server on a random port
-    port = start_everything_server()
+    # Capture the owned child in cleanup; on_exit runs in a different process.
+    server = start_everything_server()
 
     on_exit(fn ->
-      stop_everything_server(port)
+      stop_everything_server(server)
     end)
 
-    {:ok, server_port: port}
+    {:ok, server_port: server.port}
   end
 
   describe "Arbor.MCP Client -> Everything Server (non-SSE mode)" do
@@ -308,6 +308,8 @@ defmodule Arbor.MCP.Integration.EverythingHTTPInteropTest do
       url: "http://127.0.0.1:#{port}",
       endpoint: "/mcp",
       use_sse: use_sse,
+      # This fixture uses the session-based SDK 1.x transport.
+      protocol_mode: :legacy_only,
       timeout: 10_000,
       request_timeout: 10_000,
       stream_handshake_timeout: 10_000
@@ -316,60 +318,83 @@ defmodule Arbor.MCP.Integration.EverythingHTTPInteropTest do
 
   defp start_everything_server do
     node_path = System.find_executable("node")
+    deadline = System.monotonic_time(:millisecond) + 15_000
 
-    port =
-      Port.open(
-        {:spawn_executable, node_path},
-        [
-          :binary,
-          :stderr_to_stdout,
-          args: [@server_script],
-          cd: @interop_dir
-        ]
+    {:ok, child} =
+      Arbor.RPC.Subprocess.open([node_path, @server_script],
+        cd: @interop_dir,
+        environment_policy: :inherit,
+        process_group: true,
+        stderr_to_stdout: true,
+        max_frame_bytes: 8_192,
+        max_queue_bytes: 262_144,
+        max_queue_frames: 256,
+        cleanup_timeout: 1_000,
+        term_grace: 100
       )
 
-    # Read the port number from stdout
-    server_port = receive_port_number(port, "", 15_000)
-
-    # Store the OS port for cleanup
-    Process.put(:everything_server_port, port)
-
-    server_port
-  end
-
-  defp receive_port_number(port, buffer, timeout) do
-    receive do
-      {^port, {:data, data}} ->
-        buffer = buffer <> data
-
-        case Regex.run(~r/PORT:(\d+)/, buffer) do
-          [_, port_str] ->
-            String.to_integer(port_str)
-
-          nil ->
-            receive_port_number(port, buffer, timeout)
-        end
-    after
-      timeout ->
-        Port.close(port)
-        raise "Timeout waiting for everything server to start. Buffer: #{inspect(buffer)}"
+    try do
+      port = receive_port_number(child, deadline, 0, 0)
+      %{child: child, port: port}
+    rescue
+      exception ->
+        close_everything_child(child)
+        reraise exception, __STACKTRACE__
+    catch
+      kind, reason ->
+        close_everything_child(child)
+        :erlang.raise(kind, reason, __STACKTRACE__)
     end
   end
 
-  defp stop_everything_server(_server_port) do
-    case Process.get(:everything_server_port) do
-      nil ->
+  defp receive_port_number(child, deadline, count, bytes) do
+    if count >= 32 or bytes >= 65_536 do
+      raise "Everything server startup output exceeded its bounded readiness budget"
+    end
+
+    case Arbor.RPC.FramedStream.next_until(child, deadline) do
+      {:ok, line} ->
+        bytes = bytes + byte_size(line)
+
+        if bytes > 65_536 do
+          raise "Everything server startup output exceeded its bounded readiness budget"
+        end
+
+        case Regex.run(~r/^PORT:(\d+)\s*$/, line) do
+          [_, port_str] -> String.to_integer(port_str)
+          nil -> receive_port_number(child, deadline, count + 1, bytes)
+        end
+
+      _terminal ->
+        raise "Everything server did not publish readiness before its original startup cutoff"
+    end
+  end
+
+  defp stop_everything_server(%{child: child, port: server_port}) do
+    close_everything_child(child)
+
+    case :gen_tcp.connect({127, 0, 0, 1}, server_port, [:binary, active: false], 1_000) do
+      {:error, :econnrefused} ->
         :ok
 
-      port ->
-        try do
-          Port.close(port)
-        rescue
-          _ -> :ok
-        catch
-          _, _ -> :ok
-        end
+      {:ok, socket} ->
+        :gen_tcp.close(socket)
+        flunk("Everything server listener survived confirmed owned-child cleanup")
+
+      other ->
+        flunk(
+          "Everything server listener cleanup observation was inconclusive: #{inspect(other)}"
+        )
     end
+  end
+
+  defp close_everything_child(child) do
+    assert :ok = Arbor.RPC.Subprocess.close(child)
+    assert {:ok, receipt} = Arbor.RPC.Subprocess.cleanup_receipt(child)
+    assert receipt.direct_child == :reaped
+    assert receipt.targeted_group == :absent
+    # This proves the targeted group only; arbitrary escaped descendants remain outside it.
+    :ok
   end
 
   defp get_content_text(result) do
