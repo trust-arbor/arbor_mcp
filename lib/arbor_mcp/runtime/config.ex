@@ -1,10 +1,13 @@
 defmodule Arbor.MCP.Server.Runtime.Config do
   @moduledoc false
 
+  alias Arbor.MCP.Server.HTTP.Config, as: HTTPConfig
   alias Arbor.MCP.Server.Runtime.{OwnedChildConfig, ServiceConfig}
   @timer_limit 4_294_967_295
 
-  defstruct handler: nil,
+  defstruct transport: nil,
+            http: nil,
+            handler: nil,
             handler_args: [],
             dispatcher: Arbor.MCP.Server.Dispatch,
             cancellation_tracker: nil,
@@ -36,10 +39,12 @@ defmodule Arbor.MCP.Server.Runtime.Config do
             shutdown_timeout_ms: 5_000
 
   def new(opts) when is_list(opts) do
+    opts = http_service_defaults(opts)
     keys = Map.keys(Map.from_struct(%__MODULE__{}))
     config = struct(__MODULE__, Keyword.take(opts, keys))
 
-    with :ok <- validate_name(Keyword.get(opts, :name)),
+    with {:ok, http} <- http_config(opts),
+         :ok <- validate_name(Keyword.get(opts, :name)),
          :ok <- validate_legacy_services(opts),
          :ok <- validate_handler(config),
          :ok <- validate_execution(config),
@@ -48,8 +53,18 @@ defmodule Arbor.MCP.Server.Runtime.Config do
          {:ok, services} <- ServiceConfig.new(opts),
          {:ok, stores} <- OwnedChildConfig.new(Keyword.get(opts, :store_children, [])),
          :ok <- validate_replay_requirement(opts, services) do
-      {:ok, %{config | services: services, store_children: stores}}
+      {:ok, %{config | http: http, services: services, store_children: stores}}
     end
+  end
+
+  defp http_service_defaults(opts) do
+    if Keyword.get(opts, :transport) in [:http, :mounted_http],
+      do: HTTPConfig.service_defaults(opts),
+      else: opts
+  end
+
+  defp http_config(opts) do
+    if Keyword.get(opts, :transport) == :http, do: HTTPConfig.new(opts), else: {:ok, nil}
   end
 
   @doc false

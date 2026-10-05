@@ -9,17 +9,27 @@ defmodule Arbor.MCP.Server.HTTP.Cowboy do
   """
 
   @behaviour Arbor.MCP.Server.HTTP.ListenerAdapter
-  alias Arbor.MCP.Server.HTTP.ListenerAdapter
+  alias Arbor.MCP.Server.HTTP.{CowboyClaims, ListenerAdapter}
+  alias Arbor.MCP.Server.Runtime.Deadline
 
   @impl true
   def available?, do: Code.ensure_loaded?(Plug.Cowboy)
 
   @impl true
   def start(plug, plug_opts, opts) do
-    with :ok <- ListenerAdapter.ensure_started(Plug.Cowboy, :cowboy, :plug_cowboy) do
+    deadline = Deadline.now() + 10_000
+    reference = Keyword.get(opts, :ref) || Module.concat(plug, HTTP)
+
+    with :ok <- ListenerAdapter.ensure_started(Plug.Cowboy, :cowboy, :plug_cowboy),
+         {:ok, lease} <- CowboyClaims.borrowed(reference, deadline) do
       # The dependency is optional; retain the adapter module in a core build.
       # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      apply(Plug.Cowboy, :http, [plug, plug_opts, opts])
+      result = apply(Plug.Cowboy, :http, [plug, plug_opts, opts])
+      # This is settlement of an actual result, not permission for new effects.
+      # A slow host Plug constructor may outlive its initial claim wait; keep
+      # exclusion until that known result or the original starter's actual DOWN.
+      CowboyClaims.borrowed_done(lease, result, Deadline.now() + 1_000)
+      result
     end
   end
 

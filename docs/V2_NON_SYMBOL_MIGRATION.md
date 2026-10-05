@@ -426,6 +426,55 @@ listener proof preserves successful origins and drops cancelled/expired/retired
 ones without killing a healthy subscription. See
 [Origin](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/server/subscriptions/origin.ex).
 
+### HTTP listener constructors and backend ABI
+
+Explicit `Runtime.start_link(handler: ..., transport: :http, http: [...])`,
+`Server.Transport.start_server/3,4` and DSL HTTP startup return the runtime
+supervisor and own a real listener child. Initialization, registered listener
+startup and final readiness use the original root cutoff. The retained
+`start_http_server/4` instead requires a matching explicit Runtime and returns a
+borrowed backend listener PID; runtime stop does not stop that listener or an
+existing mounted Phoenix host.
+
+Owned Cowboy delegates only the qualified Ranch **1.8.1** constructor ABI,
+with an exact optional dependency requirement and a pre-effect version/export/
+child-shape check. Real Arbor listener/connection/acceptor callback identities
+replace the stock initial-call names while preserving actual OTP parents and
+acknowledgments. Managed owned and lower borrowed Cowboy constructors share a
+bounded atomic reference authority; raw third-party Ranch mutations do not.
+The authority retains unknown startup exclusivity through actual settlement,
+removes only unchanged exact setup objects authenticated by its lease marker and
+native role PIDs, and fails closed after authority loss. Partial/changed or
+untagged setup metadata quarantines the claim until VM restart, preserving any
+host replacement's objects.
+Its 128 reference domains, 128 pre-mailbox controls, 4,096-byte reference and
+8,192-byte control limits are part of the v2 lifecycle contract. No public reset
+clears uncertain obligations; VM restart is the host recovery boundary.
+
+Owned Bandit delegates only **Bandit 1.12.5 / Thousand Island 1.5.0** startup,
+with exact optional requirements and pre-effect version/export checks. Actual
+Arbor native supervisors, workers and acceptors register before delegated
+initialization under the same cutoff; stock child IDs and admitted HTTP option
+defaults remain, subject to the owned-only 1..128 acceptor and 1024 runtime
+connection-construction limits. Connection registrations use one finite original
+constructor timeout (10s default); infinity is rejected. Unknown construction
+and actual live-child credits survive API timeouts and Admission/cohort resets
+until physical settlement. Old epochs cannot bind new children; stale exact-token
+cleanup cannot retire a replacement's credit.
+Native socket buffers are separate. Owned startup log text is fixed, retaining its configured level
+or disabled setting. Borrowed Bandit startup remains stock. Nested Thousand
+Island binding options retain upstream precedence; avoid conflicts with outer
+Host/Origin defaults.
+
+Explicit `:http`/`:mounted_http` roots default to unnamed owned ETS `:sessions`
+and `:resource_subscriptions` in legacy-capable modes. Explicit descriptors or
+`false`/`nil` win; `:modern_only` and generic Runtime construction keep these
+services opt-in. Replay remains opt-in. Removed `:sse_enabled`/server `:use_sse`
+are replaced by `:legacy_http_sse`; `:handler_call_timeout` moves to root
+`:request_timeout_ms`. Raw store/registry options and owned borrowed sockets
+are rejected. See [HTTP listeners](./HTTP_LISTENERS.md) for the exact constructor
+migration and remaining mounted subscription/reverse-helper gates.
+
 ## Telemetry, diagnostics and final qualification
 
 Attach consumers to `[:arbor_mcp, ...]` and `[:arbor_acp, ...]`. The old server

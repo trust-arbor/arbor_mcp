@@ -52,7 +52,7 @@ defmodule Arbor.MCP.TestHelpers do
         port: port,
         host: "localhost",
         # Disable SSE for simpler testing
-        sse_enabled: false
+        legacy_http_sse: false
       ] ++ opts
 
     ensure_test_server_loaded()
@@ -249,7 +249,7 @@ defmodule Arbor.MCP.TestHelpers do
     [
       transport: :http,
       port: port,
-      sse_enabled: false,
+      legacy_http_sse: false,
       name: server_name,
       ranch_ref: ranch_ref
     ]
@@ -305,7 +305,7 @@ defmodule Arbor.MCP.TestHelpers do
   # Handle port binding errors by trying a different port
   defp handle_port_binding_error(_server_name, original_port) do
     retry_port = find_available_port(original_port + 1)
-    server_opts = [transport: :http, port: retry_port, sse_enabled: false]
+    server_opts = [transport: :http, port: retry_port, legacy_http_sse: false]
 
     case ApiTestServer.start_link(server_opts) do
       {:ok, pid} ->

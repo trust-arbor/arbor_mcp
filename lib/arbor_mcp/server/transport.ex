@@ -24,10 +24,15 @@ defmodule Arbor.MCP.Server.Transport do
   require Logger
 
   alias Arbor.MCP.Server.{Runtime, StdioServer}
-  alias Arbor.MCP.Server.HTTP.{Bandit, Cowboy}
+  alias Arbor.MCP.Server.HTTP.{Bandit, Config, Cowboy, CowboyClaims}
+  alias Arbor.MCP.Server.Runtime.{Admission, Initialization, Ref}
 
   @doc """
   Starts a server with the specified transport configuration.
+
+  HTTP and stdio startup return the runtime supervisor PID. The HTTP runtime
+  owns its optional listener and initializes the handler once. `:name` names
+  the runtime root. `http: [adapter: :bandit, port: 4000]` is also supported.
 
   ## Options
 
@@ -42,8 +47,8 @@ defmodule Arbor.MCP.Server.Transport do
   * `:cors_enabled` - Enable CORS for HTTP transports (default: `false`, the
     same default `Arbor.MCP.HttpPlug` uses)
   * `:legacy_http_sse` - Enable the deprecated MCP 2024-11-05 HTTP+SSE
-    transport (default: `false`). Retained throughout Arbor.MCP 1.x
-  * `:sse_enabled` - Deprecated rc.5 alias for `:legacy_http_sse`
+    transport (default: `false`). Available for explicitly selected legacy routes
+  * `:sse_enabled` / `:use_sse` - Removed server constructor aliases; use `:legacy_http_sse`
   * `:allowed_hosts` - Host-header allow-list passed to `Arbor.MCP.HttpPlug`.
     Defaults to the localhost names when binding to a localhost address
     (DNS rebinding protection), otherwise `:any`
@@ -71,7 +76,7 @@ defmodule Arbor.MCP.Server.Transport do
         start_stdio_server(module, server_info, tools, opts)
 
       :http ->
-        start_http_server(module, server_info, tools, opts)
+        Runtime.start_link(Keyword.merge(opts, handler: module, transport: :http))
 
       :beam ->
         start_beam_server(module, server_info, tools, opts)
@@ -97,7 +102,16 @@ defmodule Arbor.MCP.Server.Transport do
   end
 
   @doc """
-  Starts an HTTP-based MCP server using the selected optional listener.
+  Starts an HTTP listener borrowing an existing initialized runtime.
+
+  `:runtime` must be that runtime's root PID, registered name or opaque reference,
+  and its handler must match `module`. This helper returns the actual listener
+  PID and does not stop the runtime when its listener stops. For an endpoint
+  whose runtime owns the listener, use `start_server/4` or
+  `Runtime.start_link(handler: module, transport: :http, http: [...])`.
+
+  The retained `server_info` and `tools` arguments do not initialize a handler;
+  initialization metadata and tool callbacks come from the runtime's handler.
 
   Cowboy remains the default. Missing listener dependencies return
   `{:error, {:missing_http_listener_dependency, backend, package}}`.
@@ -109,81 +123,65 @@ defmodule Arbor.MCP.Server.Transport do
   """
   @spec start_http_server(module(), map(), list(), keyword()) ::
           {:ok, pid()} | {:error, term()}
-  def start_http_server(module, server_info, _tools, opts) do
-    port = Keyword.get(opts, :port, 4000)
-    host = Keyword.get(opts, :host, "localhost")
-    # Preserve the rc.5 server option aliases throughout 1.x, but never enable
-    # the deprecated standalone SSE transport on a new server by default.
-    legacy_http_sse =
-      Keyword.get(
-        opts,
-        :legacy_http_sse,
-        Keyword.get(opts, :sse_enabled, false) || Keyword.get(opts, :use_sse, false)
+  def start_http_server(module, _server_info, _tools, opts) do
+    with {:ok, http} <- Config.new(opts, :borrowed),
+         {:ok, runtime} <- borrowed_runtime(opts, module),
+         :ok <- borrowed_reference(http) do
+      borrowed_start(http, runtime)
+    end
+  end
+
+  defp borrowed_reference(%{backend: :cowboy, ranch_ref: ref}),
+    do: CowboyClaims.borrowed_available?(ref)
+
+  defp borrowed_reference(_http), do: :ok
+
+  defp borrowed_start(http, runtime) do
+    result =
+      http.adapter.start(
+        Arbor.MCP.HttpPlug,
+        Keyword.put(http.plug_options, :runtime, runtime),
+        http.listener_options
       )
 
-    # Matches Arbor.MCP.HttpPlug's own default; CORS must be opted into (audit L10).
-    cors_enabled = Keyword.get(opts, :cors_enabled, false)
+    if http.backend == :cowboy, do: normalize_borrowed_result(result), else: result
+  end
 
-    # Localhost-bound servers are the prime target for DNS rebinding, so
-    # they get a Host allow-list (and matching localhost Origin allow-list)
-    # by default. Explicit :allowed_hosts / :allowed_origins always win.
-    allowed_hosts = Keyword.get(opts, :allowed_hosts, default_allowed_hosts(host))
-    allowed_origins = Keyword.get(opts, :allowed_origins, default_allowed_origins(host, port))
+  defp normalize_borrowed_result({:error, {:already_started, pid}}), do: {:ok, pid}
+  defp normalize_borrowed_result(result), do: result
 
-    # Configure the HTTP Plug. Tools are read from the handler module, so the
-    # `tools` argument is not forwarded (Arbor.MCP.HttpPlug.init/1 ignores it).
-    plug_opts =
-      [
-        handler: module,
-        server_info: server_info,
-        legacy_http_sse: legacy_http_sse,
-        cors_enabled: cors_enabled,
-        allowed_hosts: allowed_hosts,
-        allowed_origins: allowed_origins
-      ] ++
-        Keyword.take(opts, [
-          :request_state,
-          :mrtr,
-          :path,
-          :legacy_http_sse_path,
-          :legacy_http_sse_post_path,
-          :protocol_mode,
-          :instructions,
-          :server_capabilities,
-          :handler_call_timeout,
-          :max_input_requests,
-          :max_mrtr_bytes,
-          :replay_cache,
-          :require_replay_protection
-        ])
-
-    if legacy_http_sse do
-      Logger.warning(
-        "The MCP 2024-11-05 HTTP+SSE transport is deprecated; migrate clients to Streamable HTTP"
-      )
+  defp borrowed_runtime(opts, module) do
+    with {:ok, runtime} <- Runtime.ref(Keyword.get(opts, :runtime)),
+         {:ok, route} <- Admission.route(Ref.table(runtime)),
+         true <- Initialization.ready?(Ref.table(runtime)),
+         true <- route.config.handler == module do
+      {:ok, runtime}
+    else
+      false -> {:error, :http_runtime_handler_mismatch}
+      _unavailable -> {:error, :http_runtime_required}
     end
+  end
 
-    Logger.info(
-      "Starting MCP HTTP server on #{inspect(host)}:#{port} " <>
-        "(deprecated HTTP+SSE: #{legacy_http_sse})"
-    )
+  @doc """
+  Returns the actual listener identity owned by an HTTP runtime.
 
-    with {:ok, adapter} <- http_adapter(opts),
-         {:ok, listener_opts} <- http_listener_options(adapter, opts, host, port) do
-      case adapter.start(Arbor.MCP.HttpPlug, plug_opts, listener_opts) do
-        {:ok, pid} ->
-          Logger.info("MCP HTTP server started successfully")
-          {:ok, pid}
-
-        {:error, {:already_started, pid}} ->
-          Logger.info("MCP HTTP server already running")
-          {:ok, pid}
-
-        {:error, reason} ->
-          Logger.error("Failed to start MCP HTTP server: #{inspect(reason)}")
-          {:error, reason}
-      end
+  The map contains `:listener` (PID), `:adapter`, and Cowboy's `:ranch_ref`.
+  Stop the owned endpoint through `Runtime.stop/1` or its supervising parent.
+  Borrowed standalone listeners are returned directly by `start_http_server/4`.
+  """
+  @spec http_listener(Runtime.server()) :: {:ok, map()} | {:error, atom()}
+  def http_listener(server) do
+    with {:ok, runtime} <- Runtime.ref(server),
+         true <- Initialization.ready?(Ref.table(runtime)),
+         [{:http_listener, %{listener: listener} = info}] <-
+           :ets.lookup(Ref.table(runtime), :http_listener),
+         true <- Process.alive?(listener) do
+      {:ok, info}
+    else
+      _unavailable -> {:error, :http_listener_unavailable}
     end
+  rescue
+    ArgumentError -> {:error, :http_listener_unavailable}
   end
 
   @doc """
@@ -208,32 +206,6 @@ defmodule Arbor.MCP.Server.Transport do
       :cowboy -> {:ok, Cowboy}
       :bandit -> {:ok, Bandit}
       adapter -> {:error, {:unsupported_http_adapter, adapter}}
-    end
-  end
-
-  defp http_listener_options(adapter, opts, host, port) do
-    listener_opts = Keyword.get(opts, :http_listener_options, [])
-
-    cond do
-      not Keyword.keyword?(listener_opts) ->
-        {:error, :invalid_http_listener_options}
-
-      adapter == Bandit and not is_nil(Keyword.get(opts, :ranch_ref)) ->
-        {:error, {:unsupported_http_option, :bandit, :ranch_ref}}
-
-      true ->
-        listener_opts = Keyword.merge(listener_opts, port: port, ip: parse_host(host))
-
-        case adapter do
-          Cowboy ->
-            case Keyword.get(opts, :ranch_ref) do
-              ref when ref in [nil, false] -> {:ok, listener_opts}
-              ref -> {:ok, Keyword.put(listener_opts, :ref, ref)}
-            end
-
-          Bandit ->
-            {:ok, Keyword.put(listener_opts, :scheme, :http)}
-        end
     end
   end
 
@@ -369,56 +341,4 @@ defmodule Arbor.MCP.Server.Transport do
       }
     }
   end
-
-  @localhost_hosts ["localhost", "127.0.0.1", "::1", "[::1]"]
-
-  defp localhost_bind?(host) do
-    host in @localhost_hosts or host == {127, 0, 0, 1} or host == {0, 0, 0, 0, 0, 0, 0, 1}
-  end
-
-  # Host allow-list for Arbor.MCP.HttpPlug: localhost binds get DNS rebinding
-  # protection by default; other binds keep :any for backwards compatibility.
-  defp default_allowed_hosts(host) do
-    if localhost_bind?(host) do
-      ["localhost", "127.0.0.1", "[::1]", "::1"]
-    else
-      :any
-    end
-  end
-
-  # Origin allow-list for Arbor.MCP.HttpPlug. HttpPlug no longer has a
-  # same-origin fallback (Host is attacker-controlled under DNS rebinding),
-  # and Arbor.MCP's own HTTP client sends an Origin derived from the server URL,
-  # so localhost binds explicitly allow localhost origins for the bound port.
-  # This is rebinding-safe: a rebinding attack presents the attacker page's
-  # real (non-localhost) origin.
-  defp default_allowed_origins(host, port) do
-    if localhost_bind?(host) do
-      for h <- ["localhost", "127.0.0.1", "[::1]"],
-          origin <- ["http://#{h}", "http://#{h}:#{port}"] do
-        origin
-      end
-    else
-      []
-    end
-  end
-
-  # Parse host string to IP tuple
-  defp parse_host(host) when is_binary(host) do
-    case :inet.parse_address(String.to_charlist(host)) do
-      {:ok, ip} ->
-        ip
-
-      {:error, :einval} ->
-        # Try resolving hostname
-        case :inet.gethostbyname(String.to_charlist(host)) do
-          {:ok, {:hostent, _, _, _, _, [ip | _]}} -> ip
-          # Default to localhost
-          _ -> {127, 0, 0, 1}
-        end
-    end
-  end
-
-  defp parse_host(host) when is_tuple(host), do: host
-  defp parse_host(_), do: {127, 0, 0, 1}
 end

@@ -3,7 +3,6 @@ defmodule Arbor.MCP.Protocol.InitializeCharacterizationTest do
 
   alias Arbor.MCP.Internal.VersionRegistry
   alias Arbor.MCP.Protocol.RequestProcessor
-  alias Arbor.MCP.Transport.HTTPServer
 
   defmodule RequestProcessorServer do
     def get_server_info_from_opts do
@@ -48,7 +47,7 @@ defmodule Arbor.MCP.Protocol.InitializeCharacterizationTest do
     def handle_call_tool(_name, _arguments, state), do: {:error, "Tool not found", state}
   end
 
-  test "all five initialize implementations match the committed golden" do
+  test "retained initialize implementations match the committed historical golden" do
     fixture_path = Path.expand("../../fixtures/protocol/initialize_results.term", __DIR__)
 
     {expected, _binding} =
@@ -61,6 +60,9 @@ defmodule Arbor.MCP.Protocol.InitializeCharacterizationTest do
       |> Enum.map(&{&1, initialize_results(&1)})
       |> Map.new()
       |> Map.put("omitted", initialize_results(nil))
+
+    expected =
+      Map.new(expected, fn {version, results} -> {version, Map.delete(results, :http_server)} end)
 
     assert actual == expected
   end
@@ -84,8 +86,7 @@ defmodule Arbor.MCP.Protocol.InitializeCharacterizationTest do
       request_processor: request_processor_result(request),
       message_processor: message_processor_result(request),
       server_handler: handler_result(params),
-      server_dsl: dsl_result(params),
-      http_server: http_server_result(request)
+      server_dsl: dsl_result(params)
     }
   end
 
@@ -111,26 +112,6 @@ defmodule Arbor.MCP.Protocol.InitializeCharacterizationTest do
   defp dsl_result(params) do
     {:ok, result, _state} = DSLServer.handle_initialize(params, %{})
     result
-  end
-
-  defp http_server_result(request) do
-    config =
-      HTTPServer.init(
-        handler: DefaultHandler,
-        security: %{
-          validate_origin: false,
-          enforce_https: false,
-          include_security_headers: false
-        }
-      )
-
-    response =
-      "POST"
-      |> Plug.Test.conn("/", Jason.encode!(request))
-      |> HTTPServer.call(config)
-
-    assert response.status == 200
-    response.resp_body |> Jason.decode!() |> Map.fetch!("result")
   end
 
   defp maybe_put_version(params, nil), do: params

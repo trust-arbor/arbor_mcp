@@ -13,7 +13,7 @@ defmodule Arbor.MCP.Server.HTTP.ListenerAdapter do
 
   @doc false
   def bounded(backend, operation, timeout, fun)
-      when is_integer(timeout) and timeout > 0 do
+      when is_integer(timeout) and timeout > 0 and timeout <= 4_294_967_295 do
     task =
       Task.async(fn ->
         try do

@@ -88,6 +88,8 @@ defmodule Arbor.MCP.Server.Runtime do
 
   use Supervisor
 
+  alias Arbor.MCP.Server.HTTP.{Config, CowboyClaims}
+
   alias Arbor.MCP.Server.Runtime.{
     Admission,
     CallbackContext,
@@ -113,6 +115,12 @@ defmodule Arbor.MCP.Server.Runtime do
 
   @doc false
   def start_configured(opts, config, deadline) do
+    with {:ok, http} <- Config.acquire(config.http, deadline) do
+      start_owned_configured(opts, %{config | http: http}, deadline)
+    end
+  end
+
+  defp start_owned_configured(opts, config, deadline) do
     result =
       Initialization.start_supervisor(
         __MODULE__,
@@ -161,7 +169,21 @@ defmodule Arbor.MCP.Server.Runtime do
     :ets.insert(table, {:shutdown_guard, guard})
 
     Process.put({__MODULE__, :reference}, Ref.new(self(), table))
+
+    if config.transport == :http and config.http.backend == :cowboy do
+      :ok = CowboyClaims.bind(config.http.lease, Ref.new(self(), table), deadline)
+    end
+
     runtime_opts = [table: table, supervisor: self(), config: config]
+
+    # HTTP listener construction occurs after the installed Gateway and before
+    # the root readiness barrier, under the same original initialization cutoff.
+    http_children =
+      if config.transport == :http do
+        [{Arbor.MCP.Server.HTTP.Supervisor, [runtime: Ref.new(self(), table), config: config]}]
+      else
+        []
+      end
 
     children =
       [
@@ -173,6 +195,7 @@ defmodule Arbor.MCP.Server.Runtime do
           {ExecutionSupervisor, runtime_opts},
           {HTTPGateway, runtime_opts}
         ] ++
+        http_children ++
         case Keyword.get(opts, :edge) do
           nil ->
             []

@@ -183,15 +183,41 @@ The planned mounted shape is:
 forward "/mcp", Arbor.MCP.HttpPlug, runtime: MyApp.MCPRuntime
 ```
 
-The implemented optional listener foundation retains
-`Arbor.MCP.Server.Transport.start_http_server/4` and `start_server/3,4`. It adds
+Owned Cowboy construction pins and checks Ranch 1.8.1's private constructor ABI.
+It uses real Arbor native callback modules, with actual parent links and one
+startup cutoff. Its bounded VM-lifetime reference authority also fences the
+retained stock lower Cowboy adapter/helper, preserves uncertain startup claims,
+and never deletes borrowed backend metadata. See [HTTP listeners](./HTTP_LISTENERS.md)
+for capacity, lifecycle and dependency migration details.
+
+Owned Bandit construction likewise pins Bandit 1.12.5 and Thousand Island 1.5.0;
+Arbor's real native callback roles register before delegated initialization,
+retain the original cutoff and native parent, and preserve admitted HTTP option
+defaults. Borrowed listeners keep stock backend constructors. See
+`HTTP_LISTENERS.md` for dependency constraints and lifetime distinctions.
+
+The standalone listener migration retains
+`Arbor.MCP.Server.Transport.start_http_server/4` and `start_server/3,4`.
+`start_server/3,4` and DSL HTTP startup return the runtime supervisor PID and own
+its listener; the lower-level `start_http_server/4` requires an explicit matching
+`:runtime` and keeps its listener-PID return shape. Direct Runtime construction
+uses `transport: :http, http: [adapter: ..., port: ...]`. It adds
 `:http_adapter` (`:cowboy` default or `:bandit`), `:http_listener_options`, and
 `stop_http_server/1,2` with positive finite `:http_shutdown_timeout` (5,000 ms
 default). Cowboy-only `:ranch_ref` is rejected for Bandit. A missing optional
 backend returns `{:error, {:missing_http_listener_dependency, backend, package}}`.
 Plug.Cowboy and Bandit are optional dependencies; mounted Phoenix does not need
 the library to own a listener. See [listener source](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/server/transport.ex).
-Listener foundation does not establish runtime-mounted HTTP convergence.
+The two legacy wrappers are removed in this constructor checkpoint; preserve
+`HttpPlug.init/1` and `call/2`. Owned HTTP/mounted runtime profiles default to
+unnamed owned ETS sessions and resource subscriptions in legacy-capable modes,
+while explicit disable/descriptors win and replay remains opt-in. Owned Cowboy
+roots use unique default references; borrowed helpers retain the old Plug
+reference. Removed server `sse_enabled`/`use_sse` aliases require
+`legacy_http_sse`; the client's `use_sse` option is separate. See
+[standalone ownership and migration](HTTP_LISTENERS.md).
+This checkpoint does not establish the remaining live subscription/reverse-helper
+HTTP convergence or final compiled API graph qualification.
 
 ## Remove unimplemented media/encoding helpers
 

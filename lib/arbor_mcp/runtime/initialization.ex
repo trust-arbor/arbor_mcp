@@ -414,6 +414,11 @@ defmodule Arbor.MCP.Server.Runtime.Initialization do
       match?({:runtime_owned, _pid}, key)
   end
 
+  # Native connection constructors and borrowed socket IO can outlive an
+  # execution cohort. Their exact-token credits remain until physical DOWN.
+  def preserve_record?({{:bandit_connection, _index}, _token, _producer, _child, _epoch}),
+    do: true
+
   def preserve_record?(_record), do: false
 
   defp start_epoch(table, config, scope, deadline) do

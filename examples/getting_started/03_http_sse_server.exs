@@ -4,7 +4,8 @@
 
 Mix.install(
   [
-    {:arbor_mcp, path: Path.expand("../..", __DIR__)}
+    {:arbor_mcp, path: Path.expand("../..", __DIR__)},
+    {:plug_cowboy, "~> 2.7"}
   ],
   verbose: false
 )
@@ -61,7 +62,7 @@ if System.get_env("MCP_ENV") != "test" do
     HttpSseHelloServer.start_link(
       transport: :http,
       port: port,
-      use_sse: true,
+      legacy_http_sse: true,
       name: :http_sse_hello_server
     )
 

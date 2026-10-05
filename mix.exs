@@ -108,13 +108,16 @@ defmodule Arbor.MCP.MixProject do
       external_dep(:excoveralls, "~> 0.18", only: :test),
       external_dep(:git_hooks, "~> 0.7", only: [:dev], runtime: false),
       external_dep(:plug_cowboy, "~> 2.7", optional: true),
-      # Keep the listener opt-in, and exclude Bandit releases before the
-      # HTTP/2 header validation and flow-control fixes in 1.12.5.
-      external_dep(:bandit, "~> 1.12 and >= 1.12.5", optional: true),
+      # Owned startup delegates only this qualified Bandit/Thousand Island ABI;
+      # Bandit 1.12.5 also includes the HTTP/2 validation/flow-control fixes.
+      external_dep(:bandit, "== 1.12.5", optional: true),
+      external_dep(:thousand_island, "== 1.5.0", optional: true),
       # Not used directly; declared so consumers resolve a cowlib that fixes
       # EEF-CVE-2026-43971 (Link header directive smuggling in cow_link),
       # which plug_cowboy's own requirements still allow.
       external_dep(:cowlib, "~> 2.20", optional: true),
+      # Owned Cowboy setup delegates only the qualified Ranch 1.8.1 constructor ABI.
+      external_dep(:ranch, "== 1.8.1", optional: true),
       external_dep(:plug, "~> 1.16"),
       external_dep(:fuse, "~> 2.4", optional: true),
       # MCP protocol support

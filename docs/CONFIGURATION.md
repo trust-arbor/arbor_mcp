@@ -839,9 +839,9 @@ It is separate from client-side `:timeout`, `:request_timeout`,
 `:stream_handshake_timeout`, and `:stream_idle_timeout` settings.
 
 The MCP 2024-11-05 HTTP+SSE transport is deprecated and disabled by default.
-Existing servers may retain it during Arbor.MCP 1.x with
-`legacy_http_sse: true`. `sse_enabled: true` remains an rc.5-compatible alias
-until Arbor.MCP 2.0. Optional `legacy_http_sse_path` and
+Version 2 servers select it with `legacy_http_sse: true`. The old server
+constructor aliases `sse_enabled` and `use_sse` are rejected; the HTTP client's
+separate `use_sse` option remains supported. Optional `legacy_http_sse_path` and
 `legacy_http_sse_post_path` settings default to `/sse` and `/message`.
 Neither dual-era preference mode enables this transport. `:modern_only`
 disables it even when the compatibility option or its rc.5 alias is present.

@@ -1,11 +1,17 @@
 defmodule Arbor.MCP.Server.HTTPListenerTest do
   use ExUnit.Case, async: false
 
-  alias Arbor.MCP.Server.Transport
+  alias Arbor.MCP.Server.{Runtime, Transport}
   alias Arbor.MCP.Server.HTTP.{Bandit, Cowboy}
 
   defmodule Handler do
     use Arbor.MCP.Server.Handler
+  end
+
+  setup do
+    runtime = start_supervised!({Runtime, handler: Handler, transport: :mounted_http})
+    Process.put({__MODULE__, :runtime}, runtime)
+    :ok
   end
 
   test "listener packages remain optional in the published dependency declaration" do
@@ -202,7 +208,10 @@ defmodule Arbor.MCP.Server.HTTPListenerTest do
       Handler,
       %{name: "optional-listener", version: "2.0.0"},
       [],
-      Keyword.merge([port: 0, host: {127, 0, 0, 1}], opts)
+      Keyword.merge(
+        [runtime: Process.get({__MODULE__, :runtime}), port: 0, host: {127, 0, 0, 1}],
+        opts
+      )
     )
   end
 
@@ -309,6 +318,12 @@ defmodule Arbor.MCP.Server.HTTPListenerTest do
 
       {:ok, socket} ->
         :ok = :gen_tcp.close(socket)
+        Process.sleep(min(remaining, 5))
+        refute_open_until(port, deadline)
+
+      {:error, :econnreset} ->
+        # A shutdown race can reset one fresh probe. Only a later fresh refused
+        # connection proves closure; keep the original observation deadline.
         Process.sleep(min(remaining, 5))
         refute_open_until(port, deadline)
 

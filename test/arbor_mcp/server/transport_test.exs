@@ -156,7 +156,7 @@ defmodule Arbor.MCP.Server.TransportTest do
           )
 
         assert is_pid(pid)
-        Transport.stop_http_server(pid)
+        Transport.stop_server(pid)
       else
         # Skip if Cowboy not available
         :skip
@@ -169,12 +169,12 @@ defmodule Arbor.MCP.Server.TransportTest do
         {:ok, pid} =
           Transport.start_server(TestServer, %{name: "test", version: "1.0.0"}, [],
             transport: :http,
-            sse_enabled: true,
+            legacy_http_sse: true,
             port: 0
           )
 
         assert is_pid(pid)
-        Transport.stop_http_server(pid)
+        Transport.stop_server(pid)
       else
         :skip
       end
@@ -216,11 +216,16 @@ defmodule Arbor.MCP.Server.TransportTest do
     @tag :requires_http
     test "start_http_server/4" do
       if match?({:module, _}, Code.ensure_loaded(Plug.Cowboy)) do
+        runtime = start_supervised!({Runtime, handler: TestServer, transport: :mounted_http})
+
         {:ok, pid} =
-          Transport.start_http_server(TestServer, %{name: "test", version: "1.0.0"}, [], port: 0)
+          Transport.start_http_server(TestServer, %{name: "test", version: "1.0.0"}, [],
+            runtime: runtime,
+            port: 0
+          )
 
         assert is_pid(pid)
-        Transport.stop_http_server(pid)
+        Transport.stop_server(pid)
       else
         :skip
       end
@@ -297,7 +302,7 @@ defmodule Arbor.MCP.Server.TransportTest do
         {:ok, pid} = TestServer.start_link(transport: :http, port: 0)
 
         assert is_pid(pid)
-        Transport.stop_http_server(pid)
+        Transport.stop_server(pid)
       else
         :skip
       end
