@@ -11,7 +11,7 @@ defmodule Arbor.MCP.Integration.ModernInteropTest do
   alias Arbor.MCP.Client
   alias Arbor.MCP.Client.Subscription
   alias Arbor.MCP.ConsentHandler.Test, as: TestConsentHandler
-  alias Arbor.MCP.Server.Subscriptions
+  alias Arbor.MCP.Server.Runtime
 
   @moduletag :interop
   @moduletag timeout: 90_000
@@ -60,7 +60,7 @@ defmodule Arbor.MCP.Integration.ModernInteropTest do
     alias Arbor.MCP.Server.DSL.Result, as: DSLResult
 
     @impl true
-    def init(opts), do: {:ok, %{subscription_registry: Keyword.fetch!(opts, :registry)}}
+    def init(_opts), do: {:ok, %{}}
 
     tool "echo", "Echoes a message over modern HTTP" do
       param(:message, :string, required: true)
@@ -112,11 +112,7 @@ defmodule Arbor.MCP.Integration.ModernInteropTest do
 
     tool "publish_tools_changed", "Publishes a tools list-changed event" do
       run(fn _arguments, state ->
-        Subscriptions.publish(
-          "notifications/tools/list_changed",
-          %{},
-          registry: state.subscription_registry
-        )
+        Subscriptions.publish("notifications/tools/list_changed", %{})
 
         {:ok, "published", state}
       end)
@@ -409,7 +405,13 @@ defmodule Arbor.MCP.Integration.ModernInteropTest do
 
     test "uses POST-owned SSE without sessions, GET, or DELETE", %{node_path: node_path} do
       require_node!(node_path)
-      registry = start_supervised!({Subscriptions, name: nil})
+
+      runtime =
+        start_supervised!(
+          {Runtime,
+           handler: ModernHTTPHandler, transport: :mounted_http, services: [replay_cache: []]}
+        )
+
       port = free_port()
       ranch_ref = {:modern_http_interop, System.unique_integer([:positive])}
 
@@ -417,8 +419,7 @@ defmodule Arbor.MCP.Integration.ModernInteropTest do
         Plug.Cowboy.http(
           Arbor.MCP.HttpPlug,
           [
-            handler: ModernHTTPHandler,
-            handler_opts: [registry: registry],
+            runtime: runtime,
             path: "/mcp",
             protocol_mode: :modern_only,
             server_info: %{
@@ -430,7 +431,6 @@ defmodule Arbor.MCP.Integration.ModernInteropTest do
               active_key_id: "interop-http",
               keys: %{"interop-http" => :binary.copy(<<78>>, 32)}
             ],
-            subscription_registry: registry,
             subscription_keepalive_interval_ms: 100,
             subscription_max_lifetime_ms: 30_000,
             allowed_origins: ["http://127.0.0.1:#{port}"]

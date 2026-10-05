@@ -1,0 +1,447 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$ref": "#/$defs/ElicitRequestParams",
+  "$defs": {
+    "BooleanSchema": {
+      "properties": {
+        "default": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "const": "boolean",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "ElicitRequestFormParams": {
+      "description": "The parameters for a request to elicit non-sensitive information from the user via a form in the client.",
+      "properties": {
+        "message": {
+          "description": "The message to present to the user describing what information is being requested.",
+          "type": "string"
+        },
+        "mode": {
+          "const": "form",
+          "description": "The elicitation mode.",
+          "type": "string"
+        },
+        "requestedSchema": {
+          "description": "A restricted subset of JSON Schema.\nOnly top-level properties are allowed, without nesting.",
+          "properties": {
+            "$schema": {
+              "type": "string"
+            },
+            "properties": {
+              "additionalProperties": {
+                "$ref": "#/$defs/PrimitiveSchemaDefinition"
+              },
+              "type": "object"
+            },
+            "required": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "object",
+              "type": "string"
+            }
+          },
+          "required": [
+            "properties",
+            "type"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "message",
+        "requestedSchema"
+      ],
+      "type": "object"
+    },
+    "ElicitRequestParams": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ElicitRequestFormParams"
+        },
+        {
+          "$ref": "#/$defs/ElicitRequestURLParams"
+        }
+      ],
+      "description": "The parameters for a request to elicit additional information from the user via the client."
+    },
+    "ElicitRequestURLParams": {
+      "description": "The parameters for a request to elicit information from the user via a URL in the client.",
+      "properties": {
+        "message": {
+          "description": "The message to present to the user explaining why the interaction is needed.",
+          "type": "string"
+        },
+        "mode": {
+          "const": "url",
+          "description": "The elicitation mode.",
+          "type": "string"
+        },
+        "url": {
+          "description": "The URL that the user should navigate to.",
+          "format": "uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message",
+        "mode",
+        "url"
+      ],
+      "type": "object"
+    },
+    "LegacyTitledEnumSchema": {
+      "description": "Use {@link TitledSingleSelectEnumSchema} instead.\nThis interface will be removed in a future version.",
+      "properties": {
+        "default": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "enum": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enumNames": {
+          "description": "(Legacy) Display names for enum values.\nNon-standard according to JSON schema 2020-12.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "const": "string",
+          "type": "string"
+        }
+      },
+      "required": [
+        "enum",
+        "type"
+      ],
+      "type": "object"
+    },
+    "NumberSchema": {
+      "properties": {
+        "default": {
+          "type": "number"
+        },
+        "description": {
+          "type": "string"
+        },
+        "maximum": {
+          "type": "number"
+        },
+        "minimum": {
+          "type": "number"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "integer",
+            "number"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "PrimitiveSchemaDefinition": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StringSchema"
+        },
+        {
+          "$ref": "#/$defs/NumberSchema"
+        },
+        {
+          "$ref": "#/$defs/BooleanSchema"
+        },
+        {
+          "$ref": "#/$defs/UntitledSingleSelectEnumSchema"
+        },
+        {
+          "$ref": "#/$defs/TitledSingleSelectEnumSchema"
+        },
+        {
+          "$ref": "#/$defs/UntitledMultiSelectEnumSchema"
+        },
+        {
+          "$ref": "#/$defs/TitledMultiSelectEnumSchema"
+        },
+        {
+          "$ref": "#/$defs/LegacyTitledEnumSchema"
+        }
+      ],
+      "description": "Restricted schema definitions that only allow primitive types\nwithout nested objects or arrays."
+    },
+    "StringSchema": {
+      "properties": {
+        "default": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "format": {
+          "enum": [
+            "date",
+            "date-time",
+            "email",
+            "uri"
+          ],
+          "type": "string"
+        },
+        "maxLength": {
+          "type": "integer"
+        },
+        "minLength": {
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "const": "string",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "TitledMultiSelectEnumSchema": {
+      "description": "Schema for multiple-selection enumeration with display titles for each option.",
+      "properties": {
+        "default": {
+          "description": "Optional default value.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "description": {
+          "description": "Optional description for the enum field.",
+          "type": "string"
+        },
+        "items": {
+          "description": "Schema for array items with enum options and display labels.",
+          "properties": {
+            "anyOf": {
+              "description": "Array of enum options with values and display labels.",
+              "items": {
+                "properties": {
+                  "const": {
+                    "description": "The constant enum value.",
+                    "type": "string"
+                  },
+                  "title": {
+                    "description": "Display title for this option.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "const",
+                  "title"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "anyOf"
+          ],
+          "type": "object"
+        },
+        "maxItems": {
+          "description": "Maximum number of items to select.",
+          "type": "integer"
+        },
+        "minItems": {
+          "description": "Minimum number of items to select.",
+          "type": "integer"
+        },
+        "title": {
+          "description": "Optional title for the enum field.",
+          "type": "string"
+        },
+        "type": {
+          "const": "array",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items",
+        "type"
+      ],
+      "type": "object"
+    },
+    "TitledSingleSelectEnumSchema": {
+      "description": "Schema for single-selection enumeration with display titles for each option.",
+      "properties": {
+        "default": {
+          "description": "Optional default value.",
+          "type": "string"
+        },
+        "description": {
+          "description": "Optional description for the enum field.",
+          "type": "string"
+        },
+        "oneOf": {
+          "description": "Array of enum options with values and display labels.",
+          "items": {
+            "properties": {
+              "const": {
+                "description": "The enum value.",
+                "type": "string"
+              },
+              "title": {
+                "description": "Display label for this option.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "const",
+              "title"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "title": {
+          "description": "Optional title for the enum field.",
+          "type": "string"
+        },
+        "type": {
+          "const": "string",
+          "type": "string"
+        }
+      },
+      "required": [
+        "oneOf",
+        "type"
+      ],
+      "type": "object"
+    },
+    "UntitledMultiSelectEnumSchema": {
+      "description": "Schema for multiple-selection enumeration without display titles for options.",
+      "properties": {
+        "default": {
+          "description": "Optional default value.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "description": {
+          "description": "Optional description for the enum field.",
+          "type": "string"
+        },
+        "items": {
+          "description": "Schema for the array items.",
+          "properties": {
+            "enum": {
+              "description": "Array of enum values to choose from.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "string",
+              "type": "string"
+            }
+          },
+          "required": [
+            "enum",
+            "type"
+          ],
+          "type": "object"
+        },
+        "maxItems": {
+          "description": "Maximum number of items to select.",
+          "type": "integer"
+        },
+        "minItems": {
+          "description": "Minimum number of items to select.",
+          "type": "integer"
+        },
+        "title": {
+          "description": "Optional title for the enum field.",
+          "type": "string"
+        },
+        "type": {
+          "const": "array",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items",
+        "type"
+      ],
+      "type": "object"
+    },
+    "UntitledSingleSelectEnumSchema": {
+      "description": "Schema for single-selection enumeration without display titles for options.",
+      "properties": {
+        "default": {
+          "description": "Optional default value.",
+          "type": "string"
+        },
+        "description": {
+          "description": "Optional description for the enum field.",
+          "type": "string"
+        },
+        "enum": {
+          "description": "Array of enum values to choose from.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "description": "Optional title for the enum field.",
+          "type": "string"
+        },
+        "type": {
+          "const": "string",
+          "type": "string"
+        }
+      },
+      "required": [
+        "enum",
+        "type"
+      ],
+      "type": "object"
+    }
+  }
+}

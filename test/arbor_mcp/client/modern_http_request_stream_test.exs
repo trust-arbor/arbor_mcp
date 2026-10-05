@@ -2,13 +2,15 @@ defmodule Arbor.MCP.Client.ModernHTTPRequestStreamTest do
   use ExUnit.Case, async: false
 
   alias Arbor.MCP.Client
-  alias Arbor.MCP.Server.Context
+  alias Arbor.MCP.Server.{Context, Runtime}
 
   defmodule ServerHandler do
     use Arbor.MCP.Server.Handler
 
     @impl true
     def init(opts) do
+      send(Keyword.fetch!(opts, :test_pid), {:request_stream_handler_initialized, self()})
+
       {:ok,
        %{
          test_pid: Keyword.fetch!(opts, :test_pid),
@@ -83,7 +85,7 @@ defmodule Arbor.MCP.Client.ModernHTTPRequestStreamTest do
 
       if attempt == 1 do
         :ok = Context.report_progress(1, 2, "first attempt")
-        Process.exit(context.notification_target, :kill)
+        Process.exit(Map.fetch!(context.application_context, :socket), :kill)
         Process.sleep(:infinity)
       else
         {:ok, %{content: [%{type: "text", text: "retried"}]}, state}
@@ -124,12 +126,22 @@ defmodule Arbor.MCP.Client.ModernHTTPRequestStreamTest do
     ranch_ref = {:modern_http_request_stream_test, System.unique_integer([:positive])}
     attempts = start_supervised!({Agent, fn -> %{} end})
 
+    runtime =
+      start_supervised!(
+        {Runtime,
+         handler: ServerHandler,
+         handler_args: [test_pid: self(), attempts: attempts],
+         transport: :mounted_http}
+      )
+
+    assert_receive {:request_stream_handler_initialized, _scheduler}, 1_000
+
     {:ok, _pid} =
       Plug.Cowboy.http(
         Arbor.MCP.HttpPlug,
         [
-          handler: ServerHandler,
-          handler_opts: [test_pid: self(), attempts: attempts],
+          runtime: runtime,
+          handler_opts: fn _conn -> %{socket: self()} end,
           path: "/mcp",
           protocol_mode: :modern_only,
           allowed_origins: ["http://127.0.0.1:#{port}"]
@@ -222,7 +234,7 @@ defmodule Arbor.MCP.Client.ModernHTTPRequestStreamTest do
     refute_receive {:client_log, _request_id, _params}, 50
   end
 
-  test "closing one request stream cancels its temporary handler", %{client: client} do
+  test "closing one request stream cancels its Runtime callback task", %{client: client} do
     task =
       Task.async(fn ->
         Client.call_tool(client, "blocking", %{},

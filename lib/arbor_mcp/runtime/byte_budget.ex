@@ -7,11 +7,15 @@ defmodule Arbor.MCP.Server.Runtime.ByteBudget do
   @attempt_limit 512
   @cleanup_budget_ms 5
 
-  def reset(table, generation, config) do
+  def reset(table, generation, config, retained \\ MapSet.new()) do
     rows =
       for lane <- @lanes do
         limit = if lane == :data, do: config.max_pending_bytes, else: config.max_control_bytes
-        {{:byte_budget, lane}, %{generation: generation, limit: limit, used: 0, claims: %{}}}
+        claims = retained_claims(table, lane, retained)
+        used = Enum.sum(Enum.map(claims, fn {_token, claim} -> claim.bytes end))
+
+        {{:byte_budget, lane},
+         %{generation: generation, limit: limit, used: used, claims: claims}}
       end
 
     :ets.insert(table, rows)
@@ -21,17 +25,30 @@ defmodule Arbor.MCP.Server.Runtime.ByteBudget do
   # Admission alone fences a retired generation, after closing its route and
   # retiring accepted work. A single atomic insert prevents old producer CAS
   # snapshots from resurrecting a lane; lifecycle retirement need not contend.
-  def clear(table) do
+  def clear(table, retained \\ MapSet.new()) do
     rows =
       for lane <- @lanes,
           [{key, budget}] <- [:ets.lookup(table, {:byte_budget, lane})],
-          do: {key, %{budget | generation: nil, used: 0, claims: %{}}}
+          do: {key, retained_budget(budget, retained)}
 
     :ets.insert(table, rows)
     :ets.delete(table, :byte_cleanup_wake)
     :ok
   rescue
     ArgumentError -> :ok
+  end
+
+  defp retained_budget(budget, retained) do
+    claims = Map.filter(budget.claims, fn {token, _claim} -> MapSet.member?(retained, token) end)
+    used = Enum.sum(Enum.map(claims, fn {_token, claim} -> claim.bytes end))
+    %{budget | generation: nil, used: used, claims: claims}
+  end
+
+  defp retained_claims(table, lane, retained) do
+    case :ets.lookup(table, {:byte_budget, lane}) do
+      [{_key, budget}] -> retained_budget(budget, retained).claims
+      _missing -> %{}
+    end
   end
 
   def cleanup_record(token, producer), do: {{:byte_cleanup, token}, producer, :none}
@@ -111,6 +128,64 @@ defmodule Arbor.MCP.Server.Runtime.ByteBudget do
   def confirm(table, token, opts \\ []), do: cleanup(table, token, :trim, opts)
   def release(table, token, opts \\ []), do: cleanup(table, token, :release, opts)
 
+  # Fixed adopted-consumer witnesses live inside the already-held incoming
+  # byte claim. Copied/forged public payload rows cannot free that claim.
+  def adopt_response(table, token, control, witness, deadline),
+    do: update_response(table, token, control, {:adopt, witness}, deadline, @attempt_limit)
+
+  def settle_response(table, token, control, witness, deadline),
+    do: update_response(table, token, control, {:settle, witness}, deadline, @attempt_limit)
+
+  def response_consumers(table) do
+    case :ets.lookup(table, {:byte_budget, :incoming}) do
+      [{_key, budget}] ->
+        for {input, claim} <- budget.claims,
+            {control, witness} <- Map.get(claim, :consumers, %{}),
+            do: {input, control, witness}
+
+      _missing ->
+        []
+    end
+  end
+
+  defp update_response(_table, _token, _control, _operation, _deadline, 0), do: :pending
+
+  defp update_response(table, token, control, operation, deadline, attempts) do
+    key = {:byte_budget, :incoming}
+
+    with [{:admission, owner}] when owner == self() <- :ets.lookup(table, :admission),
+         true <- deadline > Deadline.now(),
+         [{^key, budget}] <- :ets.lookup(table, key),
+         claim when is_map(claim) <- budget.claims[token],
+         {:ok, consumers} <- response_change(Map.get(claim, :consumers, %{}), control, operation) do
+      next = %{
+        budget
+        | claims: Map.put(budget.claims, token, Map.put(claim, :consumers, consumers))
+      }
+
+      if replace(table, key, budget, next),
+        do: :ok,
+        else: update_response(table, token, control, operation, deadline, attempts - 1)
+    else
+      false -> :pending
+      _retired -> {:error, :response_claim_retired}
+    end
+  end
+
+  defp response_change(consumers, control, {:adopt, witness}) do
+    if Map.has_key?(consumers, control),
+      do: {:error, :duplicate_response},
+      else: {:ok, Map.put(consumers, control, witness)}
+  end
+
+  defp response_change(consumers, control, {:settle, witness}) do
+    case consumers[control] do
+      ^witness -> {:ok, Map.delete(consumers, control)}
+      nil -> {:ok, consumers}
+      _other -> {:error, :response_claim_retired}
+    end
+  end
+
   def release_requested?(table, token) do
     match?(
       [{{:byte_cleanup, ^token}, _producer, :release}],
@@ -175,8 +250,13 @@ defmodule Arbor.MCP.Server.Runtime.ByteBudget do
           defer_result(table, token, operation, Keyword.get(opts, :notify, true))
 
         _attempts ->
-          finish_cleanup(table, token, operation)
-          :ok
+          if operation == :release and
+               Enum.any?(response_consumers(table), fn {input, _, _} -> input == token end) do
+            defer_result(table, token, operation, Keyword.get(opts, :notify, true))
+          else
+            finish_cleanup(table, token, operation)
+            :ok
+          end
       end
     end
   rescue
@@ -218,8 +298,13 @@ defmodule Arbor.MCP.Server.Runtime.ByteBudget do
 
   defp cleanup_claim(budget, token, :release) do
     case Map.pop(budget.claims, token) do
-      {nil, _claims} -> :unchanged
-      {%{bytes: bytes}, claims} -> %{budget | used: budget.used - bytes, claims: claims}
+      {nil, _claims} ->
+        :unchanged
+
+      {%{bytes: bytes} = claim, claims} ->
+        if map_size(Map.get(claim, :consumers, %{})) > 0,
+          do: :unchanged,
+          else: %{budget | used: budget.used - bytes, claims: claims}
     end
   end
 

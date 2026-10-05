@@ -4,9 +4,9 @@ defmodule Arbor.MCP.SessionStoreContractTest do
 
   Pins current `Arbor.MCP.SessionManager` behavior as the accepted 1.x store
   contract from `docs/STORE_ADAPTER.md`. Isolated managers use unique names
-  so they do not fight the application SessionManager.
+  so they do not fight the explicitly supervised standalone SessionManager.
   """
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
 
@@ -408,12 +408,15 @@ defmodule Arbor.MCP.SessionStoreContractTest do
     end
   end
 
-  describe "application SessionManager public API" do
-    test "global public functions still implement the same append/replay contract" do
-      # Uses the supervised application process. Clean up the session we create.
-      session_id = SessionManager.create_session(%{transport: :sse})
+  describe "standalone SessionManager public API" do
+    setup do
+      start_supervised!({SessionManager, []}, id: make_ref())
+      :ok
+    end
 
-      on_exit(fn -> SessionManager.terminate_session(session_id) end)
+    test "global public functions still implement the same append/replay contract" do
+      # Uses this describe's explicitly supervised standalone owner.
+      session_id = SessionManager.create_session(%{transport: :sse})
 
       assert {:ok, first} = SessionManager.append_event(session_id, "message", %{n: 1})
       assert {:ok, second} = SessionManager.append_event(session_id, "message", %{n: 2})

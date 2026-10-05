@@ -1,5 +1,5 @@
 defmodule Arbor.MCP.Server.RuntimeSessionServicesTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.Server.Runtime
   alias Arbor.MCP.Server.Runtime.{ServiceOperation, Services}
@@ -117,6 +117,7 @@ defmodule Arbor.MCP.Server.RuntimeSessionServicesTest do
   end
 
   test "sessions are opt in and explicit unavailable refs never use standalone stores" do
+    start_supervised!({SessionManager, []})
     root = runtime(services: [])
     assert {:error, :service_not_configured} = Runtime.service(root, :sessions)
     assert Process.alive?(Process.whereis(SessionManager))

@@ -1,13 +1,16 @@
 defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
   @moduledoc false
   use GenServer
+  alias Arbor.MCP.Internal.MessageValidator
+  alias Arbor.MCP.Server.{RequestContext, SubscriptionListener, Subscriptions}
   alias Arbor.MCP.Server.Runtime
   alias Arbor.MCP.SessionManager
-  alias Arbor.MCP.Server.{RequestContext, SubscriptionListener, Subscriptions}
 
   alias Arbor.MCP.Server.Runtime.{
     Admission,
+    Deadline,
     HTTPCancellation,
+    HTTPReverse,
     HTTPWriterBinding,
     HTTPWriterRegistry,
     HTTPWriteTicket,
@@ -34,13 +37,13 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
          true <- proof.owner == self(),
          {:ok, gateway} <- address(runtime),
          {:ok, format, dispatch_opts} <- options(opts),
-         {:ok, acceptance} <- acceptance(binding, message, gateway),
+         {:ok, response_bytes} <- response_metadata_reserve(runtime, message),
          identity = HTTPCancellation.identity(dispatch_opts, message, proof.lease),
          retained = %{
            binding: binding,
            format: format,
            dispatch_opts: dispatch_opts,
-           acceptance: acceptance,
+           acceptance: nil,
            socket: self(),
            scope: proof.scope,
            lease: proof.lease,
@@ -48,7 +51,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
            lifecycle_metadata_reserve:
              :binary.copy(
                <<0>>,
-               5_024 + 2 * :erlang.external_size({proof.scope, proof.lease, identity}) +
+               5_024 + response_bytes +
+                 2 * :erlang.external_size({proof.scope, proof.lease, identity}) +
                  HTTPCancellation.marker_metadata_bytes(
                    runtime,
                    proof.scope,
@@ -58,14 +62,112 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
                  )
              )
          },
-         result <- publish(runtime, proof, gateway, message, retained) do
+         {:ok, admitted_message, attempts, entered_responses} <-
+           preflight(runtime, proof, gateway, message, retained) do
+      submit_work(runtime, proof, gateway, binding, admitted_message, retained, attempts)
+      |> partial_result(entered_responses)
+    else
+      false -> {:error, :invalid_http_writer}
+      error -> error
+    end
+  end
+
+  defp submit_work(runtime, proof, gateway, binding, message, retained, attempts) do
+    with {:ok, acceptance} <- acceptance(binding, message, gateway) do
+      retained = Map.put(retained, :acceptance, acceptance)
+      result = publish_retry(runtime, proof, gateway, message, retained, attempts)
+
       if match?({:error, _}, result) and acceptance,
         do: HTTPWriterRegistry.release(acceptance)
 
       result
+    end
+  end
+
+  defp preflight(runtime, proof, gateway, [_ | _] = members, retained) do
+    {responses, work} = Enum.split_with(members, &response_member?/1)
+
+    if responses != [] and work != [] do
+      reply = :erlang.alias()
+      retained = Map.put(retained, :acceptance, nil)
+
+      try do
+        with {:ok, route, reservation} <-
+               Runtime.reserve_ingress(runtime, responses,
+                 kind: :edge_response,
+                 owner: gateway,
+                 caller: self(),
+                 reply_to: reply,
+                 edge: gateway,
+                 scope: proof.scope,
+                 admission_deadline: proof.deadline,
+                 invocation_deadline: proof.deadline,
+                 dispatch_opts: [http: retained]
+               ),
+             :ok <-
+               Runtime.publish_ingress(
+                 runtime,
+                 route,
+                 reservation,
+                 {:http_reverse_preflight, responses, retained, reply},
+                 gateway
+               ),
+             {:ok, entered} <- await_preflight(reservation.token, proof.deadline) do
+          {:ok, work, 512, entered}
+        end
+      after
+        :erlang.unalias(reply)
+      end
     else
-      false -> {:error, :invalid_http_writer}
-      error -> error
+      {:ok, members, 1, 0}
+    end
+  end
+
+  defp preflight(_runtime, _proof, _gateway, message, _retained), do: {:ok, message, 1, 0}
+
+  defp partial_result({:error, reason}, count) when count > 0,
+    do: {:error, {:http_partial_effect, %{accepted_responses: count, normal_outcome: reason}}}
+
+  defp partial_result(result, _count), do: result
+
+  defp await_preflight(token, deadline) do
+    if Deadline.remaining(deadline) == 0 do
+      preflight_uncertain(:handler_timeout)
+    else
+      receive do
+        {:http_reverse_preflight, ^token, {:accepted, entered}} ->
+          if Deadline.remaining(deadline) > 0,
+            do: {:ok, entered},
+            else: partial_result({:error, :handler_timeout}, entered)
+
+        {:arbor_mcp_runtime, ^token, :notification} ->
+          await_preflight(token, deadline)
+
+        {:arbor_mcp_runtime, ^token, _error} ->
+          preflight_uncertain(:http_preflight_retired)
+      after
+        Deadline.remaining(deadline) -> preflight_uncertain(:handler_timeout)
+      end
+    end
+  end
+
+  defp preflight_uncertain(reason),
+    do:
+      {:error,
+       {:http_partial_effect, %{accepted_responses: :unconfirmed, normal_outcome: reason}}}
+
+  defp publish_retry(runtime, proof, gateway, message, retained, attempts) do
+    case publish(runtime, proof, gateway, message, retained) do
+      {:error, :server_busy} when attempts > 1 ->
+        if proof.deadline > Deadline.now() do
+          Process.sleep(min(5, Deadline.remaining(proof.deadline)))
+          publish_retry(runtime, proof, gateway, message, retained, attempts - 1)
+        else
+          {:error, :handler_timeout}
+        end
+
+      result ->
+        result
     end
   end
 
@@ -91,11 +193,13 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
   defp publish(runtime, proof, gateway, message, retained) do
     with {:ok, route, reservation} <-
            Runtime.reserve_ingress(runtime, message,
+             kind: if(response_only?(message), do: :edge_response, else: :ingress),
              owner: gateway,
              caller: self(),
              reply_to: gateway,
              edge: gateway,
              scope: proof.scope,
+             admission_deadline: proof.deadline,
              invocation_deadline: proof.deadline,
              dispatch_opts: [http: retained],
              wire_ids: wire_ids(message),
@@ -114,7 +218,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
   end
 
   defp acceptance(binding, message, gateway) do
-    if notification_only?(message) do
+    if notification_only?(message) or response_only?(message) do
       case HTTPWriterRegistry.prepare(binding, "",
              owner: gateway,
              release_owner: self(),
@@ -147,6 +251,50 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
            not Map.has_key?(message, "error")
 
   defp notification_only?(_message), do: false
+
+  defp response_metadata_reserve(runtime, message) do
+    # A direct installed-binding caller must pass the same finite lane boundary
+    # before constructing retained metadata. The Plug body/member validator is
+    # not the sole admission boundary. Normal lane claims remain later so an
+    # entered mixed-array response prefix keeps its explicit partial outcome.
+    with {:ok, route} <- Admission.route(Ref.table(runtime)),
+         capacity =
+           route.config.max_concurrency + route.config.max_queue +
+             route.config.max_control_queue,
+         {:ok, count} <- response_count(List.wrap(message), capacity, 0),
+         true <- count <= route.config.max_control_queue do
+      bytes = if count == 0, do: 0, else: 32_768 + count * 2_048
+
+      if bytes <= route.config.max_control_bytes,
+        do: {:ok, bytes},
+        else: {:error, :request_too_large}
+    else
+      false -> {:error, :server_busy}
+      error -> error
+    end
+  end
+
+  defp response_count([], _capacity, count), do: {:ok, count}
+  defp response_count([_ | _], 0, _count), do: {:error, :server_busy}
+
+  defp response_count([member | remaining], capacity, count),
+    do:
+      response_count(
+        remaining,
+        capacity - 1,
+        count + if(response_member?(member), do: 1, else: 0)
+      )
+
+  defp response_only?([_ | _] = members), do: Enum.all?(members, &response_member?/1)
+  defp response_only?(message), do: response_member?(message)
+
+  defp response_member?(%{"jsonrpc" => "2.0", "id" => id} = response)
+       when is_binary(id) or is_integer(id) or is_nil(id),
+       do:
+         not Map.has_key?(response, "method") and
+           match?({:ok, _}, MessageValidator.validate_response(response))
+
+  defp response_member?(_message), do: false
 
   def address(runtime) do
     case :ets.lookup(Ref.table(runtime), :http_gateway) do
@@ -187,7 +335,14 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
     :ok = Initialization.watch(table, self())
     :ets.insert(table, {:http_gateway, self()})
     Process.send_after(self(), :reap, @reap_ms)
-    {:ok, %{runtime: Ref.new(opts[:supervisor], table), table: table, jobs: %{}}}
+
+    {:ok,
+     %{
+       runtime: Ref.new(opts[:supervisor], table),
+       table: table,
+       jobs: %{},
+       reverse: HTTPReverse.init(table)
+     }}
   end
 
   @impl true
@@ -201,8 +356,17 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
       Enum.reduce(pending, state, fn {token, reservation}, state ->
         if reservation.edge == self() do
           case Admission.checkout(state.table, token) do
-            {:ok, _entry, {:http, message, retained}} -> accept(token, message, retained, state)
-            _unavailable -> state
+            {:ok, _entry, {:http, message, retained}} ->
+              accept(token, message, retained, state)
+
+            {:ok, entry, {:http_reverse, control}} ->
+              %{state | reverse: HTTPReverse.accept(state.reverse, token, control, entry)}
+
+            {:ok, entry, {:http_reverse_preflight, responses, retained, reply}} ->
+              accept_preflight(token, entry, responses, retained, reply, state)
+
+            _unavailable ->
+              state
           end
         else
           state
@@ -281,6 +445,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
   def handle_info({:arbor_mcp_runtime, _token, :notification}, state), do: {:noreply, state}
 
   def handle_info(:reap, state) do
+    state = settle_reverse(state)
+
     state =
       Enum.reduce(state.jobs, state, fn {token, job}, state ->
         state = retire_replaced_cancellation(token, job, state)
@@ -305,6 +471,11 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
 
     Process.send_after(self(), :reap, @reap_ms)
     {:noreply, state}
+  end
+
+  def handle_info(:http_reverse_ready, state) do
+    :ets.delete(state.table, {:http_reverse_wake, self()})
+    {:noreply, settle_reverse(state)}
   end
 
   def handle_info({:DOWN, monitor, :process, _socket, _reason}, state) do
@@ -368,7 +539,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
       retained
       |> Map.delete(:lifecycle_metadata_reserve)
       |> Map.merge(%{
-        notification_only?: notification_only?(message),
+        notification_only?: notification_only?(message) or response_only?(message),
+        response_loans: %{},
         batch?: batch?,
         remaining: if(batch?, do: message, else: [message]),
         output?: false,
@@ -386,6 +558,53 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
 
     state = put_in(state.jobs[token], job)
     advance(token, state)
+  end
+
+  defp accept_preflight(token, reservation, responses, retained, reply, state) do
+    with {:ok, proof} <- HTTPWriterBinding.validate(retained.binding, state.runtime),
+         true <- proof.owner == reservation.caller and retained.socket == proof.owner,
+         true <- proof.scope == reservation.scope and proof.lease == retained.lease,
+         true <- proof.generation == reservation.generation and reservation.owner == self(),
+         true <- reservation.kind == :edge_response and proof.deadline > Deadline.now() do
+      job =
+        retained
+        |> Map.delete(:lifecycle_metadata_reserve)
+        |> Map.merge(%{
+          notification_only?: true,
+          response_loans: %{},
+          batch?: true,
+          remaining: [],
+          output?: false,
+          bound?: false,
+          done?: true,
+          failed?: false,
+          initializing?: false,
+          cancelling?: false,
+          cancellation_phase: nil,
+          cancellation_generation: nil,
+          observation: nil,
+          socket_monitor: Process.monitor(retained.socket),
+          socket_down?: false
+        })
+
+      {reverse, loans} =
+        Enum.reduce(responses, {state.reverse, %{}}, fn response, {reverse, loans} ->
+          {reverse, loan} = HTTPReverse.respond(reverse, token, job, response)
+          {reverse, if(loan, do: Map.put(loans, loan, true), else: loans)}
+        end)
+
+      state = %{state | reverse: reverse}
+      state = put_in(state.jobs[token], %{job | response_loans: loans})
+      Admission.complete_output_phase(state.table, token)
+      Admission.terminal(state.table, token, :notification)
+      send(reply, {:http_reverse_preflight, token, {:accepted, map_size(loans)}})
+      finish(token, state)
+    else
+      _invalid ->
+        Admission.terminal(state.table, token, {:error, :http_preflight_retired})
+        Admission.release(state.table, token)
+        state
+    end
   end
 
   defp advance(token, state) do
@@ -432,10 +651,41 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
   defp output_http(_state, job, _token), do: %{binding: job.binding, format: job.format}
 
   defp dispatch(token, request, job, state) do
-    if valid_envelope?(request),
-      do: dispatch_valid(token, request, job, state),
-      else: invalid_member(token, job, state)
+    cond do
+      response_member?(request) -> dispatch_response(token, request, job, state)
+      valid_envelope?(request) -> dispatch_valid(token, request, job, state)
+      true -> invalid_member(token, job, state)
+    end
   end
+
+  defp dispatch_response(token, response, job, state) do
+    with {:ok, reservation} <-
+           Admission.promote(state.table, token, response, kind: :edge_response),
+         :ok <- bind(job, token, reservation, state) do
+      {reverse, loan} = HTTPReverse.respond(state.reverse, token, job, response)
+      loans = if loan, do: Map.put(job.response_loans, loan, true), else: job.response_loans
+      state = %{state | reverse: reverse}
+      state = put_in(state.jobs[token].response_loans, loans)
+      state = put_in(state.jobs[token].bound?, true)
+
+      # Every accepted response is an entered effect. In a response-only array,
+      # finish all original-order loans before allowing its socket to return202.
+      case publish_response_acceptance(state.jobs[token]) do
+        :ok ->
+          Admission.terminal(state.table, token, :notification)
+          Admission.release_step(state.table, token)
+          state
+
+        {:error, reason} ->
+          fail(token, reason, state)
+      end
+    else
+      {:error, reason} -> fail(token, reason, state)
+    end
+  end
+
+  defp publish_response_acceptance(%{remaining: []} = job), do: publish_acceptance(job)
+  defp publish_response_acceptance(_job), do: :ok
 
   defp valid_envelope?(%{"jsonrpc" => "2.0", "method" => method} = request)
        when is_binary(method) do
@@ -576,7 +826,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
          state
        )
        when not is_map_key(request, "id") do
-    case Arbor.MCP.Internal.MessageValidator.validate_method_params(
+    case MessageValidator.validate_method_params(
            "notifications/cancelled",
            request["params"]
          ) do
@@ -727,6 +977,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
 
   defp finish(token, state) do
     case state.jobs[token] do
+      %{response_loans: loans} when map_size(loans) > 0 ->
+        put_in(state.jobs[token].done?, true)
+
       %{cancelling?: true} ->
         # The token-only Scheduler control is still queued. Retain its permit
         # until the matching ACK or this Gateway's death, even after expiry.
@@ -740,6 +993,24 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
       _missing ->
         finish_work(token, state)
     end
+  end
+
+  defp settle_reverse(state) do
+    {reverse, settled} = HTTPReverse.reap(state.reverse)
+    state = %{state | reverse: reverse}
+
+    Enum.reduce(settled, state, fn {response_token, control_token}, state ->
+      case state.jobs[response_token] do
+        %{response_loans: loans} ->
+          state =
+            put_in(state.jobs[response_token].response_loans, Map.delete(loans, control_token))
+
+          if state.jobs[response_token].done?, do: finish(response_token, state), else: state
+
+        nil ->
+          state
+      end
+    end)
   end
 
   defp finish_work(token, state) do

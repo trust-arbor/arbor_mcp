@@ -55,6 +55,14 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
       when kind in [:sessions, :resource_subscriptions],
       do: output_producer(table, reservation, {:service, kind, producer})
 
+  # Only the installed HTTP Gateway can inspect an actual retained callback
+  # producer. No synchronous Scheduler call is needed while that Task waits.
+  def gateway_producer_metadata(table, reservation, producer),
+    do: output_producer(table, reservation, {:http_gateway, producer})
+
+  def admission_producer_metadata(table, reservation, producer),
+    do: output_producer(table, reservation, {:admission, producer})
+
   defp output_producer(table, reservation, provenance) do
     with {:ok, %{generation: generation, scheduler: scheduler}} <- Admission.route(table),
          true <- generation == reservation.generation,
@@ -312,6 +320,20 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
   end
 
   defp output_producer_identity(:direct, caller, _table), do: caller
+
+  defp output_producer_identity({:http_gateway, producer}, caller, table) do
+    case :ets.lookup(table, :http_gateway) do
+      [{:http_gateway, ^caller}] -> producer
+      _untrusted -> nil
+    end
+  end
+
+  defp output_producer_identity({:admission, producer}, caller, table) do
+    case :ets.lookup(table, :admission) do
+      [{:admission, ^caller}] -> producer
+      _untrusted -> nil
+    end
+  end
 
   defp output_producer_identity({:sessions, producer}, caller, table) do
     runtime = Ref.new(:ets.info(table, :owner), table)

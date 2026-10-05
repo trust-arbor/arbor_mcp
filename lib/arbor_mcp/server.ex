@@ -42,14 +42,14 @@ defmodule Arbor.MCP.Server do
   > #### Protocol-deprecated features {: .warning}
   >
   > MCP 2026-07-28 deprecated Roots, Sampling, and protocol Logging. Arbor.MCP
-  > retains their public APIs throughout 1.x for legacy and 2026-07-28
-  > compatibility. New implementations should pass directories through tool
+  > retains their public APIs in Arbor.MCP 2.x for pinned legacy protocol
+  > revisions and 2026-07-28 compatibility. New implementations should pass directories through tool
   > parameters, resource URIs, or server configuration; call LLM provider APIs
   > directly; and use stderr or OpenTelemetry for operational logs.
   """
 
   alias Arbor.MCP.Server.Runtime
-  alias Arbor.MCP.Server.Runtime.{Admission, CallbackContext, HTTPNotifications, Ref}
+  alias Arbor.MCP.Server.Runtime.{Admission, CallbackContext, HTTPNotifications, HTTPReverse, Ref}
 
   @type server :: Runtime.server()
 
@@ -57,7 +57,7 @@ defmodule Arbor.MCP.Server do
   Sends a log message through the server.
 
   MCP protocol Logging is deprecated as of 2026-07-28. This API remains
-  available throughout Arbor.MCP 1.x for compatibility. Prefer stderr on stdio or
+  available in Arbor.MCP 2.x for pinned legacy protocol revisions. Prefer stderr on stdio or
   OpenTelemetry for new observability integrations.
   """
   @spec send_log_message(server(), atom() | String.t(), String.t(), map()) ::
@@ -78,7 +78,7 @@ defmodule Arbor.MCP.Server do
   Lists roots available from the connected client.
 
   MCP Roots is deprecated as of 2026-07-28. This API remains available
-  throughout Arbor.MCP 1.x for compatibility. New implementations should pass
+  in Arbor.MCP 2.x for pinned legacy protocol revisions. New implementations should pass
   directories or files via tool parameters, resource URIs, or server
   configuration.
   """
@@ -90,7 +90,7 @@ defmodule Arbor.MCP.Server do
   @doc """
   Notifies the client that the server's roots have changed.
 
-  MCP Roots is deprecated as of 2026-07-28 and retained throughout Arbor.MCP 1.x.
+  MCP Roots is deprecated as of 2026-07-28 and retained in Arbor.MCP 2.x for pinned legacy protocol revisions.
   Prefer explicit tool parameters, resource URIs, or server configuration for
   new implementations.
   """
@@ -166,7 +166,7 @@ defmodule Arbor.MCP.Server do
   @doc """
   Gets the list of pending request IDs on the server.
   """
-  @spec get_pending_requests(server()) :: [Arbor.MCP.Types.request_id()]
+  @spec get_pending_requests(server()) :: [Arbor.MCP.Types.request_id()] | {:error, atom()}
   def get_pending_requests(server) do
     call_control(server, :get_pending_requests)
   end
@@ -186,7 +186,7 @@ defmodule Arbor.MCP.Server do
   Sends a `sampling/createMessage` request to the connected client.
 
   MCP Sampling is deprecated as of 2026-07-28. This API remains available
-  throughout Arbor.MCP 1.x for compatibility. New implementations should integrate
+  in Arbor.MCP 2.x for pinned legacy protocol revisions. New implementations should integrate
   directly with an LLM provider API.
   """
   @spec create_message(server(), map()) :: {:ok, map()} | {:error, term()}
@@ -256,26 +256,33 @@ defmodule Arbor.MCP.Server do
 
   defp call_control(server, request, timeout \\ 5_000) do
     with {:ok, server} <- control_server(server) do
-      case Runtime.ref(server) do
-        {:ok, runtime} ->
-          payload = {:edge_call, request, control_origin()}
-
-          case Runtime.request(runtime, %{"payload" => payload},
-                 kind: :edge_control,
-                 origin: control_origin(),
-                 via_edge: true,
-                 await_timeout: timeout
-               ) do
-            {:ok, reply} -> reply
-            error -> error
-          end
-
-        {:error, _reason} ->
-          case Ref.address(server) do
-            {:ok, address} -> GenServer.call(address, request, timeout)
-            {:error, _reason} -> {:error, :runtime_unavailable}
-          end
+      case HTTPReverse.call(server, request, timeout) do
+        :not_http_request -> call_native_control(server, request, timeout)
+        result -> result
       end
+    end
+  end
+
+  defp call_native_control(server, request, timeout) do
+    case Runtime.ref(server) do
+      {:ok, runtime} ->
+        payload = {:edge_call, request, control_origin()}
+
+        case Runtime.request(runtime, %{"payload" => payload},
+               kind: :edge_control,
+               origin: control_origin(),
+               via_edge: true,
+               await_timeout: timeout
+             ) do
+          {:ok, reply} -> reply
+          error -> error
+        end
+
+      {:error, _reason} ->
+        case Ref.address(server) do
+          {:ok, address} -> GenServer.call(address, request, timeout)
+          {:error, _reason} -> {:error, :runtime_unavailable}
+        end
     end
   end
 
@@ -383,6 +390,27 @@ defmodule Arbor.MCP.Server do
       "params" => elicit_params(params)
     }
   end
+
+  @doc """
+  Sends a legacy `elicitation/create` request to the current scoped client.
+
+  This waits under the original invocation deadline. An HTTP callback requires
+  its exact live legacy session stream; modern handlers use `elicit/1` inside
+  an MRTR `input_required` result. Accepted durable requests are never retried.
+  """
+  @spec elicit(server(), map(), pos_integer()) :: {:ok, map()} | {:error, term()}
+  def elicit(server, params, timeout \\ 5_000)
+
+  def elicit(server, params, timeout)
+      when is_map(params) and is_integer(timeout) and timeout > 0 and timeout <= 4_294_967_295 do
+    call_control(server, {:elicit, elicit_params(params), timeout}, timeout)
+  end
+
+  def elicit(_server, _params, timeout)
+      when not is_integer(timeout) or timeout <= 0 or timeout > 4_294_967_295,
+      do: {:error, :invalid_reverse_timeout}
+
+  def elicit(_server, _params, _timeout), do: {:error, :invalid_elicitation_params}
 
   defp elicit_params(params) do
     message = elicit_get(params, :message) || ""

@@ -1510,6 +1510,26 @@ defmodule Arbor.MCP.HttpPlug do
     end
   end
 
+  # RequestContext describes method calls and notifications. A response to an
+  # already-addressed reverse request has no method or request metadata; its
+  # envelope is validated here, then the original session/header/auth and
+  # charged Gateway response boundaries still apply.
+  defp runtime_validate_context(%{"jsonrpc" => "2.0", "id" => id} = response, opts)
+       when (is_binary(id) or is_integer(id) or is_nil(id)) and
+              not is_map_key(response, "method") do
+    case MessageValidator.validate_response(response) do
+      {:ok, _response} when opts.protocol_mode == :modern_only ->
+        {:error,
+         {:runtime_context_rejected, id, {:protocol_mode_mismatch, :modern_only, :legacy}}}
+
+      {:ok, _response} ->
+        :ok
+
+      {:error, _invalid} ->
+        {:error, :invalid_json_rpc_envelope}
+    end
+  end
+
   defp runtime_validate_context(request, opts) do
     with {:ok, context} <- RequestContext.from_message(request),
          :ok <- RequestContext.validate_protocol_mode(context, opts.protocol_mode),

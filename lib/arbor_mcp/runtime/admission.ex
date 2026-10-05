@@ -14,6 +14,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     Deadline,
     Failure,
     HTTPCancellation,
+    HTTPResponseLoans,
     Initialization,
     Ref,
     RetainedTerm,
@@ -66,7 +67,14 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     }
 
     :ets.insert(state.table, [{:route, :closed}, {:prepared_route, route}])
-    :ok = ByteBudget.reset(state.table, generation, config)
+
+    :ok =
+      ByteBudget.reset(
+        state.table,
+        generation,
+        config,
+        HTTPResponseLoans.retained_tokens(state.table)
+      )
 
     result =
       if Initialization.current?(state.table, context),
@@ -172,6 +180,23 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   def bind(table, token), do: call(table, {:bind, token})
   def find(table, key), do: call(table, {:find, key})
   def terminal(table, token, result), do: call(table, {:terminal, token, result})
+
+  def adopt_http_response(table, token, control_token, digest, deadline) do
+    with [{:admission, admission}] <- :ets.lookup(table, :admission),
+         remaining when remaining > 0 <- Deadline.remaining(deadline),
+         do:
+           GenServer.call(
+             admission,
+             {:adopt_http_response, token, control_token, digest},
+             remaining
+           ),
+         else: (_retired -> {:error, :reverse_response_retired})
+  rescue
+    ArgumentError -> {:error, :reverse_response_retired}
+  catch
+    :exit, _reason -> {:error, :reverse_response_retired}
+  end
+
   def release(table, token), do: call(table, {:release, token})
   def close(table, reason), do: call(table, {:close, reason})
   def seal_input(table), do: call(table, :seal_input)
@@ -313,7 +338,11 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     supervisor = Keyword.fetch!(opts, :supervisor)
     :ok = Initialization.watch(table, self())
 
-    for {{:reservation, token}, %{terminal: false} = reservation} <- :ets.tab2list(table) do
+    :ets.insert(table, {:admission, self()})
+    retained = HTTPResponseLoans.recover(table)
+
+    for {{:reservation, token}, %{terminal: false} = reservation} <- :ets.tab2list(table),
+        not MapSet.member?(retained, token) do
       deliver_reply(
         reservation.reply_to,
         token,
@@ -321,22 +350,38 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
       )
     end
 
-    for object <- :ets.tab2list(table), not Initialization.preserve_record?(object) do
+    for object <- :ets.tab2list(table),
+        not Initialization.preserve_record?(object),
+        not retained_response_record?(object, retained) do
       :ets.delete_object(table, object)
     end
 
     :ets.insert(table, [{:admission, self()}, {:route, :closed}])
+    response_index = HTTPResponseLoans.install(table)
+    ByteBudget.clear(table, retained)
+
+    reservations =
+      Map.new(
+        for {{:reservation, token}, stored} <- :ets.tab2list(table),
+            MapSet.member?(retained, token),
+            do: {token, %{stored | monitor: nil, timer: nil, terminal: true}}
+      )
+
     Process.send_after(self(), :reap_unconfirmed, 100)
 
     {:ok,
      %{
        table: table,
        supervisor: supervisor,
-       reservations: %{},
+       reservations: reservations,
+       response_index: response_index,
        monitors: %{},
        bytes: 0,
        control_bytes: 0,
-       response_bytes: 0,
+       response_bytes:
+         Enum.sum(
+           Enum.map(reservations, fn {_token, reservation} -> response_bytes(reservation) end)
+         ),
        scheduler_ref: nil,
        generation: nil,
        config: nil
@@ -628,6 +673,26 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   def handle_call({:release, token}, _from, state),
     do: {:reply, :ok, release_reservation(state, token)}
 
+  def handle_call({:adopt_http_response, token, control_token, digest}, {gateway, _alias}, state) do
+    result =
+      case state.reservations[token] do
+        reservation when is_map(reservation) ->
+          HTTPResponseLoans.adopt(
+            state.table,
+            state.response_index,
+            reservation,
+            control_token,
+            gateway,
+            digest
+          )
+
+        _retired ->
+          {:error, :reverse_response_retired}
+      end
+
+    {:reply, result, state}
+  end
+
   def handle_call({:close, reason}, _from, state) do
     :ets.insert(state.table, {:route, :closed})
     {:reply, :ok, %{drain(state, reason) | generation: nil}}
@@ -692,7 +757,9 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
     case Map.get(state.monitors, ref) do
       nil ->
-        {:noreply, state}
+        if HTTPResponseLoans.monitor?(state.response_index, ref),
+          do: {:noreply, reap_response_loans(state)},
+          else: {:noreply, state}
 
       token ->
         state =
@@ -727,12 +794,15 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
 
   def handle_info({:unbound_timeout, _old_token}, state), do: {:noreply, state}
 
+  def handle_info(:http_response_ready, state), do: {:noreply, reap_response_loans(state)}
+
   def handle_info(:byte_cleanup, state) do
     ByteBudget.reap(state.table, Deadline.now() + @cleanup_turn_ms)
     {:noreply, state}
   end
 
   def handle_info(:reap_unconfirmed, state) do
+    state = reap_response_loans(state)
     cleanup_deadline = Deadline.now() + @cleanup_turn_ms
     ByteBudget.reap(state.table, cleanup_deadline)
     # A producer may be killed between insert_new and confirm. Reap those
@@ -969,6 +1039,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
             owner: owner,
             reply_to: target,
             kind: Keyword.get(opts, :kind, :rpc),
+            budget_kind: Keyword.get(opts, :kind, :rpc),
             stage: if(Keyword.get(opts, :via_edge, false), do: :waiting, else: :direct),
             edge: Keyword.get(opts, :edge),
             origin: Keyword.get(opts, :origin),
@@ -1078,7 +1149,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   end
 
   defp work_count(%{"payload" => members}, opts) when is_list(members) do
-    if Keyword.get(opts, :kind) in [:edge_control, :edge_response],
+    if Keyword.get(opts, :kind) == :edge_control,
       do: 1,
       else: max(1, length(members))
   end
@@ -1144,12 +1215,20 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     end)
   end
 
-  defp data_bytes(%{kind: kind}) when kind in [:edge_control, :edge_response], do: 0
-  defp data_bytes(reservation), do: reservation.bytes
-  defp control_bytes(%{kind: :edge_control} = reservation), do: reservation.bytes
-  defp control_bytes(_reservation), do: 0
-  defp response_bytes(%{kind: :edge_response} = reservation), do: reservation.bytes
-  defp response_bytes(_reservation), do: 0
+  defp data_bytes(reservation),
+    do:
+      if(budget_kind(reservation) in [:edge_control, :edge_response],
+        do: 0,
+        else: reservation.bytes
+      )
+
+  defp control_bytes(reservation),
+    do: if(budget_kind(reservation) == :edge_control, do: reservation.bytes, else: 0)
+
+  defp response_bytes(reservation),
+    do: if(budget_kind(reservation) == :edge_response, do: reservation.bytes, else: 0)
+
+  defp budget_kind(reservation), do: Map.get(reservation, :budget_kind, reservation.kind)
 
   defp available_slots(%{max_control_queue: 0}, kind)
        when kind in [:edge_control, :edge_response] do
@@ -1293,6 +1372,12 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   end
 
   defp release_reservation(state, token) do
+    if HTTPResponseLoans.retained?(state.table, token),
+      do: state,
+      else: release_unretained_reservation(state, token)
+  end
+
+  defp release_unretained_reservation(state, token) do
     case Map.pop(state.reservations, token) do
       {nil, _reservations} ->
         state
@@ -1357,7 +1442,9 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
 
   defp drain(state, reason) do
     :ets.insert(state.table, {:route, :closed})
-    ByteBudget.clear(state.table)
+    HTTPResponseLoans.retire_unread(state.table)
+    retained = HTTPResponseLoans.retained_tokens(state.table)
+    ByteBudget.clear(state.table, retained)
 
     state =
       Enum.reduce(Map.keys(state.reservations), state, fn token, acc ->
@@ -1366,13 +1453,37 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
         |> release_reservation(token)
       end)
 
-    :ets.select_delete(state.table, [
-      {{{:slot, :_}, :_, :_}, [], [true]},
-      {{{:byte_cleanup, :_}, :_, :_}, [], [true]}
-    ])
+    for {{:slot, _slot}, token, _producer} = object <- :ets.tab2list(state.table),
+        not MapSet.member?(retained, token),
+        do: :ets.delete_object(state.table, object)
+
+    for {{:byte_cleanup, token}, _producer, _operation} = object <- :ets.tab2list(state.table),
+        not MapSet.member?(retained, token),
+        do: :ets.delete_object(state.table, object)
 
     :ets.select_delete(state.table, [{{{:cancel_control, :_}, :_}, [], [true]}])
     state
+  end
+
+  defp retained_response_record?({{:http_response_loan, _control}, loan}, retained),
+    do: MapSet.member?(retained, loan.input)
+
+  defp retained_response_record?({{:reservation, token}, _stored}, retained),
+    do: MapSet.member?(retained, token)
+
+  defp retained_response_record?({{:slot, _slot}, token, _producer}, retained),
+    do: MapSet.member?(retained, token)
+
+  defp retained_response_record?({{:byte_cleanup, token}, _producer, _operation}, retained),
+    do: MapSet.member?(retained, token)
+
+  defp retained_response_record?({{:byte_budget, _lane}, _budget}, _retained), do: true
+  defp retained_response_record?(_object, _retained), do: false
+
+  defp reap_response_loans(state) do
+    settled = HTTPResponseLoans.reap(state.table)
+    HTTPResponseLoans.reap_index(state.table, state.response_index)
+    Enum.reduce(settled, state, fn token, state -> release_reservation(state, token) end)
   end
 
   defp outcome_class({:ok, %{"error" => _error}}), do: :application_error

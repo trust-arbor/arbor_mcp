@@ -96,6 +96,53 @@ defmodule Arbor.MCP.Server.Runtime.HTTPResources.Source do
 
   def current?(_invalid), do: false
 
+  def producer_snapshot(%__MODULE__{} = source) do
+    if current?(source),
+      do: {:ok, reverse_snapshot(source)},
+      else: {:error, :resource_source_retired}
+  end
+
+  def producer_snapshot(_invalid), do: {:error, :resource_source_retired}
+
+  def gateway_snapshot(%__MODULE__{} = source) do
+    with true <- self() == source.gateway,
+         {:ok, current} <- reservation(source),
+         {:ok, _metadata} <-
+           Scheduler.gateway_producer_metadata(source.table, current, source.producer),
+         do: {:ok, reverse_snapshot(source)},
+         else: (_retired -> {:error, :resource_source_retired})
+  end
+
+  def gateway_snapshot(_invalid), do: {:error, :resource_source_retired}
+
+  def admission_snapshot(%__MODULE__{} = source) do
+    with [{:admission, admission}] when admission == self() <-
+           :ets.lookup(source.table, :admission),
+         {:ok, current} <- reservation(source),
+         {:ok, _metadata} <-
+           Scheduler.admission_producer_metadata(source.table, current, source.producer),
+         do: {:ok, reverse_snapshot(source)},
+         else: (_retired -> {:error, :resource_source_retired})
+  end
+
+  def admission_snapshot(_invalid), do: {:error, :resource_source_retired}
+
+  defp reverse_snapshot(source),
+    do:
+      Map.take(source, [
+        :runtime,
+        :token,
+        :producer,
+        :generation,
+        :scope,
+        :phase,
+        :deadline,
+        :gateway,
+        :endpoint,
+        :identity,
+        :lease
+      ])
+
   # Stores use protected Scheduler metadata; there is no Store -> Scheduler
   # GenServer call and no caller-authored PID proof accepted at mutation.
   def valid?(%__MODULE__{} = source, context, kind) do

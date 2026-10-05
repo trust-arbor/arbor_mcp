@@ -4,7 +4,7 @@ defmodule Arbor.MCP.Client.ModernHTTPSubscriptionTest do
   alias Arbor.MCP.Client
   alias Arbor.MCP.Client.Subscription
   alias Arbor.MCP.HttpPlug
-  alias Arbor.MCP.Server.Subscriptions
+  alias Arbor.MCP.Server.{Runtime, Subscriptions}
   alias Arbor.MCP.Tasks
   alias Arbor.MCP.Tasks.Extension
 
@@ -12,11 +12,47 @@ defmodule Arbor.MCP.Client.ModernHTTPSubscriptionTest do
     use Arbor.MCP.Server.Handler, tasks: :store
 
     @impl true
-    def init(_opts), do: {:ok, %{}}
+    def init(opts) do
+      observer = Keyword.fetch!(opts, :observer)
+      send(observer, {:subscription_handler_initialized, self()})
+      {:ok, %{observer: observer}}
+    end
+
+    @impl true
+    def handle_list_tools(_cursor, state) do
+      tools =
+        for name <- ["publish", "complete"] do
+          %{
+            name: name,
+            description: "Exercises an owned Runtime service",
+            inputSchema: %{"type" => "object"}
+          }
+        end
+
+      {:ok, tools, nil, state}
+    end
+
+    @impl true
+    def handle_call_tool("publish", arguments, state) do
+      result = Subscriptions.publish(arguments["method"], arguments["params"])
+      send(state.observer, {:subscription_publication, result})
+      {:ok, %{"content" => []}, state}
+    end
+
+    def handle_call_tool("complete", arguments, state) do
+      result = Tasks.complete(arguments["taskId"], arguments["result"])
+      send(state.observer, {:subscription_task_completed, result})
+      {:ok, %{"content" => []}, state}
+    end
   end
 
   setup do
-    registry = start_supervised!({Subscriptions, name: nil})
+    runtime =
+      start_supervised!(
+        {Runtime, handler: Handler, handler_args: [observer: self()], transport: :mounted_http}
+      )
+
+    assert_receive {:subscription_handler_initialized, _scheduler}, 1_000
     port = free_port()
     ranch_ref = {:modern_http_subscription_test, System.unique_integer([:positive])}
 
@@ -24,10 +60,9 @@ defmodule Arbor.MCP.Client.ModernHTTPSubscriptionTest do
       Plug.Cowboy.http(
         HttpPlug,
         [
-          handler: Handler,
+          runtime: runtime,
           path: "/mcp",
           protocol_mode: :modern_only,
-          subscription_registry: registry,
           subscription_keepalive_interval_ms: 25,
           subscription_max_lifetime_ms: 5_000,
           allowed_origins: ["http://127.0.0.1:#{port}"]
@@ -65,11 +100,11 @@ defmodule Arbor.MCP.Client.ModernHTTPSubscriptionTest do
       end
     end)
 
-    {:ok, registry: registry, client: client}
+    {:ok, runtime: runtime, client: client}
   end
 
   test "opens, receives, and cancels a literal modern HTTP subscription", %{
-    registry: registry,
+    runtime: runtime,
     client: client
   } do
     assert {:ok, subscription} =
@@ -78,15 +113,10 @@ defmodule Arbor.MCP.Client.ModernHTTPSubscriptionTest do
     assert %Subscription.Ref{} = subscription
     assert subscription.acknowledged_filter == %{"toolsListChanged" => true}
 
-    assert [%{subscription_id: subscription_id}] = Subscriptions.entries(registry: registry)
+    assert [%{subscription_id: subscription_id}] = Subscriptions.entries(runtime: runtime)
     assert subscription_id == subscription.request_id
 
-    assert %{enqueued: 1} =
-             Subscriptions.publish(
-               "notifications/tools/list_changed",
-               %{},
-               registry: registry
-             )
+    assert %{enqueued: 1} = publish(client, "notifications/tools/list_changed", %{})
 
     assert_receive {:ex_mcp_subscription, ^subscription, "notifications/tools/list_changed",
                     params},
@@ -96,30 +126,30 @@ defmodule Arbor.MCP.Client.ModernHTTPSubscriptionTest do
              subscription.request_id
 
     assert :ok = Subscription.cancel(subscription, "test complete")
-    assert_eventually(fn -> Subscriptions.entries(registry: registry) == [] end)
+    assert_eventually(fn -> Subscriptions.entries(runtime: runtime) == [] end)
   end
 
   test "reopens and resynchronizes after an abrupt HTTP response-stream close", %{
-    registry: registry,
+    runtime: runtime,
     client: client
   } do
     assert {:ok, initial} =
              Client.listen(client, %{"toolsListChanged" => true}, timeout: 2_000)
 
-    assert [entry] = Subscriptions.entries(registry: registry)
+    assert [entry] = Subscriptions.entries(runtime: runtime)
 
     assert :ok =
              Subscriptions.cancel(
                entry.transport_ref,
                entry.subscription_id,
-               registry: registry
+               runtime: runtime
              )
 
     assert_receive {:ex_mcp_subscription_resync, subscription_pid, :started}, 1_000
     assert subscription_pid == initial.pid
 
     assert_eventually(fn ->
-      case Subscriptions.entries(registry: registry) do
+      case Subscriptions.entries(runtime: runtime) do
         [%{subscription_id: new_id}] -> new_id != initial.request_id
         _other -> false
       end
@@ -129,12 +159,7 @@ defmodule Arbor.MCP.Client.ModernHTTPSubscriptionTest do
     assert current.pid == initial.pid
     assert {:ok, %{"resultType" => "complete"}} = snapshot["tools"]
 
-    assert %{enqueued: 1} =
-             Subscriptions.publish(
-               "notifications/tools/list_changed",
-               %{},
-               registry: registry
-             )
+    assert %{enqueued: 1} = publish(client, "notifications/tools/list_changed", %{})
 
     assert_receive {:ex_mcp_subscription, delivered_on, "notifications/tools/list_changed",
                     _params},
@@ -142,30 +167,35 @@ defmodule Arbor.MCP.Client.ModernHTTPSubscriptionTest do
 
     assert delivered_on.request_id == current.request_id
     assert :ok = Subscription.cancel(current)
-    assert_eventually(fn -> Subscriptions.entries(registry: registry) == [] end)
+    assert_eventually(fn -> Subscriptions.entries(runtime: runtime) == [] end)
   end
 
   test "delivers owner-authorized task transitions and rejects malformed task events", %{
-    registry: registry,
+    runtime: runtime,
     client: client
   } do
     owner = %{principal_id: nil, tenant_id: nil, audience: "/mcp"}
 
     assert {:ok, created} =
-             Tasks.create("deploy", %{}, owner: owner, notify: false)
+             Tasks.create("deploy", %{}, runtime: runtime, owner: owner, notify: false)
 
     assert {:ok, subscription} =
              Client.listen(client, %{"taskIds" => [created["taskId"]]}, timeout: 2_000)
 
     assert subscription.acknowledged_filter == %{"taskIds" => [created["taskId"]]}
 
-    assert {:ok, _completed} =
-             Tasks.complete(
-               created["taskId"],
-               %{"content" => [%{"type" => "text", "text" => "done"}]},
-               owner: owner,
-               subscription_registry: registry
+    assert {:ok, _response} =
+             Client.call_tool(
+               client,
+               "complete",
+               %{
+                 "taskId" => created["taskId"],
+                 "result" => %{"content" => [%{"type" => "text", "text" => "done"}]}
+               },
+               timeout: 2_000
              )
+
+    assert_receive {:subscription_task_completed, {:ok, _completed}}, 1_000
 
     assert_receive {:ex_mcp_subscription, ^subscription, "notifications/tasks", params},
                    1_000
@@ -175,14 +205,23 @@ defmodule Arbor.MCP.Client.ModernHTTPSubscriptionTest do
     assert params["result"] == %{"content" => [%{"type" => "text", "text" => "done"}]}
 
     assert %{enqueued: 1} =
-             Subscriptions.publish(
-               "notifications/tasks",
-               %{"taskId" => created["taskId"], "status" => "completed"},
-               registry: registry
-             )
+             publish(client, "notifications/tasks", %{
+               "taskId" => created["taskId"],
+               "status" => "completed"
+             })
 
     refute_receive {:ex_mcp_subscription, ^subscription, "notifications/tasks", _params}, 100
     assert :ok = Subscription.cancel(subscription)
+  end
+
+  defp publish(client, method, params) do
+    assert {:ok, _response} =
+             Client.call_tool(client, "publish", %{"method" => method, "params" => params},
+               timeout: 2_000
+             )
+
+    assert_receive {:subscription_publication, result}, 1_000
+    result
   end
 
   defp free_port do

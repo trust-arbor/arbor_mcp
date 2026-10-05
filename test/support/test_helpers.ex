@@ -224,7 +224,6 @@ defmodule Arbor.MCP.TestHelpers do
   """
   def start_test_servers_for_api(context) do
     ensure_ranch_started()
-    ensure_session_manager_started()
 
     {server_name, ranch_ref, port} = generate_server_config(context)
     server_opts = build_server_opts(server_name, ranch_ref, port)
@@ -354,22 +353,6 @@ defmodule Arbor.MCP.TestHelpers do
     case Application.ensure_all_started(:ranch) do
       {:ok, _} -> :ok
       {:error, _} -> :ok
-    end
-  end
-
-  defp ensure_session_manager_started do
-    # Check if SessionManager is already running
-    case GenServer.whereis(Arbor.MCP.SessionManager) do
-      nil ->
-        # Start SessionManager if not running
-        case Arbor.MCP.SessionManager.start_link([]) do
-          {:ok, _pid} -> :ok
-          {:error, {:already_started, _pid}} -> :ok
-          {:error, reason} -> raise "Failed to start SessionManager: #{inspect(reason)}"
-        end
-
-      _pid ->
-        :ok
     end
   end
 

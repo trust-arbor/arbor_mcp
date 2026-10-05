@@ -1320,6 +1320,27 @@ defmodule Arbor.MCP.Server.HandlerServer do
   def handle_call({:create_message, params}, from, state),
     do: reverse_request("sampling/createMessage", params, 5_000, from, state)
 
+  def handle_call({:elicit, params, timeout}, from, state) do
+    cond do
+      not is_integer(timeout) or timeout <= 0 or timeout > 4_294_967_295 ->
+        {:reply, {:error, :invalid_reverse_timeout}, state}
+
+      modern_connection?(state) ->
+        {:reply, {:error, :reverse_requests_unavailable}, state}
+
+      true ->
+        deadline = System.monotonic_time(:millisecond) + timeout
+
+        case Arbor.MCP.Protocol.Elicitation.validate(params, deadline) do
+          {:ok, normalized} ->
+            reverse_request("elicitation/create", normalized, timeout, from, state)
+
+          error ->
+            {:reply, error, state}
+        end
+    end
+  end
+
   def handle_call(request, from, state) do
     case Runtime.submit(state.runtime, %{"payload" => request},
            kind: :call,
