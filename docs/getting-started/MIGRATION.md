@@ -57,8 +57,20 @@ Arbor.MCP.Client.start_link(
   protocol_mode: :prefer_modern
 )
 
+# In Application.start/2, before the borrowed Phoenix endpoint:
+children = [
+  {Arbor.MCP.Server.Runtime,
+   name: MyApp.MCPRuntime,
+   handler: MyApp.MCPServer,
+   handler_args: [],
+   transport: :mounted_http,
+   protocol_mode: :prefer_modern}
+]
+Supervisor.start_link(children, strategy: :one_for_one)
+
+# In the router:
 forward "/mcp", Arbor.MCP.HttpPlug,
-  handler: MyApp.MCPServer,
+  runtime: MyApp.MCPRuntime,
   protocol_mode: :prefer_modern
 ```
 
@@ -290,9 +302,11 @@ MyServer.start_link(transport: :http, ...)
 1.0 release candidates. In current Arbor.MCP versions, use `transport: :http`.
 Modern SSE streams are owned by their POST requests and require no server flag;
 `use_sse: true` retains the client GET stream for pre-2026 Streamable HTTP.
-The separate MCP 2024-11-05 HTTP+SSE transport is deprecated, disabled on new
-servers, and available during 1.x only by explicitly setting
-`legacy_http_sse: true` (`sse_enabled: true` remains an rc.5-compatible alias).
+The separate MCP 2024-11-05 HTTP+SSE transport remains disabled on new
+servers. Arbor.MCP 2.x retains it for pinned legacy protocol revisions with
+`legacy_http_sse: true`; the former server aliases `sse_enabled` and `use_sse`
+are rejected. The HTTP client option `use_sse: true` remains available for
+legacy Streamable HTTP GET streams.
 
 ### 2. Authorization API Changes
 

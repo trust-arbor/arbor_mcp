@@ -11,7 +11,8 @@ defmodule Arbor.MCP.Server.Handler do
   >
   > MCP 2026-07-28 deprecated Roots, Sampling, and protocol Logging. Arbor.MCP
   > retains `handle_list_roots/1`, `handle_create_message/2`, and
-  > `handle_set_log_level/2` throughout 1.x. For new implementations, pass
+  > `handle_set_log_level/2` in
+  > Arbor.MCP 2.x for pinned legacy protocol revisions. For new implementations, pass
   > directories explicitly, call LLM provider APIs directly, and use stderr or
   > OpenTelemetry for logging.
 
@@ -448,8 +449,8 @@ defmodule Arbor.MCP.Server.Handler do
   @doc """
   Handles a sampling create message request.
 
-  MCP Sampling is deprecated as of 2026-07-28 and retained throughout Arbor.MCP
-  1.x. New implementations should integrate directly with an LLM provider API.
+  MCP Sampling is deprecated as of 2026-07-28 and available in
+  Arbor.MCP 2.x for pinned legacy protocol revisions. New implementations should integrate directly with an LLM provider API.
   """
   @callback handle_create_message(params :: Arbor.MCP.Types.create_message_params(), state()) ::
               {:ok, Arbor.MCP.Types.create_message_result(), state()} | {:error, any(), state()}
@@ -457,7 +458,8 @@ defmodule Arbor.MCP.Server.Handler do
   @doc """
   Handles listing available roots.
 
-  MCP Roots is deprecated as of 2026-07-28 and retained throughout Arbor.MCP 1.x.
+  MCP Roots is deprecated as of 2026-07-28 and available in
+  Arbor.MCP 2.x for pinned legacy protocol revisions.
   Prefer tool parameters, resource URIs, or server configuration for new
   implementations.
   """
@@ -506,7 +508,7 @@ defmodule Arbor.MCP.Server.Handler do
   > #### Protocol-deprecated feature {: .warning}
   >
   > MCP protocol Logging is deprecated as of 2026-07-28 and retained
-  > throughout Arbor.MCP 1.x. `logging/setLevel` remains applicable to legacy
+  > in Arbor.MCP 2.x for pinned legacy protocol revisions. `logging/setLevel` remains applicable to legacy
   > connections. Prefer stderr for stdio or OpenTelemetry for new
   > observability integrations.
 

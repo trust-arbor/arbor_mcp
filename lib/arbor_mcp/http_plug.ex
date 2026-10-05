@@ -158,7 +158,15 @@ defmodule Arbor.MCP.HttpPlug do
   alias Arbor.MCP.Plugs.ProtectedResourceMetadata
   alias Arbor.MCP.Protocol.{ErrorCodes, Methods}
   alias Arbor.MCP.Server.{RequestContext, Subscriptions}
-  alias Arbor.MCP.Server.Runtime.{HTTPGateway, HTTPWriterBinding, HTTPWriterRegistry, OutputCodec}
+
+  alias Arbor.MCP.Server.Runtime.{
+    HTTPGateway,
+    HTTPNotificationTarget,
+    HTTPWriterBinding,
+    HTTPWriterRegistry,
+    OutputCodec
+  }
+
   alias Arbor.MCP.Transport.HTTP.RequestHeaders
   alias Arbor.RPC.{JSONRPC, LogSummary}
 
@@ -1664,10 +1672,25 @@ defmodule Arbor.MCP.HttpPlug do
       ]
   end
 
-  defp runtime_notification_target(%{runtime_format: :json}, _conn), do: nil
+  # A legacy JSON POST may publish progress to its own addressed session GET.
+  # The POST still returns JSON. Stateless modern JSON has no session lease
+  # and never borrows a legacy GET or another invocation's response stream.
+  defp runtime_notification_target(%{runtime_format: :json}, conn) do
+    runtime = RuntimeWriter.runtime(conn)
+    binding = RuntimeWriter.binding(conn)
+
+    with {:ok, %{lease: lease}} when not is_nil(lease) <-
+           HTTPWriterBinding.validate(binding, runtime),
+         {:ok, target} <-
+           HTTPNotificationTarget.new(runtime, binding, :legacy_sse) do
+      target
+    else
+      _closed -> nil
+    end
+  end
 
   defp runtime_notification_target(opts, conn) do
-    case Arbor.MCP.Server.Runtime.HTTPNotificationTarget.new(
+    case HTTPNotificationTarget.new(
            RuntimeWriter.runtime(conn),
            RuntimeWriter.binding(conn),
            opts.runtime_format

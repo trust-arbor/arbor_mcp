@@ -75,6 +75,17 @@ under `lib/arbor_mcp/http_plug/`.
 Use normal Phoenix/Plug composition for HTTP edge concerns:
 
 ```elixir
+# In Application.start/2, before the borrowed Phoenix endpoint:
+children = [
+  {Arbor.MCP.Server.Runtime,
+   name: MyApp.MCPRuntime,
+   handler: MyApp.MCPServer,
+   handler_args: [],
+   transport: :mounted_http}
+]
+Supervisor.start_link(children, strategy: :one_for_one)
+
+# In the router:
 pipeline :mcp do
   plug Arbor.MCP.Plugs.DnsRebinding
   plug MyApp.AuthenticateMCP
@@ -84,8 +95,7 @@ scope "/mcp" do
   pipe_through :mcp
 
   forward "/", Arbor.MCP.HttpPlug,
-    handler: MyApp.MCPServer,
-    server_info: %{name: "my-app", version: "1.0.0"}
+    runtime: MyApp.MCPRuntime
 end
 ```
 

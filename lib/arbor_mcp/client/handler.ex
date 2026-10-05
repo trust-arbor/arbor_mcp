@@ -14,8 +14,8 @@ defmodule Arbor.MCP.Client.Handler do
   > #### Protocol-deprecated callbacks {: .warning}
   >
   > MCP 2026-07-28 deprecated Roots and Sampling. Arbor.MCP retains
-  > `handle_list_roots/1` and `handle_create_message/2` throughout 1.x for
-  > compatibility. New clients should pass directories or files explicitly and
+  > `handle_list_roots/1` and `handle_create_message/2` in
+  > Arbor.MCP 2.x for pinned legacy protocol revisions. New clients should pass directories or files explicitly and
   > integrate with LLM provider APIs directly.
 
   ## Example
@@ -82,7 +82,8 @@ defmodule Arbor.MCP.Client.Handler do
   This is called when the server needs to understand what file system
   locations the client has access to.
 
-  MCP Roots is deprecated as of 2026-07-28 and retained throughout Arbor.MCP 1.x.
+  MCP Roots is deprecated as of 2026-07-28 and available in
+  Arbor.MCP 2.x for pinned legacy protocol revisions.
   Prefer passing directories or files via tool parameters, resource URIs, or
   server configuration in new implementations.
 
@@ -112,8 +113,8 @@ defmodule Arbor.MCP.Client.Handler do
   The client has full discretion over which model to select and should
   inform the user before beginning sampling (human in the loop).
 
-  MCP Sampling is deprecated as of 2026-07-28 and retained throughout Arbor.MCP
-  1.x. New implementations should integrate directly with an LLM provider API.
+  MCP Sampling is deprecated as of 2026-07-28 and available in
+  Arbor.MCP 2.x for pinned legacy protocol revisions. New implementations should integrate directly with an LLM provider API.
 
   ## Parameters
 

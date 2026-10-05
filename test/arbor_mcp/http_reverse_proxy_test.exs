@@ -1,6 +1,8 @@
 defmodule Arbor.MCP.HttpReverseProxyTest do
   use ExUnit.Case, async: false
 
+  alias Arbor.MCP.Server.Runtime
+
   defmodule DispatchTrackingHandler do
     use Arbor.MCP.Server.Handler
 
@@ -60,6 +62,14 @@ defmodule Arbor.MCP.HttpReverseProxyTest do
   end
 
   setup do
+    runtime =
+      start_supervised!(
+        {Runtime,
+         handler: DispatchTrackingHandler,
+         handler_args: [test_pid: self()],
+         transport: :mounted_http}
+      )
+
     upstream_port = free_port()
     proxy_port = free_port()
     upstream_ref = {:proxy_test_upstream, System.unique_integer([:positive])}
@@ -69,8 +79,7 @@ defmodule Arbor.MCP.HttpReverseProxyTest do
       Plug.Cowboy.http(
         Arbor.MCP.HttpPlug,
         [
-          handler: DispatchTrackingHandler,
-          handler_opts: [test_pid: self()],
+          runtime: runtime,
           path: "/mcp",
           protocol_mode: :modern_only
         ],

@@ -3,9 +3,13 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
   Bounded node-local Tasks store with atomic lifecycle operations.
 
   Entries survive client disconnects, client restarts, connection process
-  failures, and worker failures while the Arbor.MCP application remains running.
-  They do not survive an application or node restart. Configure another
-  `Arbor.MCP.Tasks.Store` implementation when that stronger durability is needed.
+  failures, and callback worker failures while this store process remains alive.
+  A Runtime-owned store belongs to that Runtime's service cohort; replacing the
+  cohort or root discards its in-memory entries. An explicitly supervised
+  standalone store has its own process lifetime. Entries do not survive store
+  process or node restart. Configure another `Arbor.MCP.Tasks.Store` implementation
+  when stronger durability is needed; Runtime adapters must also satisfy the
+  bounded service startup and operation contract.
   """
 
   use GenServer

@@ -185,11 +185,10 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControl do
       now >= deadline ->
         {:error, :shutdown_cleanup_unconfirmed}
 
-      :atomics.get(control.cells, 2) == 3 and not Process.alive?(control.pid) ->
-        :ok
-
       not Process.alive?(control.pid) ->
-        {:error, :shutdown_control_unavailable}
+        if :atomics.get(control.cells, 2) == 3,
+          do: :ok,
+          else: {:error, :shutdown_control_unavailable}
 
       true ->
         receive do

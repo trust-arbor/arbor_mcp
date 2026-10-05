@@ -129,8 +129,8 @@ defmodule Arbor.MCP.Server.Context do
   replay target's fixed typed capacity, operation and source errors; accepting a
   replay event does not acknowledge client bytes or retry an earlier event.
 
-  MCP protocol Logging is deprecated as of 2026-07-28 and retained throughout
-  Arbor.MCP 1.x. Prefer stderr for stdio diagnostics or OpenTelemetry for new
+  MCP protocol Logging is deprecated as of 2026-07-28 and available in
+  Arbor.MCP 2.x for pinned legacy protocol revisions. Prefer stderr for stdio diagnostics or OpenTelemetry for new
   structured-observability integrations.
   """
   @spec send_log_message(atom() | String.t(), String.t(), map()) ::

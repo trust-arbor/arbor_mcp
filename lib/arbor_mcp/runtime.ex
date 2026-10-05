@@ -55,8 +55,12 @@ defmodule Arbor.MCP.Server.Runtime do
   credit before each member commit and publish one charged array. Earlier member
   effects remain committed if a later output is rejected; the envelope fails
   explicitly without partial output. Local delivery ACK means sending to the
-  peer mailbox returned, not that the peer processed the response. Peer mailboxes,
-  stdio/HTTP and helper/subscription output remain outside this slice's bounds.
+  peer mailbox returned, not that the peer processed the response. Managed
+  stdio/HTTP and helper/subscription output use their bounded reservation and
+  writer paths, with transport-specific completion and uncertainty receipts.
+  These managed limits do not bound peer mailboxes, raw Erlang sends, OS/socket
+  buffers, borrowed IO-device buffers or arbitrary external processes, and do
+  not prove remote consumption.
 
   `request/3` uses a temporary process alias: a finite `await_timeout` covers
   admission and waiting from API entry, without leaving late replies in the

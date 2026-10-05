@@ -256,12 +256,23 @@ an intentional re-probe after an operator-controlled deployment change.
 ### Phoenix/Plug Server
 
 ```elixir
+# In Application.start/2, before the borrowed Phoenix endpoint:
+children = [
+  {Arbor.MCP.Server.Runtime,
+   name: MyApp.MCPRuntime,
+   handler: MyApp.MCPServer,
+   handler_args: [],
+   transport: :mounted_http,
+   protocol_mode: :prefer_modern}
+]
+Supervisor.start_link(children, strategy: :one_for_one)
+
+# In the router:
 scope "/mcp" do
   pipe_through [:api, :mcp_auth]
 
   forward "/", Arbor.MCP.HttpPlug,
-    handler: MyApp.MCPServer,
-    server_info: %{name: "my-app", version: "1.0.0"},
+    runtime: MyApp.MCPRuntime,
     protocol_mode: :prefer_modern,
     cors_enabled: true
 end
@@ -272,20 +283,35 @@ request signing, rate limiting, CORS/origin decisions, and DNS rebinding checks.
 
 ### Deprecated MCP 2024-11-05 HTTP+SSE
 
-Existing deployments can retain the old two-endpoint transport throughout
-Arbor.MCP 1.x by opting in:
+The pinned MCP 2024-11-05 two-endpoint transport remains available in
+Arbor.MCP 2.x by explicitly opting in:
 
 ```elixir
+# In Application.start/2, before the borrowed Phoenix endpoint:
+children = [
+  {Arbor.MCP.Server.Runtime,
+   name: MyApp.MCPRuntime,
+   handler: MyApp.MCPServer,
+   handler_args: [],
+   transport: :mounted_http,
+   protocol_mode: :legacy_only}
+]
+Supervisor.start_link(children, strategy: :one_for_one)
+
+# In the router:
 forward "/mcp", Arbor.MCP.HttpPlug,
-  handler: MyApp.MCPServer,
+  runtime: MyApp.MCPRuntime,
+  protocol_mode: :legacy_only,
   legacy_http_sse: true
 ```
 
 The GET endpoint defaults to `/sse`; its first event is `endpoint`, containing
 the POST URI (default `/message`) and session ID. Configure those paths with
-`:legacy_http_sse_path` and `:legacy_http_sse_post_path`. The rc.5
-`:sse_enabled` option remains a deprecated alias until Arbor.MCP 2.0. New servers
-should use Streamable HTTP and leave this option off. Selecting
+`:legacy_http_sse_path` and `:legacy_http_sse_post_path`. Arbor.MCP 2.x rejects
+the former server constructor aliases `:sse_enabled` and `:use_sse`; use
+`:legacy_http_sse` for this transport. The HTTP client option `:use_sse` remains
+available for legacy Streamable HTTP GET streams. New servers should use
+Streamable HTTP and leave `:legacy_http_sse` off. Selecting
 `:prefer_legacy` or `:prefer_modern` does not enable this transport;
 `:modern_only` disables it even if the compatibility flag is present.
 
@@ -298,11 +324,22 @@ on the GET stream.
 
 ```elixir
 # Server — two-endpoint transport (not Streamable HTTP)
-{:ok, _} =
+children = [
+  {Arbor.MCP.Server.Runtime,
+   name: MyApp.MCPRuntime,
+   handler: MyApp.MCPServer,
+   handler_args: [],
+   transport: :mounted_http,
+   protocol_mode: :legacy_only}
+]
+{:ok, _runtime_supervisor} = Supervisor.start_link(children, strategy: :one_for_one)
+
+# This host owns the Cowboy listener; the mounted Runtime borrows it.
+{:ok, _listener} =
   Plug.Cowboy.http(
     Arbor.MCP.HttpPlug,
     [
-      handler: MyApp.MCPServer,
+      runtime: MyApp.MCPRuntime,
       protocol_mode: :legacy_only,
       legacy_http_sse: true,
       legacy_http_sse_path: "/sse",

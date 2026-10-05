@@ -56,10 +56,17 @@ defmodule Arbor.MCP.Telemetry do
   ### Server Events
 
   #### Request Processing
-  * `[:arbor_mcp, :server, :request, :received]` - Transport message arrives
-    * Metadata: `%{method: String.t()}`
-  * `[:arbor_mcp, :server, :request, :completed]` - Response sent back
-    * Metadata: `%{method: String.t()}`
+  * `[:arbor_mcp, :server, :request, :admitted]` - Managed Runtime admission confirmed
+    * Measurements: `%{count: 1, request_bytes: non_neg_integer()}`
+    * Metadata: `%{runtime: pid()}`
+    * `count` counts reservation envelopes, including a legacy batch envelope.
+      `request_bytes` is the retained reservation charge for input, dispatch
+      context and admission metadata; it is not the raw HTTP/JSON body length.
+  * `[:arbor_mcp, :server, :request, :completed]` - Managed Runtime reservation settles
+    * Measurements: `%{count: 1, duration_ms: non_neg_integer()}`
+    * Metadata: `%{runtime: pid(), outcome: atom()}`
+    * This reports terminal settlement, including failure or notification-only
+      work. It does not prove peer processing or remote consumption.
   * `[:arbor_mcp, :server, :request, :processed]` - MessageProcessor.process/2 completes
     * Metadata: `%{method: String.t(), has_response: boolean()}`
   * `[:arbor_mcp, :server, :initialize, :completed]` - Server initialization completes

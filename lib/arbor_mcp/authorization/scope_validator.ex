@@ -78,6 +78,8 @@ defmodule Arbor.MCP.Authorization.ScopeValidator do
       Arbor.MCP.Authorization.ScopeValidator.get_required_scopes(request, my_mapper)
   """
 
+  alias Arbor.MCP.Internal.MessageValidator
+
   @type token_scopes :: [String.t()]
   @type required_scopes :: [String.t()]
   @type request :: map()
@@ -277,6 +279,18 @@ defmodule Arbor.MCP.Authorization.ScopeValidator do
               "notifications/elicitation/complete"
             ],
        do: []
+
+  # A validated response settles protocol work already addressed to its session.
+  # Empty application scopes still require ServerGuard's bearer/claim checks;
+  # the HTTP session lease and reverse producer proof authorize its destination.
+  defp default_scope_mapping(%{"jsonrpc" => "2.0", "id" => id} = response)
+       when (is_binary(id) or is_integer(id) or is_nil(id)) and
+              not is_map_key(response, "method") do
+    case MessageValidator.validate_response(response) do
+      {:ok, _response} -> []
+      {:error, _invalid} -> {:error, :unmapped_method}
+    end
+  end
 
   # There is deliberately no universal catch-all scope. Extensions must supply
   # an explicit mapper, otherwise OAuth authorization fails closed.

@@ -577,7 +577,8 @@ defmodule Arbor.MCP.Client do
   Sends a `roots/list` request to the server to retrieve the list of
   available root URIs.
 
-  MCP Roots is deprecated as of 2026-07-28 and retained throughout Arbor.MCP 1.x.
+  MCP Roots is deprecated as of 2026-07-28 and available in
+  Arbor.MCP 2.x for pinned legacy protocol revisions.
   New implementations should pass directories or files via tool parameters,
   resource URIs, or server configuration.
   """
@@ -3665,8 +3666,8 @@ defmodule Arbor.MCP.Client do
   Sends a `logging/setLevel` request to configure the server's log verbosity.
   This is part of the MCP specification for controlling server logging behavior.
 
-  MCP protocol Logging is deprecated as of 2026-07-28 and retained throughout
-  Arbor.MCP 1.x. This legacy RPC remains available for compatible peers. Prefer
+  MCP protocol Logging is deprecated as of 2026-07-28 and available in
+  Arbor.MCP 2.x for pinned legacy protocol revisions. This legacy RPC remains available for compatible peers. Prefer
   stderr for stdio or OpenTelemetry for new observability integrations.
 
   ## Parameters
@@ -3701,8 +3702,8 @@ defmodule Arbor.MCP.Client do
   logging and monitoring. The message is sent as a notification (fire-and-forget)
   following the MCP specification.
 
-  MCP protocol Logging is deprecated as of 2026-07-28 and retained throughout
-  Arbor.MCP 1.x. Prefer stderr for stdio or OpenTelemetry for new observability
+  MCP protocol Logging is deprecated as of 2026-07-28 and available in
+  Arbor.MCP 2.x for pinned legacy protocol revisions. Prefer stderr for stdio or OpenTelemetry for new observability
   integrations.
 
   ## Parameters
@@ -3733,8 +3734,8 @@ defmodule Arbor.MCP.Client do
   centralized logging and monitoring. The message is sent as a notification
   (fire-and-forget) following the MCP specification.
 
-  MCP protocol Logging is deprecated as of 2026-07-28 and retained throughout
-  Arbor.MCP 1.x. Prefer stderr for stdio or OpenTelemetry for new observability
+  MCP protocol Logging is deprecated as of 2026-07-28 and available in
+  Arbor.MCP 2.x for pinned legacy protocol revisions. Prefer stderr for stdio or OpenTelemetry for new observability
   integrations.
 
   ## Parameters

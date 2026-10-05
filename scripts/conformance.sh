@@ -44,38 +44,16 @@ mkdir -p "$PROJECT_DIR/tmp"
 
 cd "$PROJECT_DIR"
 
-free_server_port() {
-  # Kill anything still bound to the conformance port (stale BEAM from prior runs).
-  if command -v lsof >/dev/null 2>&1; then
-    local pids
-    pids=$(lsof -ti tcp:"$SERVER_PORT" -sTCP:LISTEN 2>/dev/null || true)
-    if [ -n "$pids" ]; then
-      echo "Freeing port $SERVER_PORT (pids: $pids)..."
-      # shellcheck disable=SC2086
-      kill $pids 2>/dev/null || true
-      sleep 0.2
-      pids=$(lsof -ti tcp:"$SERVER_PORT" -sTCP:LISTEN 2>/dev/null || true)
-      if [ -n "$pids" ]; then
-        # shellcheck disable=SC2086
-        kill -9 $pids 2>/dev/null || true
-      fi
-    fi
+assert_server_port_available() {
+  if command -v lsof >/dev/null 2>&1 &&
+     lsof -ti tcp:"$SERVER_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "Conformance port $SERVER_PORT is occupied; choose CONFORMANCE_PORT."
+    return 1
   fi
-
-  # Wait until the port is free (avoid racing a dying listener).
-  local i
-  for i in $(seq 1 50); do
-    if ! lsof -ti tcp:"$SERVER_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 0.1
-  done
-  echo "Warning: port $SERVER_PORT still appears busy"
-  return 0
 }
 
 start_server() {
-  free_server_port
+  assert_server_port_available || return 1
 
   echo "Starting Arbor.MCP server on port $SERVER_PORT..."
   : >"$PROJECT_DIR/tmp/conformance_server.log"
@@ -91,8 +69,8 @@ start_server() {
       tail -50 "$PROJECT_DIR/tmp/conformance_server.log" || true
       return 1
     fi
-    if curl -s -o /dev/null -w '' --max-time 1 "http://127.0.0.1:$SERVER_PORT/mcp" 2>/dev/null; then
-      # Confirm the listener belongs to our process tree when possible.
+    if grep -Fq "Server ready on http://localhost:$SERVER_PORT/mcp" "$PROJECT_DIR/tmp/conformance_server.log" &&
+       curl -s -o /dev/null -w '' --max-time 1 "http://127.0.0.1:$SERVER_PORT/mcp" 2>/dev/null; then
       echo "Server ready."
       return 0
     fi
@@ -106,15 +84,27 @@ start_server() {
 
 stop_server() {
   if [ -n "${SERVER_PID:-}" ]; then
-    # Kill the whole process group if possible (elixir may spawn children).
+    # This PID is the exact child launched above, retained until wait reaps it.
     kill "$SERVER_PID" 2>/dev/null || true
-    # Also kill direct children.
-    pkill -P "$SERVER_PID" 2>/dev/null || true
+    local i
+    for i in $(seq 1 100); do
+      if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        break
+      fi
+      sleep 0.1
+    done
+    if kill -0 "$SERVER_PID" 2>/dev/null; then
+      kill -9 "$SERVER_PID" 2>/dev/null || true
+    fi
     wait "$SERVER_PID" 2>/dev/null || true
     SERVER_PID=""
   fi
-  free_server_port
 }
+
+# Failed harness runs and interrupts still retire this invocation's own server.
+trap stop_server EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 run_server_tests() {
   local scenario="${1:-}"

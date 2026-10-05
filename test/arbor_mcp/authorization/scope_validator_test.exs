@@ -74,6 +74,50 @@ defmodule Arbor.MCP.Authorization.ScopeValidatorTest do
                {:error, :unmapped_method}
     end
 
+    test "maps only validated methodless responses to protocol bookkeeping" do
+      for id <- ["reverse-1", 1, nil] do
+        assert ScopeValidator.get_required_scopes(%{
+                 "jsonrpc" => "2.0",
+                 "id" => id,
+                 "result" => %{}
+               }) == []
+
+        assert ScopeValidator.get_required_scopes(%{
+                 "jsonrpc" => "2.0",
+                 "id" => id,
+                 "error" => %{"code" => -32603, "message" => "Client failure"}
+               }) == []
+      end
+    end
+
+    test "response bookkeeping is not a methodless or malformed envelope fallback" do
+      valid = %{"jsonrpc" => "2.0", "id" => "reverse-1", "result" => %{}}
+
+      for malformed <- [
+            Map.delete(valid, "id"),
+            Map.delete(valid, "result"),
+            Map.put(valid, "id", 1.5),
+            Map.put(valid, "jsonrpc", "1.0"),
+            Map.put(valid, "method", "unknown/operation"),
+            Map.put(valid, "error", %{"code" => -32603, "message" => "Failure"}),
+            %{"jsonrpc" => "2.0", "id" => 1, "error" => %{"message" => "Failure"}}
+          ] do
+        assert ScopeValidator.get_required_scopes(malformed) == {:error, :unmapped_method}
+      end
+    end
+
+    test "custom response policies remain authoritative and nil uses validated fallback" do
+      response = %{"jsonrpc" => "2.0", "id" => 1, "result" => %{}}
+
+      assert ScopeValidator.get_required_scopes(response, fn _ -> ["host:reverse:reply"] end) ==
+               ["host:reverse:reply"]
+
+      assert ScopeValidator.get_required_scopes(response, fn _ -> nil end) == []
+
+      assert ScopeValidator.get_required_scopes(response, fn _ -> [] end) ==
+               {:error, :invalid_scope_mapping}
+    end
+
     test "uses custom mapper when provided" do
       custom_mapper = fn
         %{"method" => "custom/op"} -> ["my:custom:scope"]

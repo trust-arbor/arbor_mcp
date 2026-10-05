@@ -12,12 +12,17 @@ defmodule Arbor.MCP.Tasks do
   A worker outside the callback must capture `Server.Runtime.service(:tasks)`
   and `owner/1` before spawning, then pass `service: service, owner: owner`.
 
-  Successful creates and wire-visible transitions asynchronously publish the
-  full modern state to authorized `subscriptions/listen` task filters. Pass a
-  runtime address as `runtime: runtime` or its task reference as `service: service`.
-  The runtime selects the matching subscription service. Outside Runtime,
-  standalone legacy helpers still accept `subscription_registry: registry`.
-  Use `notify: false` only when the host owns publication.
+  Successful creates and wire-visible transitions attempt asynchronous publication
+  of the full modern state to authorized `subscriptions/listen` task filters.
+  Stored success does not prove publication acceptance or delivery. Runtime
+  publication requires an authentic current callback Origin; retaining a task
+  ServiceRef and owner proves storage addressing and authorization, not that
+  publication origin. Public options cannot substitute a caller-authored Origin.
+  Pass a runtime address as `runtime: runtime` or its task reference as
+  `service: service`; the runtime selects its matching subscription service.
+  Outside Runtime, explicitly supervised standalone helpers retain their
+  `subscription_registry: registry` selector. Use `notify: false` for work whose
+  publication the host owns separately.
   """
 
   alias Arbor.MCP.Server.Context

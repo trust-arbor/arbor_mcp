@@ -221,6 +221,7 @@ defmodule Arbor.MCP.Integration.ConcurrentClientsTest do
 
   alias Arbor.MCP.Client
   alias Arbor.MCP.HttpPlug
+  alias Arbor.MCP.Server.Runtime
   alias __MODULE__.{TestConcurrentHandler, ErrorProneHandler}
 
   @moduletag :integration
@@ -238,6 +239,9 @@ defmodule Arbor.MCP.Integration.ConcurrentClientsTest do
     unique_id = System.unique_integer([:positive])
     ranch_ref = :"concurrent_test_listener_#{unique_id}"
 
+    runtime =
+      start_supervised!({Runtime, handler: TestConcurrentHandler, transport: :mounted_http})
+
     # Start HTTP server with our plug. Arbor.MCP.Client sends an Origin header
     # derived from the server URL, and HttpPlug no longer has a same-origin
     # fallback, so the local origin must be allow-listed explicitly.
@@ -245,7 +249,7 @@ defmodule Arbor.MCP.Integration.ConcurrentClientsTest do
       Plug.Cowboy.http(
         HttpPlug,
         [
-          handler: TestConcurrentHandler,
+          runtime: runtime,
           server_info: %{name: "test-server", version: "1.0.0"},
           allowed_origins: ["http://localhost:#{port}", "http://127.0.0.1:#{port}"]
         ],
@@ -465,13 +469,19 @@ defmodule Arbor.MCP.Integration.ConcurrentClientsTest do
       unique_id = System.unique_integer([:positive])
       ranch_ref = :"rate_limit_test_listener_#{unique_id}"
 
+      runtime =
+        start_supervised!(
+          {Runtime, handler: TestConcurrentHandler, transport: :mounted_http},
+          id: make_ref()
+        )
+
       # Start a rate-limited server. The client's Origin (derived from the
       # server URL) must be allow-listed now that same-origin fallback is gone.
       {:ok, _} =
         Plug.Cowboy.http(
           HttpPlug,
           [
-            handler: TestConcurrentHandler,
+            runtime: runtime,
             server_info: %{name: "rate-limited-server", version: "1.0.0"},
             allowed_origins: ["http://localhost:#{port}", "http://127.0.0.1:#{port}"]
             # Rate limiting could be configured here
@@ -543,11 +553,17 @@ defmodule Arbor.MCP.Integration.ConcurrentClientsTest do
       unique_id = System.unique_integer([:positive])
       error_ranch_ref = :"error_handler_test_listener_#{unique_id}"
 
+      runtime =
+        start_supervised!(
+          {Runtime, handler: ErrorProneHandler, transport: :mounted_http},
+          id: make_ref()
+        )
+
       {:ok, _} =
         Plug.Cowboy.http(
           HttpPlug,
           [
-            handler: ErrorProneHandler,
+            runtime: runtime,
             server_info: %{name: "error-test", version: "1.0.0"},
             allowed_origins: [
               "http://localhost:#{error_port}",
@@ -563,8 +579,8 @@ defmodule Arbor.MCP.Integration.ConcurrentClientsTest do
       # Create client
       {:ok, client} = Client.connect("http://localhost:#{error_port}/", use_sse: false)
 
-      # Make multiple calls - each HTTP request creates a fresh handler instance,
-      # so the server should handle all requests (no persistent error state).
+      # One Runtime keeps the handler state across these POSTs, including the
+      # state returned with each authored error.
       results =
         for i <- 1..9 do
           case Client.call_tool(client, "unreliable", %{}) do
@@ -576,16 +592,20 @@ defmodule Arbor.MCP.Integration.ConcurrentClientsTest do
           end
         end
 
-      # Verify the server is responsive and handles requests.
-      # With per-request handler instances, each call starts fresh.
+      # Authored errors isolate every third call without resetting or wedging
+      # the initialized handler state.
       successful = Enum.count(results, fn {status, _, _} -> status == :success end)
       assert successful > 0, "At least some calls should succeed"
+      assert successful == 6
+      assert for({:error, call, _error} <- results, do: call) == [3, 6, 9]
+
+      for {:success, call, response} <- results do
+        assert Arbor.MCP.Response.text_content(response) == "Success #{call}"
+      end
 
       # Server should still be responsive after all calls
-      case Client.call_tool(client, "unreliable", %{}) do
-        {:ok, _} -> assert true
-        {:error, _} -> assert true, "Server responded (even with error)"
-      end
+      assert {:ok, response} = Client.call_tool(client, "unreliable", %{})
+      assert Arbor.MCP.Response.text_content(response) == "Success 10"
 
       Client.disconnect(client)
 

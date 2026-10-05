@@ -42,6 +42,19 @@ defmodule Arbor.MCP.Server.Runtime.HTTPNotificationsTest do
       reply(state)
     end
 
+    def handle_call_tool("context_json", _args, state) do
+      {:ok, source} = Source.capture()
+      send(state.observer, {:json_progress_source, source})
+
+      results =
+        for progress <- [0, 50, 100] do
+          Context.report_progress(progress, 100, "Completed step #{progress} of 100")
+        end
+
+      send(state.observer, {:control_results, results})
+      reply(state)
+    end
+
     def handle_call_tool("intent", _args, state) do
       results = [Context.report_progress(1), Context.send_log_message(:info, "log")]
       send(state.observer, {:control_results, results})
@@ -163,6 +176,126 @@ defmodule Arbor.MCP.Server.Runtime.HTTPNotificationsTest do
            ] = Enum.map(events, & &1.data)
 
     settled(runtime)
+  end
+
+  test "legacy JSON Context progress appends to its exact live GET and keeps the final JSON response" do
+    {runtime, opts} = host()
+    {id, sessions, lease} = initialize_alias(runtime, opts)
+    live_get(runtime, lease)
+
+    response = primary_post(opts, id, tool(2, "context_json", requested_meta()))
+    assert response.status == 200
+    assert get_resp_header(response, "content-type") == ["application/json; charset=utf-8"]
+
+    assert Jason.decode!(response.resp_body) == %{
+             "jsonrpc" => "2.0",
+             "id" => 2,
+             "result" => %{"content" => []}
+           }
+
+    assert_receive {:control_results, [:ok, :ok, :ok]}, 1_000
+    assert_receive {:json_progress_source, source}, 1_000
+    assert Source.runtime(source) == runtime
+    assert Source.lease(source) == lease
+
+    assert {:ok, %{events: events}} = SessionManager.replay_page(sessions, lease, nil, [])
+    assert [%{"id" => 1} | progress] = Enum.map(events, & &1.data)
+    assert Enum.map(progress, & &1["params"]["progress"]) == [0, 50, 100]
+
+    assert Enum.all?(progress, fn message ->
+             message["method"] == "notifications/progress" and
+               message["params"]["progressToken"] == "requested" and
+               message["params"]["total"] == 100
+           end)
+
+    refute Enum.any?(events, &(&1.data["id"] == 2))
+    settled(runtime)
+    assert_no_io_credit(runtime)
+
+    peek = primary_post(opts, id, tool(3, "peek"))
+    assert Jason.decode!(peek.resp_body)["result"]["structuredContent"]["calls"] == 1
+  end
+
+  test "legacy JSON Context progress cannot fall back to another session's live GET" do
+    {runtime, opts} = host()
+    {id, sessions, lease} = initialize_alias(runtime, opts)
+    {_other_id, _same_sessions, other_lease} = initialize_alias(runtime, opts)
+    live_get(runtime, other_lease)
+
+    response = primary_post(opts, id, tool(2, "context_json", requested_meta()))
+    assert response.status == 200
+    assert get_resp_header(response, "content-type") == ["application/json; charset=utf-8"]
+
+    assert_receive {:control_results,
+                    [{:error, :stream_closed}, {:error, :stream_closed}, {:error, :stream_closed}]},
+                   1_000
+
+    for current <- [lease, other_lease] do
+      assert {:ok, %{events: [%{data: %{"id" => 1}}]}} =
+               SessionManager.replay_page(sessions, current, nil, [])
+    end
+
+    assert {:ok, %{pending_events: 0}} = SessionManager.get_stats(sessions, [])
+    settled(runtime)
+    assert_no_io_credit(runtime)
+  end
+
+  test "a dead borrowed GET does not claim legacy JSON Context progress or retain phantom IO" do
+    {runtime, opts} = host()
+    {id, sessions, lease} = initialize_alias(runtime, opts)
+    {writer, _binding} = live_get(runtime, lease)
+    monitor = Process.monitor(writer)
+    Process.exit(writer, :kill)
+    assert_receive {:DOWN, ^monitor, :process, ^writer, :killed}, 1_000
+
+    response = primary_post(opts, id, tool(2, "context_json", requested_meta()))
+    assert response.status == 200
+
+    assert_receive {:control_results,
+                    [{:error, :stream_closed}, {:error, :stream_closed}, {:error, :stream_closed}]},
+                   1_000
+
+    assert {:ok, %{events: [%{data: %{"id" => 1}}]}} =
+             SessionManager.replay_page(sessions, lease, nil, [])
+
+    assert {:ok, %{pending_events: 0}} = SessionManager.get_stats(sessions, [])
+    settled(runtime)
+    assert_no_io_credit(runtime)
+  end
+
+  test "stateless modern JSON does not borrow an available legacy session GET for Context progress" do
+    {runtime, opts} = host()
+    {_id, sessions, lease} = initialize_alias(runtime, opts)
+    live_get(runtime, lease)
+    request = modern(tool(2, "context_json"))
+    request = put_in(request, ["params", "_meta", "progressToken"], "requested")
+
+    response =
+      Plug.Test.conn(:post, "/mcp", Jason.encode!(request))
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("accept", "application/json")
+      |> put_req_header("mcp-protocol-version", "2026-07-28")
+      |> put_req_header("mcp-method", "tools/call")
+      |> put_req_header("mcp-name", "context_json")
+      |> HttpPlug.call(Map.put(opts, :protocol_mode, :modern_only))
+
+    assert response.status == 200
+    assert get_resp_header(response, "mcp-session-id") == []
+    assert get_resp_header(response, "content-type") == ["application/json; charset=utf-8"]
+
+    assert_receive {:control_results,
+                    [
+                      {:error, :request_not_streaming},
+                      {:error, :request_not_streaming},
+                      {:error, :request_not_streaming}
+                    ]},
+                   1_000
+
+    assert {:ok, %{events: [%{data: %{"id" => 1}}]}} =
+             SessionManager.replay_page(sessions, lease, nil, [])
+
+    settled(runtime)
+    assert_no_io_credit(runtime)
   end
 
   test "retained Server control casts target the addressed live session rather than the singleton edge" do
@@ -674,6 +807,12 @@ defmodule Arbor.MCP.Server.Runtime.HTTPNotificationsTest do
       value ->
         value
     end
+  end
+
+  defp assert_no_io_credit(runtime) do
+    {:ok, domain} = HTTPWriterProxy.domain(runtime)
+    assert %{frames: 0, bytes: 0} = HTTPWriterRegistry.stats(domain)
+    assert match?(%{reserved: 0, response_bytes: 0}, Runtime.stats(runtime))
   end
 
   defp settled(runtime, attempts \\ 200)

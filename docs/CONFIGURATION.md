@@ -90,9 +90,20 @@ Configure one client or server independently when canarying:
     protocol_mode: :prefer_legacy
   )
 
-# Phoenix/Plug servers accept the same option.
+# In Application.start/2, before the borrowed Phoenix endpoint:
+children = [
+  {Arbor.MCP.Server.Runtime,
+   name: MyApp.MCPRuntime,
+   handler: MyApp.MCPServer,
+   handler_args: [],
+   transport: :mounted_http,
+   protocol_mode: :prefer_legacy}
+]
+Supervisor.start_link(children, strategy: :one_for_one)
+
+# In the router:
 forward "/mcp", Arbor.MCP.HttpPlug,
-  handler: MyApp.MCPServer,
+  runtime: MyApp.MCPRuntime,
   protocol_mode: :prefer_legacy
 ```
 
@@ -536,44 +547,85 @@ overridable, and legacy task methods are unchanged unless the application
 implements them explicitly. `Arbor.MCP.Tasks.Server.create/4` inserts the task
 synchronously and returns a handle only after `tasks/get` can read it.
 
-`Arbor.MCP.Tasks.Store.ETS` is bounded and atomic on one node. It keeps tasks
-through client reconnects, client restarts, request-process failures, and
-worker failures, but not an Arbor.MCP application or node restart. Production
-deployments that need that stronger guarantee should implement the
-`Arbor.MCP.Tasks.Store` behaviour, supervise the backend in their application, and
-configure it globally or on the Handler:
+`Arbor.MCP.Tasks.Store.ETS` is bounded and atomic on one node. Its entries
+survive client reconnects, connection failures and callback-worker failures
+while the actual store process remains alive. A Runtime owns an unnamed store
+in its service cohort by default; a cohort or whole-root replacement discards
+that in-memory task state. An explicitly supervised standalone store has its
+own process lifetime. Neither form persists entries across a store process or
+node restart.
+
+Configure a Runtime's task adapter and limits on its service descriptor:
 
 ```elixir
-# Optional limits for the bundled reference store:
-config :arbor_mcp, Arbor.MCP.Tasks.Store.ETS,
-  max_tasks: 10_000,
-  max_ttl_ms: 2_592_000_000
-
-config :arbor_mcp, task_store: MyApp.Tasks.PostgresStore
-
-# Or for one server module:
-use Arbor.MCP.Server.Handler,
-  tasks: :store,
-  task_store: MyApp.Tasks.PostgresStore,
-  task_store_opts: [repo: MyApp.Repo]
+children = [
+  {Arbor.MCP.Server.Runtime,
+   name: MyApp.MCPRuntime,
+   handler: MyServer,
+   handler_args: [],
+   services: [
+     tasks: [
+       options: [
+         max_tasks: 10_000,
+         max_ttl_ms: 2_592_000_000,
+         max_entry_bytes: 1_000_000,
+         max_retained_bytes: 8_000_000
+       ]
+     ]
+   ]}
+]
 ```
+
+These are store limits, not a whole-VM memory guarantee. The v2 application no
+longer starts `Tasks.Store.ETS` automatically or reads limits from
+`config :arbor_mcp, Arbor.MCP.Tasks.Store.ETS`. Supply limits as child options
+when supervising a standalone store. The retained application `:task_store`
+selector and Handler `:task_store`/`:task_store_opts` apply to explicitly
+supervised standalone calls; they do not select or override the task service
+of a Runtime callback.
+
+For stronger durability, select a custom adapter in the Runtime descriptor,
+for example `tasks: [adapter: MyApp.Tasks.PostgresStore, options: [repo: MyApp.Repo]]`.
+The `Arbor.MCP.Tasks.Store` behaviour alone is insufficient for a Runtime
+adapter: an owned adapter must declare `bounded_startup: 1`, register before
+blocking initialization, and provide bounded native startup. Runtime task
+adapters also declare `bounded_operations: 1`, implement
+`runtime_service_binding/2` and `operate/4`, reserve operations before payload
+publication and recheck the supplied authority immediately before mutation.
+A borrowed descriptor additionally needs the explicit live `:server` and
+stable `:namespace` contract; the Runtime never stops that borrowed backend.
+See [native store bounds](./V2_NATIVE_STORE_PRESSURE.md).
 
 The store binds each task to the current request's principal, tenant, and
-endpoint. Workers running outside a request callback must retain that owner
-without credentials and pass it back explicitly:
+endpoint. Before starting work outside a request callback, capture both the
+logical service reference and non-secret owner, then pass them to storage calls:
 
 ```elixir
+{:ok, task_service} = Arbor.MCP.Server.Runtime.service(:tasks)
 owner = Arbor.MCP.Tasks.owner()
-{:ok, task} = Arbor.MCP.Tasks.complete(task_id, result, owner: owner)
+
+# Retain these values in application-owned work outside the callback:
+{:ok, task} =
+  Arbor.MCP.Tasks.complete(task_id, result,
+    service: task_service,
+    owner: owner,
+    notify: false
+  )
 ```
 
-Successful creates and wire-visible transitions publish full
-`notifications/tasks` state to matching `subscriptions/listen` streams. A
-deployment using a non-default subscription registry should pass
-`subscription_registry: registry` when a worker calls `Arbor.MCP.Tasks.complete/3`,
-`fail/3`, `require_input/3`, `mark_cancelled/2`, or `put_status_message/3`.
-Set `notify: false` only when the host application deliberately owns
-publication itself.
+The retained service reference and owner permit storage addressing and
+authorization; they do not recreate the original callback's publication Origin.
+Successful creates and wire-visible transitions attempt asynchronous full-state
+`notifications/tasks` publication when `notify: true` (the default), but their
+stored success result does not prove publication acceptance or stream delivery.
+Runtime publication requires an authentic current callback Origin and the
+matching subscription service, generation, scope and original cutoff. Public
+options cannot supply a caller-authored Origin. Work outside that callback must
+own publication separately; `notify: false` makes that choice explicit.
+Standalone calls retain the `subscription_registry: registry` selector for an
+explicitly supervised registry. A missing/retired origin, pressure or subsequent
+source retirement can prevent notification delivery without undoing a stored
+transition.
 
 The host application still owns worker execution and recovery. Store adapters
 own persistence, atomicity across serving nodes, authorization binding, and
@@ -826,18 +878,30 @@ deployment-specific fail-closed bound.
 Phoenix/Plug applications usually mount `Arbor.MCP.HttpPlug`:
 
 ```elixir
+# In Application.start/2, before the borrowed Phoenix endpoint:
+children = [
+  {Arbor.MCP.Server.Runtime,
+   name: MyApp.MCPRuntime,
+   handler: MyApp.MCPServer,
+   handler_args: [],
+   transport: :mounted_http,
+   protocol_mode: :prefer_legacy,
+   request_timeout_ms: 10_000}
+]
+Supervisor.start_link(children, strategy: :one_for_one)
+
+# In the router:
 forward "/mcp", Arbor.MCP.HttpPlug,
-  handler: MyApp.MCPServer,
-  server_info: %{name: "my-app", version: "1.0.0"},
+  runtime: MyApp.MCPRuntime,
   protocol_mode: :prefer_legacy,
-  handler_call_timeout: 10_000,
   cors_enabled: true
 ```
 
-`:handler_call_timeout` is the server-side deadline for each call from
-`Arbor.MCP.HttpPlug` into the Handler process (default `10_000` milliseconds).
-It is separate from client-side `:timeout`, `:request_timeout`,
-`:stream_handshake_timeout`, and `:stream_idle_timeout` settings.
+The Runtime owns the handler and initializes it once with `:handler_args`.
+Configure its work deadline with `:request_timeout_ms`; the retired mount
+`:handler_call_timeout` raises a configuration error. Handler/DSL metadata owns
+server identity. Client-side `:timeout`, `:request_timeout`,
+`:stream_handshake_timeout`, and `:stream_idle_timeout` remain separate settings.
 
 The MCP 2024-11-05 HTTP+SSE transport is deprecated and disabled by default.
 Version 2 servers select it with `legacy_http_sse: true`. The old server
@@ -854,9 +918,20 @@ resource identifier and at least one HTTPS authorization-server issuer. Mount
 the plug so the RFC 9728 path-specific metadata URL is reachable:
 
 ```elixir
+# In Application.start/2, before the borrowed Phoenix endpoint:
+children = [
+  {Arbor.MCP.Server.Runtime,
+   name: MyApp.MCPRuntime,
+   handler: MyApp.MCPServer,
+   handler_args: [],
+   transport: :mounted_http}
+]
+Supervisor.start_link(children, strategy: :one_for_one)
+
+# In the router:
 forward "/", Arbor.MCP.HttpPlug,
-  endpoint: "/mcp",
-  handler: MyApp.MCPServer,
+  runtime: MyApp.MCPRuntime,
+  path: "/mcp",
   oauth_enabled: true,
   resource: "https://mcp.example.com/mcp",
   authorization_servers: ["https://auth.example.com"],
@@ -970,11 +1045,22 @@ For resumptions that may cause side effects, enable atomic single-use
 enforcement:
 
 ```elixir
-MyServer.start_link(
+children = [
+  {Arbor.MCP.Server.Runtime,
+   name: MyApp.MCPRuntime,
+   handler: MyServer,
+   handler_args: [],
+   transport: :mounted_http,
+   services: [replay_cache: []],
+   require_replay_protection: true}
+]
+Supervisor.start_link(children, strategy: :one_for_one)
+
+# In the router, validate the key ring and require the Runtime's replay service:
+forward "/mcp", Arbor.MCP.HttpPlug,
+  runtime: MyApp.MCPRuntime,
   mrtr: true,
-  replay_cache: Arbor.MCP.Server.ReplayCache.ETS,
   require_replay_protection: true
-)
 ```
 
 The bundled cache is node-local. Clustered deployments must implement
@@ -1086,21 +1172,30 @@ cap, or a slow consumer that exhausts either queue bound, is closed fail-safe.
 Publication authorization is checked again for every event; denial gracefully
 closes the stream.
 
-For clustered HTTP, start one named subscription registry per node after the
-application's PubSub process and route every MCP server on that node to it:
+For clustered HTTP, start the application's PubSub process before each Runtime
+that owns a subscription service. Configure that service's storage/fanout adapter
+through its descriptor; a raw `:subscription_registry` selector is retired:
 
 ```elixir
 children = [
   {Phoenix.PubSub, name: MyApp.PubSub},
-  {Arbor.MCP.Server.Subscriptions,
-   name: MyApp.MCPSubscriptions,
-   adapter:
-     {Arbor.MCP.Server.Subscriptions.PubSub,
-      pubsub_server: MyApp.PubSub,
-      topic: "my_app:mcp:subscriptions:v1"}},
-  {MyApp.MCPServer,
-   subscription_registry: MyApp.MCPSubscriptions}
+  {Arbor.MCP.Server.Runtime,
+   name: MyApp.MCPRuntime,
+   handler: MyApp.MCPServer,
+   handler_args: [],
+   transport: :mounted_http,
+   services: [
+     subscriptions: [
+       options: [
+         adapter:
+           {Arbor.MCP.Server.Subscriptions.PubSub,
+            pubsub_server: MyApp.PubSub,
+            topic: "my_app:mcp:subscriptions:v1"}
+       ]
+     ]
+   ]}
 ]
+Supervisor.start_link(children, strategy: :one_for_one)
 ```
 
 `Arbor.MCP.Server.Subscriptions.PubSub` has no hard Phoenix dependency. Its
@@ -1127,8 +1222,20 @@ seconds by default so quiet disconnects are detected and intermediaries do not
 expire an otherwise healthy stream:
 
 ```elixir
+# In Application.start/2, before the borrowed Phoenix endpoint:
+children = [
+  {Arbor.MCP.Server.Runtime,
+   name: MyApp.MCPRuntime,
+   handler: MyApp.MCPServer,
+   handler_args: [],
+   transport: :mounted_http,
+   protocol_mode: :modern_only}
+]
+Supervisor.start_link(children, strategy: :one_for_one)
+
+# In the router:
 forward "/mcp", Arbor.MCP.HttpPlug,
-  handler: MyApp.MCPServer,
+  runtime: MyApp.MCPRuntime,
   protocol_mode: :modern_only,
   subscription_keepalive_interval_ms: 15_000,
   subscription_max_lifetime_ms: :timer.hours(1)
@@ -1337,15 +1444,27 @@ even for a positive public TTL, and a later operation never reuses an earlier
 Pass request-local context into a handler with `:handler_opts`. The option can
 be a static term, a one-arity function called with the `Plug.Conn`, a two-arity
 function called with the `Plug.Conn` and decoded JSON-RPC request, or an MFA
-tuple called as `apply(module, function, [conn, request | extra_args])`.
+tuple called as `apply(module, function, [conn, request | extra_args])`. Its
+bounded result is available at `Arbor.MCP.Server.Context.current().application_context`;
+it does not rerun handler initialization or replace the Runtime handler state.
 
 ```elixir
+# In Application.start/2, before the borrowed Phoenix endpoint:
+children = [
+  {Arbor.MCP.Server.Runtime,
+   name: MyApp.MCPRuntime,
+   handler: MyApp.MCPServer,
+   handler_args: [],
+   transport: :mounted_http}
+]
+Supervisor.start_link(children, strategy: :one_for_one)
+
+# In the router:
 forward "/mcp", Arbor.MCP.HttpPlug,
-  handler: MyApp.MCPServer,
+  runtime: MyApp.MCPRuntime,
   handler_opts: fn conn ->
     [current_user: conn.assigns[:current_user]]
-  end,
-  server_info: %{name: "my-app", version: "1.0.0"}
+  end
 ```
 
 ## Resilience
