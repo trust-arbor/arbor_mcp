@@ -402,8 +402,13 @@ publication now use the actual callback Task, original cutoff and exact lease,
 private endpoint and identity. Durable acceptance can retain earlier entered
 effects when later output preparation fails; it does not prove client byte
 receipt. See [the resource slice](https://github.com/trust-arbor/arbor_mcp/blob/f08c090c44edcda3a53478fd04a7a944c0bf2b7f/docs/V2_HTTP_RESOURCE_PUBLICATION_SLICE.md).
-Legacy progress/log and reverse helpers, final subscription convergence,
-remaining global-fallback cutover and final combined qualification remain gates. The accepted HTTP wrappers/startup helpers are
+Legacy progress/log notifications and mounted modern subscription routing have
+implemented source checkpoints. Runtime-only HTTP mounts and explicit standalone
+server ownership are implemented at `27f81a1`; its combined 543-case selection
+passes on all three captured toolchains and its 27-case HTTP wire/Client selection
+passes on both supported toolchains. HTTP reverse integration and final
+conformance, package, compiled API, consumer and soak qualification remain gates.
+The accepted HTTP wrappers/startup helpers are
 retired in the reviewed source; the final compiled absence audit is pending.
 The retained stream keeps its original HTTP entry cutoff and a reconnect preserves its typed session. Modern GET/DELETE
 remain sessionless 405. See [session streams](./V2_HTTP_SESSION_STREAM_SLICE.md).
@@ -494,7 +499,7 @@ services opt-in. Replay remains opt-in. Removed `:sse_enabled`/server `:use_sse`
 are replaced by `:legacy_http_sse`; `:handler_call_timeout` moves to root
 `:request_timeout_ms`. Raw store/registry options and owned borrowed sockets
 are rejected. See [HTTP listeners](./HTTP_LISTENERS.md) for the exact constructor
-migration and remaining mounted subscription/reverse-helper gates.
+migration and the remaining reverse-control and final combined qualification gates.
 
 ### Explicit server state ownership
 

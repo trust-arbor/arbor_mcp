@@ -696,16 +696,16 @@ distinct from the earlier green CI.
 | Phase | Remaining implementation |
 |---|---|
 | 1: contracts | Review and finish the [removal/replacement inventory](./V2_API_MIGRATION.md), non-symbol migration, result/configuration contracts and final public defaults. The runtime candidate validates its scheduling configuration, but not every transport/configuration option. |
-| 2: runtime | Installed HTTP POST, retained sessions and queued/future cancellation are integrated. Finish mounted subscriptions, live legacy resource publication, reverse controls and remaining default/alias routing. Final cross-runtime crash/restart/stop and upgrade evidence remains required. |
-| 3: dispatch/scheduler | Test/BEAM, stdio, custom calls and HTTP Gateway prepare bounded output before serialized state commit, with grouped batches and actual writer receipts. Finish subscription/reverse wiring; qualify final cross-transport equivalence and crash-log privacy. |
+| 2: runtime | Installed HTTP POST, retained sessions and queued/future cancellation are integrated. Mounted subscriptions, durable legacy resource publication, aliases and Runtime-only mounts have implemented checkpoints. Finish reverse integration and final combined qualification. Final cross-runtime crash/restart/stop and upgrade evidence remains required. |
+| 3: dispatch/scheduler | Test/BEAM, stdio, custom calls and HTTP Gateway prepare bounded output before serialized state commit, with grouped batches and actual writer receipts. Subscription/publication wiring has implemented checkpoints. Finish reverse integration; qualify final cross-transport equivalence and crash-log privacy. |
 | 4: stores | Qualified ETS is the initial runtime store; other runtime adapters are explicitly rejected. Standalone DETS has bounded operations, path ownership and confirmed/unconfirmed cleanup. Final combined persistence/recovery, lifetime and payload-safe telemetry evidence remains required. |
-| 5: public API | Shared `Server.Result`, default 2020-12 validation, selected DSL composition, media/options migration, dynamic owned tools, `with_connection` and ordinary Client cleanup pass their integrated selections. The first 96 callable removals are implemented. Finish HTTP retirement and final configuration/default contracts. |
-| 6–7: migration/release | Final four-package compiled API and non-symbol migration comparison, HTTP retirement, cross-transport equivalence, runtime pressure/isolation/privacy/upgrade evidence and v2 RC/soak. |
+| 5: public API | Shared `Server.Result`, default 2020-12 validation, selected DSL composition, media/options migration, dynamic owned tools, `with_connection` and ordinary Client cleanup pass their integrated selections. All 102 accepted callable removals, ten module retirements and four type retirements are implemented in source. Finish the final compiled absence audit and configuration/default contracts. |
+| 6–7: migration/release | Final four-package compiled API and non-symbol migration comparison, final compiled retirement audit, cross-transport equivalence, runtime pressure/isolation/privacy/upgrade evidence and v2 RC/soak. |
 
 The accepted runtime contract specifies callback PID/links, state order,
 cancellation, ownership and restart behavior. The common runtime implements
 those scheduling semantics across Test/BEAM, server stdio and HTTP Gateway; the
-remaining subscription/reverse boundaries must converge before release.
+remaining reverse integration and final transport qualification must converge before release.
 A client wait timeout and a server execution deadline remain distinct. Later
 2.x changes preserve the qualified contract or introduce compatible opt-in behavior.
 

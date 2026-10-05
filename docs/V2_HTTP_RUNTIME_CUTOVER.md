@@ -35,7 +35,7 @@ The retired mount keys are `handler`, `handler_args`, `handler_call_timeout`,
 even when a runtime is also present. Configure handler/initial arguments,
 `request_timeout_ms` and service descriptors on the Runtime. Mount
 `handler_opts` retains static, function and MFA resolution as bounded request
-`Context.application_context`; it does not reinitialize the handler or extend
+`Context.current().application_context`; it does not reinitialize the handler or extend
 the HTTP entry cutoff. Legacy `legacy_http_sse` aliases and wire identifiers
 remain separate from those retired options.
 
@@ -61,9 +61,20 @@ mode. Package-wide client/security/reliability facilities and standalone DETS
 path-claim authority remain application-owned; runtime stop never adopts or
 stops a mounted host listener.
 
-This is a private implementation checkpoint. Focused tests use actual BEAM
-Runtime roots and request-owned fake Plug IO, assert fresh application startup
-has no implicit server owners, and preserve session isolation, three durable/two
-live publication counts, root+mount denials/byte limits, and native callback
-semantics without HTTP headers. Final supported-toolchain, real legacy client,
-combined package and sealed compiled API checks remain qualification gates.
+This is a reviewed implementation checkpoint. Its private focused selection
+passed on all three captured toolchains, using actual BEAM Runtime roots and
+request-owned fake Plug IO. It asserts fresh application startup has no implicit
+server owners and preserves session isolation, three durable/two live
+publication counts, root+mount denials/byte limits, and native callback semantics
+without HTTP headers. The actual legacy Client selection passed on both supported
+toolchains, including borrowed listener survival after runtime stop and exact
+listener cleanup. Those private receipts do not qualify a sealed normal package
+graph. Canonical checkpoint `27f81a1` passes fresh normal compilation, formatting
+and 543 combined cases on all three captured toolchains, plus 27 actual HTTP
+wire/Client cases on both supported toolchains. Supported strict Credo and normal
+Dialyzer pass; the unfiltered warning census retains 72 current/66 minimum warnings
+with none in the 12 changed production paths and no added filters. A failed
+minimum wire run overlapped a dependency rebuild; its serial repeat passes with
+unchanged source, deadlines and stable selected Cowlib bytes. Full combined CI,
+HTTP reverse integration, conformance, compiled API, platform/consumer and the
+48-hour final RC qualification remain gates.

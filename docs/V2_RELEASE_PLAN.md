@@ -123,8 +123,9 @@ normal dependency resolution, compiled consumer and assembled-release evidence.
 
 ## Outstanding release blockers
 
-- Finish legacy progress/log delivery and reverse helpers, then complete the
-  remaining HTTP/global-fallback and final mounted-subscription qualification.
+- Integrate HTTP reverse controls and complete final combined transport qualification.
+  Legacy progress/log delivery, mounted modern subscriptions, Runtime-only HTTP
+  mounts and explicit standalone server ownership have implemented checkpoints.
   Addressed resource subscription tracking and durable fanout are implemented
   and described in [the resource slice](https://github.com/trust-arbor/arbor_mcp/blob/f08c090c44edcda3a53478fd04a7a944c0bf2b7f/docs/V2_HTTP_RESOURCE_PUBLICATION_SLICE.md). Runtime/scheduler, store/result
   contracts, owned listeners and accepted API retirements have implemented slices;

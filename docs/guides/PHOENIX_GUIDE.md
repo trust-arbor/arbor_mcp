@@ -177,7 +177,7 @@ Add these options to the forward after your host authentication pipeline:
 ```
 
 For runtime mounting, `handler_opts` becomes the callback's per-request
-`Context.application_context`. A static value, one-arity `conn` function,
+`Arbor.MCP.Server.Context.current().application_context`. A static value, one-arity `conn` function,
 two-arity `conn, request` function or MFA is supported. The application-context
 MFA receives `[conn, request | extra_args]`; identity MFAs receive
 `[conn, request, token_info | extra_args]`. A router can safely store these MFA

@@ -196,8 +196,12 @@ Mounted POST/request-SSE, addressed sessions/replay, cancellation/arrays/MRTR an
 legacy aliases have implemented checkpoints. Addressed resource subscription
 tracking and durable fanout are implemented; publication requires the actual
 HTTP callback context and exact lease identity. See [the resource slice](https://github.com/trust-arbor/arbor_mcp/blob/f08c090c44edcda3a53478fd04a7a944c0bf2b7f/docs/V2_HTTP_RESOURCE_PUBLICATION_SLICE.md).
-Legacy progress/log and reverse helpers, final subscription convergence and
-remaining global-fallback cutover remain gates.
+Legacy progress/log notifications and mounted modern subscription routing have
+implemented source checkpoints. Runtime-only HTTP mounts and explicit standalone
+server ownership are implemented at `27f81a1`. The combined 543-case selection
+passes on all three captured toolchains, and the 27-case HTTP wire/Client selection
+passes on both supported toolchains. HTTP reverse integration, final conformance
+and the sealed compiled API audit remain gates.
 
 The supported mounted shape is:
 
