@@ -2402,9 +2402,24 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
   defp reap_claim({token, %{stage: :in_flight} = entry}, gate) do
     info = gate.bindings[entry.binding]
 
-    if :atomics.get(entry.receipt, 1) != 0 or is_nil(info) or not Process.alive?(info.writer),
-      do: drop(gate, token),
-      else: gate
+    cond do
+      :atomics.get(entry.receipt, 1) != 0 ->
+        drop(gate, token)
+
+      is_nil(info) ->
+        # Missing identity is not evidence that physical IO has ended.
+        gate
+
+      is_pid(info.writer) and not Process.alive?(info.writer) ->
+        # Actual writer death ends entered IO liability, but cannot prove its
+        # outcome. Preserve uncertainty in the retained receipt before refunding
+        # the claim so the installed Controller can settle its output credit.
+        :atomics.compare_exchange(entry.receipt, 1, 0, 3)
+        drop(gate, token)
+
+      true ->
+        gate
+    end
   end
 
   defp reap_claim({token, entry}, gate) do
