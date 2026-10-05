@@ -104,7 +104,9 @@ defmodule Arbor.MCP.SubscriptionRegistry do
       )
 
   @doc "Lists a bounded set of addressed session-epoch keys for a resource URI."
-  def sessions(%ServiceRef{} = service, uri, opts),
+  @spec sessions(ServiceRef.t(), binary(), keyword()) ::
+          {:ok, [{binary(), binary()}]} | {:error, term()}
+  def sessions(service, uri, opts),
     do: ServiceOperation.call(service, :resource_subscriptions, :sessions, [uri], opts)
 
   @doc "Lists bounded resource subscriptions for an addressed session lease."

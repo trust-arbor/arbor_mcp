@@ -3240,63 +3240,22 @@ defmodule Arbor.MCP.HttpPlug do
   end
 
   @doc """
-  Broadcasts a resource update to each live SSE client subscribed to `uri`.
+  Publishes a resource update from an active HTTP handler callback.
 
-  Subscription lookup is performed directly against ETS, and delivery uses
-  independent tasks so backpressure from one client does not block the rest.
-  The event is persisted before live delivery; sessions without a live SSE
-  connection remain subscribed and receive it through Last-Event-ID replay
-  after reconnecting. Expired sessions are removed by `Arbor.MCP.SessionManager`.
+  The addressed runtime, session epochs, forward mount and verified identity
+  determine eligible subscribers. Events are durably accepted before this
+  function returns; `delivered` counts accepted events for currently live
+  session streams, not a client byte receipt. Disconnected sessions retain
+  their event for replay. Calls outside a handler return `:no_request_context`.
   """
-  @spec broadcast_resource_update(String.t()) :: %{
-          subscribers: non_neg_integer(),
-          delivered: non_neg_integer()
-        }
-  def broadcast_resource_update(uri) when is_binary(uri) do
-    session_ids = Arbor.MCP.SubscriptionRegistry.sessions(uri)
-
-    delivered =
-      session_ids
-      |> Task.async_stream(&deliver_resource_update(&1, uri),
-        ordered: false,
-        timeout: 5_000,
-        on_timeout: :kill_task
-      )
-      |> Enum.count(&match?({:ok, :ok}, &1))
-
-    %{subscribers: length(session_ids), delivered: delivered}
-  end
-
-  defp deliver_resource_update(session_id, uri) do
-    notification = %{
-      "jsonrpc" => "2.0",
-      "method" => "notifications/resources/updated",
-      "params" => %{"uri" => uri}
-    }
-
-    # Append independently of the connection so notifications published during
-    # a reconnect gap are available to Last-Event-ID replay.
-    case Arbor.MCP.SessionManager.append_event(session_id, "message", notification) do
-      {:ok, event} ->
-        deliver_persisted_resource_update(session_id, notification, event.id)
-
-      {:error, _reason} ->
-        :not_delivered
-    end
-  end
-
-  defp deliver_persisted_resource_update(session_id, notification, event_id) do
-    with {:ok, handler} <- lookup_sse_handler(session_id),
-         true <- Process.alive?(handler),
-         :ok <- SSEHandler.request_send(handler) do
-      SSEHandler.send_event(handler, "message", notification,
-        event_id: event_id,
-        persist: false
-      )
-    else
-      _not_connected -> :stored
-    end
-  end
+  @spec broadcast_resource_update(String.t()) ::
+          %{
+            subscribers: non_neg_integer(),
+            delivered: non_neg_integer()
+          }
+          | {:error, term()}
+  def broadcast_resource_update(uri) when is_binary(uri),
+    do: Arbor.MCP.Server.Runtime.HTTPResources.broadcast(uri)
 
   # Clean up SSE handler registration
   defp cleanup_sse_handler(session_id) do

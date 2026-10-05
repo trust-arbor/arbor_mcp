@@ -235,12 +235,12 @@ defmodule Arbor.MCP.Server.Dispatch do
 
   defp do_dispatch("resources/subscribe", ctx, state) do
     uri = Map.get(ctx.params, "uri")
-    call(ctx, :handle_subscribe_resource, [uri, state], "Subscribe resource error", state)
+    resource_call(ctx, :handle_subscribe_resource, uri, "Subscribe resource error", state)
   end
 
   defp do_dispatch("resources/unsubscribe", ctx, state) do
     uri = Map.get(ctx.params, "uri")
-    call(ctx, :handle_unsubscribe_resource, [uri, state], "Unsubscribe resource error", state)
+    resource_call(ctx, :handle_unsubscribe_resource, uri, "Unsubscribe resource error", state)
   end
 
   defp do_dispatch("prompts/list", ctx, state) do
@@ -338,6 +338,27 @@ defmodule Arbor.MCP.Server.Dispatch do
       end
     else
       {:response, JSONRPC.response(ctx.id, %{}), state}
+    end
+  end
+
+  defp resource_call(ctx, callback, uri, label, state) do
+    case call(ctx, callback, [uri, state], label, state) do
+      {:response, %{"result" => _result} = response, next_state} ->
+        case Arbor.MCP.Server.Runtime.HTTPResources.track(ctx.method, uri) do
+          :ok ->
+            {:response, response, next_state}
+
+          {:error, _reason} ->
+            {:response,
+             JSONRPC.error(
+               ctx.id,
+               ErrorCodes.internal_error(),
+               "Resource subscription unavailable"
+             ), state}
+        end
+
+      result ->
+        result
     end
   end
 

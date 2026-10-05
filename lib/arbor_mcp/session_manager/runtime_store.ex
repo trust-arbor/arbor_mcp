@@ -2,6 +2,7 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
   @moduledoc false
 
   alias Arbor.MCP.Internal.SessionStore
+  alias Arbor.MCP.Server.Runtime.HTTPResources.Source
 
   alias Arbor.MCP.Server.Runtime.{
     OutputCodec,
@@ -269,6 +270,27 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
     end
   end
 
+  def apply(:http_resource_append, [namespace, {id, epoch}, uri, source], context, model) do
+    with true <- is_binary(uri) and byte_size(uri) in 1..4_096 and String.valid?(uri),
+         {:ok, row} <- epoch_row(model, {namespace, id}, epoch),
+         true <- resource_source_current?(source, context, row.metadata) do
+      notification = %{
+        "jsonrpc" => "2.0",
+        "method" => "notifications/resources/updated",
+        "params" => %{"uri" => uri}
+      }
+
+      apply(
+        :append,
+        [namespace, {id, epoch}, "message", notification],
+        Map.put(context, :http_resource_source, source),
+        model
+      )
+    else
+      _invalid -> {{:error, :resource_source_retired}, model}
+    end
+  end
+
   def apply(:append, [namespace, {id, epoch}, type, data], context, model) do
     key = {namespace, id}
 
@@ -319,7 +341,7 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
       updated = %{row | sequence: sequence, evicted_through: floor}
 
       cond do
-        ServiceOperation.validate_context(context) != :ok ->
+        not append_context_current?(context, row.metadata) ->
           {{:error, :operation_timeout}, model}
 
         row_capacity(model, key, updated) != :ok ->
@@ -575,6 +597,17 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
   defp ensure_initialized(_row, false), do: :ok
   defp ensure_initialized(%{initialized: true}, true), do: :ok
   defp ensure_initialized(_row, _required), do: {:error, :session_not_initialized}
+
+  defp append_context_current?(%{http_resource_source: source} = context, metadata),
+    do: resource_source_current?(source, context, metadata)
+
+  defp append_context_current?(context, _metadata),
+    do: ServiceOperation.validate_context(context) == :ok
+
+  defp resource_source_current?(source, context, metadata),
+    do:
+      Source.valid?(source, context, :sessions) and
+        Source.matches?(source, metadata)
 
   defp valid_id?(id), do: is_binary(id) and byte_size(id) in 1..128
 

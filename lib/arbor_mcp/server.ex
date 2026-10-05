@@ -117,12 +117,17 @@ defmodule Arbor.MCP.Server do
   end
 
   @doc """
-  Sends a resource update to streamable-HTTP clients subscribed to `uri`.
+  Publishes an addressed HTTP resource update from the active handler callback.
+
+  `delivered` counts acceptance for currently live session streams, not client
+  byte delivery. Outside a callback, returns `{:error, :no_request_context}`.
   """
-  @spec notify_resource_update(String.t()) :: %{
-          subscribers: non_neg_integer(),
-          delivered: non_neg_integer()
-        }
+  @spec notify_resource_update(String.t()) ::
+          %{
+            subscribers: non_neg_integer(),
+            delivered: non_neg_integer()
+          }
+          | {:error, term()}
   def notify_resource_update(uri) when is_binary(uri) do
     Arbor.MCP.HttpPlug.broadcast_resource_update(uri)
   end

@@ -1,5 +1,6 @@
 defmodule Arbor.MCP.SubscriptionRegistry.RuntimeStore do
   @moduledoc false
+  alias Arbor.MCP.Server.Runtime.HTTPResources.Source
   alias Arbor.MCP.Server.Runtime.{RetainedTerm, ServiceOperation, ServiceStore}
   alias Arbor.MCP.SessionManager.SessionLease
 
@@ -38,6 +39,22 @@ defmodule Arbor.MCP.SubscriptionRegistry.RuntimeStore do
   def close(_model), do: :ok
   def info(_message, model), do: model
 
+  def apply(operation, [namespace, service, lease, uri, source], context, model)
+      when operation in [:http_subscribe, :http_unsubscribe] do
+    if Source.valid?(source, context, :resource_subscriptions) and Source.lease(source) == lease do
+      original = if operation == :http_subscribe, do: :subscribe, else: :unsubscribe
+
+      apply(
+        original,
+        [namespace, service, lease, uri],
+        Map.put(context, :http_resource_source, source),
+        model
+      )
+    else
+      {{:error, :resource_source_retired}, model}
+    end
+  end
+
   def apply(:subscribe, [namespace, service, lease, uri], context, model) do
     model = expire(model)
 
@@ -56,7 +73,7 @@ defmodule Arbor.MCP.SubscriptionRegistry.RuntimeStore do
         used(model) + bytes > model.limits.bytes ->
           {{:error, :subscription_capacity_exhausted}, model}
 
-        not ServiceOperation.context_current?(context) ->
+        not mutation_current?(context) ->
           {{:error, :operation_timeout}, model}
 
         true ->
@@ -76,7 +93,7 @@ defmodule Arbor.MCP.SubscriptionRegistry.RuntimeStore do
   def apply(:unsubscribe, [namespace, service, lease, uri], context, model) do
     case SessionLease.validate(lease, service, :resource_subscriptions) do
       {:ok, {id, epoch}} ->
-        if ServiceOperation.context_current?(context),
+        if mutation_current?(context),
           do: {:ok, %{model | entries: Map.delete(model.entries, {namespace, id, epoch, uri})}},
           else: {{:error, :operation_timeout}, model}
 
@@ -168,6 +185,11 @@ defmodule Arbor.MCP.SubscriptionRegistry.RuntimeStore do
 
     %{model | entries: entries, expiry_offset: offset + processed}
   end
+
+  defp mutation_current?(%{http_resource_source: source} = context),
+    do: Source.valid?(source, context, :resource_subscriptions)
+
+  defp mutation_current?(context), do: ServiceOperation.context_current?(context)
 
   defp used(model), do: Enum.sum(Enum.map(model.entries, fn {_key, entry} -> entry.bytes end))
 

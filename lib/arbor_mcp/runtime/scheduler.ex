@@ -51,6 +51,10 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
   def replay_producer_metadata(table, reservation, producer),
     do: output_producer(table, reservation, {:sessions, producer})
 
+  def service_producer_metadata(table, reservation, kind, producer)
+      when kind in [:sessions, :resource_subscriptions],
+      do: output_producer(table, reservation, {:service, kind, producer})
+
   defp output_producer(table, reservation, provenance) do
     with {:ok, %{generation: generation, scheduler: scheduler}} <- Admission.route(table),
          true <- generation == reservation.generation,
@@ -318,6 +322,15 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
     end
   end
 
+  defp output_producer_identity({:service, kind, producer}, caller, table) do
+    runtime = Ref.new(:ets.info(table, :owner), table)
+
+    case Services.resolve(runtime, kind) do
+      {:ok, %{server: ^caller}} -> producer
+      _untrusted -> nil
+    end
+  end
+
   defp cancel_key(state, reservation, key) do
     token = reservation.token
 
@@ -403,7 +416,7 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
   defp start_task(state, token, work) do
     snapshot = state.handler_state
     config = state.config
-    replay? = replay_producer?(work)
+    replay? = http_producer?(work)
 
     invocation = %{
       table: state.table,
@@ -467,8 +480,8 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
     :exit, _reason -> state |> fail(token, :handler_start_failed) |> remove_work(token)
   end
 
-  defp replay_producer?(work),
-    do: match?(%{http: %{format: :legacy_sse}}, Keyword.get(work.opts, :output))
+  defp http_producer?(work),
+    do: match?(%{http: %{binding: _binding}}, Keyword.get(work.opts, :output))
 
   defp publish_producer(state, token, producer, work) do
     proof = %{

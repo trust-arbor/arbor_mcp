@@ -22,6 +22,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
     Services
   }
 
+  alias Arbor.MCP.Server.Runtime.HTTPResources.Source
   alias Arbor.MCP.Server.Runtime.OutputTicket
 
   alias Arbor.MCP.SessionManager.SessionLease
@@ -886,6 +887,26 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
   # The existing charged writer row is the session stream registration. A
   # replacement retires the old binding; it never kills a borrowed socket PID
   # or releases an IO liability that has already started.
+  def session_delivery_active?(domain, lease, source) do
+    with {:ok, domain} <- valid(domain),
+         true <- domain.runtime == Source.runtime(source),
+         true <- Source.current?(source),
+         {:ok, gate} <- read(domain) do
+      Enum.any?(gate.bindings, fn {_token, info} ->
+        info.mode == :open and info.proof.lease == lease and
+          live_resource_stream?(domain, info)
+      end)
+    else
+      _closed -> false
+    end
+  end
+
+  defp live_resource_stream?(domain, info) do
+    session_stream_current?(domain, info) or
+      (Map.get(info.authority || %{}, :session_stream, false) and
+         source_current?(domain, info) and Process.alive?(info.writer))
+  end
+
   @spec register_session_stream(HTTPWriterBinding.t()) :: :ok | error()
   def register_session_stream(binding) do
     with {:ok, {domain, token}} <- HTTPWriterBinding.address(binding),
@@ -1109,6 +1130,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
 
   defp captured_current?(domain, %{authority: authority} = info) when is_map(authority) do
     authority.phase in [:entered, :bound] and installed_proxy?(domain, info.owner) and
+      generation_valid(domain, info.proof.generation) == :ok and
       lease_current?(domain, info.proof.lease) and work_current?(domain, authority.work)
   end
 
