@@ -4,6 +4,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPNotificationTarget do
     Admission,
     CallbackContext,
     Deadline,
+    HTTPNotifications,
     HTTPOutput,
     HTTPWriterBinding,
     HTTPWriterRegistry,
@@ -14,13 +15,27 @@ defmodule Arbor.MCP.Server.Runtime.HTTPNotificationTarget do
   }
 
   @enforce_keys [:runtime, :binding]
-  defstruct [:runtime, :binding]
-  @opaque t :: %__MODULE__{runtime: Ref.t(), binding: HTTPWriterBinding.t()}
+  defstruct [:runtime, :binding, :lease, mode: :request]
 
-  def new(runtime, binding) do
+  @opaque t :: %__MODULE__{
+            runtime: Ref.t(),
+            binding: HTTPWriterBinding.t(),
+            mode: :request | :legacy_session,
+            lease: term()
+          }
+
+  def new(runtime, binding), do: new(runtime, binding, :sse)
+
+  def new(runtime, binding, format) when format in [:sse, :legacy_sse] do
     with {:ok, proof} <- HTTPWriterBinding.validate(binding, runtime),
          true <- proof.owner == self() do
-      {:ok, %__MODULE__{runtime: runtime, binding: binding}}
+      {:ok,
+       %__MODULE__{
+         runtime: runtime,
+         binding: binding,
+         lease: proof.lease,
+         mode: if(format == :legacy_sse, do: :legacy_session, else: :request)
+       }}
     else
       _invalid -> {:error, :request_not_streaming}
     end
@@ -31,6 +46,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPNotificationTarget do
 
   # The response term is prepared in producer-side ETS under the original
   # callback authority. The Controller receives only handles and wake tokens.
+  def deliver(%__MODULE__{mode: :legacy_session} = target, value),
+    do: HTTPNotifications.deliver(target.runtime, target.lease, value)
+
   def deliver(%__MODULE__{} = target, value) do
     with %{table: table, token: source, generation: generation, scope: scope, output_phase: phase} <-
            CallbackContext.current(),

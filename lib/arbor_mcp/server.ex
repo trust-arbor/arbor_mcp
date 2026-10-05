@@ -25,6 +25,13 @@ defmodule Arbor.MCP.Server do
   lane is full. Controls issued inside a callback carry its invocation scope,
   so cancelled callbacks cannot send controls to a replacement peer.
 
+  Inside an HTTP callback, notification helpers address that invocation's
+  request-owned SSE response or its exact live legacy session stream. Legacy
+  session acceptance appends a durable replay event; it is not a receipt for
+  client bytes. Pressure or cancellation after an accepted append does not
+  roll the event back or retry it. Modern topic notifications use the runtime's
+  scoped subscription service and its publication authorization rules.
+
   Static definitions use `Arbor.MCP.Server.DSL`, including compile-time components.
   Dynamic tool descriptors and dispatch belong in the application's Handler state;
   `handle_list_tools/2` and `handle_call_tool/3` share its Runtime scheduler.
@@ -42,7 +49,7 @@ defmodule Arbor.MCP.Server do
   """
 
   alias Arbor.MCP.Server.Runtime
-  alias Arbor.MCP.Server.Runtime.{Admission, CallbackContext, Ref}
+  alias Arbor.MCP.Server.Runtime.{Admission, CallbackContext, HTTPNotifications, Ref}
 
   @type server :: Runtime.server()
 
@@ -274,26 +281,33 @@ defmodule Arbor.MCP.Server do
 
   defp cast_control(server, request) do
     with {:ok, server} <- control_server(server) do
-      case Runtime.edge(server) do
-        {:ok, edge} ->
-          payload = {:edge_cast, request, control_origin()}
-
-          case Runtime.submit(server, %{"payload" => payload},
-                 kind: :edge_control,
-                 origin: control_origin(),
-                 via_edge: true,
-                 reply_to: edge
-               ) do
-            {:ok, _token} -> :ok
-            error -> error
-          end
-
-        {:error, _reason} ->
-          case Ref.address(server) do
-            {:ok, address} -> GenServer.cast(address, request)
-            {:error, _reason} -> {:error, :runtime_unavailable}
-          end
+      case HTTPNotifications.cast(server, request) do
+        :not_http_request -> cast_native_control(server, request)
+        result -> result
       end
+    end
+  end
+
+  defp cast_native_control(server, request) do
+    case Runtime.edge(server) do
+      {:ok, edge} ->
+        payload = {:edge_cast, request, control_origin()}
+
+        case Runtime.submit(server, %{"payload" => payload},
+               kind: :edge_control,
+               origin: control_origin(),
+               via_edge: true,
+               reply_to: edge
+             ) do
+          {:ok, _token} -> :ok
+          error -> error
+        end
+
+      {:error, _reason} ->
+        case Ref.address(server) do
+          {:ok, address} -> GenServer.cast(address, request)
+          {:error, _reason} -> {:error, :runtime_unavailable}
+        end
     end
   end
 

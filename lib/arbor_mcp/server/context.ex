@@ -93,18 +93,15 @@ defmodule Arbor.MCP.Server.Context do
 
   Modern streamable-HTTP handlers use this request-scoped helper instead of a
   connection-wide server process. The request must include
-  `_meta.progressToken`, and its HTTP response must be an active SSE stream.
-  Delivery is acknowledged before this function returns, which guarantees the
-  notification is written before the request's final JSON-RPC response.
+  `_meta.progressToken`, and it must own an active SSE response or an addressed
+  legacy session stream. Request-owned SSE acknowledges actual IO before this
+  function returns. Legacy session SSE accepts a durable replay event before
+  returning, ordered before the request's final reply; this is not a client-byte
+  receipt. A cancelled callback cannot append under a retired phase or lease.
+  Legacy replay or operation pressure returns a fixed typed atom error without
+  retrying a previously accepted event.
   """
-  @spec report_progress(number(), number() | nil, String.t() | nil) ::
-          :ok
-          | {:error,
-             :no_request_context
-             | :progress_not_requested
-             | :request_not_streaming
-             | :stream_closed
-             | :stream_timeout}
+  @spec report_progress(number(), number() | nil, String.t() | nil) :: :ok | {:error, atom()}
   def report_progress(progress, total \\ nil, message \\ nil) when is_number(progress) do
     case current() do
       %RequestContext{progress_token: nil} ->
@@ -124,22 +121,20 @@ defmodule Arbor.MCP.Server.Context do
   Sends a log notification on the currently executing request's HTTP stream.
 
   Request-scoped log delivery is available only while that request owns an
-  active SSE response. It never falls back to another request or subscription
-  stream.
+  active SSE response and explicitly requested log level. It never falls back
+  to another session or modern subscription. Legacy session callbacks use
+  `Arbor.MCP.Server.send_log_message/4`; legacy metadata does not imply the
+  modern request-scoped log-level intent. Request-owned SSE retains actual IO
+  acknowledgement. Application-authored legacy log intent retains the addressed
+  replay target's fixed typed capacity, operation and source errors; accepting a
+  replay event does not acknowledge client bytes or retry an earlier event.
 
   MCP protocol Logging is deprecated as of 2026-07-28 and retained throughout
   Arbor.MCP 1.x. Prefer stderr for stdio diagnostics or OpenTelemetry for new
   structured-observability integrations.
   """
   @spec send_log_message(atom() | String.t(), String.t(), map()) ::
-          :ok
-          | {:error,
-             :no_request_context
-             | :logging_not_requested
-             | :invalid_log_level
-             | :request_not_streaming
-             | :stream_closed
-             | :stream_timeout}
+          :ok | {:error, atom()}
   def send_log_message(level, message, data \\ %{}) when is_binary(message) and is_map(data) do
     level = to_string(level)
 

@@ -1560,10 +1560,11 @@ defmodule Arbor.MCP.HttpPlug do
 
   defp runtime_notification_target(%{runtime_format: :json}, _conn), do: nil
 
-  defp runtime_notification_target(_opts, conn) do
+  defp runtime_notification_target(opts, conn) do
     case Arbor.MCP.Server.Runtime.HTTPNotificationTarget.new(
            RuntimeWriter.runtime(conn),
-           RuntimeWriter.binding(conn)
+           RuntimeWriter.binding(conn),
+           opts.runtime_format
          ) do
       {:ok, target} -> target
       _closed -> nil

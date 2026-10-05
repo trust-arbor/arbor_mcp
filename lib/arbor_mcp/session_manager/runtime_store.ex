@@ -9,12 +9,13 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
     RetainedTerm,
     ServiceInvocation,
     ServiceOperation,
+    ServiceRef,
     ServiceStore
   }
 
   @max_sequence 18_446_744_073_709_551_615
   @identity [:principal_id, :tenant_id, :issuer, :audience]
-  alias Arbor.MCP.SessionManager.PendingEvents
+  alias Arbor.MCP.SessionManager.{PendingEvents, SessionLease}
   @metadata @identity ++ [:transport, :transport_endpoint, :client_info]
   @defaults [
     max_sessions: 128,
@@ -288,6 +289,33 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
       )
     else
       _invalid -> {{:error, :resource_source_retired}, model}
+    end
+  end
+
+  def apply(
+        :http_callback_append,
+        [namespace, {id, epoch} = key, message, source],
+        context,
+        model
+      ) do
+    with %{"jsonrpc" => "2.0", "method" => method} when is_binary(method) <- message,
+         false <- Map.has_key?(message, "result") or Map.has_key?(message, "error"),
+         {:ok, row} <- epoch_row(model, {namespace, id}, epoch),
+         {:ok, ^key} <-
+           SessionLease.validate(
+             Source.lease(source),
+             ServiceRef.new(Source.runtime(source), :sessions),
+             :sessions
+           ),
+         true <- resource_source_current?(source, context, row.metadata) do
+      apply(
+        :append,
+        [namespace, key, "message", message],
+        Map.put(context, :http_resource_source, source),
+        model
+      )
+    else
+      _invalid -> {{:error, :callback_source_retired}, model}
     end
   end
 
