@@ -1,63 +1,125 @@
 defmodule Arbor.MCP.Server.SubscriptionOriginTest do
   use ExUnit.Case, async: true
 
-  alias Arbor.MCP.Server.Runtime.{CallbackContext, Deadline}
+  alias Arbor.MCP.Server.{HandlerServer, Runtime}
+  alias Arbor.MCP.Server.Runtime.{Admission, CallbackContext, Deadline}
   alias Arbor.MCP.Server.Subscriptions.Origin
+  alias Arbor.MCP.Transport.Test
+
+  defmodule Handler do
+    use Arbor.MCP.Server.Handler
+
+    @impl true
+    def init(opts), do: {:ok, opts[:test_pid]}
+
+    @impl true
+    def handle_call_tool("capture", _arguments, test_pid) do
+      context = CallbackContext.current()
+      {:ok, origin} = Origin.capture([])
+      send(test_pid, {:source_captured, self(), context, origin})
+      receive do: (:complete -> :ok)
+      {:ok, %{"content" => []}, test_pid}
+    end
+  end
 
   defp source do
-    table = :ets.new(__MODULE__, [:set, :public])
-    token = make_ref()
-    generation = make_ref()
-    connection = make_ref()
-    scope = make_ref()
-    phase = :atomics.new(1, signed: false)
-    :atomics.put(phase, 1, 1)
-    deadline = Deadline.after_ms(1_000)
-    context = %{table: table, token: token, generation: generation, scope: scope}
-    reservation = Map.merge(context, %{terminal: false, output_phase: phase, deadline: deadline})
-    :ets.insert(table, {:route, %{scheduler: self(), generation: generation}})
-    :ets.insert(table, {:edge_connection, self(), connection})
-    :ets.insert(table, {{:reservation, token}, reservation})
-    {:ok, origin} = CallbackContext.with_context(context, fn -> Origin.capture([]) end)
-    {context, origin, phase}
+    root =
+      start_supervised!(
+        Supervisor.child_spec(
+          {HandlerServer,
+           transport: :test,
+           handler: Handler,
+           handler_args: [test_pid: self()],
+           request_timeout_ms: 1_000},
+          id: make_ref(),
+          restart: :temporary
+        )
+      )
+
+    {:ok, transport} = Test.connect(server: root)
+    capture(root, transport)
+  end
+
+  defp capture(root, transport, id \\ 1) do
+    assert {:ok, _transport} = Test.send_message(tool(id), transport)
+    assert_receive {:source_captured, worker, context, origin}, 1_000
+    assert {:ok, %{output_phase: phase}} = Admission.current(context.table, context.token)
+    assert :atomics.get(phase, 1) == 1
+
+    {Map.merge(context, %{root: root, transport: transport, worker: worker, wire_id: id}), origin,
+     phase}
+  end
+
+  defp tool(id),
+    do: %{
+      "jsonrpc" => "2.0",
+      "id" => id,
+      "method" => "tools/call",
+      "params" => %{"name" => "capture", "arguments" => %{}}
+    }
+
+  defp complete(context, phase) do
+    send(context.worker, :complete)
+    assert_receive {:transport_message, encoded}, 1_000
+    assert %{"id" => id, "result" => %{"content" => []}} = Jason.decode!(encoded)
+    assert id == context.wire_id
+    assert :atomics.get(phase, 1) == 2
+
+    eventually(fn ->
+      Admission.current(context.table, context.token) == {:error, :admission_lost}
+    end)
   end
 
   test "active cancellation revokes the captured original cell" do
     {context, origin, _phase} = source()
     assert Origin.valid?(origin)
-    :ets.insert(context.table, {{:cancelled, context.token}, :client_cancelled})
-    refute Origin.valid?(origin)
+    assert :ok = Runtime.cancel(context.runtime, context.scope, 1)
+    eventually(fn -> not Origin.valid?(origin) end)
   end
 
-  test "completed success survives row retirement and reused IDs without a tombstone" do
+  test "completed success survives retired rows, rejected duplicate IDs and unrelated cancellation" do
     {context, origin, phase} = source()
-    :atomics.put(phase, 1, 2)
-    :ets.delete(context.table, {:reservation, context.token})
+    complete(context, phase)
     assert Origin.valid?(origin)
-    replacement_phase = :atomics.new(1, signed: false)
-    :atomics.put(replacement_phase, 1, 3)
+    assert {:ok, _transport} = Test.send_message(tool(1), context.transport)
+    assert_receive {:transport_message, duplicate}, 1_000
 
-    :ets.insert(
-      context.table,
-      {{:reservation, context.token}, %{output_phase: replacement_phase}}
-    )
+    assert %{"id" => 1, "error" => %{"data" => %{"type" => "duplicate_request_id"}}} =
+             Jason.decode!(duplicate)
 
-    :ets.insert(context.table, {{:cancelled, context.token}, :new_invocation})
+    {replacement, replacement_origin, _phase} = capture(context.root, context.transport, 2)
+    refute replacement.token == context.token
+    assert :ok = Runtime.cancel(replacement.runtime, replacement.scope, 2)
+    eventually(fn -> not Origin.valid?(replacement_origin) end)
+    assert Origin.valid?(origin)
+    assert :ok = Runtime.cancel(context.runtime, context.scope, 1)
+    refute :ets.member(context.table, {:cancelled, context.token})
     assert Origin.valid?(origin)
   end
 
   test "peer replacement independently retires a completed origin" do
     {context, origin, phase} = source()
-    :atomics.put(phase, 1, 2)
-    :ets.insert(context.table, {:edge_connection, self(), make_ref()})
+    complete(context, phase)
+    assert {:ok, _replacement} = Test.connect(server: context.root)
     refute Origin.valid?(origin)
   end
 
   test "execution generation replacement retires both active and completed origins" do
-    {context, origin, phase} = source()
-    :atomics.put(phase, 1, 2)
-    :ets.insert(context.table, {:route, %{scheduler: self(), generation: make_ref()}})
-    refute Origin.valid?(origin)
+    for completion <- [:active, :completed] do
+      {context, origin, phase} = source()
+      if completion == :completed, do: complete(context, phase)
+      assert {:ok, route} = Admission.route(context.table)
+      Process.exit(route.scheduler, :kill)
+
+      eventually(fn ->
+        case Admission.route(context.table) do
+          {:ok, %{generation: generation}} -> generation != context.generation
+          _unavailable -> false
+        end
+      end)
+
+      refute Origin.valid?(origin)
+    end
   end
 
   test "an original source cutoff cannot be renewed by publication or terminal helpers" do
@@ -79,5 +141,17 @@ defmodule Arbor.MCP.Server.SubscriptionOriginTest do
 
     assert {:ok, nil} = Origin.capture(subscription_origin: origin)
     assert {:error, :invalid_subscription_origin} = Origin.capture(subscription_control: origin)
+  end
+
+  defp eventually(fun, attempts \\ 200)
+  defp eventually(fun, 0), do: assert(fun.())
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(5)
+      eventually(fun, attempts - 1)
+    end
   end
 end

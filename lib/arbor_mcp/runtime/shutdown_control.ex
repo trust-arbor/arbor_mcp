@@ -106,25 +106,44 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControl do
   end
 
   def prepare(table, reason, started) do
-    with {:ok, control} <- lookup(table), true <- live?(control) do
-      deadline = started + control.budget
-      :ok = Deadline.validate(deadline)
-      row = {:stop, reason, deadline, started}
-      :ets.insert_new(control.ledger, row)
+    case lookup(table) do
+      {:ok, control} -> prepare_captured(control, reason, started)
+      error -> error
+    end
+  end
+
+  # The authentic handle is captured before asynchronous cleanup can retire its
+  # ETS ledger. This continuation retains its immutable completion/cutoff cells.
+  defp prepare_captured(control, reason, started) do
+    deadline = started + control.budget
+    :ok = Deadline.validate(deadline)
+    prepare_control(control, reason, started, deadline)
+  end
+
+  defp prepare_control(control, reason, started, deadline) do
+    if live?(control) do
+      :ets.insert_new(control.ledger, {:stop, reason, deadline, started})
 
       with :ok <- earliest(control.cells, deadline, @attempts) do
         :atomics.compare_exchange(control.cells, 2, 0, 1)
         close_route(control.table, started)
         wake(control)
         guard_wake(control)
-        {:ok, control, min(deadline, :atomics.get(control.cells, 1))}
+        {:ok, control, min(deadline, cutoff(control))}
       end
     else
-      false -> {:error, :shutdown_control_unavailable}
-      error -> error
+      completed_preparation(control, deadline)
     end
   rescue
-    ArgumentError -> {:error, :shutdown_control_unavailable}
+    ArgumentError -> completed_preparation(control, deadline)
+  end
+
+  defp completed_preparation(control, deadline) do
+    first = cutoff(control)
+
+    if first != 0 and :atomics.get(control.cells, 2) == 3,
+      do: {:ok, control, min(deadline, first)},
+      else: {:error, :shutdown_control_unavailable}
   end
 
   def request(table, reason) do
