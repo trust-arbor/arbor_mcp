@@ -2,6 +2,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
   @moduledoc false
   use GenServer
   alias Arbor.MCP.Server.Runtime
+  alias Arbor.MCP.SessionManager
   alias Arbor.MCP.Server.{RequestContext, SubscriptionListener, Subscriptions}
 
   alias Arbor.MCP.Server.Runtime.{
@@ -67,6 +68,25 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
       error -> error
     end
   end
+
+  def establish_session_stream(runtime, binding, endpoint) do
+    with {:ok, runtime} <- Runtime.ref(runtime),
+         {:ok, proof} <- HTTPWriterBinding.validate(binding, runtime),
+         true <- proof.owner == self(),
+         :ok <- HTTPWriterRegistry.request_session_stream(binding, endpoint),
+         {:ok, gateway} <- address(runtime),
+         remaining = proof.deadline - System.monotonic_time(:millisecond),
+         true <- remaining > 0,
+         result = GenServer.call(gateway, {:establish_session_stream, binding}, remaining),
+         true <- proof.deadline > System.monotonic_time(:millisecond),
+         do: result,
+         else: (error -> session_stream_error(error))
+  catch
+    :exit, _reason -> {:error, :http_session_stream_closed}
+  end
+
+  defp session_stream_error({:error, _reason} = error), do: error
+  defp session_stream_error(_invalid), do: {:error, :invalid_http_session_stream}
 
   defp publish(runtime, proof, gateway, message, retained) do
     with {:ok, route, reservation} <-
@@ -304,6 +324,21 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
   end
 
   def handle_info(_message, state), do: {:noreply, state}
+
+  @impl true
+  def handle_call({:establish_session_stream, binding}, {writer, _tag}, state) do
+    reply =
+      with {:ok, setup} <- HTTPWriterRegistry.session_stream_setup(binding),
+           true <- setup.runtime == state.runtime and setup.writer == writer,
+           {:ok, service} <- Runtime.service(state.runtime, :sessions),
+           {:ok, row} <-
+             SessionManager.get_session(service, setup.lease, deadline: setup.deadline),
+           true <- row.metadata[:transport_endpoint] == setup.endpoint,
+           do: HTTPWriterRegistry.establish_session_stream(binding, row.expires_at),
+           else: (_invalid -> {:error, :invalid_http_session_stream})
+
+    {:reply, reply, state}
+  end
 
   defp retire_replaced_cancellation(token, %{cancelling?: true} = job, state) do
     case Admission.current(state.table, token) do

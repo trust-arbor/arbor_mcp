@@ -12,6 +12,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
     Deadline,
     HTTPListenerBinding,
     HTTPListenerCompletion,
+    HTTPSessionStreamBinding,
     HTTPWriterBinding,
     HTTPWriterProxy,
     HTTPWriteTicket,
@@ -169,7 +170,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
          :ok <- finite_deadline(deadline),
          :ok <- finite_deadline(started),
          true <- started <= Deadline.now(),
-         {:ok, deadline, listener_deadline} <- bounded_capture_cutoffs(domain, deadline, started),
+         {:ok, deadline, listener_deadline, session_deadline} <-
+           bounded_capture_cutoffs(domain, deadline, started),
          :ok <- before_deadline(deadline) do
       invocation = make_ref()
 
@@ -186,6 +188,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
         lease_bound: false,
         work: nil,
         listener: %{deadline: listener_deadline, registration: make_ref(), state: :available},
+        legacy_stream: %{deadline: session_deadline, registration: make_ref(), state: :available},
         failure: %{
           deadline: deadline + domain.limits.failure_timeout_ms,
           state: :available,
@@ -742,6 +745,144 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
 
   defp event_committed?(_domain, _work, _primary), do: false
 
+  # The socket publishes a bounded setup descriptor before notifying Gateway.
+  # Only Gateway can establish the long target, under original entry authority.
+  def request_session_stream(binding, endpoint) do
+    mutate_capture(binding, fn domain, info ->
+      with %{state: :available, deadline: maximum} = stream when is_integer(maximum) <-
+             info.authority.legacy_stream,
+           true <- info.authority.phase == :entered and info.authority.work == nil,
+           :ok <- generation_valid(domain, info.proof.generation),
+           true <- info.authority.lease_bound and not is_nil(info.proof.lease),
+           true <- is_binary(endpoint) and byte_size(endpoint) in 1..4_096 do
+        stream = %{stream | state: :requested} |> Map.put(:endpoint, :binary.copy(endpoint))
+        {:ok, %{info | authority: %{info.authority | legacy_stream: stream}}}
+      else
+        _invalid -> {:error, :invalid_http_session_stream}
+      end
+    end)
+  end
+
+  def session_stream_setup(binding) do
+    with {:ok, {domain, id}} <- HTTPWriterBinding.address(binding),
+         true <- registered_actor?(domain, :http_gateway, self()),
+         {:ok, gate} <- read(domain),
+         {:ok, info} <- open_binding(gate, id),
+         true <- captured_current?(domain, info),
+         :ok <- generation_valid(domain, info.proof.generation),
+         %{state: :requested, endpoint: endpoint} <- info.authority.legacy_stream,
+         do:
+           {:ok,
+            %{
+              runtime: domain.runtime,
+              writer: info.writer,
+              lease: info.proof.lease,
+              endpoint: endpoint,
+              deadline: info.proof.deadline
+            }},
+         else: (_invalid -> {:error, :invalid_http_session_stream})
+  end
+
+  def establish_session_stream(binding, lease_expiry) do
+    with {:ok, {domain, token}} <- HTTPWriterBinding.address(binding),
+         {:ok, gate} <- read(domain),
+         {:ok, info} <- open_binding(gate, token),
+         true <- capture_mutation_current?(:gateway, :request, domain, info),
+         :ok <-
+           update(domain, info.proof.deadline, fn current ->
+             establish_session_stream_current(current, domain, token, lease_expiry)
+           end),
+         {:ok, gate} <- read(domain),
+         %{authority: %{legacy_stream: stream}} <- gate.bindings[token] do
+      wake(domain)
+      {:ok, HTTPSessionStreamBinding.new(binding, stream.registration)}
+    else
+      {:error, _reason} = error -> error
+      _unavailable -> {:error, :invalid_http_session_stream}
+    end
+  end
+
+  defp establish_session_stream_current(gate, domain, token, lease_expiry) do
+    with {:ok, info} <- open_binding(gate, token),
+         true <- session_setup_current?(domain, info),
+         %{state: :requested, deadline: maximum} = stream <- info.authority.legacy_stream,
+         :ok <- finite_deadline(lease_expiry),
+         deadline = min(maximum, lease_expiry),
+         :ok <- before_deadline(deadline) do
+      stream =
+        Map.merge(stream, %{
+          state: :established,
+          deadline: deadline,
+          gateway: self(),
+          generation: info.proof.generation
+        })
+
+      next = %{
+        info
+        | authority:
+            info.authority
+            |> Map.put(:phase, :legacy_session_stream)
+            |> Map.put(:legacy_stream, stream)
+            |> Map.put(:session_stream, true)
+      }
+
+      with {:ok, gate, :ok} <- store_capture(gate, domain, token, next) do
+        {:ok, retire_other_session_streams(gate, token, info.proof.lease), :ok}
+      end
+    else
+      _invalid -> {:error, :invalid_http_session_stream}
+    end
+  end
+
+  defp session_setup_current?(domain, info),
+    do:
+      capture_mutation_current?(:gateway, :request, domain, info) and
+        generation_valid(domain, info.proof.generation) == :ok
+
+  defp retire_other_session_streams(gate, token, lease) do
+    Enum.reduce(gate.bindings, gate, fn {old_token, old}, current ->
+      if old_token != token and Map.get(old.authority || %{}, :session_stream, false) and
+           old.proof.lease == lease,
+         do: elem(retire_binding(current, old_token, :session_stream_replaced), 1),
+         else: current
+    end)
+  end
+
+  def validate_session_stream(stream, runtime) do
+    with {:ok, runtime} <- Ref.validate(runtime),
+         {:ok, binding, registration} <- HTTPSessionStreamBinding.address(stream),
+         {:ok, {domain, token}} <- HTTPWriterBinding.address(binding),
+         true <- domain.runtime == runtime,
+         {:ok, gate} <- read(domain),
+         {:ok, info} <- open_binding(gate, token),
+         %{registration: ^registration} = proof <- info.authority.legacy_stream,
+         true <- session_stream_current?(domain, info),
+         do:
+           {:ok,
+            Map.merge(proof, %{
+              runtime: runtime,
+              writer: info.writer,
+              lease: info.proof.lease,
+              scope: info.proof.scope
+            })},
+         else: (_invalid -> {:error, :http_session_stream_closed})
+  rescue
+    ArgumentError -> {:error, :http_session_stream_closed}
+  end
+
+  defp session_stream_current?(
+         domain,
+         %{authority: %{phase: :legacy_session_stream, legacy_stream: stream}} = info
+       ) do
+    stream.state == :established and stream.deadline > Deadline.now() and
+      installed_proxy?(domain, info.owner) and
+      registered_actor?(domain, :http_gateway, stream.gateway) and
+      generation_valid(domain, stream.generation) == :ok and
+      Process.alive?(info.writer) and lease_current?(domain, info.proof.lease)
+  end
+
+  defp session_stream_current?(_domain, _info), do: false
+
   # The existing charged writer row is the session stream registration. A
   # replacement retires the old binding; it never kills a borrowed socket PID
   # or releases an IO liability that has already started.
@@ -918,17 +1059,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
         with {:ok, info} <- open_binding(current, token),
              true <- capture_mutation_current?(actor, mode, domain, info),
              {:ok, next} <- operation.(domain, info) do
-          next = %{next | bytes: 0}
-          next = %{next | bytes: :erlang.external_size(next) + 256}
-          bytes = current.metadata_bytes - info.bytes + next.bytes
-
-          if bytes <= domain.limits.max_writer_metadata_bytes do
-            {:ok,
-             %{current | bindings: Map.put(current.bindings, token, next), metadata_bytes: bytes},
-             :ok}
-          else
-            {:error, :http_writer_busy}
-          end
+          store_capture(current, domain, token, next)
         else
           false -> {:error, :http_invocation_closed}
           error -> error
@@ -937,6 +1068,20 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
     else
       _invalid -> {:error, :http_invocation_closed}
     end
+  end
+
+  defp store_capture(current, domain, token, next) do
+    previous = current.bindings[token]
+    next = %{next | bytes: 0}
+    next = %{next | bytes: :erlang.external_size(next) + 256}
+    bytes = current.metadata_bytes - previous.bytes + next.bytes
+
+    if bytes <= domain.limits.max_writer_metadata_bytes,
+      do:
+        {:ok,
+         %{current | bindings: Map.put(current.bindings, token, next), metadata_bytes: bytes},
+         :ok},
+      else: {:error, :http_writer_busy}
   end
 
   defp mutation_current?(:request, domain, info), do: captured_current?(domain, info)
@@ -1036,7 +1181,14 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
             _disabled -> nil
           end
 
-        {:ok, min(deadline, started + record.request_timeout_ms), listener_deadline}
+        session_deadline =
+          case Map.get(record, :session_lifetime_ms) do
+            value when is_integer(value) and value > 0 and value <= 0xFFFFFFFF -> started + value
+            _disabled -> nil
+          end
+
+        {:ok, min(deadline, started + record.request_timeout_ms), listener_deadline,
+         session_deadline}
 
       _retired ->
         {:error, :http_invocation_closed}
@@ -1050,6 +1202,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
        do:
          info.authority.listener.terminal.deadline > Deadline.now() and
            listener_domain_current?(domain, info)
+
+  defp source_current?(domain, %{authority: %{phase: :legacy_session_stream}} = info),
+    do: session_stream_current?(domain, info)
 
   defp source_current?(domain, %{authority: %{phase: :listener}} = info),
     do: listener_current?(domain, info)
@@ -2180,7 +2335,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
     %{gate | bindings: Map.put(gate.bindings, info.token, %{info | mode: :listener_tail})}
   end
 
-  defp failure_tail_live?(_domain, %{authority: %{phase: :listener}}), do: false
+  defp failure_tail_live?(_domain, %{authority: %{phase: phase}})
+       when phase in [:listener, :legacy_session_stream],
+       do: false
 
   defp failure_tail_live?(domain, %{authority: %{failure: failure}} = info),
     do:
@@ -2415,6 +2572,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
 
   defp binding_deadline(%{authority: %{phase: :listener, listener: listener}}),
     do: listener.deadline
+
+  defp binding_deadline(%{authority: %{phase: :legacy_session_stream, legacy_stream: stream}}),
+    do: stream.deadline
 
   defp binding_deadline(info), do: info.proof.deadline
 

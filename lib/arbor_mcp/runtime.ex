@@ -442,9 +442,13 @@ defmodule Arbor.MCP.Server.Runtime do
   @doc false
   def stats(server) do
     with {:ok, runtime} <- ref(server),
-         {:ok, route} <- Admission.route(Ref.table(runtime)) do
-      scheduler = GenServer.call(route.scheduler, :stats)
-      Map.merge(scheduler, Admission.stats(Ref.table(runtime)))
+         {:ok, route} <- Admission.route(Ref.table(runtime)),
+         scheduler when is_map(scheduler) <- GenServer.call(route.scheduler, :stats),
+         admission when is_map(admission) <- Admission.stats(Ref.table(runtime)) do
+      Map.merge(scheduler, admission)
+    else
+      {:error, _reason} = error -> error
+      _invalid_stats -> {:error, :runtime_unavailable}
     end
   catch
     :exit, _reason -> {:error, :runtime_unavailable}

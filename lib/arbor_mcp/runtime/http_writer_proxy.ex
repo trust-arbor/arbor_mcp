@@ -109,7 +109,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterProxy do
              %{
                domain: domain,
                request_timeout_ms: config.request_timeout_ms,
-               listener_lifetime_ms: listener_lifetime(config)
+               listener_lifetime_ms: listener_lifetime(config),
+               session_lifetime_ms: session_lifetime(config)
              }}
           )
 
@@ -122,6 +123,11 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterProxy do
 
   defp listener_lifetime(%{services: %{subscriptions: service}}),
     do: Keyword.get(service.options, :max_lifetime_ms, 3_600_000)
+
+  defp session_lifetime(%{services: %{sessions: nil}}), do: nil
+
+  defp session_lifetime(%{services: %{sessions: service}}),
+    do: Keyword.get(service.options, :session_ttl_ms, 3_600_000)
 
   defp registry_options(table, root, config, context) do
     [
