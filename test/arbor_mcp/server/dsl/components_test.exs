@@ -446,7 +446,7 @@ defmodule Arbor.MCP.Server.DSL.ComponentsTest do
         ] do
       request = %{"jsonrpc" => "2.0", "id" => id, "method" => method, "params" => params}
       assert {:ok, _transport} = Test.send_message(request, transport)
-      assert_receive {:transport_message, encoded}
+      assert_receive {:transport_message, encoded}, 1_000
       result = response(encoded)
       assert result["id"] == id
       refute Map.has_key?(result, "error")
