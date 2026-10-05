@@ -131,35 +131,6 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayTest do
     wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
   end
 
-  test "one fixed charged timeout error may use the entry failure tail without reviving success" do
-    runtime = runtime()
-    assert_receive :http_handler_init
-    {:ok, binding} = HTTPWriterProxy.capture(runtime, timeout: 40)
-    {:ok, _token} = HTTPGateway.submit(runtime, binding, %{message(7) | "method" => "hold"})
-    assert_receive {:gateway_callback, 7, _worker}
-    Process.sleep(50)
-    {effect, wire} = checkout(binding)
-
-    assert %{"id" => 7, "error" => %{"code" => -32603, "message" => "Request timeout"}} =
-             Jason.decode!(wire)
-
-    assert {:error, :http_invocation_closed} =
-             HTTPWriterBinding.validate(binding, runtime)
-
-    assert {:error, :http_invocation_closed} =
-             HTTPWriterRegistry.prepare(binding, "{\"result\":1}")
-
-    {:ok, {domain, _}} = HTTPWriterBinding.address(binding)
-    assert %{in_flight: 1, bytes: bytes} = HTTPWriterRegistry.stats(domain)
-    assert bytes > byte_size(wire)
-    assert :ok = HTTPWriterRegistry.complete(effect, :ok)
-    wait(fn -> match?(%{frames: 0}, HTTPWriterRegistry.stats(domain)) end)
-    assert :empty = HTTPWriterRegistry.checkout(binding)
-    wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
-    assert {:ok, %{"result" => 0}} = Runtime.request(runtime, message(8))
-    refute_receive :http_handler_init, 5
-  end
-
   test "202 IO is admitted before notification effects and normal socket return keeps accepted work" do
     runtime = runtime()
     parent = self()

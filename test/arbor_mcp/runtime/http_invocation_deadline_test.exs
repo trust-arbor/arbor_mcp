@@ -1,13 +1,20 @@
 defmodule Arbor.MCP.Server.Runtime.HTTPInvocationDeadlineTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   alias Arbor.MCP.Server.Runtime
-  alias Arbor.MCP.Server.Runtime.{Admission, Deadline, Ref}
+  alias Arbor.MCP.Server.Runtime.{Admission, CallbackContext, Deadline, Ref}
 
   defmodule Handler do
     def init(opts), do: {:ok, %{test: opts[:test], count: 0}}
 
     def dispatch(request, _handler, state, _opts) do
       send(state.test, {:http_callback, request["id"], self()})
+
+      send(
+        state.test,
+        {:http_callback_entry, request["id"], System.monotonic_time(:millisecond),
+         CallbackContext.current().deadline}
+      )
+
       if request["method"] == "hold", do: receive(do: (:finish -> :ok))
 
       {:response, %{"jsonrpc" => "2.0", "id" => request["id"], "result" => state.count},
@@ -94,6 +101,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPInvocationDeadlineTest do
     runtime = runtime()
     {:ok, hold} = Runtime.submit(runtime, message(1, "hold"))
     assert_receive {:http_callback, 1, worker}
+    assert_receive {:http_callback_entry, 1, entered, cutoff}
+    assert entered < cutoff
     {:ok, queued} = Runtime.submit(runtime, message(2), invocation_deadline: Deadline.now() + 30)
 
     assert_receive {:arbor_mcp_runtime, ^queued,

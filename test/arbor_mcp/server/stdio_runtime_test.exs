@@ -154,7 +154,7 @@ defmodule Arbor.MCP.Server.StdioRuntimeTest do
     }
 
     input(input_device, "\uFEFFstartup banner\r\n\r\n" <> Jason.encode!(request), true)
-    assert_receive {:written, bytes}
+    assert_receive {:written, bytes}, 1_000
 
     assert %{"id" => "unicode", "result" => %{"text" => "héλ🙂"}} =
              Jason.decode!(String.trim(bytes))

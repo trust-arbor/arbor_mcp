@@ -328,6 +328,9 @@ defmodule Arbor.MCP.Client.ConnectionScopeTest do
     assert {:ok, first} =
              with_transport(
                fn client ->
+                 assert_receive {:opening, ^client, observer}, 1000
+                 wait_scope_workers_idle(observer, System.monotonic_time(:millisecond) + 1000)
+
                  :sys.replace_state(client, fn state ->
                    state = %{
                      state
@@ -561,6 +564,19 @@ defmodule Arbor.MCP.Client.ConnectionScopeTest do
       {^tag, _, _} = message -> message
     after
       1000 -> flunk("missing #{tag}")
+    end
+  end
+
+  # Native initialization returns before the Observer necessarily consumes its
+  # receive Task's actual DOWN. Establish the empty-capacity setup separately
+  # before testing one accepted worker and a second refusal.
+  defp wait_scope_workers_idle(observer, cutoff) do
+    remaining = max(cutoff - System.monotonic_time(:millisecond), 0)
+    assert remaining > 0, "initialization worker credit did not settle"
+
+    if map_size(:sys.get_state(observer, remaining).workers) != 0 do
+      Process.sleep(1)
+      wait_scope_workers_idle(observer, cutoff)
     end
   end
 
