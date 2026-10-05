@@ -156,15 +156,6 @@ defmodule Arbor.MCP.HttpPlug do
 
   @session_id_max_bytes 128
 
-  @deprecated "The session table is owned by Arbor.MCP.HttpPlug.SessionRegistry, started with the :arbor_mcp application"
-  def start_link(opts \\ []) do
-    case SessionRegistry.start_link(opts) do
-      {:ok, pid} -> {:ok, pid}
-      {:error, {:already_started, pid}} -> {:ok, pid}
-      other -> other
-    end
-  end
-
   @doc """
   Initializes the plug with configuration options.
   """
