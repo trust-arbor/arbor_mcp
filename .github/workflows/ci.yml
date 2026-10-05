@@ -82,6 +82,87 @@ jobs:
         name: four-package-source-archives-${{ matrix.toolchain.elixir }}
         path: archive-consumer-input/*.tar
 
+  listener_archive_consumer:
+    name: HTTP archive consumer / ${{ matrix.adapter }} / Elixir ${{ matrix.toolchain.elixir }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MIX_ENV: prod
+    strategy:
+      fail-fast: false
+      matrix:
+        adapter: [cowboy, bandit]
+        toolchain:
+          - {elixir: '1.17.3', otp: '27.0'}
+          - {elixir: '1.19.5', otp: '28.3.1'}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+    - name: Check out unpublished shared RPC
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        repository: trust-arbor/arbor_acp
+        ref: cb8e45c6a0d4bcba25ebf7db1cb12e02b69c8393
+        path: .arbor-v2/acp
+        persist-credentials: false
+    - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+      with:
+        otp-version: ${{ matrix.toolchain.otp }}
+        elixir-version: ${{ matrix.toolchain.elixir }}
+    - name: Read the coordinated source version
+      run: |
+        python3 -B - <<'PYVERSION'
+        import os, pathlib, re
+        paths = [pathlib.Path("mix.exs"), pathlib.Path(".arbor-v2/acp/packages/arbor_rpc/mix.exs"), pathlib.Path(".arbor-v2/acp/packages/arbor_acp/mix.exs"), pathlib.Path(".arbor-v2/acp/packages/arbor_acp_adapters/mix.exs")]
+        versions = [re.findall(r'@version "([^"]+)"', path.read_text()) for path in paths]
+        if any(len(version) != 1 for version in versions) or len({version[0] for version in versions}) != 1:
+            raise SystemExit("Package source versions must match")
+        version = versions[0][0]
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version):
+            raise SystemExit("Invalid package version")
+        with open(os.environ["GITHUB_ENV"], "a") as output:
+            output.write("ARCHIVE_EXPECTED_VERSION=" + version + "\n")
+        PYVERSION
+    - name: Check HTTP consumer formatting
+      run: mix format --check-formatted fixtures/listener_archive_consumer/mix.exs fixtures/listener_archive_consumer/lib/listener_archive_consumer.ex
+    - name: Build source archives
+      run: |
+        mkdir -p listener-archive-input
+        mix deps.get --only prod
+        env -u ARBOR_RPC_PATH mix hex.build --output "listener-archive-input/arbor_mcp-$ARCHIVE_EXPECTED_VERSION.tar"
+        (
+          cd .arbor-v2/acp/packages/arbor_rpc
+          mix deps.get --only prod
+          mix hex.build --output "$GITHUB_WORKSPACE/listener-archive-input/arbor_rpc-$ARCHIVE_EXPECTED_VERSION.tar"
+        )
+    - name: Match every shipped source file to its commit
+      run: >
+        python3 -B scripts/check_archive_source_selection.py
+        --archives listener-archive-input
+        --mcp-source . --acp-source .arbor-v2/acp
+        --version "$ARCHIVE_EXPECTED_VERSION" --output listener-archive-input/source-selection.json
+    - name: Resolve the selected HTTP backend and probe installed and compiler-free applications
+      run: >
+        python3 -B scripts/check_listener_archive_consumer.py
+        --archives listener-archive-input
+        --workspace "$RUNNER_TEMP/listener-archive-consumer"
+        --expected-version "$ARCHIVE_EXPECTED_VERSION" --adapter ${{ matrix.adapter }}
+        --selection-manifest listener-archive-input/source-selection.json
+    - name: Preserve HTTP archive qualification receipts
+      if: always()
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      with:
+        name: http-archive-consumer-${{ matrix.adapter }}-${{ matrix.toolchain.elixir }}
+        path: |
+          listener-archive-input/*
+          ${{ runner.temp }}/listener-archive-consumer/result.json
+          ${{ runner.temp }}/listener-archive-consumer/logs/*
+          ${{ runner.temp }}/listener-archive-consumer/installed-probe.json
+          ${{ runner.temp }}/listener-archive-consumer/release-probe.json
+          ${{ runner.temp }}/listener-archive-consumer/consumer/mix.lock
+        if-no-files-found: error
+
   test:
     name: Test on OTP ${{matrix.otp}} / Elixir ${{matrix.elixir}}
     runs-on: ubuntu-latest
