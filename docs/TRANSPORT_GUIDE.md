@@ -72,7 +72,8 @@ an application concern, not a transport one.
 ## Streamable HTTP
 
 HTTP clients and the mounted `Arbor.MCP.HttpPlug` remain core. A standalone
-server needs an explicit host dependency on `plug_cowboy` or Bandit and uses
+server needs the qualified backend dependencies listed in the
+[HTTP listener guide](HTTP_LISTENERS.md) and uses
 `http_adapter: :cowboy` (the default) or `:bandit`. See the
 [HTTP listener guide](HTTP_LISTENERS.md) for version floors and lifecycle.
 

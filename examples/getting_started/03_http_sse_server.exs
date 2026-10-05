@@ -5,7 +5,8 @@
 Mix.install(
   [
     {:arbor_mcp, path: Path.expand("../..", __DIR__)},
-    {:plug_cowboy, "~> 2.7"}
+    {:plug_cowboy, "~> 2.7"},
+    {:ranch, "== 1.8.1"}
   ],
   verbose: false
 )

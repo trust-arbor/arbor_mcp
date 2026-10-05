@@ -25,8 +25,9 @@ prebuilt helper. Include the built helper in assembled releases, which need no
 runtime compiler. Windows native subprocess operations are unsupported; framing
 remains separate. See the [source-install policy](../V2_PACKAGE_RELEASE.md).
 
-Standalone HTTP servers additionally need `{:plug_cowboy, "~> 2.7"}` or
-`{:bandit, "~> 1.12 and >= 1.12.5"}` in the host dependencies. Select Bandit
+For a standalone Cowboy HTTP server, add `{:plug_cowboy, "~> 2.7"}` and
+`{:ranch, "== 1.8.1"}` to the host dependencies. For Bandit, add
+`{:bandit, "== 1.12.5"}` and `{:thousand_island, "== 1.5.0"}`. Select Bandit
 with `http_adapter: :bandit`; Cowboy remains the default. HTTP clients and
 mounting `Arbor.MCP.HttpPlug` in an existing host need no additional listener.
 See the [HTTP listener guide](../HTTP_LISTENERS.md).

@@ -121,10 +121,11 @@ defmodule ListenerArchiveConsumer do
     end
   end
 
-  defp port(%{adapter: :cowboy, ranch_ref: ref}), do: :ranch.get_port(ref)
+  # The other backend is intentionally absent from this consumer's code path.
+  defp port(%{adapter: :cowboy, ranch_ref: ref}), do: apply(:ranch, :get_port, [ref])
 
   defp port(%{adapter: :bandit, listener: listener}) do
-    {:ok, {_address, port}} = ThousandIsland.listener_info(listener)
+    {:ok, {_address, port}} = apply(ThousandIsland, :listener_info, [listener])
     port
   end
 
@@ -152,10 +153,12 @@ defmodule ListenerArchiveConsumer do
     {202, _headers, _body} =
       post(port, headers, %{"jsonrpc" => "2.0", "method" => "notifications/initialized"})
 
-    {200, _headers, body} =
-      post(port, headers, %{"jsonrpc" => "2.0", "id" => id, "method" => "ping"})
+    ping_id = id + 1
 
-    %{"jsonrpc" => "2.0", "id" => ^id, "result" => %{}} = Jason.decode!(body)
+    {200, _headers, body} =
+      post(port, headers, %{"jsonrpc" => "2.0", "id" => ping_id, "method" => "ping"})
+
+    %{"jsonrpc" => "2.0", "id" => ^ping_id, "result" => %{}} = Jason.decode!(body)
 
     receive do
       {:consumer_handler_init, _scheduler} -> raise "HTTP POST initialized the handler again"
@@ -215,16 +218,33 @@ defmodule ListenerArchiveConsumer do
   defp record(backend) do
     packages =
       for {app, _description, version} <- Application.loaded_applications(), into: %{} do
-        directory = to_string(:code.lib_dir(app))
-        app_file = Path.join([directory, "ebin", "#{app}.app"])
+        resource =
+          case :code.lib_dir(app) do
+            {:error, :bad_name} when app in [:hex, :sasl] ->
+              # Mix can retain these loader resources without a library code path.
+              %{
+                path: nil,
+                app_sha256: nil,
+                resource_source: "loaded_metadata",
+                loaded_metadata_sha256:
+                  app
+                  |> Application.spec()
+                  |> :erlang.term_to_binary()
+                  |> then(&:crypto.hash(:sha256, &1))
+                  |> Base.encode16(case: :lower)
+              }
+
+            directory when is_list(directory) ->
+              directory = to_string(directory)
+              app_file = Path.join([directory, "ebin", "#{app}.app"])
+              %{path: directory, app_sha256: digest(app_file), resource_source: "app_file"}
+          end
 
         {to_string(app),
-         %{
+         Map.merge(resource, %{
            version: to_string(version),
-           path: directory,
-           app_sha256: digest(app_file),
            modules: Enum.map(Application.spec(app, :modules) || [], &to_string/1)
-         }}
+         })}
       end
 
     modules = Application.spec(:arbor_mcp, :modules) ++ Application.spec(:arbor_rpc, :modules)

@@ -7,7 +7,12 @@
 # Start with: elixir test/conformance/server.exs [port]
 # Then run:   npx @modelcontextprotocol/conformance server --url http://localhost:PORT/mcp
 
-Mix.install([{:arbor_mcp, path: "."}, {:plug_cowboy, "~> 2.7"}, {:jason, "~> 1.4"}])
+Mix.install([
+  {:arbor_mcp, path: "."},
+  {:plug_cowboy, "~> 2.7"},
+  {:ranch, "== 1.8.1"},
+  {:jason, "~> 1.4"}
+])
 
 # ── Test Data ────────────────────────────────────────────────────
 

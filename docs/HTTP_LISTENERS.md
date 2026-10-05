@@ -8,7 +8,8 @@ release does not require a compiler at runtime.
 
 ## A runtime that owns its listener
 
-Add `{:plug_cowboy, "~> 2.7"}` to the host dependencies, then supervise one root:
+Add `{:plug_cowboy, "~> 2.7"}` and `{:ranch, "== 1.8.1"}` to the host
+dependencies, then supervise one root:
 
 ```elixir
 children = [
@@ -53,9 +54,12 @@ Raw third-party Ranch mutation is outside this exclusion contract. Backend start
 can fail after handler initialization (for example, an occupied port); runtime
 startup is not a transaction that rolls back arbitrary handler effects.
 
-Owned Cowboy setup qualifies Ranch **1.8.1** only. The optional package requirement
-pins that version, and startup checks its version, required exports and child-spec
-shape before handler/listener effects. Arbor uses its own real native callback
+Owned Cowboy setup qualifies Ranch **1.8.1** only. Declare that exact requirement
+in the host dependency list as above. Optional transitive requirements validate
+the selected graph but do not automatically constrain the root Hex resolution;
+omitting the host constraint can select an incompatible Ranch version and fail
+Mix dependency validation. Startup also checks the version, required exports and
+child-spec shape before handler/listener effects. Arbor uses its own real native callback
 modules for listener, connection and acceptor roles; it delegates the qualified
 Ranch `init` functions while preserving their actual OTP parent links and startup
 acknowledgments. The owned listener's initial call identifies
@@ -115,7 +119,8 @@ under a healthy root may create a new listener after the previous registered
 roles and metadata settle, using that replacement's original startup cutoff.
 Unexpected listener failure retires the whole root instead.
 
-For Bandit, add `{:bandit, "== 1.12.5"}` and select it explicitly:
+For Bandit, add `{:bandit, "== 1.12.5"}` and
+`{:thousand_island, "== 1.5.0"}` to the host dependencies and select it explicitly:
 
 ```elixir
 {:ok, root} = Arbor.MCP.Server.Runtime.start_link(

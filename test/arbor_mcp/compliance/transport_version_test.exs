@@ -5,6 +5,7 @@ defmodule Arbor.MCP.Compliance.TransportVersionTest do
   alias Arbor.MCP.Client
   alias Arbor.MCP.Protocol.VersionNegotiator
   alias Arbor.MCP.Server.HandlerServer
+  alias Arbor.MCP.Server.Runtime
   alias Arbor.MCP.Server.Transport
   alias Arbor.MCP.Transport.HTTP
 
@@ -73,12 +74,6 @@ defmodule Arbor.MCP.Compliance.TransportVersionTest do
 
   # Setup for HTTP-based tests
   defp start_http_server do
-    # Ensure ranch and cowboy are started (they may have been shut down by prior tests)
-    Application.ensure_all_started(:ranch)
-    Application.ensure_all_started(:cowboy)
-    # Give ranch time to fully initialize
-    Process.sleep(50)
-
     # Find a free port to avoid conflicts in async tests
     {:ok, socket} = :gen_tcp.listen(0, [:binary, ip: {127, 0, 0, 1}])
     {:ok, port} = :inet.port(socket)
@@ -90,6 +85,7 @@ defmodule Arbor.MCP.Compliance.TransportVersionTest do
 
     # Start the server using the high-level API with unique ranch ref
     {:ok, pid} = VersionTestServer.start_link(transport: :http, port: port, ranch_ref: ranch_ref)
+    {:ok, %{listener: listener}} = Transport.http_listener(pid)
     base_url = "http://localhost:#{port}"
 
     # Return the base_url and a function to stop the server
@@ -99,14 +95,19 @@ defmodule Arbor.MCP.Compliance.TransportVersionTest do
        port: port,
        pid: pid,
        stop_server_fn: fn ->
-         # Stop the ranch listener specifically to avoid shutting down the application
-         try do
-           :cowboy.stop_listener(ranch_ref)
-         catch
-           _, _ -> :ok
+         root_monitor = Process.monitor(pid)
+         listener_monitor = Process.monitor(listener)
+
+         case Runtime.stop(pid) do
+           :ok -> :ok
+           {:error, :runtime_unavailable} -> refute Process.alive?(pid)
          end
 
-         if Process.alive?(pid), do: GenServer.stop(pid)
+         assert_receive {:DOWN, ^root_monitor, :process, ^pid, _reason}, 1_000
+         assert_receive {:DOWN, ^listener_monitor, :process, ^listener, _reason}, 1_000
+
+         assert {:error, :econnrefused} =
+                  :gen_tcp.connect({127, 0, 0, 1}, port, [:binary, active: false], 1_000)
        end
      }}
   end
@@ -117,9 +118,6 @@ defmodule Arbor.MCP.Compliance.TransportVersionTest do
 
       on_exit(fn ->
         context.stop_server_fn.()
-        # Ranch may shut down when the server stops — ensure it's restarted
-        Application.ensure_all_started(:ranch)
-        Application.ensure_all_started(:cowboy)
       end)
 
       context
@@ -247,9 +245,6 @@ defmodule Arbor.MCP.Compliance.TransportVersionTest do
 
       on_exit(fn ->
         context.stop_server_fn.()
-        # Ranch may shut down when the server stops — ensure it's restarted
-        Application.ensure_all_started(:ranch)
-        Application.ensure_all_started(:cowboy)
       end)
 
       context

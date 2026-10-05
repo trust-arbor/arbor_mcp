@@ -1,5 +1,6 @@
 defmodule Arbor.MCP.Transport.HTTPSslOptionsTest do
-  use ExUnit.Case, async: true
+  # The credential-policy test changes VM-wide application configuration.
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.Transport.HTTP
 

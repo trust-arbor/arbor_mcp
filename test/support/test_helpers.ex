@@ -3,6 +3,7 @@ defmodule Arbor.MCP.TestHelpers do
   Helpers for setting up test servers and managing test infrastructure.
   """
   import ExUnit.Callbacks
+  import ExUnit.Assertions
 
   @doc """
   Ensures the `Arbor.MCP.TestServer` module is compiled and loaded.
@@ -228,7 +229,7 @@ defmodule Arbor.MCP.TestHelpers do
     {server_name, ranch_ref, port} = generate_server_config(context)
     server_opts = build_server_opts(server_name, ranch_ref, port)
 
-    start_server_with_retries(server_opts, server_name, ranch_ref, port)
+    start_server_with_retries(server_opts, server_name, port)
   end
 
   # Extract server configuration generation
@@ -256,13 +257,13 @@ defmodule Arbor.MCP.TestHelpers do
   end
 
   # Main server starting logic with retries
-  defp start_server_with_retries(server_opts, server_name, ranch_ref, port) do
+  defp start_server_with_retries(server_opts, server_name, port) do
     case ApiTestServer.start_link(server_opts) do
-      {:ok, _pid} ->
-        handle_successful_start(server_name, ranch_ref, port)
+      {:ok, pid} ->
+        handle_successful_start(pid, port)
 
       {:error, {:already_started, _}} ->
-        handle_already_started_error(server_opts, server_name, port)
+        handle_already_started_error(server_opts, port)
 
       {:error, reason} when reason in [:eaddrinuse, :eacces, :enotfound] ->
         handle_port_binding_error(server_name, port)
@@ -277,24 +278,24 @@ defmodule Arbor.MCP.TestHelpers do
   end
 
   # Handle successful server start
-  defp handle_successful_start(server_name, ranch_ref, port) do
+  defp handle_successful_start(pid, port) do
     # ensure_server_ready/1 polls the listening socket; no fixed sleep needed.
     ensure_server_ready(port)
-    register_cleanup(server_name, ranch_ref)
+    register_cleanup(pid, port)
     %{http_url: "http://localhost:#{port}"}
   end
 
   # Handle already started error by retrying with different ranch ref
-  defp handle_already_started_error(server_opts, server_name, port) do
+  defp handle_already_started_error(server_opts, port) do
     test_name = server_opts[:name]
     unique_id = System.unique_integer([:positive])
     retry_ranch_ref = :"ranch_listener_retry_#{test_name}_#{unique_id}"
     retry_opts = Keyword.put(server_opts, :ranch_ref, retry_ranch_ref)
 
     case ApiTestServer.start_link(retry_opts) do
-      {:ok, _pid} ->
+      {:ok, pid} ->
         ensure_server_ready(port)
-        register_cleanup(server_name, retry_ranch_ref)
+        register_cleanup(pid, port)
         %{http_url: "http://localhost:#{port}"}
 
       {:error, reason} ->
@@ -310,7 +311,7 @@ defmodule Arbor.MCP.TestHelpers do
     case ApiTestServer.start_link(server_opts) do
       {:ok, pid} ->
         ensure_server_ready(retry_port)
-        register_simple_cleanup(pid)
+        register_cleanup(pid, retry_port)
         %{http_url: "http://localhost:#{retry_port}"}
 
       {:error, reason} ->
@@ -326,36 +327,25 @@ defmodule Arbor.MCP.TestHelpers do
     end
   end
 
-  # Register cleanup for server and ranch listener.
-  # `:ranch.stop_listener/1` and `GenServer.stop/3` are both synchronous, so
-  # once they return the port is released — no settling sleep required.
-  defp register_cleanup(server_name, ranch_ref) do
-    on_exit(fn ->
-      cleanup_ranch_listener(ranch_ref)
-      safe_stop_process(server_name)
-    end)
-  end
+  # Capture this Runtime's actual listener before registering its exit cleanup.
+  defp register_cleanup(pid, port) do
+    {:ok, %{listener: listener}} = Arbor.MCP.Server.Transport.http_listener(pid)
 
-  # Register simple cleanup for just the process
-  defp register_simple_cleanup(pid) do
     on_exit(fn ->
-      ref = Process.monitor(pid)
-      safe_stop_process(pid, :shutdown, 500)
+      root_monitor = Process.monitor(pid)
+      listener_monitor = Process.monitor(listener)
 
-      # Guarantees the process is gone before the next test binds the port.
-      receive do
-        {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
-      after
-        1_000 -> Process.demonitor(ref, [:flush])
+      case Arbor.MCP.Server.Runtime.stop(pid) do
+        :ok -> :ok
+        {:error, :runtime_unavailable} -> refute Process.alive?(pid)
       end
-    end)
-  end
 
-  # Extract ranch cleanup logic
-  defp cleanup_ranch_listener(ranch_ref) do
-    :ranch.stop_listener(ranch_ref)
-  catch
-    :exit, _ -> :ok
+      assert_receive {:DOWN, ^root_monitor, :process, ^pid, _reason}, 1_000
+      assert_receive {:DOWN, ^listener_monitor, :process, ^listener, _reason}, 1_000
+
+      assert {:error, :econnrefused} =
+               :gen_tcp.connect({127, 0, 0, 1}, port, [:binary, active: false], 1_000)
+    end)
   end
 
   # Private helpers

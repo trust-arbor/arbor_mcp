@@ -2,7 +2,6 @@ defmodule Arbor.MCP.Server.Runtime.HTTPSubscriptionStreamTest do
   use ExUnit.Case, async: true
   alias Arbor.MCP.HttpPlug
   alias Arbor.MCP.Server.Runtime
-  alias Arbor.MCP.Server.Runtime.HTTPSubscriptionGatewayTest.Handler
 
   alias Arbor.MCP.Server.Runtime.{
     Deadline,
@@ -11,6 +10,25 @@ defmodule Arbor.MCP.Server.Runtime.HTTPSubscriptionStreamTest do
     HTTPWriterProxy,
     HTTPWriterRegistry
   }
+
+  defmodule Handler do
+    use Arbor.MCP.Server.Handler
+    alias Arbor.MCP.Server.Subscriptions
+
+    def init(opts) do
+      send(opts[:test], :subscription_handler_init)
+      {:ok, %{test: opts[:test], count: 0}}
+    end
+
+    def handle_call_tool("publish", args, state) do
+      result = Subscriptions.publish("notifications/tools/list_changed", args)
+      send(state.test, {:published, result, self()})
+      if args["hold"], do: receive(do: (:finish -> :ok))
+
+      {:ok, %{"content" => [], "structuredContent" => %{"count" => state.count}},
+       %{state | count: state.count + 1}}
+    end
+  end
 
   defmodule RecordingAdapter do
     alias Plug.Adapters.Test.Conn
