@@ -3,7 +3,7 @@
 - **Target:** Friday, October 9, 2026, in `America/Chicago`
 - **Status:** Package and runtime foundations committed; transport integration and release qualification underway
 - **Scope:** Full accepted v2, including runtime/scheduler and transport integration
-- **Names:** `Arbor.MCP.*`, `Arbor.ACP.*`; optional `arbor_acp_adapters` bundle accepted
+- **Names:** `Arbor.MCP.*`, `Arbor.ACP.*`, `Arbor.RPC.*`; optional `arbor_acp_adapters` bundle accepted
 - **Repository:** `trust-arbor/arbor_mcp`, transferred with repository ID `989917799` preserved
 - **Contracts:** [package/adapter contract](./V2_PACKAGE_CONTRACT.md), [runtime contract](./V2_RUNTIME_CONTRACT.md)
 - **Baseline:** [API baseline](./V2_API_BASELINE.md); [canonical roadmap](./V2_ROADMAP.md)
@@ -14,8 +14,10 @@ the release date; it does not turn the full redesign into a later minor release.
 
 ## Workstreams and accountable owners
 
-Owners below are maintainer roles. Assign a named person to each role before
-October 4; the release owner maintains the evidence ledger and integration order.
+The roles below identify responsibility areas. Implementation owners and agent
+coordination are recorded with each slice's evidence; the release integration
+owner maintains that ledger and the integration order. Named human maintainers
+for package publication and final release approval remain to be recorded before RC.
 
 | Owner role | Scope and completion evidence |
 |---|---|
@@ -26,10 +28,13 @@ October 4; the release owner maintains the evidence ledger and integration order
 | HTTP maintainer | Cowboy/Bandit listener adapters, optional dependencies, Phoenix mounts, runtime routing, listener lifecycle and adapter diagnostics |
 | Release maintainer | CI/toolchain matrix, conformance/interop/security/performance, package/archive/docs evidence, RC publication, soak and final release decision |
 
-These roles can overlap; unassigned ownership is an outstanding gate rather
-than an assumed allocation of capacity.
+These roles can overlap. Recorded implementation ownership does not establish
+publication credentials or replace the pending human release-owner record.
 
 ## Dated implementation sequence
+
+This is the target sequence. Completion is established by the source and artifact
+evidence below, not by a calendar date or a prepared test harness.
 
 | Date | Required outcome before advancing |
 |---|---|
@@ -41,9 +46,10 @@ than an assumed allocation of capacity.
 | **Wed–Fri Oct 7–9 — Final-RC soak** | Exercise the exact RC combination in representative consumers under sustained requests, reconnect/disconnect, cancellation, pressure, restart and durable replay. Record timings, bounds and outcomes. Keep scheduled upstream drift separate from pinned release gates. |
 | **Fri Oct 9 — Stable gate** | Confirm the accepted soak completed on the final RC, all evidence belongs to the release commits/artifacts, and no blocker remains. Publish stable packages in the same dependency order; otherwise record the blocker and a revised target. |
 
-**Proposed soak minimum:** 48 hours on the final qualified RC combination.
-Accept the duration before publishing the RC. To retain an October 9 target,
-the final RC must start early enough on October 7 to complete that window.
+**Accepted soak minimum:** 48 continuous hours on the final qualified RC combination.
+The final 48-hour run has not started. Record its exact source/package selection,
+accepted start timestamp and evidence ledger when it does. To retain an October 9
+target, the final RC must start early enough on October 7 to complete that window.
 Observable runtime, persistence, lifecycle, security or wire changes restart
 the clock; release metadata alone does not. The date never shortens the accepted
 soak period.
@@ -86,9 +92,9 @@ its files moved or its tests became excluded.
 | Build/quality/docs | `mix format --check-formatted`; `mix compile --warnings-as-errors --no-deps-check`; `mix credo --strict`; `MIX_ENV=dev mix docs`; `mix hex.audit`; `mix deps.unlock --check-unused` for every owning project |
 | Unit/integration/security | `mix test --exclude compliance`; `mix test.suite integration --include requires_bypass`; `mix sobelow --skip`; `./scripts/check_skip_tags.sh all`; retained authorization/framing/Unicode/security cases |
 | MCP protocol | `mix test.suite compliance`; `./scripts/conformance.sh modern`; every supported legacy revision and bidirectional official SDK stdio/HTTP lanes |
-| ACP core | `mix test --only interop_acp`; SDK v1/v2-draft routing probes; native/fake-adapter contracts with the vendor bundle absent |
+| ACP core | In `packages/arbor_acp`: `mix test` and `mix test --only interop_acp`; SDK v1/v2-draft routing probes; native/fake-adapter contracts with the vendor bundle absent |
 | Vendor bundle | Vendor unit/golden suites and credential-free real-CLI lifecycle; upstream/reference parity manifest and all current launch/permission/history cases |
-| Runtime/stores | New transport-equivalence, multi-runtime crash/restart/stop, deadline/cancel race, commit ordering, bounded admission/mailbox/queue and ETS/DETS domain suites; commands assigned with their implementation PRs |
+| Runtime/stores | Transport-equivalence, multi-runtime crash/restart/stop, deadline/cancel race, commit ordering, bounded admission/mailbox/queue and ETS/DETS domain suites; retain each slice's exact runner and rerun the final combined source/artifact selection |
 | Performance | `mix test.suite performance`; same-runner budgets against the final 1.x artifact, including cancellation and pressure bounds |
 | Archives/consumers | `mix hex.build --output /tmp/<package>.tar`; inspect intended modules/files and run clean consumers below using packaged dependencies rather than workspace path dependencies |
 
@@ -106,20 +112,26 @@ lanes and is insufficient.
 | MCP client/stdio server | Only `arbor_mcp` and its declared mechanics; no ACP/vendor modules and no installed Cowboy/Bandit requirement |
 | Native ACP client/agent | Only `arbor_acp` and mechanics; no MCP, Mint/Plug/JOSE or vendor implementation; correct application bootstrap |
 | Vendor adapter | Add `arbor_acp_adapters`; compatible ACP resolves automatically; fake CLI and reviewed real-CLI lifecycle pass without MCP |
-| Combined application | Load MCP, ACP and bundle together; no duplicate modules/app names, telemetry/config collision or cross-runtime state leakage |
-| HTTP hosts | Separate explicit Cowboy and Bandit consumers plus a Phoenix mount; missing listener adapter gives a clear startup error; listener failure preserves independently owned durable state |
+| Combined application | Load all four packages together; no duplicate modules/app names, conflicting config ownership, telemetry attachment duplication or cross-runtime state leakage; preserve the documented legacy wire/storage identifiers |
+| HTTP hosts | Separate explicit Cowboy and Bandit consumers plus a Phoenix mount; declare their qualified host dependency constraints; missing listener adapter gives a clear startup error; runtime stop preserves borrowed host listeners/services and owns its own listener |
 | OTP release | Start from a built release and verify effective child PATH/environment, owner/subprocess shutdown, repeated close, process groups, Unicode framing and no stdout logging corruption |
 
 Measure cold compile time, archive size and dependency/application counts in
-fresh temporary consumer projects. Implement these smoke jobs before October 7;
-the current extraction has not completed this evidence.
+fresh temporary consumer projects. Consumer jobs and private preparations have
+interim receipts; the final sealed source/package graph still requires its own
+normal dependency resolution, compiled consumer and assembled-release evidence.
 
 ## Outstanding release blockers
 
-- Full runtime/scheduler and every transport's integration, store/result/API
-  contracts and deprecated cleanup remain implementation work.
-- Shared package qualification, exact subprocess ABI/defaults, independent CI,
-  version ranges, release owners and final soak duration must be frozen.
+- Finish legacy progress/log delivery and reverse helpers, then complete the
+  remaining HTTP/global-fallback and final mounted-subscription qualification.
+  Addressed resource subscription tracking and durable fanout are implemented
+  and described in [the resource slice](https://github.com/trust-arbor/arbor_mcp/blob/f08c090c44edcda3a53478fd04a7a944c0bf2b7f/docs/V2_HTTP_RESOURCE_PUBLICATION_SLICE.md). Runtime/scheduler, store/result
+  contracts, owned listeners and accepted API retirements have implemented slices;
+  their interim receipts do not establish final cross-transport qualification.
+- Freeze the final four-package compiled ABI/defaults, exact subprocess and
+  dependency contracts, versions/tags and named human release owners. Independent
+  package CI and the accepted 48-hour duration do not replace those final gates.
 - Qualify the shared-handle integration candidates and their exact immutable
   dependency pins. Canonical v2 ACP is now in its own repository; preserve the
   original extraction and dirty spike as migration evidence, without regenerating
@@ -127,9 +139,10 @@ the current extraction has not completed this evidence.
 - Complete packaged consumer, extension/range and publishing qualification.
   Independent ACP manifests and CI exist; Hex ownership/credentials, final
   links and namespace/config/telemetry migration still need release evidence.
-- Finish HTTP runtime/session integration and requalify the optional-listener
-  candidate at the final package commit. Qualify Phoenix, combined/OTP-release
-  consumers, conformance, adapter compatibility and RC soak.
+- Complete the remaining HTTP implementation and requalify installed sessions,
+  aliases, replay and optional listeners at the final package commit. Qualify
+  Phoenix, actual Arbor/combined/OTP-release consumers, conformance, adapter
+  compatibility and the final RC's actual 48-hour soak.
 
 Stable publication requires all blockers cleared and the final RC's full evidence
 reviewed. Keep the frozen 1.x manifest and preserved migration worktrees available

@@ -16,9 +16,12 @@ Prerelease floors explicitly admit the coordinated prerelease and subsequent
 compatible releases. An RC floor excludes earlier development snapshots. Stable
 requirements exclude prereleases and preserve compatibility with later 2.x
 releases. Wrong major versions are rejected. External security floors and optional
-listener dependencies are unchanged.
+listener dependency requirements are preserved during version preparation.
+Optional transitive constraints do not necessarily select the host's listener
+versions: declare the qualified Ranch 1.8.1 or Bandit 1.12.5/Thousand Island 1.5.0
+host dependencies in [HTTP listeners](./HTTP_LISTENERS.md).
 
-Publish `arbor_rpc` first, then `arbor_mcp` and `arbor_acp`, then the optional
+Publish `arbor_rpc` first, then `arbor_acp`, then `arbor_mcp`, then the optional
 `arbor_acp_adapters` bundle. The MCP source tag is `v<version>`. The ACP monorepo
 uses `arbor_rpc-v<version>`, `arbor_acp-v<version>` and
 `arbor_acp_adapters-v<version>` at the same coordinated source commit. ExDoc source

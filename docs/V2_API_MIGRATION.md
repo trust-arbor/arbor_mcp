@@ -1,9 +1,13 @@
 # V2 API migration inventory
 
-Status: accepted retirement inventory; 96 of 102 callable removals, eight
-whole-module removals and four type removals are implemented in the v2 candidate.
+Status: all 102 accepted callable retirements, the eight Tools modules and two
+legacy HTTP wrappers, and four type retirements are implemented in the reviewed
+source candidate.
+The final sealed four-package compiled comparison remains pending.
 Seven additional implementation exports deliberately retire with the reviewed
-runtime redesign; they are recorded separately below. Supported 1.x remains on the default branch.
+runtime redesign; they are recorded separately below. During migration, supported
+1.x remains on the default `master` branch; a later default-branch change is a
+separate release action.
 Candidate v2 source is in the isolated MCP checkout and canonical ACP repository.
 This inventory records the package/namespace split, implemented migrations and
 remaining release gates.
@@ -27,7 +31,9 @@ MCP `69b0a39` / ACP-RPC `0e4cfd1` census. Ordinary Client lifetime and runtime
 privacy freezes are supplementary named checkpoints, not retroactive changes
 to that census. Candidate runtime files remain
 under active development; the presence of a source file does not establish
-release-wide qualification or a final public API.
+release-wide qualification or a final public API. Live status also includes the
+later owned-listener, finite-shutdown, HTTP alias and accepted HttpPlug startup
+retirement followups; the historical compiled counts below are unchanged.
 
 The compiled checkpoint audit reads actual BEAM exports (including macro/default
 arities) and type metadata against the frozen baseline and accepted plan:
@@ -36,10 +42,12 @@ arities) and type metadata against the frozen baseline and accepted plan:
 mix run --no-start scripts/check_v2_api_retirements.exs
 ```
 
-Minimum/current artifacts confirm 96 callable, eight module and four type
-removals. Six HTTP callables and two wrappers remain. Pass `--complete` after
-HTTP migration; it fails while any planned removal is present. This audit does
-not replace the final four-package API/consumer comparison.
+The historical minimum/current artifacts confirm 96 callable, eight module and
+four type removals. Later source followups remove the four HTTP-wrapper callables
+and `HttpPlug.start_link/0,1`, completing the accepted source retirement inventory.
+Run `--complete` on freshly compiled final sources; it fails while any planned
+removal is present. Source absence is not a sealed compiled 102-callable result,
+and this audit does not replace the final four-package API/consumer comparison.
 
 The historical four-package comparison maps 333 of 341 old modules; the eight
 missing modules are accepted Tools retirements. Its 104 missing callables are
@@ -163,23 +171,30 @@ semantic assertions from `compliance/protocol_vs_execution_error_test.exs`,
 Remove `ExMCP.Transport.HTTPServer` and
 `ExMCP.Transport.HTTPServerWithVersion`, including each `init/1` and `call/2`.
 They declare no frozen public types. The replacement Plug is
-`Arbor.MCP.HttpPlug`; `init/1` and `call/2` are present in current main and the
-candidate. It supports forwarded mount paths, bodies already parsed by
+`Arbor.MCP.HttpPlug`; `init/1` and `call/2` remain in the v2 candidate. Supported
+1.x main retains `ExMCP.HttpPlug`. The v2 Plug supports forwarded mount paths and
+bodies already parsed by
 `Plug.Parsers`, canonical initialization and protocol-version validation.
 Removing wrappers does not remove Streamable HTTP, request-owned SSE, sessions,
 resume/replay, OAuth, origin/host checks or explicitly supported legacy HTTP+SSE.
 
-`ExMCP.HttpPlug.start_link/0,1` separately disappear. They only start the
-application-owned session registry. In supported 1.x the replacement is
-ensuring `:ex_mcp` is started, not starting another session owner manually.
-The final v2 replacement is an explicit runtime owning its session/replay/
-subscription stores. Runtime-mounted HTTP has not converged in the candidate;
-do not tell consumers that renaming this startup helper completes that migration.
+`ExMCP.HttpPlug.start_link/0,1` separately disappear in the accepted source
+retirement. They only started the application-owned session registry. In supported
+1.x the replacement is ensuring `:ex_mcp` is started, not starting another session
+owner manually. V2 mounts an explicit Runtime owning its configured services;
+replay stays opt-in. The application still starts the standalone SessionRegistry
+for retained APIs: retiring the helper does not retire that owner accidentally.
+Mounted POST/request-SSE, addressed sessions/replay, cancellation/arrays/MRTR and
+legacy aliases have implemented checkpoints. Addressed resource subscription
+tracking and durable fanout are implemented; publication requires the actual
+HTTP callback context and exact lease identity. See [the resource slice](https://github.com/trust-arbor/arbor_mcp/blob/f08c090c44edcda3a53478fd04a7a944c0bf2b7f/docs/V2_HTTP_RESOURCE_PUBLICATION_SLICE.md).
+Legacy progress/log and reverse helpers, final subscription convergence and
+remaining global-fallback cutover remain gates.
 
-The planned mounted shape is:
+The supported mounted shape is:
 
 ```elixir
-# Final shape required by the runtime contract; HTTP convergence is still pending.
+# The host owns its listener; a supervised Runtime owns handler state and services.
 forward "/mcp", Arbor.MCP.HttpPlug, runtime: MyApp.MCPRuntime
 ```
 
@@ -306,7 +321,7 @@ release gate. No `ExMCP.*` aliases are promised inside the new protocol packages
 
 | Old owner/symbol | New owner and verified candidate |
 |---|---|
-| `ExMCP` and MCP-only `ExMCP.*` | `arbor_mcp`, `Arbor.MCP` / `Arbor.MCP.*`; eight Tools modules are absent. Two HTTP wrappers remain pending replacement/removal, rather than gaining a permanent compatibility promise under the new prefix. |
+| `ExMCP` and MCP-only `ExMCP.*` | `arbor_mcp`, `Arbor.MCP` / `Arbor.MCP.*`; eight Tools modules and the two legacy HTTP wrappers are retired. The replacement Runtime-mounted HttpPlug retains Plug `init/1` / `call/2`, without its old registry startup helpers. |
 | `ExMCP.ACP`, `.Client`, `.Agent` and generic ACP descendants | `arbor_acp`, `Arbor.ACP.*`; `start_client/1`, `start_agent/1`, `run_agent/1` are in the ACP facade. MCP no longer supplies ACP. |
 | `ExMCP.start_acp_client/1` | `Arbor.ACP.start_client/1`; this facade replacement is distinct from the accepted callable retirements. |
 | `ExMCP.ACP.Adapters.*` including nested vendor helpers | Optional `arbor_acp_adapters`, keeping `Arbor.ACP.Adapters.*`. Core ACP has no dependency on the vendor bundle. |
@@ -328,22 +343,23 @@ opaque peer data or persistent keys.
 
 ## Handler runtime migration
 
-The candidate routes Test/BEAM HandlerServer, generated DSL startup and server
-stdio through Runtime/Scheduler and bounded precommit output. HTTP gateway
-convergence remains separate. Earlier slice documents describe their original
+The candidate routes Test/BEAM HandlerServer, generated DSL startup, server
+stdio and installed HTTP requests through Runtime/Scheduler and bounded output.
+Mounted subscription/resource/reverse convergence and final cross-transport
+qualification remain gates. Earlier slice documents describe their original
 evidence boundaries; [the non-symbol migration](./V2_NON_SYMBOL_MIGRATION.md)
 records current source and supplementary freezes without rewriting that history.
 
 | Old usage/contract | Candidate replacement and limits |
 |---|---|
-| `ExMCP.Server.HandlerServer.start_link/1` and generated DSL startup return a handler GenServer PID | `Arbor.MCP.Server.HandlerServer.start_link/1`, generated Test/BEAM startup and `StdioServer.start_link/1` return a native runtime supervisor PID. Child specs become supervisor specs; registered names belong to the root. Runtime-mounted HTTP remains outstanding. |
+| `ExMCP.Server.HandlerServer.start_link/1` and generated DSL startup return a handler GenServer PID | `Arbor.MCP.Server.HandlerServer.start_link/1`, generated startup, `StdioServer.start_link/1` and owned HTTP startup return a native runtime supervisor PID. Child specs become supervisor specs; registered names belong to the root. Existing Phoenix mounts borrow their host listener and address a supervised Runtime. |
 | `self()` during protocol/custom callbacks identifies the transport/handler process | Callbacks execute in supervised tasks; their PID differs from the root, protocol edge and state owner. Scheduler owns committed state and handler init/termination. Resources created inside an invocation inherit task lifetime. An ETS table created in init belongs to the scheduler: callback tasks cannot access a private table or write a protected table. Use explicit state or a supervised state owner for those operations. |
 | `GenServer.call(server, request)` / `GenServer.cast(server, message)` for custom handlers | New `Arbor.MCP.Server.call/2,3` and `cast/2` submit through bounded runtime admission. These are additive helpers, absent from the frozen `ExMCP.Server` callable set. Custom callbacks support `{:reply, reply, next_state}` and `{:noreply, next_state}`; deferred `GenServer.reply`, continuation and stop tuples are unsupported. Override the Handler default before adding custom call clauses. |
 | External inspection assumes `:sys.get_state(server)` contains handler state | Root state is supervisor state. `Runtime.ref/1` gives an opaque runtime reference stable across child restarts; `Runtime.edge/1` is explicit diagnostic/control access. Edge state is protocol state. Direct GenServer calls/sends to an edge bypass supported pre-mailbox admission and are not the migration contract. |
 | Singletons/process-dictionary context and wire ID alone determine cancellation | `Server.Context.cancelled?/0` consults runtime/connection/direction/invocation scope; new `Context.scope/0` exposes that opaque scope during a callback (nil outside); accepted cancellation prevents the invocation's state commit and retires old peer work. A new peer can reuse its wire IDs safely. |
 
 ```elixir
-# Supported candidate Test/BEAM shape; mounted HTTP has a separate gateway gate.
+# Supported candidate Test/BEAM shape; full HTTP convergence has additional gates.
 {:ok, root} = Arbor.MCP.Server.HandlerServer.start_link(handler: MyHandler, transport: :beam)
 {:ok, runtime} = Arbor.MCP.Server.Runtime.ref(root)
 {:ok, client} = Arbor.MCP.Client.start_link(transport: :beam, server: runtime)
@@ -398,9 +414,9 @@ checks remain distinct from symbol parity:
 | Surface | Concrete current evidence and required decision/check |
 |---|---|
 | Application configuration | Migrate `config :ex_mcp` to the actual owner, including module-valued OAuth/task/subscription keys and schema policy. Host Logger/Phoenix settings remain host-owned. Do not blanket-map vendor environment variables or protocol/storage identifiers. Application/launcher stdio Logger migration remains separate from facade behavior and privacy formatting. |
-| HTTP options | Retire the `:sse_enabled` alias separately from the retained `:legacy_http_sse` wire feature. Inventory `:sse_mode`, `:handler_opts` static/function/MFA behavior, `:handler_call_timeout`, `:handler`, `:server`, authentication facts, replay and store options before runtime-mounted HTTP replacement. Per-request handler initialization must not survive behind a renamed option. |
+| HTTP options | `:sse_enabled` and server `:use_sse` retire; `:legacy_http_sse` remains an explicit wire option. `:handler_call_timeout` moves to root `:request_timeout_ms`; per-request static/function/MFA `:handler_opts` becomes charged Context application data, never handler initialization. Explicit Runtime/service addresses replace raw handler/server/store overrides. Preserve authenticated request facts and qualify the final subscription/resource/reverse cutover. |
 | Media options | Implemented in the first retirement checkpoint: full pipeline prevalidation rejects removed tokens before custom effects, and every file builder rejects `:auto_resize` / `:quality` presence before file access. Retained `:mime_types` and `:max_size` constrain loading. See `V2_API_RETIREMENTS_SLICE.md` for exact policies and tests. |
-| Process/store names | Native runtime/service logical references replace cached child PIDs; service descriptors distinguish owned and genuinely namespaced borrowed domains. Legacy production HTTP globals still require convergence. DETS lifecycle/recovery and aggregate Tasks/Replay retained payload bounds remain gates; retaining a filename or changing a module atom does not prove runtime isolation. |
+| Process/store names | Native runtime/service logical references replace cached child PIDs; descriptors distinguish owned and genuinely namespaced borrowed domains. ETS runtime sessions and bounded Tasks/Replay have implemented slices; standalone DETS has its separate finite ownership contract. Remaining HTTP globals and final combined retention/recovery/pressure evidence remain gates; a filename or renamed atom does not prove runtime isolation. |
 | Telemetry and messages | Prefixes become `[:arbor_mcp, ...]` / `[:arbor_acp, ...]`. Managed runtime `server/request/admitted` replaces old `received`: reservation-envelope count/request bytes/runtime PID have different meanings from method-level receipt metadata. Local mailbox ACK, staged batch ACK, physical IO completion and remote consumption are distinct. Selected legacy IDs/messages remain; RPC events carry generation/token with explicit bounded ACK. |
 | Lifecycle/results | Source checkpoints distinguish the committed scoped helper, supplementary ordinary Client lifetime/event-context patches and supplementary privacy diagnostics. Preserve native parent identity, typed cleanup uncertainty, original deadlines and borrowed survival during final integration. ACP's shutdown result expansion and pure managed-receipt callback require consumer changes despite retained names. |
 | Package/consumer release | Validate four real package manifests, normal dependency resolution and clean consumer compilation; move examples, Mix tasks, SDK/ecosystem tooling and tests to the owning package. V2 must include full runtime/scheduler scope and preserved wire-era coverage. No release/tag/publication is implied by source-copy or manifest checks. |
@@ -413,8 +429,9 @@ subscriptions, progress, cancellation, OAuth, schema policy, MRTR or legacy
 negotiation. Check those features with replacement-path tests before deleting
 compatibility code.
 
-The remaining six HTTP signatures/two modules must retire only after qualified
-runtime-mounted replacements exist. Rebuild the final four-package API against
+The accepted six HTTP signatures and two wrappers are retired in the reviewed
+source candidate; Plug `init/1` and `call/2` remain. Rebuild the final four-package
+API against
 the frozen baseline, recording accepted removals, the ACP facade move, the
 seven implementation retirements and all unexpected differences in callables,
 callbacks, types and struct meanings. Validate actual installed consumer graphs,

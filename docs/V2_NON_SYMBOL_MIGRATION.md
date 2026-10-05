@@ -24,6 +24,13 @@ candidate; the final compiled graph, HTTP cutover and RC gates remain open.
 | Mounted HTTP control convergence manifest `59bca49d96ee0dccd7341ae193a2fc9b5ae8cbc9f2dc0f6ae0a0a92795ae12a4` | Accepted legacy notification/init arrays, charged same-lease/trusted-modern cancellation controls and actual MRTR retry/replay; canonical combined23 wire/pure,19 retained-session,43 Gateway wire and332 runtime cases pass both. Merge retains pressure/phase/deadline rules and adds endpoint default fallback; queued/future controls, subscriptions/listeners and finalAPI retirement remain required. |
 | Native RPC write admission, ACP `27f5606` | Aggregate count/byte reservation precedes payload copying and Actor enqueue; final native admission checks original producer cutoff and identity. Canonical RPC113 cases pass all three local toolchains and exact-commit Linux CI passes9/9 including archives. Actual32-producer probe admits3/rejects29 and has zero new native writes after cutoff. Native acknowledgement does not prove vendor consumption or child/group cleanup. |
 
+Live migration status also includes the later owned HTTP constructors, finite
+shutdown at `cfd4686`, aliases/SDK followups at `ecc4ee9`, and the accepted
+HttpPlug startup retirement. Addressed resource tracking and publication are
+implemented at `f08c090`: 78 combined cases pass all three toolchains and 14
+actual resource/alias wire cases pass both supported toolchains. These do not
+change the historical slice counts or establish the final compiled package graph.
+
 The historical census is retained under
 `tmp/v2-semantic-census-69b0a39/{SEMANTIC_CENSUS.md,semantic-inventory.json,REVIEW_NOTES.md}`.
 The Client and runtime privacy freezes are retained under
@@ -113,9 +120,16 @@ in the initiating caller before OTP's native constructor timeout and cannot be
 preempted by it. Arbitrary blocking lookup implementations are unsupported;
 registration and subsequent initialization retain the original cutoff. See
 [the native-name contract](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/runtime.ex).
-Shutdown has one finite overall budget. A genuine replacement gets one new
-epoch; a poll/child operation cannot refresh the current budget. Forced owned
-cleanup can interrupt termination or persistence hooks. Use the parent
+Shutdown has one finite overall budget captured at public stop entry; repeated
+stops can tighten but never renew it. Bounded pre-mailbox control and an independent
+observer enforce it even if ShutdownGuard stalls. Successful cleanup requires the
+authenticated terminal result and observer DOWN; a cutoff without confirmed
+cleanup returns `{:error, :shutdown_cleanup_unconfirmed}`, while lost authority
+returns `{:error, :shutdown_control_unavailable}`. Registration has a fixed 16,384
+proven-owned-PID capacity and reasons have a detached 4 KiB limit. Root/Writer
+DOWN alone does not certify entered borrowed IO completion. A genuine replacement
+gets one new epoch; a poll/child operation cannot refresh the current budget.
+Forced owned cleanup can interrupt termination or persistence hooks. Use the parent
 supervisor's child-termination API when restart policy must not restart an
 endpoint. Borrowed devices/services/listeners survive. See
 [owned startup contracts](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/runtime/service_adapter.ex).
@@ -179,7 +193,7 @@ An ACK has a specific proof boundary:
 | Test/BEAM | Native `send/2` returned after local mailbox handoff; consumer processing/mailbox capacity is not proved. |
 | Batch member | Staged handoff into a charged output group, not delivery of the final array to the peer. |
 | Stdio | Authenticated local IO result **and** physical sender DOWN; runtime/Writer DOWN alone cannot release a borrowed device's retained write. Remote consumption is not proved. |
-| HTTP | Borrowed socket-writer liability must persist until actual adapter return/socket DOWN. Production Gateway integration remains pending at this source checkpoint. |
+| HTTP | Borrowed socket-writer liability persists until actual adapter return/socket DOWN. The installed Gateway/output integration has separate qualified checkpoints; neither preparation nor queue admission establishes physical completion. |
 
 Stdio seals input only after the final admitted frame publication, drains
 accepted work under original deadlines and one EOF cutoff, then stops owned
@@ -350,8 +364,10 @@ matrix; this does not require a Windows backend for the initial v2 release. See
 
 ## Stores, HTTP and persistence
 
-Owned runtime Tasks/Subscriptions are defaults; replay/session/resource services
-are opt-in descriptors. `ServiceRef` follows child replacement and rejects
+Generic Runtime construction defaults to owned Tasks/Subscriptions; replay,
+session and resource services are opt-in descriptors. Explicit HTTP constructors
+have the transport-specific defaults described below. `ServiceRef` follows child
+replacement and rejects
 retired/wrong-kind capabilities without global fallback. Raw subscription/replay
 overrides reject. Borrowed adapters must implement actual namespaced operations
 with a stable host logical key (1–256 bytes) and proven live address; adding a
@@ -377,14 +393,19 @@ See [session store](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206
 
 Optional Cowboy/Bandit listeners are implemented, with explicit backend selection,
 missing-dependency diagnostics and finite shutdown. Mounted host listeners remain
-borrowed. Runtime-mounted HttpPlug/Gateway routing, legacy session/progress/
-reverse/replay convergence and six remaining HTTP API removals are separate gates.
-Mounted POST/request-owned SSE and addressed legacy GET/replay/DELETE now have
-separate qualified source slices. They share the existing initialized Runtime;
-each POST does not reconnect a singleton HandlerServer. Full subscriptions,
-cross-session cancellation, MRTR, notification and initialization arrays, aliases
-and listener API migration remain required. The retained stream keeps its original
-HTTP entry cutoff and a reconnect preserves its typed session. Modern GET/DELETE
+borrowed. Mounted POST/request-owned SSE, progress/log output, addressed legacy
+GET/replay/DELETE, correlated cancellation, MRTR, notification/initialization
+arrays and legacy aliases have separate implemented and qualified source slices.
+They share the existing initialized Runtime; each POST does not reconnect a
+singleton HandlerServer. Addressed resource subscribe/unsubscribe and update
+publication now use the actual callback Task, original cutoff and exact lease,
+private endpoint and identity. Durable acceptance can retain earlier entered
+effects when later output preparation fails; it does not prove client byte
+receipt. See [the resource slice](https://github.com/trust-arbor/arbor_mcp/blob/f08c090c44edcda3a53478fd04a7a944c0bf2b7f/docs/V2_HTTP_RESOURCE_PUBLICATION_SLICE.md).
+Legacy progress/log and reverse helpers, final subscription convergence,
+remaining global-fallback cutover and final combined qualification remain gates. The accepted HTTP wrappers/startup helpers are
+retired in the reviewed source; the final compiled absence audit is pending.
+The retained stream keeps its original HTTP entry cutoff and a reconnect preserves its typed session. Modern GET/DELETE
 remain sessionless 405. See [session streams](./V2_HTTP_SESSION_STREAM_SLICE.md).
 A separate [listener capability](./V2_HTTP_LISTENER_LIFETIME_CORE.md) captures
 its potential lifetime at entry, default one hour from the subscription service.
@@ -534,11 +555,11 @@ remain separate boundaries; formatter coverage alone cannot prove them.
 
 Before RC, rebuild immutable MCP/ACP/adapters/RPC manifests and reconcile every
 unexpected callable, callback, type and struct change, including the seven
-deliberate hidden retirements and privacy callbacks. Complete HTTP replacement
-before its final removal audit. Qualify installed archives/releases, native build
-and priv lookup, package-only consumers, final published dependency constraints,
+deliberate hidden retirements and privacy callbacks. The accepted source HTTP
+retirements do not certify their sealed compiled absence or full HTTP convergence.
+Qualify installed archives/releases, native build and priv lookup, package-only consumers, final published dependency constraints,
 both wire eras, cancellation/EOF/output/borrowed survival, physical pressure,
 durable stores, coverage/conformance/SDKs and the supported toolchain/platform
-matrix. Run the required soak and coordinated versions/tags/publication only
-after those gates pass. See [release plan](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/docs/V2_RELEASE_PLAN.md); this document
+matrix. The accepted final-RC soak is 48 continuous hours and has not started.
+Run it and coordinated versions/tags/publication only after those gates pass. See [release plan](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/V2_RELEASE_PLAN.md); this document
 does not make the release complete.
