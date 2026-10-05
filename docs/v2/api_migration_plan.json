@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "accepted retirement inventory;96callables/8modules/4types removed in candidate; HTTP6/2modules and final release qualification open",
+  "status": "accepted retirement inventory; all102callables/10modules/4types removed in the source candidate; final four-package compiled API and semantic qualification open",
   "baseline": {
     "application": "ex_mcp",
     "package_version": "1.5.0",
