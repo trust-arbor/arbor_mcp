@@ -46,6 +46,14 @@ defmodule Arbor.MCP.Server.StdioServer do
 
   @timer_limit 4_294_967_295
 
+  @doc """
+  Starts an owned stdio Runtime and returns its native supervisor PID.
+
+  Options select `:module` or `:handler` and the borrowed input/output devices.
+  Startup uses one initialization cutoff and acquires the output-device lease
+  before returning. Use `Arbor.MCP.Server` helpers for calls and controls; this
+  PID is a Runtime root, rather than an inline handler GenServer.
+  """
   @spec start_link(keyword()) :: Elixir.Supervisor.on_start()
   def start_link(opts) do
     opts = Keyword.put(opts, :handler, Keyword.get(opts, :module, Keyword.get(opts, :handler)))
@@ -73,6 +81,13 @@ defmodule Arbor.MCP.Server.StdioServer do
     end
   end
 
+  @doc """
+  Returns the supervisor child specification for the owned stdio Runtime.
+
+  The specification starts `start_link/1` and preserves Runtime supervision
+  and diagnostic argument protection. It does not take ownership of borrowed
+  host IO devices.
+  """
   def child_spec(opts),
     do:
       Arbor.MCP.Server.Runtime.Diagnostics.child_spec(%{

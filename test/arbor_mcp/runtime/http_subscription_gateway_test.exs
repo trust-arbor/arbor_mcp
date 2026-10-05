@@ -1,5 +1,5 @@
 defmodule Arbor.MCP.Server.Runtime.HTTPSubscriptionGatewayTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   alias Arbor.MCP.Server.Runtime
   alias Arbor.MCP.Server.{SubscriptionListener, Subscriptions}
 
@@ -201,23 +201,86 @@ defmodule Arbor.MCP.Server.Runtime.HTTPSubscriptionGatewayTest do
 
     socket = socket()
     {binding, listener, pid, _registration} = listen(runtime, socket)
-    ack(socket, binding, listener, pid, :acknowledged)
-    assert_receive {:subscription_ready, ^socket, ^pid, id, cutoff}, 1_000
+    monitor = Process.monitor(pid)
+    assert_receive {:subscription_ready, ^socket, ^pid, ack_id, ack_cutoff}, 1_000
 
-    {:ok, :complete, _message, origin} =
-      call(socket, fn -> SubscriptionListener.checkout_http(pid, id, listener, cutoff) end)
+    assert {:ok, capture} =
+             call(socket, fn ->
+               capture_completion_after_ack(runtime, listener, pid, ack_id, ack_cutoff)
+             end)
 
-    completion = Origin.completion(origin)
-    {:ok, proof} = HTTPListenerCompletion.validate(completion)
-    Process.sleep(max(0, proof.deadline + 5 - Deadline.now()))
-    assert not Origin.valid?(origin)
+    # Public close captures this genuine completion early; the adjacent case
+    # separately preserves natural listener-expiry coverage.
+    assert capture.ack_at < capture.listener_deadline
+    assert capture.tail_deadline == capture.listener_deadline + 80
+    assert capture.completion_at < capture.tail_deadline
+    assert capture.checkout_cutoff == min(capture.ready_cutoff, capture.tail_deadline)
+    assert capture.proof.deadline == capture.tail_deadline
+    assert {:error, :http_listener_closed} = HTTPListenerBinding.validate(listener, runtime)
+    completion = Origin.completion(capture.origin)
+    Process.sleep(max(0, capture.tail_deadline + 5 - Deadline.now()))
+    assert not Origin.valid?(capture.origin)
 
     assert {:error, :http_listener_completion_closed} =
              call(socket, fn -> HTTPWriterRegistry.prepare_listener_completion(completion) end)
 
     assert {:error, _} = call(socket, fn -> HTTPWriterRegistry.prepare(binding, "late") end)
     assert %{frames: 0, in_flight: 0} = HTTPWriterRegistry.stats(domain(binding))
-    call(socket, fn -> SubscriptionListener.delivered_http(pid, id, listener) end)
+    call(socket, fn -> SubscriptionListener.delivered_http(pid, capture.id, listener) end)
+    assert_receive {:DOWN, ^monitor, :process, ^pid, _reason}, 1_000
+    assert :ok = call(socket, fn -> HTTPWriterRegistry.retire(binding) end)
+    eventually(fn -> HTTPWriterRegistry.stats(domain(binding)).bindings == 0 end)
+  end
+
+  test "ACK and close processed after the original completion tail cannot renew authority" do
+    runtime =
+      runtime(
+        output_timeout_ms: 80,
+        services: [subscriptions: [options: [max_lifetime_ms: 100]]]
+      )
+
+    socket = socket()
+    {binding, listener, pid, _registration} = listen(runtime, socket)
+    monitor = Process.monitor(pid)
+    assert_receive {:subscription_ready, ^socket, ^pid, id, cutoff}, 1_000
+
+    assert {{:ok, listener_proof}, {:ok, tail_deadline}, {:ok, :acknowledged, _message, origin}} =
+             call(socket, fn ->
+               {:ok, proof} = HTTPListenerBinding.validate(listener, runtime)
+
+               {{:ok, proof}, HTTPWriterRegistry.listener_wait_deadline(listener, runtime),
+                SubscriptionListener.checkout_http(pid, id, listener, min(cutoff, proof.deadline))}
+             end)
+
+    assert Deadline.now() < listener_proof.deadline
+    assert tail_deadline == listener_proof.deadline + 80
+    :ok = :sys.suspend(pid, Deadline.remaining(listener_proof.deadline))
+
+    try do
+      assert :ok =
+               call(socket, fn ->
+                 :ok = SubscriptionListener.delivered_http(pid, id, listener)
+                 SubscriptionListener.close(pid)
+               end)
+
+      Process.sleep(max(0, tail_deadline + 5 - Deadline.now()))
+      assert not Origin.valid?(origin)
+      assert {:error, :http_listener_closed} = HTTPListenerBinding.validate(listener, runtime)
+
+      assert {:error, :http_listener_closed} =
+               call(socket, fn -> HTTPWriterRegistry.listener_wait_deadline(listener, runtime) end)
+
+      assert {:error, _} = call(socket, fn -> HTTPWriterRegistry.prepare(binding, "late") end)
+      assert %{frames: 0, in_flight: 0} = HTTPWriterRegistry.stats(domain(binding))
+      :ok = :sys.resume(pid, 1_000)
+      assert_receive {:DOWN, ^monitor, :process, ^pid, _reason}, 1_000
+      refute_receive {:subscription_ready, ^socket, ^pid, _id, _cutoff}, 20
+      assert :ok = call(socket, fn -> HTTPWriterRegistry.retire(binding) end)
+      eventually(fn -> HTTPWriterRegistry.stats(domain(binding)).bindings == 0 end)
+      assert Process.alive?(socket)
+    after
+      if Process.alive?(pid), do: :sys.resume(pid, 1_000)
+    end
   end
 
   test "maintenance retains completion authority after both ordinary listener and old invocation tails expire" do
@@ -442,6 +505,57 @@ defmodule Arbor.MCP.Server.Runtime.HTTPSubscriptionGatewayTest do
 
     assert :ok = call(socket, fn -> SubscriptionListener.delivered_http(pid, id, listener) end)
     assert HTTPWriterRegistry.stats(domain(binding)).in_flight == 0
+  end
+
+  defp capture_completion_after_ack(runtime, listener, pid, id, cutoff) do
+    with {:ok, listener_proof} <- HTTPListenerBinding.validate(listener, runtime),
+         {:ok, tail_deadline} <- HTTPWriterRegistry.listener_wait_deadline(listener, runtime),
+         {:ok, :acknowledged, _message, _origin} <-
+           SubscriptionListener.checkout_http(
+             pid,
+             id,
+             listener,
+             min(cutoff, listener_proof.deadline)
+           ),
+         :ok <- SubscriptionListener.delivered_http(pid, id, listener),
+         remaining when remaining > 0 <- Deadline.remaining(listener_proof.deadline) do
+      # The actual socket sent the cast and this system request to the same Listener.
+      # The returned native state therefore proves that exact ACK was processed.
+      state = :sys.get_state(pid, remaining)
+      ack_at = Deadline.now()
+
+      if is_nil(state.runtime_delivery.in_flight) and ack_at < listener_proof.deadline do
+        :ok = SubscriptionListener.close(pid)
+
+        receive do
+          {:ex_mcp_subscription_ready, ^pid, complete_id, ready_cutoff} ->
+            checkout_cutoff = min(ready_cutoff, tail_deadline)
+
+            with {:ok, :complete, _message, origin} <-
+                   SubscriptionListener.checkout_http(pid, complete_id, listener, checkout_cutoff),
+                 {:ok, proof} <- HTTPListenerCompletion.validate(Origin.completion(origin)) do
+              {:ok,
+               %{
+                 id: complete_id,
+                 origin: origin,
+                 proof: proof,
+                 ack_at: ack_at,
+                 listener_deadline: listener_proof.deadline,
+                 tail_deadline: tail_deadline,
+                 ready_cutoff: ready_cutoff,
+                 checkout_cutoff: checkout_cutoff,
+                 completion_at: Deadline.now()
+               }}
+            end
+        after
+          Deadline.remaining(tail_deadline) -> {:error, :completion_not_ready_before_cutoff}
+        end
+      else
+        {:error, :ack_not_processed_before_cutoff}
+      end
+    end
+  catch
+    :exit, _reason -> {:error, :subscription_unavailable}
   end
 
   defp settle_response(binding) do

@@ -64,6 +64,37 @@ source delta. Regenerate final manifests after all overlays; added callbacks,
 changed types/struct meanings and generated consumer modules require their own
 review even when the old export name remains.
 
+### Current compiled API census: API4 snapshot
+
+The fresh four-package production comparison at MCP
+`9d18d9b6266260acbda45b5f7399c19c11c01327` and ACP/RPC/adapters
+`47c9e8a303cb0b3fcbb9c1c748e49edfa53a377b` is a separate snapshot from the
+historical counts above. On minimum and current toolchains, it maps 331 old
+modules, classifies ten module retirements and 110 missing callables
+(102 accepted retirements, the moved ACP facade and seven implementation
+exports), and reports zero unintended missing items or ownership differences.
+The four missing types remain the accepted Tools types.
+
+Both captures contain eleven retained type-definition changes and sixteen
+struct changes: fifteen structs gain fields and the accepted
+`Tools.Builder.Tool` struct retires entirely. Three callback contracts expand:
+ACP `Adapter.shutdown/1`, MCP `Transport.close/1`, and the hidden
+`Internal.SessionStore.close/1` seam. Minimum reflection also renders unchanged
+`Client.Middleware.call/2`'s `fun()` as `(... -> any())`; the released and current
+source declarations match, so that fourth rendered row is not a callback
+contract change. See the [current semantic census](./V2_NON_SYMBOL_MIGRATION.md#current-api4-type-callback-and-struct-census)
+for the additional fields and consumer actions.
+
+The retained `Server.DSL.Result` constructor delegates and StdioServer startup
+entrypoints have explicit function documentation linking their replacement and
+Runtime ownership contracts. This documentation followup changes no production
+forms, signatures or retirement-plan classifications.
+
+API4 is a source-qualified `2.0.0-dev` API snapshot, not release qualification.
+The later legacy Client async-POST correction requires a new source association
+and reflection. Final RC metadata, external consumers, paired performance,
+platform/wire qualification and the continuous soak remain separate gates.
+
 ## Deliberate implementation-surface retirements
 
 These seven former exports are already absent from the new architecture and

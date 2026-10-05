@@ -313,6 +313,62 @@ mock GenServer. Mock replies use caller-owned bounded handoff and original
 deadline. See [ConnectionManager](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/client/connection_manager.ex)
 and [mock implementation](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/testing/mock_server.ex).
 
+### Current API4 type, callback and struct census
+
+The production API4 snapshot is MCP
+`9d18d9b6266260acbda45b5f7399c19c11c01327` plus ACP/RPC/adapters
+`47c9e8a303cb0b3fcbb9c1c748e49edfa53a377b`. Minimum and current captures each
+report eleven retained type changes and sixteen struct changes. The seven-type
+and eight-struct tables above remain historical; this section adds the later
+associations without rewriting them. It does not qualify subsequent Client
+fixes or final RC artifacts.
+
+The eleven retained types comprise the seven named historical rows plus these
+four later definitions:
+
+| Later retained type | Actual migration contract |
+| --- | --- |
+| `Server.RequestContext.t/0` | Adds `application_context`; `notification_target` becomes an opaque term rather than only a PID. Resolved HTTP `handler_opts` supplies charged per-request application data, not another handler init. Use Context helpers rather than sending to or reconstructing a target. |
+| `Server.Subscriptions.Entry.t/0` | Adds `http_listener`, explicitly documented as private transport bookkeeping. Use registration/listener APIs; copying fields does not create listener authority. |
+| `SessionManager.config/0` | Adds `storage_io_timeout_ms`, default 5,000 and finite range 1..4,294,967,295. DETS timeout may follow an entered durable effect; its path stays exclusive until cleanup is confirmed. ETS ignores this option. See [DETS lifecycle](./V2_DETS_LIFECYCLE.md). |
+| `Transport.HTTP.LegacySSE.t/0` | Adds the original `deadline` used by bounded transport exchanges. Use Client/transport APIs; do not renew a saved invocation cutoff or persist a transport struct across versions. |
+
+The three real callback expansions are ACP `Adapter.shutdown/1` (plain state,
+`{:ok, state}` or `{:error, reason, state}`), MCP `Transport.close/1`
+(`:ok | {:error, reason}`), and hidden `Internal.SessionStore.close/1`
+(`:ok | {:error, reason}`). SessionManager remains the public store facade;
+the hidden callback is not a new public backend-extension promise. Minimum
+reflection adds a fourth row for `Client.Middleware.call/2`, rendering `fun()`
+as `(... -> any())`. Its old and new source declarations are identical.
+
+The sixteen struct changes are fifteen additions and one entire retirement:
+
+| Struct | API4 field changes and ownership |
+| --- | --- |
+| `Arbor.ACP.AdapterBridge` | Adds `cleanup_result`, `port_generation`, `port_monitor`; preserve known cleanup failures and use managed child APIs. |
+| `Arbor.ACP.Adapters.Pi` | Adds `cleanup_result`, `framing`, `port_monitor`, `subprocess_error`; retained child fields do not expose a raw Port contract. |
+| `Arbor.ACP.Client` | Adds `cleanup_result`, `transport_actor_monitor`; actor death does not turn unconfirmed cleanup into success. |
+| `Arbor.MCP.Client` | Adds `cleanup_result`; use typed public disconnect/stop outcomes. |
+| `Internal.SessionStore.DETS` | Adds `gate`, `io_timeout_ms`, `owner`, `token`; private I/O ownership, accessed through SessionManager. |
+| `Server.RequestContext` | Adds `application_context`; request data has invocation lifetime. |
+| `Server.SubscriptionListener` | Adds `http_listener`, `runtime_delivery`; transport authority and charged delivery are private bookkeeping. |
+| `Server.Subscriptions` | Adds `publication_mailbox`, `publication_timeout_ms`, `runtime_table`; use bounded publication APIs. |
+| `Server.Subscriptions.Entry` | Adds `http_listener`; registrations retain exact writer/listener identity. |
+| `Server.Tools.Builder.Tool` | Entire struct and all eight fields retire under the accepted Tools replacement. No serialized builder-struct replacement is promised. |
+| `Tasks.Store.ETS.Entry` | Adds `bytes`; retained memory accounting belongs to the store. |
+| `Testing.MockTransport` | Adds `deadline`; mock exchanges retain original caller budgets. |
+| `Transport.HTTP.LegacySSE` | Adds `deadline`; supported transport APIs manage it. |
+| `Transport.Local`, `Transport.Test` | Each adds `connection`, `peer_event_context`, `runtime`; use active connection/generation APIs rather than a saved peer PID. |
+| `Transport.Stdio` | Adds `monitor`, `subprocess`; use the opaque child/receipt lifecycle. |
+
+Unqualified names in this table use `Arbor.MCP.*`. These are reflected shape
+changes, not persisted-term or hot-upgrade compatibility guarantees. Known
+cleanup errors, opaque authority and actual ownership remain behavioral
+contracts even where the exported name or a broad term type is unchanged.
+The final legacy Client async-POST followup and RC metadata require fresh
+compiled association; consumers/performance/continuous soak are not certified
+by this census.
+
 ## Client, adapter and subprocess ownership
 
 The committed scoped helper accepts a **connection specification**, creates its
