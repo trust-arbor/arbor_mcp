@@ -119,7 +119,14 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
     root_monitor = Process.monitor(root)
     guard_monitor = Process.monitor(guard)
     observer_monitor = Process.monitor(observer)
-    caller = spawn(fn -> send(parent, {:after_root_stop, Runtime.stop(ref)}) end)
+
+    caller =
+      spawn(fn ->
+        result = Runtime.stop(ref)
+        returned_at = Deadline.now()
+        send(parent, {:after_root_stop, result, returned_at})
+      end)
+
     caller_monitor = Process.monitor(caller)
     assert_receive {:held_terminate, ^owner}
     %{cutoff: cutoff} = ShutdownControl.stats(table)
@@ -128,11 +135,11 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
     assert_receive {:DOWN, ^root_monitor, :process, ^root, :normal}, 300
     assert Process.alive?(guard)
 
-    assert_receive {:after_root_stop, result}
+    assert_receive {:after_root_stop, result, returned_at}
                    when result in [:ok, {:error, :shutdown_cleanup_unconfirmed}],
                    500
 
-    assert Deadline.now() <= cutoff + 50
+    assert returned_at <= cutoff + 50
     assert_receive {:DOWN, ^guard_monitor, :process, ^guard, :killed}, 100
     assert_receive {:DOWN, ^observer_monitor, :process, ^observer, :normal}, 100
     assert_receive {:DOWN, ^caller_monitor, :process, ^caller, :normal}, 100
