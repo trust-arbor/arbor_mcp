@@ -14,7 +14,14 @@ defmodule Arbor.MCP.Server.Subscriptions do
     do: Arbor.MCP.Server.Runtime.Diagnostics.format_status(status, __MODULE__)
 
   alias Arbor.MCP.Server.SubscriptionListener
-  alias Arbor.MCP.Server.Runtime.{Deadline, ServiceAdapter, Services}
+
+  alias Arbor.MCP.Server.Runtime.{
+    Deadline,
+    HTTPListenerBinding,
+    ServiceAdapter,
+    Services
+  }
+
   alias Arbor.MCP.Server.Subscriptions.{Entry, ETS, Mailbox, Origin}
   alias Arbor.MCP.SubscriptionFilter
   alias Arbor.MCP.Tasks.Extension, as: TasksExtension
@@ -67,6 +74,28 @@ defmodule Arbor.MCP.Server.Subscriptions do
       registry = Keyword.get(opts, :registry, __MODULE__)
       GenServer.call(registry, {:listen, subscription_id, requested_filter, transport_ref, opts})
     end)
+  end
+
+  @doc false
+  def listen_http(binding, subscription_id, requested_filter, opts \\ []) do
+    with {:ok, proof} <- HTTPListenerBinding.validate(binding),
+         true <- proof.gateway == self(),
+         {:ok, __MODULE__, resolved} <-
+           Services.subscription_options(Keyword.put(opts, :runtime, proof.runtime)),
+         true <- Deadline.remaining(proof.source_deadline) > 0 do
+      resolved =
+        resolved |> Keyword.put(:http_listener, binding) |> Keyword.put(:runtime, proof.runtime)
+
+      GenServer.call(
+        resolved[:registry],
+        {:listen, subscription_id, requested_filter, proof.writer, resolved},
+        min(1_000, Deadline.remaining(proof.source_deadline))
+      )
+    else
+      _invalid -> {:error, :subscription_origin_retired}
+    end
+  catch
+    :exit, _reason -> {:error, :subscription_origin_retired}
   end
 
   @spec cancel(pid(), Arbor.MCP.Types.request_id(), keyword()) :: :ok | {:error, term()}
@@ -313,11 +342,16 @@ defmodule Arbor.MCP.Server.Subscriptions do
     end
   end
 
-  def handle_call({:listen, subscription_id, requested, transport_ref, opts}, _from, state) do
+  def handle_call(
+        {:listen, subscription_id, requested, transport_ref, opts},
+        {caller, _tag},
+        state
+      ) do
     opts = ensure_authorization_context(opts)
     {entries, state} = all_entries(state)
 
-    with :ok <- validate_subscription_id(subscription_id),
+    with :ok <- http_listener_current(opts, transport_ref, caller),
+         :ok <- validate_subscription_id(subscription_id),
          :ok <- validate_transport_ref(transport_ref),
          :ok <- validate_identity(opts),
          :ok <-
@@ -336,6 +370,7 @@ defmodule Arbor.MCP.Server.Subscriptions do
          {:ok, honoured} <- authorize_filter(task_authorized, transport_ref, opts, state),
          :ok <- ensure_not_registered(entries, transport_ref, subscription_id),
          :ok <- enforce_limits(entries, transport_ref, opts, state),
+         :ok <- http_listener_current(opts, transport_ref, caller),
          {:ok, entry, state} <-
            start_listener(subscription_id, honoured, transport_ref, opts, state) do
       {:reply, {:ok, entry}, state}
@@ -518,11 +553,19 @@ defmodule Arbor.MCP.Server.Subscriptions do
     max_queue_bytes =
       min(option(opts, :max_queue_bytes, state.max_queue_bytes), state.max_queue_bytes)
 
+    listener_deadline = http_listener_deadline(opts)
+
+    max_lifetime_ms =
+      if listener_deadline,
+        do: min(max_lifetime_ms, Deadline.remaining(listener_deadline)),
+        else: max_lifetime_ms
+
     expires_at = System.system_time(:millisecond) + max_lifetime_ms
 
     listener_opts = [
       registry: self(),
       runtime_table: state.runtime_table,
+      runtime: Keyword.get(opts, :runtime),
       token: token,
       subscription_id: subscription_id,
       transport_ref: transport_ref,
@@ -536,7 +579,9 @@ defmodule Arbor.MCP.Server.Subscriptions do
       max_message_bytes: max_message_bytes,
       max_queue_bytes: max_queue_bytes,
       publication_timeout_ms: state.publication_timeout_ms,
-      max_lifetime_ms: max_lifetime_ms
+      max_lifetime_ms: max_lifetime_ms,
+      http_listener: Keyword.get(opts, :http_listener),
+      listener_deadline: listener_deadline
     ]
 
     case DynamicSupervisor.start_child(
@@ -552,6 +597,7 @@ defmodule Arbor.MCP.Server.Subscriptions do
           filter: filter,
           principal_id: Keyword.get(opts, :principal_id),
           tenant_id: Keyword.get(opts, :tenant_id),
+          http_listener: Keyword.get(opts, :http_listener),
           expires_at: expires_at
         }
 
@@ -563,17 +609,54 @@ defmodule Arbor.MCP.Server.Subscriptions do
   end
 
   defp register_listener(listener, entry, state) do
-    case put_entry(entry, state) do
+    case listener_entry_current(entry) && put_entry(entry, state) do
       {:ok, state} ->
         ref = Process.monitor(listener)
         SubscriptionListener.activate(listener)
 
         {:ok, entry, %{state | monitors: Map.put(state.monitors, ref, {listener, entry.token})}}
 
+      false ->
+        _result = DynamicSupervisor.terminate_child(state.listener_supervisor, listener)
+        {:error, :subscription_origin_retired}
+
       {:error, reason, state} ->
         _result = DynamicSupervisor.terminate_child(state.listener_supervisor, listener)
         {:error, reason, state}
     end
+  end
+
+  defp http_listener_current(opts, transport, caller) do
+    case Keyword.get(opts, :http_listener) do
+      nil ->
+        :ok
+
+      binding ->
+        with {:ok, proof} <- HTTPListenerBinding.validate(binding, opts[:runtime]),
+             true <- proof.writer == transport and proof.gateway == caller,
+             true <- Deadline.remaining(proof.source_deadline) > 0,
+             do: :ok,
+             else: (_invalid -> {:error, :subscription_origin_retired})
+    end
+  end
+
+  defp http_listener_deadline(opts) do
+    case Keyword.get(opts, :http_listener) do
+      nil ->
+        nil
+
+      binding ->
+        case HTTPListenerBinding.validate(binding, opts[:runtime]) do
+          {:ok, proof} -> proof.deadline
+          _retired -> Deadline.now()
+        end
+    end
+  end
+
+  defp listener_entry_current(%{http_listener: nil}), do: true
+
+  defp listener_entry_current(%{http_listener: binding}) do
+    match?({:ok, _proof}, HTTPListenerBinding.validate(binding))
   end
 
   defp authorize_filter(requested, transport_ref, opts, state) do

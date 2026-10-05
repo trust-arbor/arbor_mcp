@@ -179,7 +179,10 @@ defmodule Arbor.MCP.Server.Runtime.HTTPRetainedSessionTest do
     assert (session_conn(:delete, id) |> HttpPlug.call(wrong)).status == 404
     assert (Plug.Test.conn(:delete, "/mcp") |> HttpPlug.call(opts)).status == 400
     assert {:ok, _} = SessionManager.get_session(service, lease, [])
-    {:ok, pending} = SessionManager.create_session(service, %{}, [])
+
+    {:ok, pending} =
+      SessionManager.create_session(service, %{transport_endpoint: "/mcp"}, [])
+
     assert (session_conn(:delete, SessionLease.id(pending)) |> HttpPlug.call(opts)).status == 400
     assert {:ok, _} = SessionManager.get_session(service, pending, [])
   end
@@ -427,17 +430,19 @@ defmodule Arbor.MCP.Server.Runtime.HTTPRetainedSessionTest do
 
   # DELETE's short socket deadline is under test, rather than HTTP initialize.
   # Set up its session through the supported addressed service API with one
-  # separate finite cutoff. Other fixtures retain actual wire initialization.
+  # separate finite cutoff and the installed Plug's private mount domain.
+  # Other fixtures retain actual wire initialization.
   defp initialized_session(extra) do
     runtime = runtime(extra)
     opts = HttpPlug.init(runtime: runtime, protocol_mode: :legacy_only, sse_mode: :oneshot)
     {:ok, service} = Runtime.service(runtime, :sessions)
     setup = [deadline: System.monotonic_time(:millisecond) + 1_000]
-    {:ok, lease} = SessionManager.create_session(service, %{}, setup)
+    metadata = %{transport_endpoint: "/mcp"}
+    {:ok, lease} = SessionManager.create_session(service, metadata, setup)
     {:ok, claim} = SessionManager.claim_initialization(service, lease, setup)
     assert :ok == SessionManager.complete_initialization(service, claim, "2025-11-25", setup)
     id = SessionLease.id(lease)
-    {:ok, lease} = SessionManager.ensure_initialized_session(service, id, %{}, setup)
+    {:ok, lease} = SessionManager.ensure_initialized_session(service, id, metadata, setup)
     {runtime, opts, id, service, lease}
   end
 

@@ -12,31 +12,36 @@ defmodule Arbor.MCP.HttpPlug do
   `sse_enabled: true` option remains an alias for compatibility. New servers do
   not enable this deprecated transport by default.
 
-  ## Handler options
+  ## Runtime mounts and request context
 
-  `:handler_opts` configures the argument passed to a handler module's
-  `init/1`. It may be a static term, a one-arity function called with the
-  `Plug.Conn`, a two-arity function called with the `Plug.Conn` and decoded
-  JSON-RPC request, or an `{module, function, extra_args}` tuple. MFA handlers
-  are called as `apply(module, function, [conn, request | extra_args])`.
+  Start one `Arbor.MCP.Server.Runtime` under the application's supervision tree
+  and mount this plug with `runtime: MyApp.MCPRuntime`. The runtime initializes
+  its handler once from `Runtime.handler_args`; every POST uses that same
+  scheduler and handler state.
 
-  `:handler_call_timeout` is the server-side deadline, in milliseconds, for
-  each call from the plug into a Handler process (default: `10_000`). It is
-  independent of client request and stream timeouts.
+  On a runtime mount, `:handler_opts` supplies per-request application context,
+  available as `Arbor.MCP.Server.Context.current().application_context`. It may
+  be a static term, a one-arity function called with the `Plug.Conn`, a two-arity
+  function called with the connection and decoded JSON-RPC request, or an
+  `{module, function, extra_args}` tuple called with `[conn, request | extra_args]`.
+  The context is charged before dispatch. Resolution and validation cannot
+  extend the original HTTP entry deadline. Configure the runtime's
+  `:request_timeout_ms` for work lifetime.
 
   ## Usage
 
-      # With Cowboy
-      {:ok, _} = Plug.Cowboy.http(Arbor.MCP.HttpPlug, [
-        handler: MyApp.MCPServer,
-        server_info: %{name: "my-app", version: "1.0.0"}
-      ], port: 4000)
+      # In the host application's supervision tree
+      {Arbor.MCP.Server.Runtime,
+       name: MyApp.MCPRuntime, handler: MyApp.MCPServer, handler_args: []}
+
+      # Borrow the host listener and mount the existing runtime
+      {:ok, _} = Plug.Cowboy.http(Arbor.MCP.HttpPlug,
+        [runtime: MyApp.MCPRuntime, path: "/mcp"], port: 4000)
 
       # With Phoenix (router)
       scope "/api" do
         forward "/mcp", Arbor.MCP.HttpPlug,
-          handler: MyApp.MCPServer,
-          server_info: %{name: "my-app", version: "1.0.0"}
+          runtime: MyApp.MCPRuntime, path: "/mcp"
       end
 
   The plug answers every request it receives and halts the connection
@@ -54,8 +59,7 @@ defmodule Arbor.MCP.HttpPlug do
   To enable OAuth 2.1 bearer token validation:
 
       plug Arbor.MCP.HttpPlug,
-        handler: MyApp.MCPServer,
-        server_info: %{name: "my-app"},
+        runtime: MyApp.MCPRuntime,
         oauth_enabled: true,
         resource: "https://mcp.example.com/mcp",
         authorization_servers: ["https://auth.example.com"],
@@ -110,7 +114,7 @@ defmodule Arbor.MCP.HttpPlug do
   its POST response stream. `notifications/progress` and
   `notifications/message` are written only there, followed by one final
   JSON-RPC response that closes the stream. A disconnect or chunk failure
-  cancels that request's worker and temporary handler without affecting other
+  cancels that request's worker without affecting other
   requests or subscriptions.
 
   ### Session ids
@@ -321,6 +325,8 @@ defmodule Arbor.MCP.HttpPlug do
   end
 
   defp call_captured(conn, opts) do
+    opts = Map.put(opts, :http_endpoint, transport_endpoint(conn, opts))
+
     conn =
       if request_host_allowed?(conn, opts) do
         dispatch(conn, opts)
@@ -333,6 +339,24 @@ defmodule Arbor.MCP.HttpPlug do
     # plug is placed directly in an endpoint it keeps the router from running
     # against an already-sent conn.
     halt(conn)
+  end
+
+  # The host router supplies script_name. Caller headers, body metadata and
+  # configured public endpoint values cannot author this private mount identity.
+  # Relative legacy aliases share the same canonical forward domain.
+  defp transport_endpoint(conn, opts) do
+    logical = Map.get(opts, :endpoint, "/mcp")
+
+    parts =
+      case conn.script_name do
+        [] ->
+          split_path(logical)
+
+        prefix ->
+          prefix
+      end
+
+    :binary.copy("/" <> Enum.join(parts, "/"))
   end
 
   defp dispatch(conn, opts) do
@@ -1273,14 +1297,27 @@ defmodule Arbor.MCP.HttpPlug do
              dispatch_opts:
                runtime_dispatch_opts(Map.put(resolved, :runtime_format, format), conn)
            ),
-         {:ok, effect, wire} <- RuntimeWriter.await(conn) do
+         response <- RuntimeWriter.await(conn),
+         :ok <- runtime_response_ready(response) do
       conn =
         conn
         |> maybe_add_cors_headers(opts)
         |> add_protocol_version_header()
         |> maybe_put_session_header(RuntimeSession.id(session))
 
-      write_runtime_output(conn, effect, wire, format, session, request)
+      case response do
+        {:ok, effect, wire} ->
+          write_runtime_output(conn, effect, wire, format, session, request)
+
+        {:listener, binding, listener, registration} ->
+          Arbor.MCP.HttpPlug.RuntimeSubscriptionStream.serve(
+            conn,
+            binding,
+            listener,
+            registration,
+            opts
+          )
+      end
     else
       {:error, reason} = error
       when reason in [
@@ -1301,6 +1338,10 @@ defmodule Arbor.MCP.HttpPlug do
         reject_mcp_request(error, conn, opts, nil, nil, nil)
     end
   end
+
+  defp runtime_response_ready({:ok, _effect, _wire}), do: :ok
+  defp runtime_response_ready({:listener, _binding, _pid, _registration}), do: :ok
+  defp runtime_response_ready(error), do: error
 
   defp runtime_json(body) do
     case Jason.decode(body) do
@@ -1394,6 +1435,7 @@ defmodule Arbor.MCP.HttpPlug do
       :instructions,
       :request_state,
       :endpoint,
+      :http_endpoint,
       :max_input_requests,
       :max_mrtr_bytes,
       :require_replay_protection,
@@ -2477,6 +2519,7 @@ defmodule Arbor.MCP.HttpPlug do
   defp session_metadata(opts, token_info, transport, extra \\ %{}) do
     %{
       transport: transport,
+      transport_endpoint: Map.get(opts, :http_endpoint),
       principal_id: Map.get(opts, :principal_id),
       tenant_id: Map.get(opts, :tenant_id),
       issuer: token_claim(token_info, ["iss", :iss]),

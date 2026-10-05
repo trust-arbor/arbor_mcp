@@ -12,7 +12,7 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
   }
 
   @identity [:principal_id, :tenant_id, :issuer, :audience]
-  @metadata @identity ++ [:transport, :client_info]
+  @metadata @identity ++ [:transport, :transport_endpoint, :client_info]
   @defaults [
     max_sessions: 128,
     max_metadata_bytes: 1_000_000,
@@ -93,7 +93,7 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
       expires_at: ServiceOperation.now() + model.limits.session_ttl_ms
     }
 
-    with true <- valid_id?(id) and is_map(metadata),
+    with true <- valid_id?(id) and is_map(metadata) and valid_transport_metadata?(metadata),
          false <- SessionStore.member(model.store, :sessions, key),
          true <- SessionStore.info(model.store, :sessions, :size) < model.limits.max_sessions,
          :ok <- row_capacity(model, key, row),
@@ -497,7 +497,31 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
   end
 
   defp identity_matches?(bound, supplied),
-    do: is_map(supplied) and Enum.all?(@identity, &(Map.get(bound, &1) == Map.get(supplied, &1)))
+    do:
+      is_map(supplied) and Enum.all?(@identity, &(Map.get(bound, &1) == Map.get(supplied, &1))) and
+        transport_identity_matches?(bound, supplied)
+
+  # Trusted addressed application calls retain their existing metadata-free
+  # lookup. Every HTTP path supplies this private field before store access.
+  defp transport_identity_matches?(bound, supplied) do
+    case Map.fetch(supplied, :transport_endpoint) do
+      :error ->
+        true
+
+      {:ok, endpoint} ->
+        valid_transport_metadata?(supplied) and Map.get(bound, :transport_endpoint) == endpoint
+    end
+  end
+
+  defp valid_transport_metadata?(metadata) do
+    case Map.fetch(metadata, :transport_endpoint) do
+      :error ->
+        true
+
+      {:ok, value} ->
+        is_binary(value) and byte_size(value) in 1..4_096 and String.starts_with?(value, "/")
+    end
+  end
 
   defp ensure_identity(bound, supplied) do
     if identity_matches?(bound, supplied),

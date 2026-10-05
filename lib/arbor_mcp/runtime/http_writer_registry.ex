@@ -10,6 +10,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
     Admission,
     Deadline,
     HTTPListenerBinding,
+    HTTPListenerCompletion,
     HTTPWriterBinding,
     HTTPWriterProxy,
     HTTPWriteTicket,
@@ -223,7 +224,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
   defp establish_listener_current(domain, info, source, opts) do
     with %{state: :available, deadline: maximum} = listener when is_integer(maximum) <-
            info.authority.listener,
-         true <- info.authority.phase == :entered and info.authority.work == nil,
+         true <- listener_setup_source?(domain, info.authority, source),
          true <- not info.authority.lease_bound,
          {:ok, settings} <- listener_options(opts),
          {:ok, reservation} <- Admission.current(Ref.table(domain.runtime), source),
@@ -246,7 +247,13 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
           source_deadline: min(reservation.deadline, info.proof.deadline),
           endpoint: settings.endpoint,
           identity: materialize_identity(settings.identity),
-          deadline: deadline
+          deadline: deadline,
+          terminal: %{
+            deadline: deadline + domain.limits.failure_timeout_ms,
+            state: 1,
+            token: make_ref(),
+            effect: make_ref()
+          }
         })
 
       {:ok, %{info | authority: %{info.authority | phase: :listener, listener: listener}}}
@@ -254,6 +261,230 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
       _invalid -> {:error, :invalid_http_listener_binding}
     end
   end
+
+  defp listener_setup_source?(_domain, %{phase: :entered, work: nil}, _source), do: true
+
+  defp listener_setup_source?(domain, %{phase: :bound, work: %{token: token} = work}, source),
+    do: token == source and not Map.has_key?(work, :final) and work_current?(domain, work)
+
+  defp listener_setup_source?(_domain, _authority, _source), do: false
+
+  # Failed setup may return to its original scalar error-response authority.
+  # No listener capability or deadline is renewed, and establishment stays spent.
+  def reject_listener_setup(binding, source) do
+    mutate_capture(
+      binding,
+      fn domain, info ->
+        case info.authority.listener do
+          %{source: ^source, source_phase: phase} = listener ->
+            if listener_setup_rejection_current?(domain, info, source, phase) do
+              authority = %{
+                info.authority
+                | phase: :bound,
+                  listener: %{listener | state: :failed}
+              }
+
+              {:ok, %{info | authority: authority}}
+            else
+              {:error, :http_listener_closed}
+            end
+
+          _invalid ->
+            {:error, :http_listener_closed}
+        end
+      end,
+      :gateway,
+      :listener_setup
+    )
+  end
+
+  defp listener_setup_rejection_current?(domain, info, source, phase) do
+    with 1 <- :atomics.get(phase, 1),
+         {:ok, reservation} <- Admission.current(Ref.table(domain.runtime), source),
+         true <- reservation.owner == self() and not reservation.terminal,
+         true <- reservation.generation == info.proof.generation,
+         true <- reservation.scope == info.proof.scope and reservation.output_phase == phase,
+         do: reservation.deadline > Deadline.now(),
+         else: (_retired -> false)
+  end
+
+  def attach_listener(listener, pid, registration, subscription_id) do
+    with {:ok, binding, nonce} <- HTTPListenerBinding.address(listener),
+         :ok <- local_pid(pid),
+         true <- is_binary(registration) and byte_size(registration) in 1..128 do
+      mutate_capture(
+        binding,
+        fn _domain, info ->
+          with %{registration: ^nonce, state: :established} = proof <- info.authority.listener,
+               false <- Map.has_key?(proof, :pid),
+               true <- Process.alive?(pid) do
+            proof =
+              Map.merge(proof, %{
+                pid: pid,
+                token: :binary.copy(registration),
+                id:
+                  if(is_binary(subscription_id),
+                    do: :binary.copy(subscription_id),
+                    else: subscription_id
+                  )
+              })
+
+            {:ok, %{info | authority: %{info.authority | listener: proof}}}
+          else
+            _invalid -> {:error, :http_listener_closed}
+          end
+        end,
+        :gateway,
+        :listener
+      )
+    else
+      _invalid -> {:error, :http_listener_closed}
+    end
+  end
+
+  def listener_setup(binding) do
+    with {:ok, {domain, token}} <- HTTPWriterBinding.address(binding),
+         {:ok, gate} <- read(domain),
+         {:ok, info} <- open_binding(gate, token),
+         true <- info.writer == self(),
+         %{state: :established, registration: nonce, pid: pid, token: registration} = proof <-
+           info.authority.listener,
+         true <- :atomics.get(proof.source_phase, 1) == 2 and listener_current?(domain, info) do
+      {:listener, HTTPListenerBinding.new(binding, nonce), pid, registration}
+    else
+      _not_ready -> :empty
+    end
+  end
+
+  # A fixed completion is the only frame allowed to use the immutable listener
+  # tail. It is authorized by the exact owned Listener and prepared by its
+  # actual borrowed socket; publications and service claims cannot use it.
+  def authorize_listener_completion(listener) do
+    with {:ok, binding, nonce} <- HTTPListenerBinding.address(listener),
+         {:ok, {domain, token}} <- HTTPWriterBinding.address(binding),
+         {:ok, gate} <- read(domain),
+         %{authority: %{listener: %{registration: ^nonce, pid: pid, terminal: terminal}}} <-
+           gate.bindings[token],
+         true <- pid == self(),
+         :ok <-
+           update(domain, terminal.deadline, fn gate ->
+             info = gate.bindings[token]
+
+             with %{state: 1} = terminal <- info.authority.listener.terminal,
+                  true <- listener_domain_current?(domain, info),
+                  true <- terminal.deadline > Deadline.now() do
+               proof = %{info.authority.listener | terminal: %{terminal | state: 2}}
+
+               next = %{
+                 info
+                 | mode: :listener_tail,
+                   authority: %{info.authority | listener: proof}
+               }
+
+               {:ok, listener_tail(gate, next), :ok}
+             else
+               _invalid -> {:error, :http_listener_completion_closed}
+             end
+           end) do
+      {:ok, HTTPListenerCompletion.new(listener, terminal.token)}
+    else
+      _invalid -> {:error, :http_listener_completion_closed}
+    end
+  end
+
+  def validate_listener_completion(completion) do
+    with {:ok, listener, receipt} <- HTTPListenerCompletion.address(completion),
+         {:ok, binding, nonce} <- HTTPListenerBinding.address(listener),
+         {:ok, {domain, token}} <- HTTPWriterBinding.address(binding),
+         {:ok, gate} <- read(domain),
+         %{
+           authority: %{
+             listener: %{registration: ^nonce, terminal: %{token: ^receipt} = terminal}
+           }
+         } = info <- gate.bindings[token],
+         true <- not gate.sealed and terminal.state in [2, 3],
+         true <- terminal.deadline > Deadline.now() and listener_domain_current?(domain, info) do
+      {:ok, %{deadline: terminal.deadline, runtime: domain.runtime, writer: info.writer}}
+    else
+      _invalid -> {:error, :http_listener_completion_closed}
+    end
+  rescue
+    ArgumentError -> {:error, :http_listener_completion_closed}
+  end
+
+  def listener_wait_deadline(listener, runtime) do
+    with {:ok, binding, nonce} <- HTTPListenerBinding.address(listener),
+         {:ok, {domain, token}} <- HTTPWriterBinding.address(binding),
+         true <- domain.runtime == runtime,
+         {:ok, gate} <- read(domain),
+         %{writer: writer, authority: %{listener: %{registration: ^nonce} = proof}} = info <-
+           gate.bindings[token],
+         true <- writer == self() and not gate.sealed and listener_domain_current?(domain, info),
+         true <- proof.terminal.deadline > Deadline.now() do
+      {:ok, proof.terminal.deadline}
+    else
+      _retired -> {:error, :http_listener_closed}
+    end
+  end
+
+  def prepare_listener_completion(completion) do
+    with {:ok, listener, receipt} <- HTTPListenerCompletion.address(completion),
+         {:ok, binding, nonce} <- HTTPListenerBinding.address(listener),
+         {:ok, {domain, binding_token}} <- HTTPWriterBinding.address(binding),
+         {:ok, gate} <- read(domain),
+         %{
+           writer: writer,
+           authority: %{
+             listener:
+               %{registration: ^nonce, terminal: %{state: 2, token: ^receipt} = terminal} =
+                 listener_proof
+           }
+         } = info <- gate.bindings[binding_token],
+         true <- writer == self(),
+         {:ok, _proof} <- validate_listener_completion(completion),
+         wire = listener_completion_wire(listener_proof.id),
+         :ok <- wire_valid(wire, domain.limits),
+         token = terminal.effect,
+         entry =
+           candidate(
+             token,
+             binding_token,
+             self(),
+             self(),
+             terminal.deadline,
+             wire,
+             %{listener_completion: completion},
+             0
+           ),
+         :ok <- update(domain, terminal.deadline, &claim(&1, entry, domain)) do
+      finish_prepare(domain, entry, info.writer, wire)
+    else
+      _invalid -> {:error, :http_listener_completion_closed}
+    end
+  end
+
+  defp listener_completion_wire(id) do
+    value = %{
+      "jsonrpc" => "2.0",
+      "id" => id,
+      "result" => %{
+        "resultType" => "complete",
+        "_meta" => %{"io.modelcontextprotocol/subscriptionId" => id}
+      }
+    }
+
+    "data: " <> Jason.encode!(value) <> "\r\n\r\n"
+  end
+
+  defp listener_domain_current?(domain, %{authority: %{listener: %{pid: pid} = proof}} = info) do
+    installed_proxy?(domain, info.owner) and
+      registered_actor?(domain, :http_gateway, proof.gateway) and
+      generation_valid(domain, proof.generation) == :ok and
+      Process.alive?(info.writer) and Process.alive?(pid) and
+      :atomics.get(proof.source_phase, 1) == 2
+  end
+
+  defp listener_domain_current?(_domain, _info), do: false
 
   defp listener_options(opts) when is_list(opts) do
     if Keyword.keyword?(opts) and length(opts) <= 3 and
@@ -290,6 +521,17 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
   defp materialize_identity({endpoint, principal, tenant}),
     do: {:binary.copy(endpoint), :binary.copy(principal), if(tenant, do: :binary.copy(tenant))}
 
+  @spec validate_listener(HTTPListenerBinding.t()) :: {:ok, map()} | error()
+  def validate_listener(listener) do
+    with {:ok, binding, _registration} <- HTTPListenerBinding.address(listener),
+         {:ok, {%__MODULE__{runtime: runtime}, _token}} <-
+           HTTPWriterBinding.address(binding) do
+      validate_listener(listener, runtime)
+    else
+      _invalid -> {:error, :http_listener_closed}
+    end
+  end
+
   @spec validate_listener(HTTPListenerBinding.t(), Ref.t()) :: {:ok, map()} | error()
   def validate_listener(listener, runtime) do
     with {:ok, runtime} <- Ref.validate(runtime),
@@ -315,7 +557,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
   end
 
   defp listener_current?(domain, %{authority: %{listener: listener}} = info) do
-    listener.state == :established and listener.deadline > Deadline.now() and
+    listener.state == :established and listener.terminal.state == 1 and
+      listener.deadline > Deadline.now() and
       installed_proxy?(domain, info.owner) and
       registered_actor?(domain, :http_gateway, listener.gateway) and
       generation_valid(domain, listener.generation) == :ok and
@@ -520,14 +763,14 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
 
   def cleanup_status(_domain), do: {:error, :http_io_cleanup_unconfirmed}
 
-  defp mutate_capture(binding, operation, actor \\ :writer) do
+  defp mutate_capture(binding, operation, actor \\ :writer, mode \\ :request) do
     with {:ok, {domain, token}} <- HTTPWriterBinding.address(binding),
          {:ok, gate} <- read(domain),
          {:ok, info} <- open_binding(gate, token),
-         true <- capture_actor?(actor, domain, info) and captured_current?(domain, info) do
+         true <- capture_actor?(actor, domain, info) and mutation_current?(mode, domain, info) do
       update(domain, info.proof.deadline, fn current ->
         with {:ok, info} <- open_binding(current, token),
-             true <- capture_actor?(actor, domain, info) and captured_current?(domain, info),
+             true <- capture_mutation_current?(actor, mode, domain, info),
              {:ok, next} <- operation.(domain, info) do
           next = %{next | bytes: 0}
           next = %{next | bytes: :erlang.external_size(next) + 256}
@@ -549,6 +792,15 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
       _invalid -> {:error, :http_invocation_closed}
     end
   end
+
+  defp mutation_current?(:request, domain, info), do: captured_current?(domain, info)
+  defp mutation_current?(:listener, domain, info), do: listener_current?(domain, info)
+
+  defp mutation_current?(:listener_setup, domain, info),
+    do: listener_current?(domain, info) and not Map.has_key?(info.authority.listener, :pid)
+
+  defp capture_mutation_current?(actor, mode, domain, info),
+    do: capture_actor?(actor, domain, info) and mutation_current?(mode, domain, info)
 
   defp capture_actor?(:writer, _domain, info), do: info.writer == self()
 
@@ -646,6 +898,12 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
   rescue
     ArgumentError -> {:error, :http_invocation_closed}
   end
+
+  defp source_current?(domain, %{mode: mode} = info)
+       when mode in [:listener_tail, :listener_completion],
+       do:
+         info.authority.listener.terminal.deadline > Deadline.now() and
+           listener_domain_current?(domain, info)
 
   defp source_current?(domain, %{authority: %{phase: :listener}} = info),
     do: listener_current?(domain, info)
@@ -1359,9 +1617,11 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
     with {:ok, info} <- claim_binding(gate, entry, domain),
          :ok <- generation_valid(domain, info.proof.generation) do
       gate =
-        if Map.has_key?(entry.metadata || %{}, :failure_token),
-          do: failure_only(gate, info, domain),
-          else: gate
+        cond do
+          Map.has_key?(entry.metadata || %{}, :failure_token) -> failure_only(gate, info, domain)
+          Map.has_key?(entry.metadata || %{}, :listener_completion) -> completion_only(gate, info)
+          true -> gate
+        end
 
       cond do
         not Process.alive?(domain.root) ->
@@ -1385,6 +1645,24 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
                bytes: gate.bytes + entry.bytes
            }, :ok}
       end
+    end
+  end
+
+  defp claim_binding(gate, %{metadata: %{listener_completion: completion}} = entry, domain) do
+    with {:ok, listener, receipt} <- HTTPListenerCompletion.address(completion),
+         {:ok, _binding, nonce} <- HTTPListenerBinding.address(listener),
+         %{
+           authority: %{
+             listener:
+               %{registration: ^nonce, terminal: %{token: ^receipt, state: 2} = terminal} = proof
+           }
+         } = info <- gate.bindings[entry.binding],
+         true <- info.writer == self() and listener_domain_current?(domain, info),
+         true <- terminal.deadline > Deadline.now() and entry.deadline == terminal.deadline do
+      proof = %{proof | terminal: %{terminal | state: 3}}
+      {:ok, %{info | mode: :listener_completion, authority: %{info.authority | listener: proof}}}
+    else
+      _invalid -> {:error, :http_listener_completion_closed}
     end
   end
 
@@ -1414,6 +1692,25 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
          do: {:ok, info}
   end
 
+  defp entry_current?(domain, info, %{token: effect, metadata: %{listener_completion: completion}}) do
+    with {:ok, _listener, receipt} <- HTTPListenerCompletion.address(completion),
+         %{token: ^receipt, state: 3, effect: ^effect} <- info.authority.listener.terminal,
+         {:ok, _proof} <- validate_listener_completion(completion),
+         do: listener_domain_current?(domain, info),
+         else: (_retired -> false)
+  end
+
+  defp entry_current?(domain, info, %{
+         metadata: %{subscription_origin: origin, listener: listener}
+       }) do
+    with {:ok, binding, nonce} <- HTTPListenerBinding.address(listener),
+         {:ok, {^domain, token}} <- HTTPWriterBinding.address(binding),
+         true <- info.token == token and info.authority.listener.registration == nonce,
+         true <- Arbor.MCP.Server.Subscriptions.Origin.valid?(origin),
+         do: listener_current?(domain, info),
+         else: (_retired -> false)
+  end
+
   defp entry_current?(domain, %{authority: %{work: %{gateway: gateway}}} = info, %{
          owner: gateway,
          wire_bytes: 0,
@@ -1440,6 +1737,11 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
 
   defp io_binding(gate, token) do
     case gate.bindings[token] do
+      %{mode: :listener_completion, authority: %{listener: %{terminal: %{deadline: tail}}}} = info ->
+        if tail > Deadline.now(),
+          do: {:ok, info},
+          else: {:error, :http_listener_completion_closed}
+
       %{mode: :failure_only, authority: %{failure: %{deadline: tail}}} = info ->
         if tail > Deadline.now(), do: {:ok, info}, else: {:error, :http_failure_expired}
 
@@ -1672,17 +1974,12 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
   end
 
   defp reap_binding({token, info}, gate, domain) do
-    reason =
-      cond do
-        generation_valid(domain, info.proof.generation) != :ok -> :generation_retired
-        not source_current?(domain, info) -> :source_retired
-        not Process.alive?(info.writer) -> :writer_down
-        not Process.alive?(info.owner) -> :owner_down
-        binding_deadline(info) <= Deadline.now() -> :invocation_expired
-        true -> nil
-      end
+    reason = binding_retirement_reason(info, domain)
 
     cond do
+      reason in [:source_retired, :invocation_expired] and listener_tail_live?(domain, info) ->
+        listener_tail(gate, info)
+
       reason in [:source_retired, :invocation_expired] and failure_tail_live?(domain, info) ->
         failure_only(gate, info, domain)
 
@@ -1694,12 +1991,53 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
     end
   end
 
+  defp binding_retirement_reason(info, domain) do
+    cond do
+      generation_valid(domain, info.proof.generation) != :ok -> :generation_retired
+      not source_current?(domain, info) -> :source_retired
+      not Process.alive?(info.writer) -> :writer_down
+      not Process.alive?(info.owner) -> :owner_down
+      binding_deadline(info) <= Deadline.now() -> :invocation_expired
+      true -> nil
+    end
+  end
+
+  defp listener_tail_live?(domain, %{authority: %{phase: :listener, listener: listener}} = info),
+    do: listener.terminal.deadline > Deadline.now() and listener_domain_current?(domain, info)
+
+  defp listener_tail_live?(_domain, _info), do: false
+
+  defp listener_tail(gate, info) do
+    gate =
+      Enum.reduce(gate.claims, gate, fn {token, entry}, acc ->
+        if entry.binding == info.token and entry.stage != :in_flight and
+             not Map.has_key?(entry.metadata || %{}, :listener_completion),
+           do: drop(acc, token),
+           else: acc
+      end)
+
+    %{gate | bindings: Map.put(gate.bindings, info.token, %{info | mode: :listener_tail})}
+  end
+
+  defp failure_tail_live?(_domain, %{authority: %{phase: :listener}}), do: false
+
   defp failure_tail_live?(domain, %{authority: %{failure: failure}} = info),
     do:
       failure.deadline > Deadline.now() and binding_parties_alive?(info) and
         lease_current?(domain, info.proof.lease)
 
   defp failure_tail_live?(_domain, _info), do: false
+
+  defp completion_only(gate, info) do
+    gate =
+      Enum.reduce(gate.claims, gate, fn {token, entry}, acc ->
+        if entry.binding == info.token and entry.stage != :in_flight,
+          do: drop(acc, token),
+          else: acc
+      end)
+
+    %{gate | bindings: Map.put(gate.bindings, info.token, info)}
+  end
 
   defp failure_only(gate, info, domain) do
     gate =
@@ -1839,7 +2177,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
           %{mode: :retired, closed_notice: false, closed_ack: false} = info ->
             queue_wake(gate, %{info | closed_notice: true})
 
-          %{mode: mode, notice: false} = info when mode in [:open, :failure_only] ->
+          %{mode: mode, notice: false} = info
+          when mode in [:open, :failure_only, :listener_completion] ->
             entries = Enum.filter(Map.values(gate.claims), &(&1.binding == token))
 
             if Enum.any?(entries, &(&1.stage == :queued)) and
@@ -1882,7 +2221,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
     cond do
       is_nil(info) or not Process.alive?(domain.root) or
         generation_valid(domain, info.proof.generation) != :ok or
-        info.mode not in [:open, :failure_only] or
+        info.mode not in [:open, :failure_only, :listener_completion] or
         not entry_current?(domain, info, entry) or
         not binding_parties_alive?(info) or entry.deadline <= Deadline.now() ->
         3
@@ -1905,6 +2244,13 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
     deadline = Keyword.get(opts, :deadline, maximum)
     with :ok <- finite_deadline(deadline), do: {:ok, min(deadline, maximum)}
   end
+
+  defp binding_deadline(%{
+         mode: mode,
+         authority: %{listener: %{terminal: terminal}}
+       })
+       when mode in [:listener_tail, :listener_completion],
+       do: terminal.deadline
 
   defp binding_deadline(%{authority: %{phase: :listener, listener: listener}}),
     do: listener.deadline

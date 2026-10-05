@@ -8,7 +8,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellation do
     with {:ok, context} <- RequestContext.from_message(request),
          true <- context.era == :modern or (context.era == :unknown and not context.request?),
          principal when is_binary(principal) and byte_size(principal) > 0 <- opts[:principal_id],
-         endpoint when is_binary(endpoint) <- opts[:endpoint],
+         endpoint when is_binary(endpoint) <- opts[:http_endpoint] || opts[:endpoint],
          tenant when is_binary(tenant) or is_nil(tenant) <- opts[:tenant_id] do
       {endpoint, principal, tenant}
     else
@@ -21,16 +21,18 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellation do
   # One payload-free origin row per admitted envelope. Its term cost is
   # precharged in the Gateway ingress metadata reservation, and the same
   # owner removes it when that envelope settles. No per-target mailbox queue.
-  def register(runtime, token, lease, identity) do
+  def register(runtime, token, lease, identity, endpoint \\ "/mcp") do
     table = Ref.table(runtime)
 
     with [{:http_gateway, owner}] when owner == self() <- :ets.lookup(table, :http_gateway),
          {:ok, reservation} <- Admission.current(table, token),
-         true <- reservation.owner == self() and reservation.deadline > Deadline.now() do
+         true <- reservation.owner == self() and reservation.deadline > Deadline.now(),
+         true <- is_binary(endpoint) and byte_size(endpoint) in 1..4_096 do
       entry = %{
         runtime: runtime,
         lease: lease,
         identity: identity,
+        endpoint: :binary.copy(endpoint),
         generation: reservation.generation,
         owner: self(),
         scope: reservation.scope,

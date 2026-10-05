@@ -31,12 +31,7 @@ defmodule Arbor.MCP.Server.Subscriptions.Delivery do
     message_bytes = Keyword.fetch!(opts, :max_message_bytes)
     term_bytes = message_bytes * 2 + 1_024
 
-    with {:ok, registration} <-
-           Origin.for_listener(
-             Keyword.fetch!(opts, :runtime_table),
-             transport,
-             Deadline.after_ms(lifetime)
-           ) do
+    with {:ok, registration} <- registration(opts, transport, lifetime) do
       mailbox =
         Mailbox.new(
           max_count: count,
@@ -58,6 +53,24 @@ defmodule Arbor.MCP.Server.Subscriptions.Delivery do
          max_queue_bytes: Keyword.fetch!(opts, :max_queue_bytes),
          timeout: timeout
        }}
+    end
+  end
+
+  defp registration(opts, transport, lifetime) do
+    case Keyword.get(opts, :http_listener) do
+      nil ->
+        Origin.for_listener(
+          Keyword.fetch!(opts, :runtime_table),
+          transport,
+          Deadline.after_ms(lifetime)
+        )
+
+      binding ->
+        Origin.for_http_listener(
+          binding,
+          Keyword.fetch!(opts, :runtime),
+          is_function(Keyword.get(opts, :publication_authorizer), 3)
+        )
     end
   end
 
@@ -170,7 +183,7 @@ defmodule Arbor.MCP.Server.Subscriptions.Delivery do
   defp control(state, kind, message) do
     deadline = Deadline.after_ms(state.timeout)
 
-    with {:ok, origin} <- Origin.terminal(state.registration, deadline),
+    with {:ok, origin} <- control_origin(state.registration, kind, deadline),
          {:ok, id} <-
            Mailbox.offer(state.mailbox, message, origin, deadline, %{
              kind: kind,
@@ -184,6 +197,12 @@ defmodule Arbor.MCP.Server.Subscriptions.Delivery do
       _ -> %{state | closing?: true}
     end
   end
+
+  defp control_origin(registration, :complete, deadline),
+    do: Origin.terminal(registration, deadline)
+
+  defp control_origin(registration, _kind, deadline),
+    do: {:ok, Origin.limit(registration, deadline)}
 
   defp admit_queue(state, entry) do
     key = entry.mode.key

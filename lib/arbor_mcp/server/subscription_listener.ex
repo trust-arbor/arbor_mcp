@@ -27,6 +27,7 @@ defmodule Arbor.MCP.Server.SubscriptionListener do
     :max_message_bytes,
     :max_queue_bytes,
     :runtime_delivery,
+    :http_listener,
     :in_flight_kind,
     active?: false,
     closing?: false,
@@ -132,6 +133,29 @@ defmodule Arbor.MCP.Server.SubscriptionListener do
   end
 
   @doc false
+  def checkout_http(listener, delivery, binding, deadline) do
+    if Deadline.remaining(deadline) == 0 do
+      {:error, :source_retired}
+    else
+      GenServer.call(
+        listener,
+        {:checkout_http, delivery, binding},
+        min(5_000, Deadline.remaining(deadline))
+      )
+    end
+  catch
+    :exit, _reason -> {:error, :subscription_unavailable}
+  end
+
+  @doc false
+  def delivered_http(listener, delivery, binding),
+    do: GenServer.cast(listener, {:delivered_http, self(), delivery, binding})
+
+  @doc false
+  def cancel_http(listener, binding, registration),
+    do: GenServer.cast(listener, {:cancel_http, self(), binding, registration})
+
+  @doc false
   def discard(listener, delivery), do: GenServer.cast(listener, {:discarded, self(), delivery})
 
   @spec cancel(pid()) :: :ok
@@ -160,7 +184,8 @@ defmodule Arbor.MCP.Server.SubscriptionListener do
       authorization_required: Keyword.get(opts, :authorization_required, false),
       max_queue: Keyword.fetch!(opts, :max_queue),
       max_message_bytes: Keyword.fetch!(opts, :max_message_bytes),
-      max_queue_bytes: Keyword.fetch!(opts, :max_queue_bytes)
+      max_queue_bytes: Keyword.fetch!(opts, :max_queue_bytes),
+      http_listener: Keyword.get(opts, :http_listener)
     }
 
     with {:ok, acknowledgment_bytes} <-
@@ -197,6 +222,26 @@ defmodule Arbor.MCP.Server.SubscriptionListener do
   end
 
   def handle_cast(:activate, state), do: {:noreply, state}
+
+  def handle_cast({:delivered_http, owner, id, binding}, %{http_listener: binding} = state)
+      when owner == state.transport_ref and not is_nil(binding) do
+    case Delivery.delivered(state.runtime_delivery, id) do
+      {:stop, delivery} -> {:stop, :normal, %{state | runtime_delivery: delivery}}
+      {:ok, delivery} -> {:noreply, %{state | runtime_delivery: delivery}}
+    end
+  end
+
+  def handle_cast({:delivered_http, _owner, _id, _binding}, state), do: {:noreply, state}
+
+  def handle_cast(
+        {:cancel_http, owner, binding, registration},
+        %{http_listener: binding, token: registration} = state
+      )
+      when owner == state.transport_ref and not is_nil(binding) do
+    {:stop, :normal, state}
+  end
+
+  def handle_cast({:cancel_http, _owner, _binding, _registration}, state), do: {:noreply, state}
 
   def handle_cast({:delivered, owner, id}, %{runtime_delivery: delivery} = state)
       when not is_nil(delivery) and owner == state.transport_ref do
@@ -265,6 +310,15 @@ defmodule Arbor.MCP.Server.SubscriptionListener do
 
   def handle_call({:enqueue_token, _id}, _from, state),
     do: {:reply, {:closed, :invalid_subscription_owner}, state}
+
+  def handle_call({:checkout_http, id, binding}, {owner, _}, %{http_listener: binding} = state)
+      when owner == state.transport_ref and not is_nil(binding) do
+    {result, delivery} = Delivery.checkout(state.runtime_delivery, id)
+    {:reply, result, %{state | runtime_delivery: delivery}}
+  end
+
+  def handle_call({:checkout_http, _id, _binding}, _from, state),
+    do: {:reply, {:error, :invalid_subscription_owner}, state}
 
   def handle_call({:checkout, id}, {owner, _}, state)
       when owner == state.transport_ref and not is_nil(state.runtime_delivery) do

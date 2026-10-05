@@ -23,9 +23,11 @@ defmodule Arbor.MCP.Server.Subscriptions.Entry do
     :filter,
     :principal_id,
     :tenant_id,
+    :http_listener,
     :expires_at
   ]
 
+  @typedoc "Registration data; `http_listener` is private transport bookkeeping."
   @type t :: %__MODULE__{
           token: String.t(),
           subscription_id: String.t() | integer(),
@@ -34,6 +36,7 @@ defmodule Arbor.MCP.Server.Subscriptions.Entry do
           filter: map(),
           principal_id: String.t() | nil,
           tenant_id: String.t() | nil,
+          http_listener: term(),
           expires_at: integer()
         }
 end

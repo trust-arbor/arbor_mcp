@@ -1,5 +1,6 @@
 defmodule Arbor.MCP.Server.Runtime.HTTPListenerBinding do
   @moduledoc false
+  alias Arbor.MCP.Server.Runtime.HTTPWriterRegistry
   @enforce_keys [:writer, :registration]
   defstruct [:writer, :registration]
 
@@ -19,7 +20,11 @@ defmodule Arbor.MCP.Server.Runtime.HTTPListenerBinding do
 
   def address(_invalid), do: {:error, :invalid_http_listener_binding}
 
+  @spec validate(t()) :: {:ok, map()} | {:error, atom()}
+  def validate(binding),
+    do: HTTPWriterRegistry.validate_listener(binding)
+
   @spec validate(t(), Arbor.MCP.Server.Runtime.Ref.t()) :: {:ok, map()} | {:error, atom()}
   def validate(binding, runtime),
-    do: Arbor.MCP.Server.Runtime.HTTPWriterRegistry.validate_listener(binding, runtime)
+    do: HTTPWriterRegistry.validate_listener(binding, runtime)
 end

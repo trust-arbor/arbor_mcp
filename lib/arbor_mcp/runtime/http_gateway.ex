@@ -2,6 +2,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
   @moduledoc false
   use GenServer
   alias Arbor.MCP.Server.Runtime
+  alias Arbor.MCP.Server.{RequestContext, SubscriptionListener, Subscriptions}
 
   alias Arbor.MCP.Server.Runtime.{
     Admission,
@@ -433,7 +434,14 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
     }
 
     with {:ok, reservation} <- Admission.promote(state.table, token, request, kind: :rpc),
-         :ok <- HTTPCancellation.register(state.runtime, token, job.lease, job.identity),
+         :ok <-
+           HTTPCancellation.register(
+             state.runtime,
+             token,
+             job.lease,
+             job.identity,
+             job.dispatch_opts[:http_endpoint] || job.dispatch_opts[:endpoint] || "/mcp"
+           ),
          :ok <- uncancelled_member(state.table, token, request),
          :ok <- bind(job, token, reservation, state),
          :ok <- publish_acceptance(job),
@@ -462,6 +470,54 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
     if HTTPCancellation.cancelled_member?(table, token, request["id"]),
       do: {:error, :request_cancelled},
       else: :ok
+  end
+
+  defp dispatch_or_cancel(
+         token,
+         %{"method" => "subscriptions/listen"} = request,
+         _route,
+         work_opts,
+         state
+       ) do
+    job = state.jobs[token]
+    endpoint = job.dispatch_opts[:http_endpoint] || job.dispatch_opts[:endpoint] || "/mcp"
+
+    with false <- job.batch?,
+         {:ok, context} <- RequestContext.from_message(request),
+         :modern <- context.era,
+         :ok <- RequestContext.validate_protocol_mode(context, job.dispatch_opts[:protocol_mode]),
+         :ok <- RequestContext.validate_method(context),
+         {:ok, listener} <-
+           HTTPWriterRegistry.establish_listener(job.binding, token,
+             endpoint: endpoint,
+             identity: job.identity
+           ),
+         {:ok, entry} <-
+           Subscriptions.listen_http(
+             listener,
+             request["id"],
+             get_in(request, ["params", "notifications"]),
+             principal_id: job.dispatch_opts[:principal_id],
+             tenant_id: job.dispatch_opts[:tenant_id],
+             audience: job.dispatch_opts[:endpoint] || "/mcp",
+             authorization_required: not is_nil(job.identity),
+             client_capabilities: context.client_capabilities
+           ),
+         :ok <- attach_subscription(listener, entry) do
+      Admission.complete_output_phase(state.table, token)
+      Admission.terminal(state.table, token, {:ok, :subscription})
+      finish(token, state)
+    else
+      _invalid ->
+        HTTPWriterRegistry.reject_listener_setup(job.binding, token)
+        output = Keyword.fetch!(work_opts, :output)
+        response = Arbor.RPC.JSONRPC.error(request["id"], -32602, "Invalid subscription request")
+
+        case OutputController.edge_result(state.table, token, output, response) do
+          :ok -> put_in(state.jobs[token].output?, true)
+          {:error, reason} -> fail(token, reason, state)
+        end
+    end
   end
 
   defp dispatch_or_cancel(
@@ -499,6 +555,22 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
   defp dispatch_or_cancel(token, request, route, work_opts, state) do
     send(route.scheduler, {:submit, route.generation, token, request, work_opts})
     state
+  end
+
+  defp attach_subscription(binding, entry) do
+    case HTTPWriterRegistry.attach_listener(
+           binding,
+           entry.listener_pid,
+           entry.token,
+           entry.subscription_id
+         ) do
+      :ok ->
+        :ok
+
+      error ->
+        SubscriptionListener.cancel(entry.listener_pid)
+        error
+    end
   end
 
   defp publish_acceptance(%{acceptance: nil}), do: :ok

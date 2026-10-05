@@ -71,6 +71,13 @@ defmodule Arbor.MCP.HttpPlug.RuntimeWriter do
   end
 
   defp await(binding, domain, deadline) do
+    case HTTPWriterRegistry.listener_setup(binding) do
+      {:listener, _cap, _pid, _token} = listener -> listener
+      :empty -> await_output(binding, domain, deadline)
+    end
+  end
+
+  defp await_output(binding, domain, deadline) do
     case HTTPWriterRegistry.peek(binding) do
       {:ok, _ticket, _wire} = ready ->
         ready
@@ -98,14 +105,28 @@ defmodule Arbor.MCP.HttpPlug.RuntimeWriter do
   end
 
   def perform(conn, effect, wire, write) do
+    case perform_if_ready(conn, effect, wire, write) do
+      {:error, :http_io_not_entered} -> raise AdmissionError
+      result -> result
+    end
+  end
+
+  # Distinguish a proof rejected before IO from an actual borrowed write failure.
+  # The latter still raises and cannot be treated as a retryable stale source.
+  def perform_if_ready(conn, effect, wire, write) do
     {:ok, expected} = HTTPWriteTicket.address(effect)
 
-    with {:ok, actual, actual_wire} <- HTTPWriterRegistry.checkout(binding(conn)),
-         {:ok, ^expected} <- HTTPWriteTicket.address(actual),
-         true <- actual_wire == wire do
-      write_checked_out(conn, actual, actual_wire, write)
-    else
-      _closed -> raise AdmissionError
+    case HTTPWriterRegistry.checkout(binding(conn)) do
+      {:ok, actual, actual_wire} ->
+        if HTTPWriteTicket.address(actual) == {:ok, expected} and actual_wire == wire do
+          write_checked_out(conn, actual, actual_wire, write)
+        else
+          HTTPWriterRegistry.complete(actual, {:error, :http_output_mismatch})
+          {:error, :http_io_not_entered}
+        end
+
+      _closed ->
+        {:error, :http_io_not_entered}
     end
   end
 
