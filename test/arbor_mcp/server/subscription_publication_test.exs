@@ -54,27 +54,43 @@ defmodule Arbor.MCP.Server.SubscriptionPublicationTest do
     registry = start_supervised!({Subscriptions, name: nil, publication_timeout_ms: 60})
     :ok = :sys.suspend(registry)
 
-    caller =
-      spawn(fn ->
+    {caller, monitor} =
+      spawn_monitor(fn ->
         Subscriptions.publish_async("notifications/tools/list_changed", %{}, registry: registry)
       end)
 
-    Process.sleep(20)
+    try do
+      messages =
+        await_publication_lookup(registry, caller, System.monotonic_time(:millisecond) + 1_000)
+
+      assert Enum.all?(messages, fn
+               {:"$gen_call", _, :publication_mailbox} -> true
+               :publication_reap -> true
+               _ -> false
+             end)
+    after
+      try do
+        Process.exit(caller, :kill)
+        assert_receive {:DOWN, ^monitor, :process, ^caller, _reason}, 1_000
+      after
+        :ok = :sys.resume(registry)
+      end
+    end
+
+    assert %{count: 0, bytes: 0} = Mailbox.stats(:sys.get_state(registry).publication_mailbox)
+  end
+
+  defp await_publication_lookup(registry, caller, deadline) do
+    assert Process.alive?(caller), "publication caller exited before the lookup was observed"
     assert {:messages, messages} = Process.info(registry, :messages)
 
-    assert Enum.any?(messages, fn
-             {:"$gen_call", _, :publication_mailbox} -> true
-             _ -> false
-           end)
-
-    assert Enum.all?(messages, fn
-             {:"$gen_call", _, :publication_mailbox} -> true
-             :publication_reap -> true
-             _ -> false
-           end)
-
-    Process.exit(caller, :kill)
-    :ok = :sys.resume(registry)
-    assert %{count: 0, bytes: 0} = Mailbox.stats(:sys.get_state(registry).publication_mailbox)
+    if Enum.any?(messages, &match?({:"$gen_call", _, :publication_mailbox}, &1)) do
+      messages
+    else
+      remaining = deadline - System.monotonic_time(:millisecond)
+      assert remaining > 0, "publication lookup was not enqueued within the observation deadline"
+      Process.sleep(min(remaining, 5))
+      await_publication_lookup(registry, caller, deadline)
+    end
   end
 end
