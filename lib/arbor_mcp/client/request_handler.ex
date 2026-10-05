@@ -839,11 +839,13 @@ defmodule Arbor.MCP.Client.RequestHandler do
   Handles a notification to be sent to the server.
   """
   def handle_cast_notification(method, params, state) do
-    # A notification is a request object without an "id" member.
-    # We assume build_request handles a nil id by omitting it.
-    notification = build_request(method, params, nil)
+    # Use the connection metadata policy while omitting the notification id.
+    result =
+      with {:ok, notification} <- build_request(method, params, nil, state) do
+        send_message(notification, state)
+      end
 
-    case send_message(notification, state) do
+    case result do
       {:ok, updated_state, _response_data} ->
         # Non-SSE HTTP returns response but we ignore it for notifications
         {:noreply, updated_state}
