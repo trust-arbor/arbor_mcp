@@ -2,7 +2,15 @@ defmodule Arbor.MCP.HttpPlug.RuntimeSessionStream do
   @moduledoc false
 
   alias Arbor.MCP.HttpPlug.{RuntimeSession, RuntimeWriter}
-  alias Arbor.MCP.Server.Runtime.{Deadline, HTTPWriterBinding, HTTPWriterRegistry, OutputCodec}
+
+  alias Arbor.MCP.Server.Runtime.{
+    Deadline,
+    HTTPGateway,
+    HTTPSessionStreamBinding,
+    HTTPWriterBinding,
+    HTTPWriterRegistry,
+    OutputCodec
+  }
 
   @poll_ms 50
 
@@ -17,6 +25,24 @@ defmodule Arbor.MCP.HttpPlug.RuntimeSessionStream do
 
   def prepare(_conn, _session, _cursor, _mode), do: {:error, :invalid_sse_mode}
 
+  def prepare_legacy(conn, session, cursor, mode, endpoint) when mode in [:oneshot, :stream] do
+    with :ok <- RuntimeWriter.current(conn),
+         {:ok, cursor} <- initial_cursor(session, cursor),
+         {:ok, page} <- RuntimeSession.replay_page(session, cursor),
+         {:ok, target} <-
+           HTTPGateway.establish_session_stream(
+             RuntimeWriter.runtime(conn),
+             RuntimeWriter.binding(conn),
+             endpoint
+           ) do
+      session = RuntimeSession.with_replay_target(session, target)
+      {:ok, %{cursor: cursor, page: page, mode: mode, session: session, target: target}}
+    end
+  end
+
+  def prepare_legacy(_conn, _session, _cursor, _mode, _endpoint),
+    do: {:error, :invalid_sse_mode}
+
   defp initial_cursor(session, nil), do: RuntimeSession.replay_cursor(session)
   defp initial_cursor(_session, cursor), do: {:ok, cursor}
 
@@ -26,6 +52,11 @@ defmodule Arbor.MCP.HttpPlug.RuntimeSessionStream do
     do: HTTPWriterRegistry.register_session_stream(RuntimeWriter.binding(conn))
 
   def serve(conn, context, initial_event \\ nil) do
+    conn =
+      if context[:target],
+        do: Plug.Conn.put_private(conn, :arbor_mcp_http_session_target, context.target),
+        else: conn
+
     event = initial_event || {"connected", %{"session_id" => RuntimeSession.id(context.session)}}
 
     with {:ok, wire} <- frame(conn, elem(event, 0), elem(event, 1), nil),
@@ -66,7 +97,7 @@ defmodule Arbor.MCP.HttpPlug.RuntimeSessionStream do
   end
 
   defp poll(conn, context) do
-    case HTTPWriterBinding.validate(RuntimeWriter.binding(conn), RuntimeWriter.runtime(conn)) do
+    case stream_proof(conn) do
       {:ok, proof} ->
         {:ok, {domain, _}} = HTTPWriterBinding.address(RuntimeWriter.binding(conn))
 
@@ -77,12 +108,18 @@ defmodule Arbor.MCP.HttpPlug.RuntimeSessionStream do
           min(@poll_ms, Deadline.remaining(proof.deadline)) -> :ok
         end
 
-        if RuntimeWriter.current(conn) == :ok, do: next_page(conn, context), else: conn
+        if match?({:ok, _proof}, stream_proof(conn)), do: next_page(conn, context), else: conn
 
       _closed ->
         conn
     end
   end
+
+  defp stream_proof(%{private: %{arbor_mcp_http_session_target: target}} = conn),
+    do: HTTPSessionStreamBinding.validate(target, RuntimeWriter.runtime(conn))
+
+  defp stream_proof(conn),
+    do: HTTPWriterBinding.validate(RuntimeWriter.binding(conn), RuntimeWriter.runtime(conn))
 
   defp write_event(event, conn) do
     with {:ok, wire} <- frame(conn, event.type, event.data, event.id),
@@ -100,7 +137,7 @@ defmodule Arbor.MCP.HttpPlug.RuntimeSessionStream do
 
   defp frame(conn, type, data, cursor) do
     with {:ok, proof} <-
-           HTTPWriterBinding.validate(RuntimeWriter.binding(conn), RuntimeWriter.runtime(conn)),
+           stream_proof(conn),
          {:ok, %{wire: json}} <-
            OutputCodec.prepare(data, codec: :protocol, deadline: proof.deadline),
          true <-

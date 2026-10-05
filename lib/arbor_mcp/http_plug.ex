@@ -383,13 +383,16 @@ defmodule Arbor.MCP.HttpPlug do
   end
 
   defp modern_only_disallowed_method?(conn, %{protocol_mode: :modern_only} = opts) do
-    conn.method in ["GET", "DELETE"] and mcp_endpoint_path?(conn, opts)
+    conn.method in ["GET", "DELETE"] and session_transport_path?(conn, opts)
   end
 
   defp modern_only_disallowed_method?(conn, opts) do
-    conn.method in ["GET", "DELETE"] and mcp_endpoint_path?(conn, opts) and
+    conn.method in ["GET", "DELETE"] and session_transport_path?(conn, opts) and
       modern_protocol_header?(conn)
   end
+
+  defp session_transport_path?(conn, opts),
+    do: mcp_endpoint_path?(conn, opts) or legacy_http_sse_path?(conn, opts)
 
   defp mounted_session_method?(conn, %{runtime: runtime} = opts) when not is_nil(runtime),
     do:
@@ -400,20 +403,104 @@ defmodule Arbor.MCP.HttpPlug do
   defp mounted_session_method?(_conn, _opts), do: false
 
   defp handle_runtime_session_method(conn, opts) do
-    if legacy_http_sse_path?(conn, opts) do
-      if legacy_http_sse_enabled?(opts) do
-        conn
-        |> put_resp_content_type("application/json")
-        |> send_resp(
-          501,
-          Jason.encode!(%{"error" => "Runtime legacy endpoint routing unavailable"})
-        )
-      else
-        send_resp(conn, 404, "SSE not enabled")
+    if legacy_http_sse_path?(conn, opts) and not mcp_endpoint_path?(conn, opts) do
+      cond do
+        not legacy_http_sse_enabled?(opts) ->
+          send_resp(conn, 404, "SSE not enabled")
+
+        conn.method == "GET" ->
+          handle_runtime_legacy_get(conn, opts)
+
+        true ->
+          handle_runtime_session_endpoint(conn, opts)
       end
     else
       handle_runtime_session_endpoint(conn, opts)
     end
+  end
+
+  defp handle_runtime_legacy_get(conn, opts) do
+    if legacy_post_path_conflicts?(opts) do
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(
+        400,
+        Jason.encode!(
+          JSONRPC.error(
+            nil,
+            ErrorCodes.invalid_request(),
+            "Legacy SSE requires a distinct POST alias path"
+          )
+        )
+      )
+    else
+      serve_runtime_legacy_get(conn, opts)
+    end
+  end
+
+  defp legacy_post_path_conflicts?(opts) do
+    post = split_path(Map.get(opts, :legacy_http_sse_post_path, "/message"))
+    post == [] or post == split_path(Map.get(opts, :endpoint, "/mcp"))
+  end
+
+  defp serve_runtime_legacy_get(conn, opts) do
+    request = %{"method" => "session/listen"}
+
+    with :ok <- RuntimeWriter.current(conn),
+         {:ok, reference} <- get_or_create_session_id(conn, :allow_new_session),
+         {:ok, conn} <- validate_request_origin(conn, opts),
+         {:ok, token_info} <- authorize_request(conn, request, opts),
+         {:ok, resolved} <- resolve_mrtr_identity(conn, request, token_info, opts),
+         {:ok, session} <-
+           RuntimeSession.alias_get(
+             RuntimeWriter.runtime(conn),
+             RuntimeWriter.binding(conn),
+             reference,
+             session_metadata(resolved, token_info, :sse)
+           ),
+         :ok <- RuntimeWriter.current(conn),
+         {:ok, cursor} <- runtime_replay_header(conn),
+         {:ok, stream} <-
+           RuntimeSessionStream.prepare_legacy(
+             conn,
+             session,
+             cursor,
+             opts.sse_mode,
+             resolved.http_endpoint
+           ) do
+      endpoint =
+        legacy_http_sse_post_uri(conn, opts) <>
+          "?sessionId=" <>
+          URI.encode_www_form(RuntimeSession.id(session))
+
+      conn
+      |> maybe_add_cors_headers(opts)
+      |> add_protocol_version_header()
+      |> put_resp_header("content-type", "text/event-stream")
+      |> put_resp_header("x-accel-buffering", "no")
+      |> put_resp_header("cache-control", "no-cache")
+      |> put_resp_header("connection", "keep-alive")
+      |> RuntimeSessionStream.serve(stream, {"endpoint", {:raw, endpoint}})
+    else
+      {:error, reason}
+      when reason in [:unknown_cursor, :foreign_cursor, :cursor_evicted, :invalid_replay_header] ->
+        reject_runtime_replay(conn, reason, opts)
+
+      error ->
+        reject_mcp_request(error, conn, opts, nil, nil, nil)
+    end
+  end
+
+  defp reject_runtime_replay(conn, reason, opts) do
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> put_resp_content_type("application/json")
+    |> send_resp(
+      if(reason == :cursor_evicted, do: 410, else: 400),
+      Jason.encode!(
+        JSONRPC.error(nil, ErrorCodes.invalid_request(), "Invalid session replay request")
+      )
+    )
   end
 
   defp handle_runtime_session_endpoint(conn, opts) do
@@ -568,10 +655,18 @@ defmodule Arbor.MCP.HttpPlug do
       %{method: conn.method, path: conn.request_path}
     )
 
-    if legacy_http_sse_enabled?(opts) and legacy_http_sse_post_path?(conn, opts) do
-      handle_legacy_http_sse_post(conn, opts)
-    else
-      handle_mcp_request(conn, opts)
+    cond do
+      legacy_http_sse_enabled?(opts) and legacy_http_sse_post_path?(conn, opts) and
+          not mcp_endpoint_path?(conn, opts) ->
+        if opts.runtime,
+          do: handle_runtime_legacy_post(conn, opts),
+          else: handle_legacy_http_sse_post(conn, opts)
+
+      legacy_http_sse_post_path?(conn, opts) and not mcp_endpoint_path?(conn, opts) ->
+        send_resp(conn, 404, "SSE not enabled")
+
+      true ->
+        handle_mcp_request(conn, opts)
     end
   end
 
@@ -1272,6 +1367,7 @@ defmodule Arbor.MCP.HttpPlug do
          {:ok, body, conn} <- read_or_cached_body(conn, opts),
          {:ok, request} <- runtime_json(body),
          conn = assign_request_protocol_version_runtime(conn, request),
+         :ok <- runtime_route_policy(conn, request),
          :ok <- runtime_array_policy(conn, request, opts),
          :ok <- runtime_validate_methods(request),
          {:ok, token_info} <- authorize_request_runtime(conn, request, opts),
@@ -1290,7 +1386,7 @@ defmodule Arbor.MCP.HttpPlug do
            ),
          {:ok, conn} <- runtime_protocol_version(conn, request, session),
          :ok <- RuntimeWriter.current(conn),
-         format = if(request_stream?(conn, request), do: :sse, else: :json),
+         format = runtime_output_format(conn, request),
          {:ok, _token} <-
            HTTPGateway.submit(runtime, binding, request,
              format: format,
@@ -1386,6 +1482,25 @@ defmodule Arbor.MCP.HttpPlug do
     do: assign_request_protocol_version(conn, request)
 
   defp assign_request_protocol_version_runtime(conn, _batch), do: conn
+
+  defp runtime_output_format(%{private: %{arbor_mcp_legacy_session: _id}}, _request),
+    do: :legacy_sse
+
+  defp runtime_output_format(conn, request),
+    do: if(request_stream?(conn, request), do: :sse, else: :json)
+
+  defp runtime_route_policy(%{private: %{arbor_mcp_legacy_session: _id}} = conn, request) do
+    members = if is_list(request), do: request, else: [request]
+
+    if modern_protocol_header?(conn) or Enum.any?(members, &modern_request_metadata?/1),
+      do: {:error, {:header_mismatch, nil, "Modern requests require the MCP POST endpoint"}},
+      else: :ok
+  end
+
+  defp runtime_route_policy(_conn, _request), do: :ok
+
+  defp runtime_session_reference(%{private: %{arbor_mcp_legacy_session: id}}, _request),
+    do: {:ok, {:existing_session, id}}
 
   defp runtime_session_reference(conn, request) do
     if modern_http_request?(conn, request),
@@ -1532,6 +1647,17 @@ defmodule Arbor.MCP.HttpPlug do
   defp write_runtime_response(conn, effect, "", _format),
     do: RuntimeWriter.perform(conn, effect, "", &Plug.Conn.send_resp(&1, 202, &2))
 
+  # A successful deprecated POST acknowledges a durable replay commit. The
+  # existing physical companion conservatively retains JSON bytes even though
+  # the actual 202 body is empty. Terminal library failures have no replay
+  # companion and use an explicit non-202 response without claiming durability.
+  defp write_runtime_response(conn, effect, wire, :legacy_sse) do
+    case HTTPWriterRegistry.response_primary(effect) do
+      {:ok, primary} -> write_legacy_response(conn, effect, wire, primary)
+      _uncertain -> raise RuntimeWriter.AdmissionError
+    end
+  end
+
   defp write_runtime_response(conn, effect, wire, :json) do
     conn = put_resp_content_type(conn, "application/json")
     RuntimeWriter.perform(conn, effect, wire, &Plug.Conn.send_resp(&1, 200, &2))
@@ -1556,6 +1682,25 @@ defmodule Arbor.MCP.HttpPlug do
         error -> error
       end
     end)
+  end
+
+  defp write_legacy_response(conn, effect, wire, primary) do
+    case Arbor.MCP.Server.Runtime.OutputTicket.session(primary) do
+      nil ->
+        conn = put_resp_content_type(conn, "application/json")
+        RuntimeWriter.perform(conn, effect, wire, &Plug.Conn.send_resp(&1, 500, &2))
+
+      _event ->
+        case Arbor.MCP.SessionManager.RuntimeEvents.publish(primary) do
+          :ok ->
+            RuntimeWriter.perform(conn, effect, wire, fn conn, _charged_wire ->
+              Plug.Conn.send_resp(conn, 202, "")
+            end)
+
+          _uncertain ->
+            raise RuntimeWriter.AdmissionError
+        end
+    end
   end
 
   defp send_resp(conn, status, body), do: RuntimeWriter.send_resp(conn, status, body)
@@ -1923,6 +2068,25 @@ defmodule Arbor.MCP.HttpPlug do
   # The deprecated 2024-11-05 transport receives client messages on the URI
   # announced by the initial `endpoint` event and sends JSON-RPC responses on
   # the already-open SSE stream.
+  defp handle_runtime_legacy_post(conn, opts) do
+    with {:ok, conn, id} <- fetch_legacy_http_sse_session(conn),
+         :ok <- legacy_alias_reference(conn, id) do
+      conn
+      |> put_private(:arbor_mcp_legacy_session, id)
+      |> handle_mcp_request(opts)
+    else
+      {:error, :invalid_session_id} -> reject_invalid_session_id(conn, opts)
+    end
+  end
+
+  defp legacy_alias_reference(conn, id) do
+    case get_or_create_session_id(conn, :allow_new_session) do
+      {:ok, :new_session} -> :ok
+      {:ok, {:existing_session, ^id}} -> :ok
+      _invalid -> {:error, :invalid_session_id}
+    end
+  end
+
   defp handle_legacy_http_sse_post(conn, opts) do
     with {:ok, conn, session_id} <- fetch_legacy_http_sse_session(conn),
          {:ok, conn} <- validate_request_origin(conn, opts),

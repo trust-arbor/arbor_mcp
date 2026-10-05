@@ -1,7 +1,15 @@
 defmodule Arbor.MCP.HttpPlug.RuntimeSession do
   @moduledoc false
   alias Arbor.MCP.Server.Runtime
-  alias Arbor.MCP.Server.Runtime.{HTTPWriterBinding, HTTPWriterRegistry, Services}
+
+  alias Arbor.MCP.Server.Runtime.{
+    HTTPSessionStreamBinding,
+    HTTPWriterBinding,
+    HTTPWriterRegistry,
+    ServiceRef,
+    Services
+  }
+
   alias Arbor.MCP.SessionManager
   alias Arbor.MCP.SessionManager.SessionLease
 
@@ -66,15 +74,49 @@ defmodule Arbor.MCP.HttpPlug.RuntimeSession do
     end
   end
 
+  # The deprecated transport opens a session before initialize. Only the
+  # original short entry may create/ensure/bind it; the established long target
+  # later grants replay reads and IO, never claim or mutation authority.
+  def alias_get(runtime, binding, reference, metadata) do
+    with {:ok, service} <- Runtime.service(runtime, :sessions),
+         {:ok, proof} <- HTTPWriterBinding.validate(binding, runtime),
+         opts = [deadline: proof.deadline],
+         {:ok, lease} <- alias_lease(service, reference, metadata, opts),
+         :ok <- bind(binding, lease) do
+      {:ok, %{service: service, lease: lease, claim: nil, opts: opts}}
+    end
+  end
+
+  defp alias_lease(service, :new_session, metadata, opts),
+    do: SessionManager.create_session(service, metadata, opts)
+
+  defp alias_lease(service, {:existing_session, id}, metadata, opts),
+    do: SessionManager.ensure_session(service, id, metadata, opts)
+
+  def with_replay_target(session, target), do: Map.put(session, :replay_target, target)
+
+  defp replay_opts(%{replay_target: target} = session) do
+    with {:ok, runtime} <- ServiceRef.validate(session.service, :sessions),
+         {:ok, proof} <- HTTPSessionStreamBinding.validate(target, runtime),
+         true <- proof.lease == session.lease,
+         do: {:ok, [deadline: proof.deadline]},
+         else: (_closed -> {:error, :http_session_stream_closed})
+  end
+
+  defp replay_opts(session), do: {:ok, session.opts}
+
   # Capture the existing store cursor before the GET handshake. A first GET
   # does not replay historical events unless Last-Event-ID requests them.
-  def replay_cursor(session),
-    do: SessionManager.replay_cursor(session.service, session.lease, session.opts)
+  def replay_cursor(session) do
+    with {:ok, opts} <- replay_opts(session),
+         do: SessionManager.replay_cursor(session.service, session.lease, opts)
+  end
 
   def replay_page(session, cursor) do
-    with {:ok, service} <- Services.resolve(session.service, :sessions) do
+    with {:ok, service} <- Services.resolve(session.service, :sessions),
+         {:ok, read_opts} <- replay_opts(session) do
       opts =
-        Keyword.merge(session.opts,
+        Keyword.merge(read_opts,
           max_events: min(32, Keyword.get(service.options, :max_replay_page_events, 32)),
           max_bytes: min(65_536, Keyword.get(service.options, :max_replay_page_bytes, 65_536))
         )

@@ -2289,6 +2289,10 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
     {:ok, next, :ok}
   end
 
+  # Explicit retirement is irreversible. Maintenance may retain entered IO,
+  # but must not reopen a failure/completion tail after the socket returned.
+  defp reap_binding({_token, %{mode: :retired}}, gate, _domain), do: gate
+
   defp reap_binding({token, info}, gate, domain) do
     reason = binding_retirement_reason(info, domain)
 
