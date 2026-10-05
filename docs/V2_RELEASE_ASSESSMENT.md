@@ -2,7 +2,7 @@
 
 - **Reviewed:** 2026-10-04
 - **Released baseline:** `v1.5.0`
-- **Integrated source baseline:** `e4d2fc3`
+- **Initial integrated audit baseline:** `e4d2fc3`; later qualified v2 checkpoints are recorded below
 - **Status:** Full v2 scope, adapter split and Arbor namespaces accepted; GitHub MCP transfer complete; implementation and qualification in progress
 - **Release target:** Friday 2026-10-09, subject to release gates and RC soak
 - **Canonical plan:** [V2_ROADMAP.md](./V2_ROADMAP.md)
@@ -633,20 +633,52 @@ application/authority probes pass on minimum/current. Final combined canonical
 qualification follows integration. Runtime durable sessions remain explicitly
 unqualified. See [DETS lifecycle](./V2_DETS_LIFECYCLE.md).
 
+## DETS and queued HTTP cancellation checkpoint
+
+The committed `a5a8f6e` source passes all twelve jobs in
+[complete CI](https://github.com/trust-arbor/arbor_mcp/actions/runs/37247550351),
+including minimum/current/newest toolchains, both archive consumers, SDK,
+external conformance, coverage, performance and Dialyzer. Its local full suites
+pass on both supported toolchains: current reports 5,192 executed tests and
+minimum a 5,274-test inventory including 82 exclusions; both include 20 doctests
+and 34 properties. All 27 pinned SDK/HTTP interoperability cases pass on each.
+
+That checkpoint integrates bounded standalone DETS operations and actual
+all-table close receipts, explicit C17 source-build policy, the unreachable
+newest-Elixir clause correction and two isolated HTTP test-fixture corrections.
+ACP documentation checkpoint `cb8e45c` passes all nine independent CI jobs and
+six local standalone documentation builds. Its executable source is unchanged
+from qualified native write-admission checkpoint `27f5606`.
+
+The additional immutable queued/future-control packet (manifest
+`8008a757fc7fa8cb163e2632e8cd5147a87a5750ae14ea2d623d3f7f4f780e3a`)
+merges cleanly while retaining canonical input materialization and byte/deadline
+accounting. The canonical merged source passes 38 convergence cases on each
+supported toolchain, including ten actual socket cases, plus 19 retained-session
+and 43 Gateway cases. It preserves first deadlines and earlier committed batch
+state and checks both member handoff windows. Source control input remains
+charged until Admission's actual acknowledgment. See
+[queued and future controls](./V2_HTTP_FUTURE_CONTROL_SLICE.md). Both full merged-source suites pass 5,207 executed tests, 20 doctests and
+34 properties, with 82 exclusions. Formatting, production compilation, strict
+Credo, ExDoc and normal minimum Dialyzer pass, as does actual local newest
+production compilation. Final HTTP changes and release-wide qualification remain
+distinct from the earlier green CI.
+
 ## Full-roadmap work still outstanding
 
 | Phase | Remaining implementation |
 |---|---|
 | 1: contracts | Review and finish the [removal/replacement inventory](./V2_API_MIGRATION.md), non-symbol migration, result/configuration contracts and final public defaults. The runtime candidate validates its scheduling configuration, but not every transport/configuration option. |
-| 2: runtime | Finish installed HTTP gateway/session routing. Ordinary Client worker cleanup and captured peer generations pass the combined full suites. Server stdio dispatch and retained physical liability across Runtime replacement are integrated, including clean device retirement. Qualify all remaining singleton boundaries, store lifecycle and cross-runtime crash/restart/stop isolation. |
-| 3: dispatch/scheduler | Test/BEAM, server stdio and custom calls prepare bounded output before serialized state commit, with grouped batch accounting and actual stdio IO receipts. HTTP still needs gateway/Controller delivery, complete legacy batches and real socket acknowledgements. Complete cross-transport and crash-log privacy qualification. |
-| 4: stores | Deliberate public contracts, runtime-owned adapter lifecycle and payload-safe store telemetry. The internal ETS/DETS seam is groundwork, not the whole target. |
+| 2: runtime | Installed HTTP POST, retained sessions and queued/future cancellation are integrated. Finish mounted subscriptions, live legacy resource publication, reverse controls and remaining default/alias routing. Final cross-runtime crash/restart/stop and upgrade evidence remains required. |
+| 3: dispatch/scheduler | Test/BEAM, stdio, custom calls and HTTP Gateway prepare bounded output before serialized state commit, with grouped batches and actual writer receipts. Finish subscription/reverse wiring; qualify final cross-transport equivalence and crash-log privacy. |
+| 4: stores | Qualified ETS is the initial runtime store; other runtime adapters are explicitly rejected. Standalone DETS has bounded operations, path ownership and confirmed/unconfirmed cleanup. Final combined persistence/recovery, lifetime and payload-safe telemetry evidence remains required. |
 | 5: public API | Shared `Server.Result`, default 2020-12 validation, selected DSL composition, media/options migration, dynamic owned tools, `with_connection` and ordinary Client cleanup pass their integrated selections. The first 96 callable removals are implemented. Finish HTTP retirement and final configuration/default contracts. |
 | 6–7: migration/release | Final four-package compiled API and non-symbol migration comparison, HTTP retirement, cross-transport equivalence, runtime pressure/isolation/privacy/upgrade evidence and v2 RC/soak. |
 
 The accepted runtime contract specifies callback PID/links, state order,
-cancellation, ownership and restart behavior. The Test/BEAM candidate implements
-those scheduling semantics; server stdio and HTTP must converge before release.
+cancellation, ownership and restart behavior. The common runtime implements
+those scheduling semantics across Test/BEAM, server stdio and HTTP Gateway; the
+remaining subscription/reverse boundaries must converge before release.
 A client wait timeout and a server execution deadline remain distinct. Later
 2.x changes preserve the qualified contract or introduce compatible opt-in behavior.
 

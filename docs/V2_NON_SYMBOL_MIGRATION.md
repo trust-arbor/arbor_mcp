@@ -162,6 +162,15 @@ through final settlement, and return an explicit whole-envelope error when a
 later member/output fails. Earlier sequential effects remain committed.
 See [output integration](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/docs/V2_OUTPUT_INTEGRATION_SLICE.md).
 
+Mounted legacy HTTP cancellation now covers queued callbacks and future members
+of an admitted array, including the gap between members. Wire IDs retain their
+types. The accepted receipt keeps the first source/target cutoff; duplicate
+controls do not renew it. A live marker fails the whole envelope before the
+targeted callback while preserving earlier committed state. Source input stays
+charged until Admission actually acknowledges the control; caller timeout alone
+does not release it. Initialization IDs remain protected. See
+[queued and future controls](./V2_HTTP_FUTURE_CONTROL_SLICE.md).
+
 An ACK has a specific proof boundary:
 
 | Transport/domain | What completion establishes |

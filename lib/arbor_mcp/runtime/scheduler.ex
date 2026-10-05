@@ -95,7 +95,11 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
                else: current
           end)
 
-        send(source.owner, {:http_cancel_settled, token, phase, :notification})
+        case Admission.cancel_http_future(state.table, token, generation, phase, source.deadline) do
+          :not_queued -> send(self(), {:http_future_cancel_settled, token, generation, phase})
+          _queued_or_uncertain -> :ok
+        end
+
         {:noreply, state}
 
       {:expired, source} when generation == state.generation ->
@@ -105,6 +109,17 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
       _retired ->
         {:noreply, state}
     end
+  end
+
+  def handle_info({:http_future_cancel_settled, token, generation, phase}, state) do
+    if generation == state.generation do
+      case HTTPCancellation.complete(state.table, token, generation, phase) do
+        {:ok, source} -> send(source.owner, {:http_cancel_settled, token, phase, :notification})
+        _retired -> :ok
+      end
+    end
+
+    {:noreply, state}
   end
 
   def handle_info({:submit, generation, token, request, opts}, state) do
@@ -674,7 +689,7 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
       not Process.alive?(work.reservation.owner) ->
         :owner_down
 
-      work.phase != :tracker and :ets.member(state.table, {:cancelled, work.reservation.token}) ->
+      work.phase != :tracker and cancelled_before_start?(state.table, work) ->
         :request_cancelled
 
       now() >= work.reservation.deadline ->
@@ -683,6 +698,11 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
       true ->
         nil
     end
+  end
+
+  defp cancelled_before_start?(table, work) do
+    :ets.member(table, {:cancelled, work.reservation.token}) or
+      HTTPCancellation.cancelled_member?(table, work.reservation.token, work.request["id"])
   end
 
   defp tracker_needed?(state, reason),

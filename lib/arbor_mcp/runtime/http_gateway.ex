@@ -46,7 +46,14 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
            lifecycle_metadata_reserve:
              :binary.copy(
                <<0>>,
-               4_512 + 2 * :erlang.external_size({proof.scope, proof.lease, identity})
+               4_512 + 2 * :erlang.external_size({proof.scope, proof.lease, identity}) +
+                 HTTPCancellation.marker_metadata_bytes(
+                   runtime,
+                   proof.scope,
+                   proof.lease,
+                   identity,
+                   wire_ids(message)
+                 )
              )
          },
          result <- publish(runtime, proof, gateway, message, retained) do
@@ -255,6 +262,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
   def handle_info(:reap, state) do
     state =
       Enum.reduce(state.jobs, state, fn {token, job}, state ->
+        state = retire_replaced_cancellation(token, job, state)
+        job = state.jobs[token]
+
         case job.observation && HTTPWriteTicket.observation_status(job.observation) do
           nil ->
             if job.done?, do: finish(token, state), else: state
@@ -294,6 +304,27 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
 
   def handle_info(_message, state), do: {:noreply, state}
 
+  defp retire_replaced_cancellation(token, %{cancelling?: true} = job, state) do
+    case Admission.current(state.table, token) do
+      {:ok, reservation} ->
+        if reservation.generation != job.cancellation_generation or
+             reservation.output_phase != job.cancellation_phase do
+          state
+          |> put_in([:jobs, token, :cancelling?], false)
+          |> put_in([:jobs, token, :done?], true)
+        else
+          state
+        end
+
+      {:error, :admission_lost} ->
+        state
+        |> put_in([:jobs, token, :cancelling?], false)
+        |> put_in([:jobs, token, :done?], true)
+    end
+  end
+
+  defp retire_replaced_cancellation(_token, _job, state), do: state
+
   defp accept(token, message, retained, state) do
     batch? = is_list(message)
 
@@ -311,6 +342,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
         initializing?: false,
         cancelling?: false,
         cancellation_phase: nil,
+        cancellation_generation: nil,
         observation: nil,
         socket_monitor: Process.monitor(retained.socket),
         socket_down?: false
@@ -401,9 +433,10 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
     }
 
     with {:ok, reservation} <- Admission.promote(state.table, token, request, kind: :rpc),
+         :ok <- HTTPCancellation.register(state.runtime, token, job.lease, job.identity),
+         :ok <- uncancelled_member(state.table, token, request),
          :ok <- bind(job, token, reservation, state),
          :ok <- publish_acceptance(job),
-         :ok <- HTTPCancellation.register(state.runtime, token, job.lease, job.identity),
          {:ok, route} <- Admission.route(state.table) do
       work_opts = [
         runtime: state.runtime,
@@ -414,10 +447,21 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
 
       state = put_in(state.jobs[token].bound?, true)
       state = put_in(state.jobs[token].acceptance, nil)
-      dispatch_or_cancel(token, request, route, work_opts, state)
+
+      if HTTPCancellation.cancelled_member?(state.table, token, request["id"]) do
+        fail(token, :request_cancelled, state)
+      else
+        dispatch_or_cancel(token, request, route, work_opts, state)
+      end
     else
       {:error, reason} -> fail(token, reason, state)
     end
+  end
+
+  defp uncancelled_member(table, token, request) do
+    if HTTPCancellation.cancelled_member?(table, token, request["id"]),
+      do: {:error, :request_cancelled},
+      else: :ok
   end
 
   defp dispatch_or_cancel(
@@ -437,6 +481,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
           {:ok, generation, phase} ->
             send(route.scheduler, {:http_cancel, generation, token, phase})
             state = put_in(state.jobs[token].cancelling?, true)
+            state = put_in(state.jobs[token].cancellation_generation, generation)
             put_in(state.jobs[token].cancellation_phase, phase)
 
           _invalid ->

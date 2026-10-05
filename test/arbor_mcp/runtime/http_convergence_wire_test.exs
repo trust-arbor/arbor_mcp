@@ -100,6 +100,69 @@ defmodule Arbor.MCP.Server.Runtime.HTTPConvergenceWireTest do
     settled(runtime)
   end
 
+  test "physical same-array cancellation suppresses its future request without a callback effect" do
+    {runtime, port} = host(:legacy_only)
+    {200, headers, _} = request(port, initialize())
+    id = session_id(headers)
+    {200, _, body} = request(port, [cancellation(7), tool(7, "count")], session_headers(id))
+    assert %{"id" => 7, "error" => %{"message" => "Request cancelled"}} = Jason.decode!(body)
+    refute_receive {:convergence_count, _}, 5
+    settled(runtime)
+    {200, _, body} = request(port, tool(8, "count"), session_headers(id))
+    assert Jason.decode!(body)["result"]["structuredContent"]["count"] == 0
+    settled(runtime)
+  end
+
+  test "physical future-member cancellation fails one aggregate and preserves earlier committed state" do
+    {runtime, port} = host(:legacy_only)
+    {200, headers, _} = request(port, initialize())
+    id = session_id(headers)
+    socket = open_stream(port, [tool(11, "hold"), tool(7, "count")], session_headers(id))
+    assert_receive {:convergence_hold, 11, worker}, 1_000
+    assert {202, _, ""} = request(port, cancellation("7"), session_headers(id))
+    assert {202, _, ""} = request(port, cancellation(7), session_headers(id))
+    assert Process.alive?(worker)
+    send(worker, :finish)
+    response = receive_until(socket, "Request cancelled")
+    assert response =~ "\"id\":7"
+    refute response =~ "\"id\":11"
+    refute_receive {:convergence_count, _}, 5
+    settled(runtime)
+    {200, _, body} = request(port, tool(8, "count"), session_headers(id))
+    assert Jason.decode!(body)["result"]["structuredContent"]["count"] == 1
+    settled(runtime)
+  end
+
+  test "physical queued current cancellation suppresses its callback without cancelling the active peer" do
+    {runtime, port} = host(:legacy_only)
+    {200, headers, _} = request(port, initialize())
+    id = session_id(headers)
+    active = open_stream(port, tool(11, "hold"), session_headers(id))
+    assert_receive {:convergence_hold, 11, worker}, 1_000
+    queued = open_stream(port, tool(7, "count"), session_headers(id))
+
+    {:ok, route} =
+      Arbor.MCP.Server.Runtime.Admission.route(Arbor.MCP.Server.Runtime.Ref.table(runtime))
+
+    wait(fn ->
+      Enum.any?(
+        :sys.get_state(route.scheduler).work,
+        fn {_token, work} -> work.request["id"] == 7 end
+      )
+    end)
+
+    assert {202, _, ""} = request(port, cancellation(7), session_headers(id))
+    assert receive_until(queued, "Request cancelled") =~ "\"id\":7"
+    assert Process.alive?(worker)
+    refute_receive {:convergence_count, _}, 5
+    send(worker, :finish)
+    assert receive_until(active, "structuredContent") =~ "\"id\":11"
+    settled(runtime)
+    {200, _, body} = request(port, tool(8, "count"), session_headers(id))
+    assert Jason.decode!(body)["result"]["structuredContent"]["count"] == 1
+    settled(runtime)
+  end
+
   test "physical trusted modern cross-POST cancellation uses server identity" do
     {runtime, port} =
       host(:modern_only, principal_id: "alice", tenant_id: "team", endpoint: "/mcp")

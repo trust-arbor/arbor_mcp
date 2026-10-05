@@ -13,6 +13,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     ByteBudget,
     Deadline,
     Failure,
+    HTTPCancellation,
     Initialization,
     Ref,
     RetainedTerm,
@@ -216,6 +217,25 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   def pending_key?(table, key), do: :ets.member(table, {:request, key})
 
   def cancel_ingress(table, token, id), do: call(table, {:cancel_ingress, token, id})
+
+  def cancel_http_future(table, token, generation, phase, deadline) do
+    remaining = Deadline.remaining(deadline)
+
+    with true <- remaining > 0,
+         {:ok, %{admission: admission}} <- route(table) do
+      GenServer.call(
+        admission,
+        {:http_future_cancel, token, generation, phase},
+        min(remaining, 1_000)
+      )
+    else
+      false -> :not_queued
+      _retired -> {:error, :runtime_unavailable}
+    end
+  catch
+    :exit, {:timeout, _call} -> :pending
+    :exit, _reason -> {:error, :runtime_unavailable}
+  end
 
   def origin_active?(table, %{token: token, generation: generation, scope: scope}) do
     case current(table, token) do
@@ -440,6 +460,22 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     {:reply, :ok, state}
   end
 
+  def handle_call({:http_future_cancel, token, generation, phase}, {caller, _alias}, state) do
+    with {:ok, %{scheduler: ^caller, generation: ^generation}} <- route(state.table),
+         {:ok, source} <- HTTPCancellation.consumed_source(state.table, token, generation, phase) do
+      Enum.each(state.reservations, fn {_target_token, reservation} ->
+        if HTTPCancellation.future_target?(state.table, source, reservation) do
+          HTTPCancellation.mark_future(state.table, source, reservation)
+        end
+      end)
+
+      send(caller, {:http_future_cancel_settled, token, generation, phase})
+      {:reply, :ok, state}
+    else
+      _retired -> {:reply, {:error, :http_cancellation_retired}, state}
+    end
+  end
+
   def handle_call({:bind, token}, _from, state) do
     case Map.get(state.reservations, token) do
       %{bound: false, terminal: false} = reservation ->
@@ -529,6 +565,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
         )
 
         :ets.delete(state.table, {:wire_cancel, token, reservation.request_id})
+        :ets.delete(state.table, {:http_wire_cancel, token, reservation.request_id})
         key = key(reservation.scope, {:notification, token}, :inbound)
 
         reservation = %{
@@ -1269,6 +1306,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
         for id <- reservation.wire_ids do
           :ets.delete(state.table, {:wire_request, reservation.scope, id, token})
           :ets.delete(state.table, {:wire_cancel, token, id})
+          :ets.delete(state.table, {:http_wire_cancel, token, id})
         end
 
         %{
