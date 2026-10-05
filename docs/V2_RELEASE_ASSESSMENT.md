@@ -1,16 +1,18 @@
 # Arbor MCP v2 Release Assessment
 
-- **Reviewed:** 2026-10-04
+- **Reviewed:** 2026-10-05; historical checkpoint evidence below is preserved
 - **Released baseline:** `v1.5.0`
 - **Initial integrated audit baseline:** `e4d2fc3`; later qualified v2 checkpoints are recorded below
-- **Status:** Full v2 scope, adapter split and Arbor namespaces accepted; GitHub MCP transfer complete; implementation and qualification in progress
+- **Status:** Package/runtime and HTTP reverse integration implemented; combined followups and final release qualification in progress
 - **Release target:** Friday 2026-10-09, subject to release gates and RC soak
 - **Canonical plan:** [V2_ROADMAP.md](./V2_ROADMAP.md)
 
 ## Release conclusion
 
-The library has a stable protocol baseline and useful split preparation, but
-neither the package cutover nor the architectural v2 roadmap is complete.
+The library has a stable protocol baseline and integrated package/runtime,
+Runtime-only HTTP and bounded reverse implementations. The final combined
+qualification, sealed four-package artifacts and continuous RC soak are not
+complete. Earlier audit conclusions below retain their original source context.
 
 **Accepted on 2026-10-03:** v2 includes the per-server runtime, unified
 dispatch and bounded handler scheduler as well as the MCP/ACP split, any
@@ -24,6 +26,9 @@ library-v2 release requirement; retain the gates in
 [ACP_V2_TRACKING.md](./ACP_V2_TRACKING.md).
 
 ## Work already integrated
+
+The following table and local validation record the initial supported 1.x audit.
+Later sections identify the separate v2 implementation checkpoints.
 
 | Area | Evidence and current outcome |
 |---|---|
@@ -691,21 +696,75 @@ filters. A fresh CI run remains required.
 Final HTTP changes and release-wide qualification remain
 distinct from the earlier green CI.
 
+## October 5 current qualification checkpoint
+
+Committed MCP `1284440` integrates the bounded HTTP reverse path and explicit
+Runtime fixtures. Its 636-case combined selection passes on all three captured
+toolchains and its 40 actual HTTP wire/Client cases pass on both supported
+toolchains. Checkpoint `e284fee` commits the later scoped HTTP bookkeeping,
+legacy JSON progress and shutdown observation followups. Its immediately
+preceding qualified snapshot passes 671 combined cases, warnings-as-errors
+compilation and full formatting on all three. The 50-case HTTP wire selection,
+strict Credo/normal Dialyzer and docs with warnings as errors pass both supported
+toolchains. The raw warning census retains 72/current and 66/minimum, none in
+owned paths and no new filters. The 13 actual SDK stdio/HTTP cases pass both
+with no skips. The only later change in that source batch restores the
+conformance fixture's original 150 ms progress workload; production and
+configuration remain unchanged. Counts identify separate selections, not an
+aggregate release total, and the earlier snapshot receipts remain distinct.
+
+The working followups include six passing direct Plug OAuth cases, with validated
+methodless response default scopes `[]` while full ServerGuard, custom mapping
+and exact identity/endpoint/session/source checks remain. Actual OAuth wire
+execution remains pending. Four pure legacy JSON Context progress cases preserve
+the final JSON response and authenticated addressed-session delivery. The
+shutdown wait-order fix reads completion after actual observer death under the
+unchanged cutoff. It resolves the accepted-await minimum selection failure;
+that earlier 667-case receipt remains preserved alongside the passing 671-case
+selection.
+
+The earlier full current run executed 5,340 tests, 20 doctests and 34 properties
+with one stale retained-protocol documentation assertion and 207 exclusions.
+The corrected four-module docs and assertion pass their focused cases on all
+three toolchains. A fresh full current rerun now passes 5,344 tests, 20 doctests
+and 34 properties with zero failures and 207 exclusions. The earlier failed
+receipt remains preserved; final full minimum and complete CI remain required.
+
+Official stable conformance 0.1.16 now reports 38 server scenarios passed and one
+failed on both supported toolchains. The earlier 34/5 and 37/2 receipts remain
+preserved. The error-tool and subscribe/unsubscribe callback corrections are
+covered by the actual reruns. After restoration of the original paced fixture,
+the single progress scenario observes three ordered 0/50/100 notifications and
+passes. The remaining multiple-stream scenario uses `2025-03-26` after
+negotiating `2025-11-25`, producing the retained HTTP 400 version fence; fresh
+correctly versioned requests return 200/200/200. The published mismatch remains
+unresolved; no expected-failure adjustment or protocol downgrade qualifies the
+stable server gate. Stable client conformance passes 218 cases on both supported
+toolchains, and modern 0.2.0-alpha.11 passes 149 server and 387 client cases on
+both. These selected-profile successes do not qualify the final package graph.
+
+MCP migration documentation and ACP documentation checkpoints are pushed.
+Concrete final four-package production API and actual 2024 continuous-consumer
+preparations are source-only. Final builds, complete CI/conformance/SDKs, actual
+authenticated wire and installed/release consumers, same-runner performance and
+the accepted continuous 48-hour final-RC run remain required. No RC or stable
+release is qualified by these interim receipts.
+
 ## Full-roadmap work still outstanding
 
-| Phase | Remaining implementation |
+| Phase | Remaining release work |
 |---|---|
-| 1: contracts | Review and finish the [removal/replacement inventory](./V2_API_MIGRATION.md), non-symbol migration, result/configuration contracts and final public defaults. The runtime candidate validates its scheduling configuration, but not every transport/configuration option. |
-| 2: runtime | Installed HTTP POST, retained sessions and queued/future cancellation are integrated. Mounted subscriptions, durable legacy resource publication, aliases and Runtime-only mounts have implemented checkpoints. Finish reverse integration and final combined qualification. Final cross-runtime crash/restart/stop and upgrade evidence remains required. |
-| 3: dispatch/scheduler | Test/BEAM, stdio, custom calls and HTTP Gateway prepare bounded output before serialized state commit, with grouped batches and actual writer receipts. Subscription/publication wiring has implemented checkpoints. Finish reverse integration; qualify final cross-transport equivalence and crash-log privacy. |
-| 4: stores | Qualified ETS is the initial runtime store; other runtime adapters are explicitly rejected. Standalone DETS has bounded operations, path ownership and confirmed/unconfirmed cleanup. Final combined persistence/recovery, lifetime and payload-safe telemetry evidence remains required. |
+| 1: contracts | Reconcile the implemented [removal/replacement inventory](./V2_API_MIGRATION.md), non-symbol migration and result/configuration contracts against the final compiled graph. Freeze and qualify final public defaults and package ranges. |
+| 2: runtime | Installed HTTP POST, retained sessions and queued/future cancellation are integrated. Mounted subscriptions, durable legacy resource publication, aliases, Runtime-only mounts and reverse controls are integrated. Complete final combined and authenticated wire qualification. Final cross-runtime crash/restart/stop and upgrade evidence remains required. |
+| 3: dispatch/scheduler | Test/BEAM, stdio, custom calls and HTTP Gateway prepare bounded output before serialized state commit, with grouped batches and actual writer receipts. Subscription/publication and bounded reverse wiring are integrated. Qualify final cross-transport equivalence, authenticated wire and crash-log privacy on the sealed graph. |
+| 4: stores | Built-in Runtime session storage is ETS; unqualified durable session backends reject explicitly. Standalone DETS has bounded operations, path ownership and confirmed/unconfirmed cleanup. Final combined persistence/recovery, lifetime and payload-safe telemetry evidence remains required. |
 | 5: public API | Shared `Server.Result`, default 2020-12 validation, selected DSL composition, media/options migration, dynamic owned tools, `with_connection` and ordinary Client cleanup pass their integrated selections. All 102 accepted callable removals, ten module retirements and four type retirements are implemented in source. Finish the final compiled absence audit and configuration/default contracts. |
 | 6–7: migration/release | Final four-package compiled API and non-symbol migration comparison, final compiled retirement audit, cross-transport equivalence, runtime pressure/isolation/privacy/upgrade evidence and v2 RC/soak. |
 
 The accepted runtime contract specifies callback PID/links, state order,
 cancellation, ownership and restart behavior. The common runtime implements
 those scheduling semantics across Test/BEAM, server stdio and HTTP Gateway; the
-remaining reverse integration and final transport qualification must converge before release.
+integrated reverse path still requires final combined transport qualification before release.
 A client wait timeout and a server execution deadline remain distinct. Later
 2.x changes preserve the qualified contract or introduce compatible opt-in behavior.
 
@@ -788,5 +847,5 @@ documents the `:hex` override. Hex ownership is also separate from GitHub;
 Preserve wire/storage identifiers such as `_meta.ex_mcp`, the BEAM capability
 extension and Pi's persisted session-map path unless a separate migration is
 accepted. Renaming a library does not justify silently changing those contracts.
-The MCP repository transfer is complete. Package publication and canonical
-ACP cutover remain gated on implementation and qualification.
+The MCP repository transfer and canonical ACP source cutover are complete.
+Package publication remains gated on final artifact qualification and the RC soak.

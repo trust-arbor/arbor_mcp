@@ -75,6 +75,22 @@ wire/Client cases on both supported toolchains. Supported strict Credo and norma
 Dialyzer pass; the unfiltered warning census retains 72 current/66 minimum warnings
 with none in the 12 changed production paths and no added filters. A failed
 minimum wire run overlapped a dependency rebuild; its serial repeat passes with
-unchanged source, deadlines and stable selected Cowlib bytes. Full combined CI,
-HTTP reverse integration, conformance, compiled API, platform/consumer and the
-48-hour final RC qualification remain gates.
+unchanged source, deadlines and stable selected Cowlib bytes. Bounded reverse
+integration is now committed at `1284440`: 636 combined cases pass all three
+captured toolchains and 40 HTTP wire/Client cases pass both supported toolchains.
+The later followups are committed at `e284fee`. Their immediately preceding
+qualified snapshot passes 671 cases with WAE/full formatting on all three,
+50 HTTP wire cases and supported quality/docs gates on both supported toolchains.
+Its full current rerun passes 5,344 tests plus doctests/properties; 13 actual SDK
+stdio/HTTP cases pass both with no skips. The only later change in that batch
+restores the conformance fixture's original 150 ms progress workload. These
+receipts retain strict initialization/version fences and the original shutdown
+cutoff. Legacy JSON progress preserves final JSON responses and exact session
+authority, with actual ordered-progress conformance now passing. Validated
+methodless OAuth responses preserve full ServerGuard and custom mapping; actual
+OAuth wire remains pending. Stable server conformance reports 38/1 on both,
+with the published version-header mismatch still open. Stable client 218 and
+modern server 149/client 387 cases pass both supported toolchains.
+Full combined CI, final authenticated wire/conformance, compiled API,
+platform/installed consumers, same-runner performance and the 48-hour final RC
+qualification remain gates. See [current release status](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_PLAN.md).

@@ -1,7 +1,7 @@
 # v2 Release Plan: October 3–9, 2026
 
 - **Target:** Friday, October 9, 2026, in `America/Chicago`
-- **Status:** Package and runtime foundations committed; transport integration and release qualification underway
+- **Status:** Runtime-only HTTP and bounded reverse integration committed; combined followups and final release qualification underway
 - **Scope:** Full accepted v2, including runtime/scheduler and transport integration
 - **Names:** `Arbor.MCP.*`, `Arbor.ACP.*`, `Arbor.RPC.*`; optional `arbor_acp_adapters` bundle accepted
 - **Repository:** `trust-arbor/arbor_mcp`, transferred with repository ID `989917799` preserved
@@ -121,11 +121,68 @@ fresh temporary consumer projects. Consumer jobs and private preparations have
 interim receipts; the final sealed source/package graph still requires its own
 normal dependency resolution, compiled consumer and assembled-release evidence.
 
+## Current qualification checkpoint — October 5
+
+Runtime-only HTTP mounts and bounded reverse controls are integrated at
+`1284440`. Its combined selection passes 636 cases on all three captured
+toolchains, and 40 actual HTTP wire/Client cases pass on both supported
+toolchains. Checkpoint `e284fee` commits the later scoped HTTP bookkeeping,
+legacy JSON progress and shutdown observation followups. Its immediately
+preceding qualified snapshot passes 671 combined cases, warnings-as-errors
+compilation and full formatting on all three toolchains. The 50-case HTTP wire
+selection, strict Credo, normal Dialyzer and docs with warnings as errors pass
+both supported toolchains. The raw warning census retains 72/current and
+66/minimum warnings, none in owned paths and no new filters. The 13 actual SDK
+stdio/HTTP cases pass both with no skips. The only subsequent change within that
+source batch restores the conformance progress fixture's original 150 ms
+workload; production and configuration are unchanged. Keep the original
+snapshot receipts distinct from the later conformance reruns.
+These counts describe separate selections and must not be added together.
+
+The followups keep bearer introspection and exact identity/endpoint/session
+checks while assigning empty default scopes only to a validated methodless
+JSON-RPC response; custom scope mapping remains unchanged. Six direct Plug
+OAuth cases pass on all three toolchains, but the actual OAuth wire fixture has
+not run. Legacy JSON callbacks can report progress through their authenticated
+session's addressed GET while keeping the final POST response JSON. Four pure
+regressions pass; the actual official progress scenario now observes all three
+ordered notifications. The
+shutdown completion read-order correction preserves the original cutoff and
+unexpected observer-loss error; the combined 671-case selection includes it.
+
+The earlier full current run executed 5,340 tests, 20 doctests and 34 properties,
+with one stale documentation assertion and 207 exclusions. The corrected
+retained-protocol documentation and assertion pass their focused cases on all
+three toolchains. The fresh full current rerun now passes 5,344 tests, 20 doctests
+and 34 properties with zero failures and 207 exclusions; the earlier failure
+remains recorded. Final full minimum and complete CI qualification remain gates.
+
+Official stable conformance 0.1.16 now reports 38 server scenarios passed and one
+failed on both supported toolchains. Its earlier 34/5 and 37/2 receipts remain
+preserved. Restoring the fixture's original 50 ms of work after each progress
+report yields an actual passing single-scenario receipt with ordered 0/50/100
+notifications. The remaining published multiple-stream scenario sends
+`2025-03-26` after negotiating `2025-11-25`: HTTP 400 is the retained version
+fence, while fresh correctly versioned requests return 200/200/200. That
+published scenario mismatch remains unresolved; the stable server gate is not
+closed and no expected failure or protocol downgrade is added. Stable client
+conformance passes 218 cases on both supported toolchains. Modern
+0.2.0-alpha.11 conformance passes 149 server and 387 client cases on both.
+These are the selected profile receipts, not final package qualification.
+
+The four-package production API audit and actual 2024 `/sse` to `/message`
+continuous-consumer preparations are source-only. Fresh final builds, physical
+consumer/short-mode proof and the unbroken 48-hour final-RC run remain required.
+Preparation is not execution or release qualification.
+
 ## Outstanding release blockers
 
-- Integrate HTTP reverse controls and complete final combined transport qualification.
-  Legacy progress/log delivery, mounted modern subscriptions, Runtime-only HTTP
-  mounts and explicit standalone server ownership have implemented checkpoints.
+- Complete final combined transport and authenticated wire qualification.
+  HTTP reverse controls, legacy progress/log delivery, mounted modern
+  subscriptions, Runtime-only HTTP mounts and explicit standalone server
+  ownership are integrated. Legacy JSON progress has passing actual official
+  coverage; actual OAuth wire and the published stable conformance scenario
+  mismatch remain open.
   Addressed resource subscription tracking and durable fanout are implemented
   and described in [the resource slice](https://github.com/trust-arbor/arbor_mcp/blob/f08c090c44edcda3a53478fd04a7a944c0bf2b7f/docs/V2_HTTP_RESOURCE_PUBLICATION_SLICE.md). Runtime/scheduler, store/result
   contracts, owned listeners and accepted API retirements have implemented slices;
@@ -140,10 +197,12 @@ normal dependency resolution, compiled consumer and assembled-release evidence.
 - Complete packaged consumer, extension/range and publishing qualification.
   Independent ACP manifests and CI exist; Hex ownership/credentials, final
   links and namespace/config/telemetry migration still need release evidence.
-- Complete the remaining HTTP implementation and requalify installed sessions,
-  aliases, replay and optional listeners at the final package commit. Qualify
-  Phoenix, actual Arbor/combined/OTP-release consumers, conformance, adapter
-  compatibility and the final RC's actual 48-hour soak.
+- Requalify installed HTTP sessions, reverse controls, aliases, replay and
+  optional listeners at the final package commit. Complete full CI, official
+  legacy/current conformance, tagged TypeScript HTTP and SDK coverage, Phoenix,
+  actual Arbor/combined/OTP-release consumers, adapter compatibility and
+  same-runner performance against the released 1.x artifact. Run the final RC's
+  actual 48-hour soak only after the exact package graph is qualified.
 
 Stable publication requires all blockers cleared and the final RC's full evidence
 reviewed. Keep the frozen 1.x manifest and preserved migration worktrees available

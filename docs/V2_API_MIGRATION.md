@@ -33,7 +33,11 @@ to that census. Candidate runtime files remain
 under active development; the presence of a source file does not establish
 release-wide qualification or a final public API. Live status also includes the
 later owned-listener, finite-shutdown, HTTP alias and accepted HttpPlug startup
-retirement followups; the historical compiled counts below are unchanged.
+retirement followups. Runtime-only mounts and bounded HTTP reverse are integrated
+at `1284440`; the later scoped HTTP bookkeeping, legacy JSON progress and
+shutdown observation followups are committed at `e284fee`. Selected conformance
+results and remaining final qualification gates are recorded below. The
+historical compiled counts are unchanged.
 
 The compiled checkpoint audit reads actual BEAM exports (including macro/default
 arities) and type metadata against the frozen baseline and accepted plan:
@@ -200,8 +204,21 @@ Legacy progress/log notifications and mounted modern subscription routing have
 implemented source checkpoints. Runtime-only HTTP mounts and explicit standalone
 server ownership are implemented at `27f81a1`. The combined 543-case selection
 passes on all three captured toolchains, and the 27-case HTTP wire/Client selection
-passes on both supported toolchains. HTTP reverse integration, final conformance
-and the sealed compiled API audit remain gates.
+passes on both supported toolchains. Bounded reverse integration is committed at
+`1284440`, with 636 combined cases on all three captured toolchains and 40 actual
+HTTP wire/Client cases on both supported toolchains. The later scoped HTTP
+followups are committed at `e284fee`. Their immediately preceding qualified
+snapshot passes 671 combined cases with WAE/full formatting on all three and
+50 actual HTTP wire cases on both supported toolchains. Supported quality/docs
+gates and 13 actual SDK stdio/HTTP cases pass both; the full current rerun passes
+5,344 tests plus doctests/properties. The later fixture-only restoration of its
+original paced workload has passing actual progress coverage. Stable server
+conformance reports 38/1 on both, retaining the published version-header
+mismatch; stable client 218 and modern server 149/client 387 cases pass both.
+Final full minimum/CI, actual OAuth wire, complete stable conformance and the
+sealed compiled API audit remain gates. See
+[current release status](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_PLAN.md) for the separate source receipts
+and remaining package, consumer, performance and continuous-soak gates.
 
 The supported mounted shape is:
 
@@ -357,15 +374,15 @@ opaque peer data or persistent keys.
 
 The candidate routes Test/BEAM HandlerServer, generated DSL startup, server
 stdio and installed HTTP requests through Runtime/Scheduler and bounded output.
-Mounted subscription/resource/reverse convergence and final cross-transport
-qualification remain gates. Earlier slice documents describe their original
+Mounted subscription/resource/reverse paths are integrated; final combined
+cross-transport, authenticated wire and installed-package qualification remain gates. Earlier slice documents describe their original
 evidence boundaries; [the non-symbol migration](./V2_NON_SYMBOL_MIGRATION.md)
 records current source and supplementary freezes without rewriting that history.
 
 | Old usage/contract | Candidate replacement and limits |
 |---|---|
 | `ExMCP.Server.HandlerServer.start_link/1` and generated DSL startup return a handler GenServer PID | `Arbor.MCP.Server.HandlerServer.start_link/1`, generated startup, `StdioServer.start_link/1` and owned HTTP startup return a native runtime supervisor PID. Child specs become supervisor specs; registered names belong to the root. Existing Phoenix mounts borrow their host listener and address a supervised Runtime. |
-| `self()` during protocol/custom callbacks identifies the transport/handler process | Callbacks execute in supervised tasks; their PID differs from the root, protocol edge and state owner. Scheduler owns committed state and handler init/termination. Resources created inside an invocation inherit task lifetime. An ETS table created in init belongs to the scheduler: callback tasks cannot access a private table or write a protected table. Use explicit state or a supervised state owner for those operations. |
+| `self()` during protocol/custom callbacks identifies the transport/handler process | Callbacks execute in supervised tasks; their PID differs from the root, protocol edge and state owner. Scheduler owns committed state and handler init/termination. ETS owned by a callback worker follows that owner's lifetime unless an explicit heir or ownership transfer is configured. Arbitrary spawned processes and other callback-created resources do not gain automatic Runtime lifecycle management; give persistent resources explicit managed owners. An ETS table created in init belongs to the scheduler: callback tasks cannot access a private table or write a protected table. Use explicit state or a supervised state owner for those operations. |
 | `GenServer.call(server, request)` / `GenServer.cast(server, message)` for custom handlers | New `Arbor.MCP.Server.call/2,3` and `cast/2` submit through bounded runtime admission. These are additive helpers, absent from the frozen `ExMCP.Server` callable set. Custom callbacks support `{:reply, reply, next_state}` and `{:noreply, next_state}`; deferred `GenServer.reply`, continuation and stop tuples are unsupported. Override the Handler default before adding custom call clauses. |
 | External inspection assumes `:sys.get_state(server)` contains handler state | Root state is supervisor state. `Runtime.ref/1` gives an opaque runtime reference stable across child restarts; `Runtime.edge/1` is explicit diagnostic/control access. Edge state is protocol state. Direct GenServer calls/sends to an edge bypass supported pre-mailbox admission and are not the migration contract. |
 | Singletons/process-dictionary context and wire ID alone determine cancellation | `Server.Context.cancelled?/0` consults runtime/connection/direction/invocation scope; new `Context.scope/0` exposes that opaque scope during a callback (nil outside); accepted cancellation prevents the invocation's state commit and retires old peer work. A new peer can reuse its wire IDs safely. |
@@ -426,9 +443,9 @@ checks remain distinct from symbol parity:
 | Surface | Concrete current evidence and required decision/check |
 |---|---|
 | Application configuration | Migrate `config :ex_mcp` to the actual owner, including module-valued OAuth/task/subscription keys and schema policy. Host Logger/Phoenix settings remain host-owned. Do not blanket-map vendor environment variables or protocol/storage identifiers. Application/launcher stdio Logger migration remains separate from facade behavior and privacy formatting. |
-| HTTP options | `:sse_enabled` and server `:use_sse` retire; `:legacy_http_sse` remains an explicit wire option. `:handler_call_timeout` moves to root `:request_timeout_ms`; per-request static/function/MFA `:handler_opts` becomes charged Context application data, never handler initialization. Explicit Runtime/service addresses replace raw handler/server/store overrides. Preserve authenticated request facts and qualify the final subscription/resource/reverse cutover. |
+| HTTP options | `:sse_enabled` and server `:use_sse` retire; `:legacy_http_sse` remains an explicit wire option. `:handler_call_timeout` moves to root `:request_timeout_ms`; per-request static/function/MFA `:handler_opts` becomes charged Context application data, never handler initialization. Explicit Runtime/service addresses replace raw handler/server/store overrides. Preserve authenticated request facts and qualify the final combined subscription/resource/reverse package graph. |
 | Media options | Implemented in the first retirement checkpoint: full pipeline prevalidation rejects removed tokens before custom effects, and every file builder rejects `:auto_resize` / `:quality` presence before file access. Retained `:mime_types` and `:max_size` constrain loading. See `V2_API_RETIREMENTS_SLICE.md` for exact policies and tests. |
-| Process/store names | Native runtime/service logical references replace cached child PIDs; descriptors distinguish owned and genuinely namespaced borrowed domains. ETS runtime sessions and bounded Tasks/Replay have implemented slices; standalone DETS has its separate finite ownership contract. Remaining HTTP globals and final combined retention/recovery/pressure evidence remain gates; a filename or renamed atom does not prove runtime isolation. |
+| Process/store names | Native runtime/service logical references replace cached child PIDs; descriptors distinguish owned and genuinely namespaced borrowed domains. ETS runtime sessions and bounded Tasks/Replay have implemented slices; standalone DETS has its separate finite ownership contract. HTTP mounts no longer select implicit server globals. Final combined retention/recovery/pressure evidence remains a gate; a filename or renamed atom does not prove runtime isolation. |
 | Telemetry and messages | Prefixes become `[:arbor_mcp, ...]` / `[:arbor_acp, ...]`. Managed runtime `server/request/admitted` replaces old `received`: reservation-envelope count/request bytes/runtime PID have different meanings from method-level receipt metadata. Local mailbox ACK, staged batch ACK, physical IO completion and remote consumption are distinct. Selected legacy IDs/messages remain; RPC events carry generation/token with explicit bounded ACK. |
 | Lifecycle/results | Source checkpoints distinguish the committed scoped helper, supplementary ordinary Client lifetime/event-context patches and supplementary privacy diagnostics. Preserve native parent identity, typed cleanup uncertainty, original deadlines and borrowed survival during final integration. ACP's shutdown result expansion and pure managed-receipt callback require consumer changes despite retained names. |
 | Package/consumer release | Validate four real package manifests, normal dependency resolution and clean consumer compilation; move examples, Mix tasks, SDK/ecosystem tooling and tests to the owning package. V2 must include full runtime/scheduler scope and preserved wire-era coverage. No release/tag/publication is implied by source-copy or manifest checks. |

@@ -4,7 +4,8 @@ This is the consumer migration record for behavior that an export comparison
 cannot establish. It accompanies [the API inventory](./V2_API_MIGRATION.md),
 [package ownership](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/docs/V2_PACKAGE_CONTRACT.md) and
 [the runtime contract](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/docs/V2_RUNTIME_CONTRACT.md). V2 is still an unpublished
-candidate; the final compiled graph, HTTP cutover and RC gates remain open.
+candidate; HTTP reverse and Runtime-only mounts are integrated, while final
+combined transport, compiled graph and RC gates remain open.
 
 ## Source checkpoints and evidence boundaries
 
@@ -28,8 +29,22 @@ Live migration status also includes the later owned HTTP constructors, finite
 shutdown at `cfd4686`, aliases/SDK followups at `ecc4ee9`, and the accepted
 HttpPlug startup retirement. Addressed resource tracking and publication are
 implemented at `f08c090`: 78 combined cases pass all three toolchains and 14
-actual resource/alias wire cases pass both supported toolchains. These do not
-change the historical slice counts or establish the final compiled package graph.
+actual resource/alias wire cases pass both supported toolchains. Runtime-only
+HTTP mounts and reverse integration are committed at `1284440`, with 636 combined
+cases on all three captured toolchains and 40 wire/Client cases on both supported
+toolchains. Checkpoint `e284fee` commits the later scoped bookkeeping, legacy
+JSON progress and shutdown observation followups. Its immediately preceding
+qualified snapshot passes 671 combined cases, WAE/full formatting on all three,
+50 HTTP wire cases and supported quality/docs gates on both supported
+toolchains. The full current rerun passes 5,344 tests plus doctests/properties,
+and 13 actual SDK stdio/HTTP cases pass both with no skips. The only later change
+in that batch restores the conformance fixture's original 150 ms workload.
+Actual stable server conformance now reports 38/1 on both supported toolchains;
+the remaining published scenario uses a header inconsistent with its negotiated
+version. Stable client 218 and modern server 149/client 387 cases pass both.
+The earlier failed receipts remain preserved; full minimum/CI, actual OAuth
+wire and final package qualification remain pending. These do not change the historical slice counts or establish the final
+compiled package graph. See [current release status](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_PLAN.md).
 
 The historical census is retained under
 `tmp/v2-semantic-census-69b0a39/{SEMANTIC_CENSUS.md,semantic-inventory.json,REVIEW_NOTES.md}`.
@@ -406,8 +421,20 @@ Legacy progress/log notifications and mounted modern subscription routing have
 implemented source checkpoints. Runtime-only HTTP mounts and explicit standalone
 server ownership are implemented at `27f81a1`; its combined 543-case selection
 passes on all three captured toolchains and its 27-case HTTP wire/Client selection
-passes on both supported toolchains. HTTP reverse integration and final
-conformance, package, compiled API, consumer and soak qualification remain gates.
+passes on both supported toolchains. Reverse controls are now integrated at
+`1284440`; their original private evidence remains in [the reverse slice](./V2_HTTP_REVERSE_SLICE.md).
+Final combined/authenticated wire, conformance, package, compiled API, consumer,
+performance, full CI and soak qualification remain gates. The legacy JSON
+progress continuation committed at `e284fee` uses the original authenticated
+session target without changing the final JSON response format. Its actual
+official progress scenario passes with three ordered 0/50/100 notifications.
+Stable server conformance reports 38/1 on both supported toolchains; the
+remaining published version-header mismatch is still open, without an
+expected-failure adjustment or protocol downgrade.
+Validated methodless OAuth responses use empty default scopes only after normal
+ServerGuard validation. Custom scope mapping and exact callback/session/identity/
+endpoint authority remain required; direct Plug tests do not qualify actual
+OAuth wire behavior.
 The accepted HTTP wrappers/startup helpers are
 retired in the reviewed source; the final compiled absence audit is pending.
 The retained stream keeps its original HTTP entry cutoff and a reconnect preserves its typed session. Modern GET/DELETE
@@ -499,7 +526,7 @@ services opt-in. Replay remains opt-in. Removed `:sse_enabled`/server `:use_sse`
 are replaced by `:legacy_http_sse`; `:handler_call_timeout` moves to root
 `:request_timeout_ms`. Raw store/registry options and owned borrowed sockets
 are rejected. See [HTTP listeners](./HTTP_LISTENERS.md) for the exact constructor
-migration and the remaining reverse-control and final combined qualification gates.
+migration and final combined, authenticated wire and installed-consumer qualification gates.
 
 ### Explicit server state ownership
 
