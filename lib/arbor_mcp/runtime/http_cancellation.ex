@@ -101,8 +101,6 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellation do
 
   def retire(table, token), do: :ets.delete(table, {:http_session_origin, token})
 
-  defp session_key(%{lease: nil}), do: {:error, :session_required}
-
   defp session_key(origin),
     do: SessionLease.validate(origin.lease, ServiceRef.new(origin.runtime, :sessions), :sessions)
 

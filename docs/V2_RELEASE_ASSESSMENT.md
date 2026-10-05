@@ -621,6 +621,18 @@ paths and modern method rejection; the nine existing session/replay/delete cases
 and 35 Gateway routing cases pass on both toolchains. Fresh combined CI remains
 required after the control slice and native RPC integration.
 
+The standalone DETS lifecycle slice now adds a native four-table Owner, bounded
+node-local path claims and one original finite I/O cutoff. Timeout seals the
+store while physical uncertainty retains exclusivity; actual all-table close
+confirms cleanup. Owner DOWN alone quarantines the claim. Normal managed app
+stop/start preserves rows and clears confirmed authority; unresolved shutdown
+or lost authority fails closed until a new VM. Successful facade shapes remain;
+storage failures deliberately reply with a typed error before Manager fail-stop.
+The private exact-source 52-case contract/lifecycle selection and fresh-VM
+application/authority probes pass on minimum/current. Final combined canonical
+qualification follows integration. Runtime durable sessions remain explicitly
+unqualified. See [DETS lifecycle](./V2_DETS_LIFECYCLE.md).
+
 ## Full-roadmap work still outstanding
 
 | Phase | Remaining implementation |

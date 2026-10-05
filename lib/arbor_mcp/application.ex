@@ -7,6 +7,9 @@ defmodule Arbor.MCP.Application do
   def start(_type, _args) do
     children =
       [
+        # Holds exclusive durable paths until actual DETS cleanup completes
+        {Arbor.MCP.Internal.SessionStore.DETS.PathClaims,
+         Application.get_env(:arbor_mcp, Arbor.MCP.Internal.SessionStore.DETS.PathClaims, [])},
         # Dynamic supervisor for runtime components
         {DynamicSupervisor, strategy: :one_for_one, name: Arbor.MCP.DynamicSupervisor},
         # Start the Consent Cache for security features

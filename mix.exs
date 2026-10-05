@@ -238,6 +238,7 @@ defmodule Arbor.MCP.MixProject do
         "docs/V2_HTTP_CONTROL_CONVERGENCE_SLICE.md",
         "docs/V2_PACKAGE_RELEASE.md",
         "docs/V2_NATIVE_STORE_PRESSURE.md",
+        "docs/V2_DETS_LIFECYCLE.md",
         "docs/V2_API_MIGRATION.md",
         "docs/V2_NON_SYMBOL_MIGRATION.md",
         "docs/TRANSPORT_GUIDE.md",

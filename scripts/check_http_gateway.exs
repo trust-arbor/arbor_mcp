@@ -8,6 +8,7 @@ ExUnit.start(autorun: false)
 Code.require_file("test/arbor_mcp/runtime/http_output_test.exs")
 Code.require_file("test/arbor_mcp/runtime/http_invocation_deadline_test.exs")
 Code.require_file("test/arbor_mcp/runtime/http_gateway_test.exs")
+Code.require_file("test/arbor_mcp/runtime/http_gateway_borrowed_io_test.exs")
 Code.require_file("test/arbor_mcp/runtime/http_mounted_test.exs")
 
 if System.get_env("ARBOR_HTTP_WIRE") == "1",

@@ -266,8 +266,15 @@ functions retain the arguments already used by the bridge and Pi:
 open(command :: String.t(), args :: [String.t()], opts :: keyword(), adapter :: module()) ::
   {:ok, handle()} | {:error, term()}
 command(handle(), iodata()) :: :ok | {:error, term()}
-close(handle() | nil) :: :ok
+close(handle() | nil) :: :ok | {:error, term()}
 ```
+
+`close(nil)` returns `:ok`. Closing a handle exposes known cleanup failures and
+unconfirmed or unavailable cleanup rather than treating Actor DOWN as success.
+An available typed RPC cleanup receipt records the actual owned-child reaping
+and, when requested, targeted-group observation; it does not establish containment
+of arbitrary descendants. This is the existing support return contract, not an
+additional ownership guarantee.
 
 The subprocess support wrapper replaces its implementation behind those
 signatures. Its handle must be

@@ -17,7 +17,7 @@ defmodule Arbor.MCP.Internal.SessionStore do
         }
 
   @callback open(map()) :: {:ok, t()} | {:error, term()}
-  @callback close(t()) :: :ok
+  @callback close(t()) :: :ok | {:error, term()}
   @callback lookup(t(), table(), term()) :: [tuple()]
   @callback insert(t(), table(), tuple()) :: true
   @callback insert_new(t(), table(), tuple()) :: boolean()
@@ -33,7 +33,7 @@ defmodule Arbor.MCP.Internal.SessionStore do
   # Backend selection lives in `Arbor.MCP.Internal.SessionStore.Factory` so this
   # behaviour does not depend on the implementations that adopt it.
 
-  @spec close(t()) :: :ok
+  @spec close(t()) :: :ok | {:error, term()}
   def close(%mod{} = store), do: mod.close(store)
 
   @spec lookup(t(), table(), term()) :: [tuple()]

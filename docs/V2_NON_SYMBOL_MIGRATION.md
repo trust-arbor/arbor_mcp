@@ -326,12 +326,16 @@ OS/driver buffers and write pressure still need qualification. See
 [Subprocess](https://github.com/trust-arbor/arbor_acp/blob/0e4cfd1efdb7437eb6cf4c944ed6fa04553da7bb/packages/arbor_rpc/lib/arbor_rpc/subprocess.ex)
 and [Receipt](https://github.com/trust-arbor/arbor_acp/blob/0e4cfd1efdb7437eb6cf4c944ed6fa04553da7bb/packages/arbor_rpc/lib/arbor_rpc/subprocess/receipt.ex).
 
-The RPC source package requires a build-time C17 compiler on qualified Linux/
-macOS installations. Reviewed C source ships; generated host binaries do not.
-Installed releases must include built `priv` artifacts, resolved through
-`:code.priv_dir`; there is no runtime compiler or NIF. Windows/missing helper
-fails clearly for subprocess opening; framing does not need a running helper.
-Advertise only the actually qualified platform/architecture matrix. See
+The RPC source package requires a build-time C17 compiler on Linux and
+macOS/Darwin, including transitive MCP/ACP installation for HTTP-only or BEAM-only
+use. `CC` selects a compiler executable, not a shell command. Reviewed C source
+ships; generated host binaries do not, and no prebuilt helper is promised.
+Installed releases must include the helper built for their target in `priv`,
+resolved through `:code.priv_dir`; there is no runtime compiler or NIF. Windows
+native subprocess operations are explicitly unsupported. Missing helpers and
+unsupported platforms fail clearly for subprocess opening; framing needs no
+running helper. Advertise only the actually qualified platform/architecture
+matrix; this does not require a Windows backend for the initial v2 release. See
 [RPC compiler/package](https://github.com/trust-arbor/arbor_acp/blob/0e4cfd1efdb7437eb6cf4c944ed6fa04553da7bb/packages/arbor_rpc/mix.exs).
 
 ## Stores, HTTP and persistence
@@ -351,10 +355,13 @@ reused wire session IDs do not reuse authority. Addressed operations have finite
 count/byte/phase admission and paged results. Timeouts may occur after accepted
 mutation, so terminal/reapable credit does not authorize re-execution. Do not
 serialize process-local leases or use PID/ref/generation as a durable namespace.
-Runtime durable sessions reject non-ETS backends as
-`:runtime_durable_sessions_unqualified`. Standalone DETS support is not runtime
-isolation certification. Preserve paths/keys while qualifying exclusive files,
-static table allocation, finite open/sync/close and restart recovery.
+The built-in initial v2 runtime session service is ETS-backed. Its non-ETS
+backends reject explicitly as `:runtime_durable_sessions_unqualified`; they do
+not fall back to a global store. Standalone DETS APIs remain supported separately
+and do not certify runtime durability or namespace isolation. Separately
+supplied durable runtime adapters require their own contract qualification;
+this release does not promise one. Preserve standalone paths/keys and its
+exclusive-file, finite open/sync/close and restart-recovery contract.
 See [session store](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/session_manager/runtime_store.ex) and
 [session leases](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/lib/arbor_mcp/session_manager/session_lease.ex).
 
@@ -386,7 +393,13 @@ declare `bounded_operations: 1`, expose `runtime_service_binding/2` and implemen
 `operate/4`, with a final source/deadline check before mutation. Standalone custom
 Task store callbacks remain supported. See [store bounds](./V2_NATIVE_STORE_PRESSURE.md)
 for exact defaults and tagged capacity outcomes. DETS table names now use
-references; finite filesystem open/sync/close and cleanup remain separate gates.
+references. Standalone DETS now has one native four-table Owner, finite original
+I/O cutoffs and bounded node-local exclusive path claims. A timeout does not
+promise rollback or confirmed cleanup; late physical settlement remains tracked.
+Confirmed all-table close allows reuse; Owner/authority loss remains fail-closed.
+SessionManager deliberately replies with typed storage errors before fail-stop.
+See [DETS lifecycle](./V2_DETS_LIFECYCLE.md). Runtime durable sessions remain
+unqualified, and final combined/platform qualification remains required.
 Owned
 service addressing alone does not bound those payloads. A modern subscription
 must capture authoritative registered-edge/runtime origin, not arbitrary caller

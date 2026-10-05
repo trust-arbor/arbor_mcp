@@ -1,249 +1,226 @@
 defmodule Arbor.MCP.Internal.SessionStore.DETS do
   @moduledoc false
-
-  # Opt-in durable backend. One SessionManager owns a storage_path. Restarting
-  # that process with the same path reopens the files and retains sessions,
-  # events, claimed request IDs, and the event clock. Two runtimes must not
-  # share the same files; DETS rejects a second open.
-
   @behaviour Arbor.MCP.Internal.SessionStore
 
-  defstruct [:sessions, :events, :request_ids, :meta, :path, :names, backend: :dets]
+  alias Arbor.MCP.Internal.SessionStore.DETS.Error
+  alias Arbor.MCP.Internal.SessionStore.DETS.Owner
+  alias Arbor.MCP.Internal.SessionStore.DETS.PathClaims
 
-  @impl Arbor.MCP.Internal.SessionStore
+  @default_io_timeout_ms 5_000
+  @max_timeout_ms 4_294_967_295
+
+  defstruct [
+    :sessions,
+    :events,
+    :request_ids,
+    :meta,
+    :path,
+    :names,
+    :owner,
+    :token,
+    :gate,
+    :io_timeout_ms,
+    backend: :dets
+  ]
+
+  @impl true
   def open(config) do
-    path = storage_path(config)
+    path = Map.get(config, :storage_path) || Map.get(config, :dets_path)
+    timeout = Map.get(config, :storage_io_timeout_ms, @default_io_timeout_ms)
 
-    if is_binary(path) and path != "" do
-      open_path(Path.expand(path))
-    else
-      {:error, :storage_path_required}
+    cond do
+      not (is_binary(path) and path != "") -> {:error, :storage_path_required}
+      not valid_timeout?(timeout) -> {:error, :invalid_storage_io_timeout}
+      byte_size(path) > 4_096 -> {:error, :storage_path_too_large}
+      true -> open_expanded(path, timeout)
     end
   end
 
-  @impl Arbor.MCP.Internal.SessionStore
-  def close(%__MODULE__{} = store) do
-    Enum.each(store.names, fn name ->
-      case :dets.info(name) do
-        :undefined -> :ok
-        _info -> :dets.close(name)
-      end
-    end)
+  defp valid_timeout?(timeout),
+    do: is_integer(timeout) and timeout > 0 and timeout <= @max_timeout_ms
 
+  defp open_expanded(path, timeout) do
+    expanded = Path.expand(path)
+
+    if byte_size(expanded) <= 4_096,
+      do: open_owner(:binary.copy(expanded), timeout),
+      else: {:error, :storage_path_too_large}
+  end
+
+  defp open_owner(path, timeout) do
+    deadline = now() + timeout
+    token = make_ref()
+    gate = :atomics.new(2, signed: true)
+    :atomics.put(gate, 2, 1)
+
+    case Owner.start(self(), token, gate, remaining(deadline)) do
+      {:ok, owner} ->
+        handle = %__MODULE__{
+          owner: owner,
+          token: token,
+          gate: gate,
+          path: path,
+          io_timeout_ms: timeout
+        }
+
+        case acquire(path, handle, deadline) do
+          {:ok, claims} ->
+            open_claimed(handle, %{storage_path: path}, claims, deadline)
+
+          {:error, reason} ->
+            retire(handle)
+            {:error, reason}
+        end
+
+      {:error, _reason} ->
+        {:error, :storage_owner_unavailable}
+    end
+  end
+
+  defp acquire(path, handle, deadline) do
+    case PathClaims.claim(path, handle.owner, self(), handle.token, handle.gate, deadline) do
+      {:wait, _other_gate} ->
+        if remaining(deadline) > 0 do
+          receive do
+          after
+            min(remaining(deadline), 5) -> acquire(path, handle, deadline)
+          end
+        else
+          {:error, :storage_io_timeout}
+        end
+
+      result ->
+        result
+    end
+  end
+
+  defp open_claimed(handle, config, claims, deadline) do
+    message = {handle.token, handle.gate, deadline, :open, config, claims}
+
+    case owner_call(handle, message, deadline) do
+      {:ok, raw} ->
+        {:ok,
+         struct!(
+           __MODULE__,
+           Map.merge(
+             Map.from_struct(handle),
+             Map.take(Map.from_struct(raw), [:sessions, :events, :request_ids, :meta, :names])
+           )
+         )}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  @impl true
+  def close(store) do
+    case :atomics.get(store.gate, 1) do
+      3 -> :ok
+      4 -> {:error, :storage_cleanup_unconfirmed}
+      2 -> {:error, :storage_cleanup_pending}
+      _active -> close_active(store)
+    end
+  end
+
+  defp close_active(store) do
+    PathClaims.seal(store.gate)
+
+    case :atomics.compare_exchange(store.gate, 2, 0, 1) do
+      :ok ->
+        deadline = now() + store.io_timeout_ms
+        owner_call(store, {store.token, store.gate, deadline, :close, []}, deadline)
+
+      _busy ->
+        retire(store)
+        {:error, :storage_cleanup_pending}
+    end
+  end
+
+  @impl true
+  def lookup(store, table, key), do: request!(store, :lookup, [table, key])
+  @impl true
+  def insert(store, table, object), do: request!(store, :insert, [table, object])
+  @impl true
+  def insert_new(store, table, object), do: request!(store, :insert_new, [table, object])
+  @impl true
+  def delete(store, table, key), do: request!(store, :delete, [table, key])
+  @impl true
+  def member(store, table, key), do: request!(store, :member, [table, key])
+  @impl true
+  def match(store, table, pattern), do: request!(store, :match, [table, pattern])
+  @impl true
+  def match_delete(store, table, pattern), do: request!(store, :match_delete, [table, pattern])
+  @impl true
+  def all(store, table), do: request!(store, :all, [table])
+  @impl true
+  def info(store, table, item), do: request!(store, :info, [table, item])
+  @impl true
+  def event_clock(store), do: request!(store, :event_clock, [])
+
+  @impl true
+  def put_event_clock(store, clock) when is_integer(clock) and clock >= 0 do
+    request!(store, :put_event_clock, [clock])
+    store
+  end
+
+  def with_deadline(store, operation) do
+    key = {__MODULE__, store.token}
+    previous = Process.get(key)
+    deadline = min(previous || now() + store.io_timeout_ms, now() + store.io_timeout_ms)
+    Process.put(key, deadline)
+
+    try do
+      operation.()
+    after
+      if previous, do: Process.put(key, previous), else: Process.delete(key)
+    end
+  end
+
+  defp request!(store, operation, arguments) do
+    case request(store, operation, arguments) do
+      {:ok, value} -> value
+      {:error, reason} -> raise Error, operation: operation, reason: reason
+    end
+  end
+
+  defp request(store, operation, arguments) do
+    deadline = Process.get({__MODULE__, store.token}, now() + store.io_timeout_ms)
+
+    cond do
+      :atomics.get(store.gate, 1) != 1 ->
+        {:error, :storage_closed}
+
+      :atomics.compare_exchange(store.gate, 2, 0, 1) != :ok ->
+        {:error, :storage_busy}
+
+      true ->
+        owner_call(store, {store.token, store.gate, deadline, operation, arguments}, deadline)
+    end
+  end
+
+  defp owner_call(store, message, deadline) do
+    result =
+      try do
+        GenServer.call(store.owner, message, remaining(deadline))
+      catch
+        :exit, {:timeout, _call} -> {:error, :storage_io_timeout}
+        :exit, _reason -> {:error, :storage_cleanup_unconfirmed}
+      end
+
+    if now() >= deadline or result == {:error, :storage_io_timeout} do
+      retire(store)
+      {:error, :storage_io_timeout}
+    else
+      result
+    end
+  end
+
+  defp retire(store) do
+    if PathClaims.seal(store.gate) == :changed, do: send(store.owner, {:retire, store.token})
     :ok
   end
 
-  @impl Arbor.MCP.Internal.SessionStore
-  def lookup(store, table, key) do
-    case :dets.lookup(table_ref(store, table), key) do
-      objects when is_list(objects) -> objects
-      {:error, reason} -> raise "DETS lookup failed: #{inspect(reason)}"
-    end
-  end
-
-  @impl Arbor.MCP.Internal.SessionStore
-  def insert(store, table, object) do
-    :ok = :dets.insert(table_ref(store, table), object)
-    sync_table(store, table)
-    true
-  end
-
-  @impl Arbor.MCP.Internal.SessionStore
-  def insert_new(store, table, object) do
-    case :dets.insert_new(table_ref(store, table), object) do
-      true ->
-        sync_table(store, table)
-        true
-
-      false ->
-        false
-
-      {:error, reason} ->
-        raise "DETS insert_new failed: #{inspect(reason)}"
-    end
-  end
-
-  @impl Arbor.MCP.Internal.SessionStore
-  def delete(store, table, key) do
-    :ok = :dets.delete(table_ref(store, table), key)
-    sync_table(store, table)
-    true
-  end
-
-  @impl Arbor.MCP.Internal.SessionStore
-  def member(store, table, key) do
-    case :dets.member(table_ref(store, table), key) do
-      result when is_boolean(result) -> result
-      {:error, reason} -> raise "DETS member failed: #{inspect(reason)}"
-    end
-  end
-
-  @impl Arbor.MCP.Internal.SessionStore
-  def match(store, table, pattern) do
-    case :dets.match(table_ref(store, table), pattern) do
-      objects when is_list(objects) -> objects
-      {:error, reason} -> raise "DETS match failed: #{inspect(reason)}"
-    end
-  end
-
-  @impl Arbor.MCP.Internal.SessionStore
-  def match_delete(store, table, pattern) do
-    :ok = :dets.match_delete(table_ref(store, table), pattern)
-    sync_table(store, table)
-    true
-  end
-
-  @impl Arbor.MCP.Internal.SessionStore
-  def all(store, table) do
-    :dets.foldl(fn object, acc -> [object | acc] end, [], table_ref(store, table))
-    |> Enum.reverse()
-  end
-
-  @impl Arbor.MCP.Internal.SessionStore
-  def info(store, table, item) do
-    :dets.info(table_ref(store, table), item)
-  end
-
-  @impl Arbor.MCP.Internal.SessionStore
-  def event_clock(store) do
-    case :dets.lookup(store.meta, :event_clock) do
-      [{:event_clock, clock}] when is_integer(clock) and clock >= 0 ->
-        clock
-
-      _missing ->
-        max_stored_sequence(store)
-    end
-  end
-
-  @impl Arbor.MCP.Internal.SessionStore
-  def put_event_clock(store, clock) when is_integer(clock) and clock >= 0 do
-    :ok = :dets.insert(store.meta, {:event_clock, clock})
-    :ok = :dets.sync(store.meta)
-    store
-  end
-
-  defp open_path(path) do
-    File.mkdir_p!(path)
-
-    if files_already_open?(path) do
-      {:error, :storage_in_use}
-    else
-      open_tables(path)
-    end
-  end
-
-  defp open_tables(path) do
-    names = table_names()
-
-    with {:ok, sessions} <- open_table(names.sessions, Path.join(path, "sessions.dets")),
-         {:ok, events} <- open_table(names.events, Path.join(path, "events.dets")),
-         {:ok, request_ids} <-
-           open_table(names.request_ids, Path.join(path, "request_ids.dets")),
-         {:ok, meta} <- open_table(names.meta, Path.join(path, "meta.dets")) do
-      store = %__MODULE__{
-        sessions: sessions,
-        events: events,
-        request_ids: request_ids,
-        meta: meta,
-        path: path,
-        names: [sessions, events, request_ids, meta]
-      }
-
-      {:ok, repair_process_local_flags(store)}
-    else
-      {:error, {:already_open, _file}} ->
-        close_opened(names)
-        {:error, :storage_in_use}
-
-      {:error, reason} ->
-        close_opened(names)
-        {:error, reason}
-    end
-  end
-
-  defp open_table(name, file) do
-    :dets.open_file(name,
-      file: String.to_charlist(file),
-      type: :set,
-      access: :read_write,
-      auto_save: :infinity,
-      repair: true
-    )
-  end
-
-  defp close_opened(names) do
-    Enum.each([names.sessions, names.events, names.request_ids, names.meta], fn name ->
-      case :dets.info(name) do
-        :undefined -> :ok
-        _info -> :dets.close(name)
-      end
-    end)
-  end
-
-  defp storage_path(config) do
-    Map.get(config, :storage_path) || Map.get(config, :dets_path)
-  end
-
-  # DETS accepts any term as a table name. Fresh references isolate each open
-  # without creating permanent atoms. File exclusivity is still enforced by
-  # files_already_open?/1 and by DETS rejecting a second open of the same file.
-  defp table_names do
-    %{
-      sessions: make_ref(),
-      events: make_ref(),
-      request_ids: make_ref(),
-      meta: make_ref()
-    }
-  end
-
-  defp files_already_open?(path) do
-    expected =
-      ["sessions.dets", "events.dets", "request_ids.dets", "meta.dets"]
-      |> Enum.map(&String.to_charlist(Path.join(path, &1)))
-      |> MapSet.new()
-
-    Enum.any?(:dets.all(), fn name ->
-      case :dets.info(name, :filename) do
-        file when is_list(file) -> MapSet.member?(expected, file)
-        _other -> false
-      end
-    end)
-  end
-
-  defp table_ref(%__MODULE__{sessions: table}, :sessions), do: table
-  defp table_ref(%__MODULE__{events: table}, :events), do: table
-  defp table_ref(%__MODULE__{request_ids: table}, :request_ids), do: table
-
-  defp sync_table(store, table) do
-    :ok = :dets.sync(table_ref(store, table))
-  end
-
-  # initialization_claimed is process-local (owner monitors live on
-  # SessionManager). A durable row that still says claimed after a restart
-  # has no owner; clear the flag so a later initialize can proceed.
-  defp repair_process_local_flags(store) do
-    store
-    |> all(:sessions)
-    |> Enum.each(fn
-      {session_id, %{initialization_claimed: true, initialized: false} = session} ->
-        insert(store, :sessions, {session_id, %{session | initialization_claimed: false}})
-
-      _other ->
-        :ok
-    end)
-
-    store
-  end
-
-  defp max_stored_sequence(store) do
-    store
-    |> all(:events)
-    |> Enum.reduce(0, fn
-      {_key, event}, acc when is_map(event) ->
-        max(acc, Map.get(event, :__ex_mcp_sequence__, 0))
-
-      _other, acc ->
-        acc
-    end)
-  end
+  defp now, do: System.monotonic_time(:millisecond)
+  defp remaining(deadline), do: max(deadline - now(), 0)
 end

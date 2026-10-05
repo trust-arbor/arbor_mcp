@@ -21,6 +21,13 @@ mix test
 
 The supported Elixir floor is 1.17. The CI matrix checks multiple Elixir/OTP versions; passing CI and the release gates are required before publishing 2.0.
 
+On macOS/Darwin and Linux, installing the transitive `arbor_rpc` source package
+requires a C17 compiler (`cc`, or the executable selected by `CC`), including for
+HTTP-only and BEAM-only applications. Source archives contain reviewed C source,
+not prebuilt helpers. An installed release includes the built helper and needs
+no runtime compiler. Windows native subprocess operations are unsupported;
+framing is separate. Only the qualified platform/architecture matrix is supported.
+
 ## Client example
 
 ```elixir

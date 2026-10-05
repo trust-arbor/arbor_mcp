@@ -204,7 +204,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPRetainedSessionTest do
   end
 
   test "delayed DELETE cannot mutate after the original socket cutoff" do
-    {_runtime, opts, id, service, lease} = session(request_timeout_ms: 60)
+    {_runtime, opts, id, service, lease} = initialized_session(request_timeout_ms: 60)
+    assert {:ok, before_session} = SessionManager.get_session(service, lease, [])
+    assert {:ok, before_stats} = SessionManager.get_stats(service, [])
     {:ok, backend} = Services.resolve(service, :sessions)
     :sys.suspend(backend.server)
 
@@ -216,12 +218,13 @@ defmodule Arbor.MCP.Server.Runtime.HTTPRetainedSessionTest do
       :sys.resume(backend.server)
     end
 
-    assert {:ok, _} = SessionManager.get_session(service, lease, [])
+    assert {:ok, ^before_session} = SessionManager.get_session(service, lease, [])
+    assert {:ok, ^before_stats} = SessionManager.get_stats(service, [])
   end
 
   test "DELETE delayed after response reservation is rejected at the final mutation guard" do
     {runtime, opts, id, service, lease} =
-      session(
+      initialized_session(
         request_timeout_ms: 60,
         services: [sessions: [adapter: DelayedDeleteStore, options: [test_parent: self()]]]
       )
@@ -420,6 +423,22 @@ defmodule Arbor.MCP.Server.Runtime.HTTPRetainedSessionTest do
 
     {:ok, runtime} = Runtime.ref(root)
     runtime
+  end
+
+  # DELETE's short socket deadline is under test, rather than HTTP initialize.
+  # Set up its session through the supported addressed service API with one
+  # separate finite cutoff. Other fixtures retain actual wire initialization.
+  defp initialized_session(extra) do
+    runtime = runtime(extra)
+    opts = HttpPlug.init(runtime: runtime, protocol_mode: :legacy_only, sse_mode: :oneshot)
+    {:ok, service} = Runtime.service(runtime, :sessions)
+    setup = [deadline: System.monotonic_time(:millisecond) + 1_000]
+    {:ok, lease} = SessionManager.create_session(service, %{}, setup)
+    {:ok, claim} = SessionManager.claim_initialization(service, lease, setup)
+    assert :ok == SessionManager.complete_initialization(service, claim, "2025-11-25", setup)
+    id = SessionLease.id(lease)
+    {:ok, lease} = SessionManager.ensure_initialized_session(service, id, %{}, setup)
+    {runtime, opts, id, service, lease}
   end
 
   defp initialize,

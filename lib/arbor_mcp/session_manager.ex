@@ -52,6 +52,10 @@ defmodule Arbor.MCP.SessionManager do
     If the wall clock moves backwards, elapsed time is negative and the
     session is not treated as expired — the correct absolute-expiry outcome.
   - `:cleanup_interval_ms` - Cleanup interval in milliseconds (default: 60000)
+  - `:storage_io_timeout_ms` - One original DETS operation deadline in milliseconds
+    (default 5,000; integer 1..4,294,967,295). A timed-out operation may have
+    persisted data; the store closes and its path stays exclusive until actual
+    cleanup is confirmed. ETS ignores this option.
   - `:storage_backend` - Storage backend (`:ets`, `:persistent_term`, or
     `:dets`, default: `:ets`). ETS remains the default. `:persistent_term`
     is accepted for 1.x compatibility and still uses ETS (no-op durability).
@@ -158,8 +162,18 @@ defmodule Arbor.MCP.SessionManager do
           session_ttl_seconds: pos_integer(),
           cleanup_interval_ms: pos_integer(),
           storage_backend: :ets | :persistent_term | :dets,
-          storage_path: String.t() | nil
+          storage_path: String.t() | nil,
+          storage_io_timeout_ms: pos_integer()
         }
+
+  @typep storage_failure ::
+           {:error,
+            :storage_busy
+            | :storage_closed
+            | :storage_cleanup_unconfirmed
+            | :storage_io_failed
+            | :storage_io_timeout
+            | :storage_owner_unavailable}
 
   ## Public API
 
@@ -177,7 +191,8 @@ defmodule Arbor.MCP.SessionManager do
 
   Returns a unique session ID that can be used for subsequent operations.
   """
-  @spec create_session(map()) :: session_id() | {:error, :session_limit_exceeded}
+  @spec create_session(map()) ::
+          session_id() | {:error, :session_limit_exceeded} | storage_failure()
   def create_session(metadata \\ %{}) do
     GenServer.call(__MODULE__, {:create_session, metadata})
   end
@@ -191,7 +206,7 @@ defmodule Arbor.MCP.SessionManager do
   notifications with one client across both channels.
   """
   @spec ensure_session(session_id(), map()) ::
-          :ok | {:error, :session_not_found | :session_identity_mismatch}
+          :ok | {:error, :session_not_found | :session_identity_mismatch} | storage_failure()
   def ensure_session(session_id, metadata \\ %{}) when is_binary(session_id) do
     GenServer.call(__MODULE__, {:ensure_session, session_id, metadata})
   end
@@ -203,6 +218,7 @@ defmodule Arbor.MCP.SessionManager do
   @spec ensure_initialized_session(session_id(), map()) ::
           :ok
           | {:error, :session_not_found | :session_identity_mismatch | :session_not_initialized}
+          | storage_failure()
   def ensure_initialized_session(session_id, metadata \\ %{}) when is_binary(session_id) do
     GenServer.call(__MODULE__, {:ensure_initialized_session, session_id, metadata})
   end
@@ -216,6 +232,7 @@ defmodule Arbor.MCP.SessionManager do
   @spec claim_request_id(session_id(), String.t() | integer()) ::
           :ok
           | {:error, :session_not_found | :duplicate_request_id | :request_id_limit_exceeded}
+          | storage_failure()
   def claim_request_id(session_id, request_id)
       when is_binary(session_id) and (is_binary(request_id) or is_integer(request_id)) do
     GenServer.call(__MODULE__, {:claim_request_id, session_id, request_id})
@@ -230,6 +247,7 @@ defmodule Arbor.MCP.SessionManager do
           :ok
           | {:error,
              :session_not_found | :session_already_initialized | :initialization_in_progress}
+          | storage_failure()
   def claim_initialization(session_id) when is_binary(session_id) do
     GenServer.call(__MODULE__, {:claim_initialization, session_id})
   end
@@ -245,6 +263,7 @@ defmodule Arbor.MCP.SessionManager do
              | :initialization_not_claimed
              | :initialization_owner_mismatch
              | :session_protocol_version_mismatch}
+          | storage_failure()
   def complete_initialization(session_id, protocol_version)
       when is_binary(session_id) and is_binary(protocol_version) do
     GenServer.call(__MODULE__, {:complete_initialization, session_id, protocol_version})
@@ -257,7 +276,9 @@ defmodule Arbor.MCP.SessionManager do
   replay during session resumption.
   """
   @spec store_event(session_id(), event_data()) ::
-          :ok | {:error, :session_not_found | :event_too_large | :event_not_json_encodable}
+          :ok
+          | {:error, :session_not_found | :event_too_large | :event_not_json_encodable}
+          | storage_failure()
   def store_event(session_id, event_data) do
     GenServer.call(__MODULE__, {:store_event, session_id, event_data})
   end
@@ -272,6 +293,7 @@ defmodule Arbor.MCP.SessionManager do
   @spec append_event(session_id(), String.t(), term()) ::
           {:ok, event_data()}
           | {:error, :session_not_found | :event_too_large | :event_not_json_encodable}
+          | storage_failure()
   def append_event(session_id, type, data) when is_binary(session_id) and is_binary(type) do
     GenServer.call(__MODULE__, {:append_event, session_id, type, data})
   end
@@ -283,7 +305,7 @@ defmodule Arbor.MCP.SessionManager do
   to resume from where they left off.
   """
   @spec replay_events_after(session_id(), event_id() | nil) ::
-          [event_data()] | {:error, :session_not_found}
+          [event_data()] | {:error, :session_not_found} | storage_failure()
   def replay_events_after(session_id, last_event_id \\ nil) do
     GenServer.call(__MODULE__, {:replay_events_after, session_id, last_event_id})
   end
@@ -294,7 +316,7 @@ defmodule Arbor.MCP.SessionManager do
   This is the callback function referenced in SSEHandler for session replay.
   """
   @spec replay_events_after(session_id(), event_id() | nil, pid()) ::
-          :ok | {:error, :session_not_found}
+          :ok | {:error, :session_not_found} | storage_failure()
   def replay_events_after(session_id, last_event_id, handler_pid) do
     case replay_events_after(session_id, last_event_id) do
       {:error, reason} ->
@@ -325,6 +347,7 @@ defmodule Arbor.MCP.SessionManager do
              :session_not_found
              | :session_identity_mismatch
              | :session_protocol_version_mismatch}
+          | storage_failure()
   def update_session(session_id, updates) do
     GenServer.call(__MODULE__, {:update_session, session_id, updates})
   end
@@ -336,7 +359,7 @@ defmodule Arbor.MCP.SessionManager do
   abandoned. A transient SSE disconnect alone does not terminate the session,
   because its events must remain available for Last-Event-ID replay.
   """
-  @spec terminate_session(session_id()) :: :ok
+  @spec terminate_session(session_id()) :: :ok | storage_failure()
   def terminate_session(session_id) do
     GenServer.call(__MODULE__, {:terminate_session, session_id})
   end
@@ -344,7 +367,8 @@ defmodule Arbor.MCP.SessionManager do
   @doc """
   Gets session information.
   """
-  @spec get_session(session_id()) :: {:ok, session_data()} | {:error, :session_not_found}
+  @spec get_session(session_id()) ::
+          {:ok, session_data()} | {:error, :session_not_found} | storage_failure()
   def get_session(session_id) do
     GenServer.call(__MODULE__, {:get_session, session_id})
   end
@@ -352,7 +376,7 @@ defmodule Arbor.MCP.SessionManager do
   @doc """
   Lists all active sessions.
   """
-  @spec list_sessions() :: [session_data()]
+  @spec list_sessions() :: [session_data()] | storage_failure()
   def list_sessions do
     GenServer.call(__MODULE__, :list_sessions)
   end
@@ -360,12 +384,14 @@ defmodule Arbor.MCP.SessionManager do
   @doc """
   Gets session statistics.
   """
-  @spec get_stats() :: %{
-          total_sessions: non_neg_integer(),
-          active_sessions: non_neg_integer(),
-          total_events: non_neg_integer(),
-          memory_usage: non_neg_integer()
-        }
+  @spec get_stats() ::
+          %{
+            total_sessions: non_neg_integer(),
+            active_sessions: non_neg_integer(),
+            total_events: non_neg_integer(),
+            memory_usage: non_neg_integer()
+          }
+          | storage_failure()
   def get_stats do
     GenServer.call(__MODULE__, :get_stats)
   end
@@ -510,7 +536,8 @@ defmodule Arbor.MCP.SessionManager do
       session_ttl_seconds: Keyword.get(opts, :session_ttl_seconds, @default_session_ttl),
       cleanup_interval_ms: Keyword.get(opts, :cleanup_interval_ms, @default_cleanup_interval),
       storage_backend: Keyword.get(opts, :storage_backend, @default_storage_backend),
-      storage_path: Keyword.get(opts, :storage_path) || Keyword.get(opts, :dets_path)
+      storage_path: Keyword.get(opts, :storage_path) || Keyword.get(opts, :dets_path),
+      storage_io_timeout_ms: Keyword.get(opts, :storage_io_timeout_ms, 5_000)
     }
 
     if config.storage_backend == :persistent_term do
@@ -556,7 +583,32 @@ defmodule Arbor.MCP.SessionManager do
   end
 
   @impl true
-  def handle_call({:create_session, metadata}, _from, state) do
+  def handle_call(message, from, state) do
+    storage_operation(state, fn -> handle_store_call(message, from, state) end, fn reason ->
+      {:stop, :storage_io_failed, {:error, reason}, state}
+    end)
+  end
+
+  @impl true
+  def handle_info(message, state) do
+    storage_operation(state, fn -> handle_store_info(message, state) end, fn _reason ->
+      {:stop, :storage_io_failed, state}
+    end)
+  end
+
+  defp storage_operation(state, operation, failed) do
+    case state.store do
+      %Arbor.MCP.Internal.SessionStore.DETS{} = store ->
+        Arbor.MCP.Internal.SessionStore.DETS.with_deadline(store, operation)
+
+      _other_backend ->
+        operation.()
+    end
+  rescue
+    error in Arbor.MCP.Internal.SessionStore.DETS.Error -> failed.(error.reason)
+  end
+
+  defp handle_store_call({:create_session, metadata}, _from, state) do
     prune_terminated_sessions(state)
 
     if SessionStore.info(state.store, :sessions, :size) >= state.config.max_sessions do
@@ -566,8 +618,7 @@ defmodule Arbor.MCP.SessionManager do
     end
   end
 
-  @impl true
-  def handle_call({:ensure_session, session_id, metadata}, _from, state) do
+  defp handle_store_call({:ensure_session, session_id, metadata}, _from, state) do
     now = System.system_time(:microsecond)
 
     case SessionStore.lookup(state.store, :sessions, session_id) do
@@ -589,8 +640,7 @@ defmodule Arbor.MCP.SessionManager do
     end
   end
 
-  @impl true
-  def handle_call({:ensure_initialized_session, session_id, metadata}, _from, state) do
+  defp handle_store_call({:ensure_initialized_session, session_id, metadata}, _from, state) do
     now = System.system_time(:microsecond)
 
     case SessionStore.lookup(state.store, :sessions, session_id) do
@@ -617,8 +667,7 @@ defmodule Arbor.MCP.SessionManager do
     end
   end
 
-  @impl true
-  def handle_call({:claim_request_id, session_id, request_id}, _from, state) do
+  defp handle_store_call({:claim_request_id, session_id, request_id}, _from, state) do
     key = {session_id, request_id}
 
     case SessionStore.lookup(state.store, :sessions, session_id) do
@@ -648,8 +697,7 @@ defmodule Arbor.MCP.SessionManager do
     end
   end
 
-  @impl true
-  def handle_call({:claim_initialization, session_id}, {owner, _tag}, state) do
+  defp handle_store_call({:claim_initialization, session_id}, {owner, _tag}, state) do
     case SessionStore.lookup(state.store, :sessions, session_id) do
       [{^session_id, %{status: :active} = session}] ->
         cond do
@@ -685,8 +733,7 @@ defmodule Arbor.MCP.SessionManager do
     end
   end
 
-  @impl true
-  def handle_call({:complete_initialization, session_id, version}, {owner, _tag}, state) do
+  defp handle_store_call({:complete_initialization, session_id, version}, {owner, _tag}, state) do
     case SessionStore.lookup(state.store, :sessions, session_id) do
       [{^session_id, %{status: :active} = session}] ->
         cond do
@@ -717,8 +764,7 @@ defmodule Arbor.MCP.SessionManager do
     end
   end
 
-  @impl true
-  def handle_call({:append_event, session_id, type, data}, _from, state) do
+  defp handle_store_call({:append_event, session_id, type, data}, _from, state) do
     sequence = state.event_clock + 1
 
     event = %{
@@ -735,16 +781,14 @@ defmodule Arbor.MCP.SessionManager do
     end
   end
 
-  @impl true
-  def handle_call({:store_event, session_id, event_data}, _from, state) do
+  defp handle_store_call({:store_event, session_id, event_data}, _from, state) do
     case store_event(state, session_id, event_data) do
       {:ok, state} -> {:reply, :ok, state}
       {:error, reason, state} -> {:reply, {:error, reason}, state}
     end
   end
 
-  @impl true
-  def handle_call({:replay_events_after, session_id, last_event_id}, _from, state) do
+  defp handle_store_call({:replay_events_after, session_id, last_event_id}, _from, state) do
     case SessionStore.lookup(state.store, :sessions, session_id) do
       [{^session_id, _session}] ->
         events = get_events_after(state, session_id, last_event_id)
@@ -755,8 +799,7 @@ defmodule Arbor.MCP.SessionManager do
     end
   end
 
-  @impl true
-  def handle_call({:update_session, session_id, updates}, _from, state) do
+  defp handle_store_call({:update_session, session_id, updates}, _from, state) do
     case SessionStore.lookup(state.store, :sessions, session_id) do
       [{^session_id, %{status: :active} = session}] ->
         cond do
@@ -785,8 +828,7 @@ defmodule Arbor.MCP.SessionManager do
     end
   end
 
-  @impl true
-  def handle_call({:terminate_session, session_id}, _from, state) do
+  defp handle_store_call({:terminate_session, session_id}, _from, state) do
     # Mark session as terminated
     case SessionStore.lookup(state.store, :sessions, session_id) do
       [{^session_id, session}] ->
@@ -813,8 +855,7 @@ defmodule Arbor.MCP.SessionManager do
     {:reply, :ok, release_initialization_claim(state, session_id)}
   end
 
-  @impl true
-  def handle_call({:get_session, session_id}, _from, state) do
+  defp handle_store_call({:get_session, session_id}, _from, state) do
     case SessionStore.lookup(state.store, :sessions, session_id) do
       [{^session_id, session}] ->
         {:reply, {:ok, session}, state}
@@ -824,8 +865,7 @@ defmodule Arbor.MCP.SessionManager do
     end
   end
 
-  @impl true
-  def handle_call(:list_sessions, _from, state) do
+  defp handle_store_call(:list_sessions, _from, state) do
     sessions =
       SessionStore.all(state.store, :sessions)
       |> Enum.map(fn {_id, session} -> session end)
@@ -834,8 +874,7 @@ defmodule Arbor.MCP.SessionManager do
     {:reply, sessions, state}
   end
 
-  @impl true
-  def handle_call(:get_stats, _from, state) do
+  defp handle_store_call(:get_stats, _from, state) do
     sessions = SessionStore.all(state.store, :sessions)
     active_sessions = Enum.count(sessions, fn {_id, session} -> session.status == :active end)
     total_events = SessionStore.info(state.store, :events, :size)
@@ -855,8 +894,7 @@ defmodule Arbor.MCP.SessionManager do
     {:reply, stats, state}
   end
 
-  @impl true
-  def handle_info(:cleanup_expired_sessions, state) do
+  defp handle_store_info(:cleanup_expired_sessions, state) do
     state = cleanup_expired_sessions(state)
 
     # Schedule next cleanup
@@ -866,8 +904,7 @@ defmodule Arbor.MCP.SessionManager do
     {:noreply, %{state | cleanup_timer: cleanup_timer}}
   end
 
-  @impl true
-  def handle_info({:DOWN, monitor, :process, owner, _reason}, state) do
+  defp handle_store_info({:DOWN, monitor, :process, owner, _reason}, state) do
     case initialization_claim_for_monitor(state, monitor, owner) do
       {session_id, _claim} ->
         terminate_abandoned_initialization(state, session_id)
@@ -878,8 +915,7 @@ defmodule Arbor.MCP.SessionManager do
     end
   end
 
-  @impl true
-  def handle_info(msg, state) do
+  defp handle_store_info(msg, state) do
     Logger.warning("SessionManager received unexpected message",
       message_shape: LogSummary.describe(msg)
     )

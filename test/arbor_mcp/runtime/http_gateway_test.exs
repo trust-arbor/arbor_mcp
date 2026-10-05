@@ -263,39 +263,6 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayTest do
     assert {:error, :runtime_unavailable} = Runtime.request(runtime, message(22))
   end
 
-  test "a timeout during borrowed notification IO retains its original observation without a retry" do
-    runtime = runtime(request_timeout_ms: 60, output_timeout_ms: 30)
-    {:ok, binding} = HTTPWriterProxy.capture(runtime)
-    {:ok, target} = HTTPNotificationTarget.new(runtime, binding)
-
-    {:ok, token} =
-      HTTPGateway.submit(runtime, binding, %{message(1) | "method" => "notify"},
-        format: :sse,
-        dispatch_opts: [target: target]
-      )
-
-    {effect, wire} = checkout(binding)
-    assert wire =~ "notifications/progress"
-    {:ok, gateway} = HTTPGateway.address(runtime)
-    send(gateway, {:arbor_mcp_runtime, token, {:error, :handler_timeout}})
-    wait(fn -> :sys.get_state(gateway).jobs[token].failed? end)
-    wait(fn -> match?(%{jobs: 0}, OutputController.stats(Ref.table(runtime))) end)
-    {:ok, {domain, _}} = HTTPWriterBinding.address(binding)
-    assert %{frames: 1, in_flight: 1} = HTTPWriterRegistry.stats(domain)
-    assert map_size(:sys.get_state(gateway).jobs) == 1
-    assert {:error, :http_write_uncertain} = HTTPWriterRegistry.complete(effect, :ok)
-    wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
-    wait(fn -> map_size(:sys.get_state(gateway).jobs) == 0 end)
-    assert {:ok, %{"result" => 0}} = Runtime.request(runtime, message(2))
-    assert %{frames: 0, in_flight: 0} = HTTPWriterRegistry.stats(domain)
-
-    assert HTTPWriterRegistry.checkout(binding) in [
-             :empty,
-             {:error, :http_invocation_closed},
-             {:error, :http_failure_expired}
-           ]
-  end
-
   test "socket death cancels its accepted response work without mutating other invocation state" do
     runtime = runtime()
     parent = self()

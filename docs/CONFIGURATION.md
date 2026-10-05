@@ -15,6 +15,13 @@ def deps do
 end
 ```
 
+On macOS/Darwin and Linux, the transitive `arbor_rpc` source package requires a
+C17 compiler even for HTTP-only or BEAM-only use. `CC` selects one compiler
+executable. It ships C source rather than a prebuilt helper; assembled releases
+must include the built helper and do not invoke a runtime compiler. Windows
+native subprocess operations are unsupported, while framing is separate. See
+the [source-install policy](V2_PACKAGE_RELEASE.md).
+
 Standalone HTTP servers additionally need `{:plug_cowboy, "~> 2.7"}` or
 `{:bandit, "~> 1.12 and >= 1.12.5"}` in the host dependencies. Select Bandit
 with `http_adapter: :bandit`; Cowboy remains the default. HTTP clients and

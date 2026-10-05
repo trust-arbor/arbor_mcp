@@ -63,12 +63,18 @@ version overrides unset. These overrides must never appear in published package
 requirements. ExDoc is excluded from consumer runtime dependencies.
 
 Arbor.RPC ships reviewed `c_src/subprocess_helper.c` and its Mix compiler. It
-excludes host-generated `priv/native` binaries. Installation requires a C17
-compiler on the qualified Unix targets. Runtime/release lookup uses installed
-`:code.priv_dir(:arbor_rpc)` and does not invoke a compiler. Unsupported platforms
-fail explicitly for subprocess operations; framing-only use starts no helper.
-Windows native ownership, platform coverage, pressure and the broader runtime/API
-qualification gates remain separate release requirements.
+excludes host-generated `priv/native` binaries; no prebuilt helper is promised.
+Source installation on macOS/Darwin and Linux requires a C17 compiler, including
+transitive installation through MCP or ACP for HTTP-only or BEAM-only use. `CC`
+selects one compiler executable, with fixed compiler arguments and no shell
+command. Assembled releases must include the helper built for their target;
+runtime lookup uses installed `:code.priv_dir(:arbor_rpc)` and invokes no compiler.
+Windows native subprocess operations are explicitly unsupported. Other
+unsupported platforms also fail explicitly for subprocess opening; framing use
+starts no helper. Advertise only the platform/architecture matrix actually
+qualified from the final source and archives. Broader native pressure/lifecycle
+and runtime/API qualification remain release gates; Windows implementation is
+not a requirement for this release.
 
 Run the four-package consumer against one archive per package:
 
