@@ -8,8 +8,9 @@ defmodule Arbor.MCP.Reliability.CircuitBreaker do
   The process shell is the clock owner. It injects
   `System.monotonic_time(:millisecond)` as `now_ms` into
   `Arbor.MCP.Reliability.CircuitBreaker.Core` so elapsed open/half-open
-  durations cannot go backwards if the wall clock is adjusted. Operation
-  `:timeout` remains a process timeout and is unchanged.
+  durations cannot go backwards if the wall clock is adjusted. The caller
+  enforces an original monotonic execution cutoff and rejects results
+  observed after it.
   """
 
   use GenServer
@@ -71,6 +72,7 @@ defmodule Arbor.MCP.Reliability.CircuitBreaker do
   # exits are contained and a timeout can be enforced without trapping.
   defp run_protected(fun, timeout) do
     parent = self()
+    deadline = if timeout == :infinity, do: :infinity, else: now_ms() + timeout
 
     {pid, ref} =
       spawn_monitor(fn ->
@@ -89,23 +91,34 @@ defmodule Arbor.MCP.Reliability.CircuitBreaker do
 
     receive do
       {:circuit_breaker_result, ^pid, outcome} ->
-        Process.demonitor(ref, [:flush])
-        outcome
+        if execution_open?(deadline) do
+          Process.demonitor(ref, [:flush])
+          outcome
+        else
+          terminate_protected(pid, ref)
+        end
 
       {:DOWN, ^ref, :process, ^pid, reason} ->
-        {:exited, reason}
+        if execution_open?(deadline), do: {:exited, reason}, else: :timeout
     after
-      timeout ->
-        Process.exit(pid, :kill)
+      execution_remaining(deadline) -> terminate_protected(pid, ref)
+    end
+  end
 
-        receive do
-          {:circuit_breaker_result, ^pid, outcome} ->
-            Process.demonitor(ref, [:flush])
-            outcome
+  defp execution_open?(:infinity), do: true
+  defp execution_open?(deadline), do: now_ms() < deadline
+  defp execution_remaining(:infinity), do: :infinity
+  defp execution_remaining(deadline), do: max(deadline - now_ms(), 0)
 
-          {:DOWN, ^ref, :process, ^pid, _reason} ->
-            :timeout
-        end
+  defp terminate_protected(pid, ref) do
+    Process.exit(pid, :kill)
+    await_protected_down(pid, ref)
+  end
+
+  defp await_protected_down(pid, ref) do
+    receive do
+      {:circuit_breaker_result, ^pid, _outcome} -> await_protected_down(pid, ref)
+      {:DOWN, ^ref, :process, ^pid, _reason} -> :timeout
     end
   end
 
