@@ -8,9 +8,29 @@ defmodule Arbor.MCP.Server.Runtime.HTTPOutput do
     OutputTicket
   }
 
+  alias Arbor.MCP.SessionManager.RuntimeEvents
+
   # Reserve the complete physical frame before the handler proposal can commit.
   # HTTP IO stays unpublished and independently charged until actual IO return.
-  def prepare(%{http: %{binding: binding, format: format, owner: owner}} = context, ticket) do
+  def prepare(%{http: %{binding: _binding}} = context, ticket) do
+    with {:ok, prepared} <- prepare_event(context, ticket) do
+      case prepare_response(context, prepared) do
+        {:ok, paired} ->
+          {:ok, paired}
+
+        error ->
+          RuntimeEvents.release(prepared)
+          error
+      end
+    end
+  end
+
+  def prepare(_context, ticket), do: {:ok, ticket}
+
+  defp prepare_response(
+         %{http: %{binding: binding, format: format, owner: owner}} = context,
+         ticket
+       ) do
     with {:ok, json} <- OutputLedger.prepared_wire(ticket),
          {:ok, wire} <- frame(json, format, context.group),
          {:ok, {domain, _binding_token}} <- HTTPWriterBinding.address(binding),
@@ -29,10 +49,17 @@ defmodule Arbor.MCP.Server.Runtime.HTTPOutput do
              }
            ) do
       {:ok, OutputTicket.with_http(ticket, effect)}
+    else
+      error -> error
     end
   end
 
-  def prepare(_context, ticket), do: {:ok, ticket}
+  defp prepare_event(%{http: %{terminal: _token}}, ticket), do: {:ok, ticket}
+
+  defp prepare_event(%{http: %{format: :legacy_sse}} = context, ticket),
+    do: RuntimeEvents.prepare(context, ticket)
+
+  defp prepare_event(_context, ticket), do: {:ok, ticket}
 
   defp prepare_io(%{http: %{terminal: token}}, binding, wire, opts),
     do: HTTPWriterRegistry.prepare_failure(binding, token, wire, opts)
@@ -41,6 +68,10 @@ defmodule Arbor.MCP.Server.Runtime.HTTPOutput do
     do: HTTPWriterRegistry.prepare(binding, wire, opts)
 
   def handoff(ticket) do
+    with :ok <- RuntimeEvents.handoff(ticket), do: handoff_io(ticket)
+  end
+
+  defp handoff_io(ticket) do
     case OutputTicket.http(ticket) do
       nil -> :ok
       effect -> HTTPWriterRegistry.handoff(effect)
@@ -48,13 +79,20 @@ defmodule Arbor.MCP.Server.Runtime.HTTPOutput do
   end
 
   def valid?(ticket) do
-    case OutputTicket.http(ticket) do
-      nil -> true
-      effect -> HTTPWriterRegistry.prepared?(effect)
-    end
+    RuntimeEvents.valid?(ticket) and
+      case OutputTicket.http(ticket) do
+        nil -> true
+        effect -> HTTPWriterRegistry.prepared?(effect)
+      end
   end
 
   def release(ticket) do
+    event_result = RuntimeEvents.release(ticket)
+    io_result = release_io(ticket)
+    if match?({:error, _}, event_result), do: event_result, else: io_result
+  end
+
+  defp release_io(ticket) do
     case OutputTicket.http(ticket) do
       nil -> :ok
       effect -> HTTPWriterRegistry.release(effect)
@@ -62,8 +100,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPOutput do
   end
 
   def release_all(ticket) do
-    release(ticket)
-    OutputLedger.release(ticket)
+    result = release(ticket)
+    primary_result = OutputLedger.release(ticket)
+    if match?({:error, _}, result), do: result, else: primary_result
   end
 
   def publish(ticket) do
@@ -80,15 +119,23 @@ defmodule Arbor.MCP.Server.Runtime.HTTPOutput do
     end
   end
 
-  def finish_group(binding, primary) do
-    with {:ok, effect} <- HTTPWriterRegistry.finish_group(binding, primary),
+  def finish_group(binding, primary, member) do
+    with {:ok, primary} <- finish_event(primary, member),
+         {:ok, effect} <- HTTPWriterRegistry.finish_group(binding, primary),
          do: {:ok, OutputTicket.with_http(primary, effect)}
+  end
+
+  defp finish_event(primary, member) do
+    if is_nil(OutputTicket.session(member)),
+      do: {:ok, primary},
+      else: RuntimeEvents.finalize(primary, member)
   end
 
   defp frame(json, _format, true), do: {:ok, json}
   defp frame(json, format, false), do: frame(json, format)
 
   defp frame(json, :json), do: {:ok, json}
+  defp frame(json, :legacy_sse), do: {:ok, json}
   defp frame(json, :sse), do: {:ok, "data: " <> json <> "\r\n\r\n"}
   defp frame(_json, _format), do: {:error, :invalid_http_output_format}
 end

@@ -140,7 +140,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPOutputTest do
     before = HTTPWriterRegistry.stats(domain)
     assert before.frames == 2
     assert {:ok, primary} = OutputLedger.finish_group(ledger, context.scope)
-    assert {:ok, final} = HTTPOutput.finish_group(binding, primary)
+    assert {:ok, final} = HTTPOutput.finish_group(binding, primary, second)
     assert %{frames: 1, bytes: bytes, held: 1} = HTTPWriterRegistry.stats(domain)
     assert bytes == before.bytes
     assert :ok = HTTPOutput.publish(final)

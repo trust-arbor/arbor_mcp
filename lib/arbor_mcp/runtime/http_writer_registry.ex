@@ -8,6 +8,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
 
   alias Arbor.MCP.Server.Runtime.{
     Admission,
+    CallbackContext,
     Deadline,
     HTTPListenerBinding,
     HTTPListenerCompletion,
@@ -15,7 +16,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
     HTTPWriterProxy,
     HTTPWriteTicket,
     Ref,
-    ServiceRef
+    Scheduler,
+    ServiceRef,
+    Services
   }
 
   alias Arbor.MCP.Server.Runtime.OutputTicket
@@ -595,6 +598,149 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
          do: true,
          else: (_ -> false)
   end
+
+  # Replay preparation is authorized by the actual promoted producer. This
+  # snapshot is metadata only; protocol output remains in its admitted ledger.
+  def event_source(binding, source, primary) do
+    with {:ok, {domain, id}} <- HTTPWriterBinding.address(binding),
+         {:ok, gate} <- read(domain),
+         %{authority: %{work: %{token: ^source}}} = info <- gate.bindings[id],
+         true <- source_current?(domain, info),
+         table = Ref.table(domain.runtime),
+         {:ok, reservation} <- Admission.current(table, source),
+         {:ok, %{scheduler: scheduler}} <- Admission.route(table),
+         {:ok, producer_metadata} <- event_producer_metadata(table, reservation),
+         true <- not is_nil(info.proof.lease),
+         [{:output_controller, controller}] <- :ets.lookup(table, :output_controller),
+         true <- Process.alive?(controller),
+         :ok <- OutputTicket.validate_scope(primary, event_scope(reservation)) do
+      {:ok,
+       %{
+         runtime: domain.runtime,
+         binding: binding,
+         token: source,
+         generation: reservation.generation,
+         scope: reservation.scope,
+         owner: reservation.owner,
+         controller: controller,
+         scheduler: scheduler,
+         phase: reservation.output_phase,
+         producer: self(),
+         writer: info.writer,
+         lease: info.proof.lease,
+         primary: OutputTicket.identity(primary),
+         group: reservation.batch?,
+         initialization: producer_metadata.initialization,
+         deadline: min(reservation.deadline, info.proof.deadline)
+       }}
+    else
+      _invalid -> {:error, :invalid_session_event_origin}
+    end
+  rescue
+    ArgumentError -> {:error, :invalid_session_event_origin}
+  end
+
+  defp event_producer_metadata(table, reservation) do
+    case CallbackContext.current() do
+      %{table: ^table, token: token, generation: generation, scope: scope, output_phase: phase} ->
+        if token == reservation.token and generation == reservation.generation and
+             scope == reservation.scope and phase == reservation.output_phase and
+             Admission.origin_active?(table, %{
+               token: token,
+               generation: generation,
+               scope: scope,
+               output_phase: phase,
+               owner: reservation.owner
+             }),
+           do: Scheduler.output_producer_metadata(table, reservation),
+           else: {:error, :invalid_output_producer}
+
+      nil ->
+        if :ets.lookup(table, :http_gateway) == [{:http_gateway, self()}] and
+             reservation.owner == self(),
+           do: {:ok, %{initialization: false}},
+           else: {:error, :invalid_output_producer}
+
+      _invalid ->
+        {:error, :invalid_output_producer}
+    end
+  end
+
+  defp event_scope(%{batch?: true} = reservation),
+    do: {:batch, reservation.generation, reservation.token}
+
+  defp event_scope(reservation),
+    do: {:work, reservation.generation, reservation.token}
+
+  def event_preparation_authorized?(source, producer) do
+    table = Ref.table(source.runtime)
+
+    with true <- event_source_current?(source),
+         true <- source.producer == producer,
+         {:ok, %{server: store}} <-
+           Services.resolve(source.runtime, :sessions),
+         true <- store == self(),
+         {:ok, reservation} <- Admission.current(table, source.token),
+         true <- reservation.output_phase == source.phase do
+      if :ets.lookup(table, :http_gateway) == [{:http_gateway, producer}] do
+        reservation.owner == producer and source.initialization == false
+      else
+        Scheduler.replay_producer_metadata(table, reservation, producer) ==
+          {:ok, %{initialization: source.initialization}}
+      end
+    else
+      _untrusted -> false
+    end
+  rescue
+    _invalid -> false
+  end
+
+  def event_source_current?(source) do
+    with {:ok, {domain, id}} <- HTTPWriterBinding.address(source.binding),
+         true <- domain.runtime == source.runtime,
+         {:ok, gate} <- read(domain),
+         %{writer: writer, authority: %{work: work}, proof: proof} = info <- gate.bindings[id],
+         true <-
+           writer == source.writer and proof.generation == source.generation and
+             proof.scope == source.scope and proof.lease == source.lease,
+         true <- work.token == source.token and work.gateway == source.owner,
+         true <- registered_actor?(domain, :output_controller, source.controller),
+         {:ok, %{scheduler: scheduler}} <- Admission.route(Ref.table(source.runtime)),
+         true <- scheduler == source.scheduler,
+         true <- source.deadline > Deadline.now(),
+         do: source_current?(domain, info),
+         else: (_retired -> false)
+  rescue
+    _exception -> false
+  end
+
+  def event_publication_authorized?(source, primary, actor) do
+    with true <- event_source_current?(source),
+         {:ok, {domain, id}} <- HTTPWriterBinding.address(source.binding),
+         {:ok, gate} <- read(domain),
+         %{writer: writer, authority: %{work: work}} <- gate.bindings[id],
+         true <-
+           actor == writer or
+             (actor == source.controller and registered_actor?(domain, :output_controller, actor)) do
+      event_committed?(domain, work, primary)
+    else
+      _retired -> false
+    end
+  rescue
+    _exception -> false
+  end
+
+  defp event_committed?(_domain, %{kind: :batch, final: {:done, identity}}, primary),
+    do: OutputTicket.identity(primary) == identity
+
+  defp event_committed?(domain, %{token: token, phase: phase}, primary) do
+    with 2 <- :atomics.get(phase, 1),
+         [{_, committed}] <- :ets.lookup(Ref.table(domain.runtime), {:output_commit, token}),
+         do: OutputTicket.same?(committed, primary),
+         else: (_uncommitted -> false)
+  end
+
+  defp event_committed?(_domain, _work, _primary), do: false
 
   # The existing charged writer row is the session stream registration. A
   # replacement retires the old binding; it never kills a borrowed socket PID
@@ -1193,6 +1339,21 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
       %{mode: :retired} -> {:error, :http_writer_closed}
       _live -> :ok
     end
+  end
+
+  # Only the recorded socket can retrieve its queued response companion.
+  # The opaque primary carries no payload; durable publication rechecks the
+  # same installed source, committed phase and exact session lease.
+  def response_primary(effect) do
+    with {:ok, {domain, token, binding}} <- HTTPWriteTicket.address(effect),
+         true <- HTTPWriteTicket.writer?(effect, self()),
+         {:ok, gate} <- read(domain),
+         %{binding: ^binding, stage: :queued, metadata: %{primary: primary}} = entry <-
+           gate.claims[token],
+         info when is_map(info) <- gate.bindings[binding],
+         true <- entry.deadline > Deadline.now() and entry_current?(domain, info, entry),
+         do: {:ok, primary},
+         else: (_invalid -> {:error, :invalid_http_response_ticket})
   end
 
   def kind(effect) do

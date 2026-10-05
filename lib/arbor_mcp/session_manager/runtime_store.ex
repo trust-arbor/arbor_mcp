@@ -11,7 +11,9 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
     ServiceStore
   }
 
+  @max_sequence 18_446_744_073_709_551_615
   @identity [:principal_id, :tenant_id, :issuer, :audience]
+  alias Arbor.MCP.SessionManager.PendingEvents
   @metadata @identity ++ [:transport, :transport_endpoint, :client_info]
   @defaults [
     max_sessions: 128,
@@ -68,13 +70,38 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
 
       true ->
         with {:ok, store} <- SessionStore.ETS.open(%{}) do
-          {:ok, %{store: store, limits: limits, claims: %{}, expiry_offset: 0}}
+          {:ok,
+           %{
+             store: store,
+             limits: limits,
+             claims: %{},
+             expiry_offset: 0,
+             pending_events: %{},
+             pending_event_offset: 0
+           }}
         end
     end
   end
 
   def read_address(model), do: model.store.sessions
-  def close(model), do: SessionStore.close(model.store)
+
+  def close(model),
+    do: model |> PendingEvents.close() |> Map.fetch!(:store) |> SessionStore.close()
+
+  def event_row(model, key, epoch), do: epoch_row(model, key, epoch)
+  def event_row_capacity(model, key, row), do: row_capacity(model, key, row)
+  def max_sequence, do: @max_sequence
+
+  def apply(operation, args, context, model)
+      when operation in [
+             :prepare_event,
+             :event_current,
+             :handoff_event,
+             :finalize_event,
+             :publish_event,
+             :release_event
+           ],
+      do: PendingEvents.apply(operation, args, context, model)
 
   def apply(:create, [namespace, metadata, requested_id], context, model) do
     model = expire(model)
@@ -254,7 +281,8 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
              max_frame_bytes: model.limits.max_event_bytes + 1,
              max_term_bytes: model.limits.max_event_bytes
            ),
-         true <- byte_size(encoded) <= model.limits.max_event_bytes do
+         true <- byte_size(encoded) <= model.limits.max_event_bytes,
+         true <- row.sequence < @max_sequence do
       sequence = row.sequence + 1
 
       event = %{
@@ -271,7 +299,16 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
         )
 
       events = events(model, namespace, id, epoch)
-      {evicted, _retained} = trim(events, bytes, model.limits)
+      {pending_count, pending_bytes} = PendingEvents.session_pending(model, namespace, id, epoch)
+      pending = PendingEvents.stats(model)
+
+      limits = %{
+        model.limits
+        | max_events_per_session: model.limits.max_events_per_session - pending_count,
+          max_replay_bytes_per_session: model.limits.max_replay_bytes_per_session - pending_bytes
+      }
+
+      {evicted, _retained} = trim(events, bytes, limits)
       all = SessionStore.all(model.store, :events)
       evicted_bytes = Enum.sum(Enum.map(evicted, fn {_key, {_event, size}} -> size end))
       total_bytes = Enum.sum(Enum.map(all, fn {_key, {_event, size}} -> size end))
@@ -288,13 +325,14 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
         row_capacity(model, key, updated) != :ok ->
           {{:error, :session_metadata_capacity_exhausted}, model}
 
-        bytes > model.limits.max_replay_bytes_per_session ->
+        bytes + pending_bytes > model.limits.max_replay_bytes_per_session ->
           {{:error, :replay_capacity_exhausted}, model}
 
-        length(all) - length(evicted) >= model.limits.max_events ->
+        length(all) - length(evicted) + pending.pending_events >= model.limits.max_events ->
           {{:error, :replay_capacity_exhausted}, model}
 
-        total_bytes - evicted_bytes + bytes > model.limits.max_replay_bytes ->
+        total_bytes - evicted_bytes + bytes + pending.pending_event_bytes >
+            model.limits.max_replay_bytes ->
           {{:error, :replay_capacity_exhausted}, model}
 
         true ->
@@ -384,7 +422,7 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
         )
     }
 
-    {{:ok, stats}, model}
+    {{:ok, Map.merge(stats, PendingEvents.stats(model))}, model}
   end
 
   def apply(_operation, _args, _context, model),
@@ -429,10 +467,14 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
         end
       end)
 
-    %{model | expiry_offset: offset + processed}
+    model
+    |> Map.put(:expiry_offset, offset + processed)
+    |> PendingEvents.expire(deadline)
   end
 
   def info({:DOWN, monitor, :process, owner, _reason}, model) do
+    model = PendingEvents.info({:DOWN, monitor, :process, owner, :retired}, model)
+
     case Enum.find(model.claims, fn {_key, claim} ->
            claim.monitor == monitor and claim.owner == owner
          end) do
@@ -450,6 +492,7 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
   def info(_message, model), do: model
 
   defp retire(model, {namespace, id} = key, epoch) do
+    model = PendingEvents.retire(model, namespace, id, epoch)
     SessionStore.delete(model.store, :sessions, key)
 
     for {event_key = {^namespace, ^id, ^epoch, _sequence}, _event} <-
@@ -544,8 +587,11 @@ defmodule Arbor.MCP.SessionManager.RuntimeStore do
         [] -> 0
       end
 
-    if size <= model.limits.max_session_metadata_bytes and
-         metadata_bytes(model) - previous + size <= model.limits.max_metadata_bytes,
+    growth = PendingEvents.metadata_growth(model, key, row)
+
+    if size + growth <= model.limits.max_session_metadata_bytes and
+         metadata_bytes(model) - previous + size +
+           PendingEvents.metadata_growth(model, key, row, :all) <= model.limits.max_metadata_bytes,
        do: :ok,
        else: {:error, :session_metadata_capacity_exhausted}
   end

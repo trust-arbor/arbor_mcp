@@ -346,7 +346,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
     with [{:http_gateway, ^caller}] <- :ets.lookup(state.table, :http_gateway),
          [{_, proof}] <- :ets.lookup(state.table, {:output_failure, token}),
          {:ok, deadline} <- HTTPWriterRegistry.failure_deadline(binding, token),
-         true <- format in [:json, :sse] do
+         true <- format in [:json, :sse, :legacy_sse] do
       prepare_http_failure(
         token,
         binding,
@@ -791,7 +791,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
       %{output: %{edge: ^caller, batch?: true}} = job ->
         case OutputLedger.finish_group(state.ledger, job.scope) do
           {:ok, ticket} ->
-            case final_http_ticket(job, token, ticket) do
+            case final_http_ticket(job, token, ticket, state.table) do
               {:ok, ticket} ->
                 {reply, state} = deliver_peer(ticket, job, state)
                 complete_delivery(reply, token, job, state, false)
@@ -854,8 +854,11 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
       :ets.lookup(state.table, :edge_connection) == [{:edge_connection, edge, connection}]
   end
 
-  defp http_context(%{http: %{binding: binding, format: format}}, owner),
-    do: %{binding: binding, format: format, owner: owner}
+  defp http_context(%{http: %{binding: binding, format: format} = http}, owner),
+    do:
+      http
+      |> Map.take([:source, :session])
+      |> Map.merge(%{binding: binding, format: format, owner: owner})
 
   defp http_context(_output, _owner), do: nil
 
@@ -1111,12 +1114,18 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
     if OutputTicket.same?(ticket, paired), do: paired, else: ticket
   end
 
-  defp final_http_ticket(%{output: %{http: %{binding: binding}}}, token, ticket) do
+  defp final_http_ticket(%{output: %{http: %{binding: binding}}} = job, token, ticket, table) do
+    member =
+      case :ets.lookup(table, {:output_commit, token}) do
+        [{_, member}] -> member
+        _missing -> Map.get(job, :edge_ticket, ticket)
+      end
+
     with :ok <- HTTPWriterRegistry.finalize_batch(binding, token, ticket),
-         do: HTTPOutput.finish_group(binding, ticket)
+         do: HTTPOutput.finish_group(binding, ticket, member)
   end
 
-  defp final_http_ticket(_job, _token, ticket), do: {:ok, ticket}
+  defp final_http_ticket(_job, _token, ticket, _table), do: {:ok, ticket}
 
   defp settle_http_returns(state) do
     Enum.reduce(state.jobs, state, fn {token, job}, state ->

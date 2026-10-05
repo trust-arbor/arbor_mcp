@@ -18,6 +18,7 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
     Lifecycle,
     OutputController,
     OutputLedger,
+    Ref,
     Services,
     ShutdownGuard
   }
@@ -42,6 +43,33 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
     }
   end
 
+  def output_producer_metadata(table, reservation),
+    do: output_producer(table, reservation, :direct)
+
+  # The addressed session actor can recheck the actual retained Task before
+  # accepting an invisible replay candidate from its original producer.
+  def replay_producer_metadata(table, reservation, producer),
+    do: output_producer(table, reservation, {:sessions, producer})
+
+  defp output_producer(table, reservation, provenance) do
+    with {:ok, %{generation: generation, scheduler: scheduler}} <- Admission.route(table),
+         true <- generation == reservation.generation,
+         producer = output_producer_identity(provenance, self(), table),
+         [{:output_producers, proofs}] <- :ets.lookup(table, :output_producers),
+         true <- :ets.info(proofs, :owner) == scheduler,
+         true <- :ets.info(proofs, :protection) == :protected,
+         [{token, proof}] <- :ets.lookup(proofs, reservation.token),
+         true <- token == reservation.token and proof.producer == producer,
+         true <- proof.generation == generation and proof.phase == reservation.output_phase,
+         true <- proof.deadline == reservation.deadline and proof.deadline > now(),
+         true <- Process.alive?(producer) and Process.alive?(reservation.owner),
+         true <- Admission.origin_active?(table, reservation),
+         do: {:ok, %{initialization: proof.initialization}},
+         else: (_retired -> {:error, :invalid_output_producer})
+  rescue
+    _invalid -> {:error, :invalid_output_producer}
+  end
+
   @impl true
   def init(opts) do
     Process.flag(:trap_exit, true)
@@ -52,6 +80,8 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
     with {:ok, handler_state} <- initialize_handler(config),
          {:ok, generation} <- Admission.activate(table, self(), config) do
       [{:callback_tasks, task_supervisor}] = :ets.lookup(table, :callback_tasks)
+      producers = :ets.new(__MODULE__, [:set, :protected, read_concurrency: true])
+      :ets.insert(table, {:output_producers, producers})
 
       {:ok,
        %{
@@ -60,6 +90,7 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
          handler_state: handler_state,
          generation: generation,
          task_supervisor: task_supervisor,
+         producers: producers,
          queue: :queue.new(),
          work: %{},
          tasks: %{},
@@ -174,6 +205,7 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
     cond do
       Map.has_key?(state.tasks, ref) ->
         token = Map.fetch!(state.tasks, ref)
+        :ets.delete(state.producers, token)
         state = if state.work[token].terminal, do: state, else: fail(state, token, :handler_crash)
 
         cleanup_worker_output(state, token)
@@ -275,6 +307,17 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
      }, state}
   end
 
+  defp output_producer_identity(:direct, caller, _table), do: caller
+
+  defp output_producer_identity({:sessions, producer}, caller, table) do
+    runtime = Ref.new(:ets.info(table, :owner), table)
+
+    case Services.resolve(runtime, :sessions) do
+      {:ok, %{server: ^caller}} -> producer
+      _untrusted -> nil
+    end
+  end
+
   defp cancel_key(state, reservation, key) do
     token = reservation.token
 
@@ -360,6 +403,7 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
   defp start_task(state, token, work) do
     snapshot = state.handler_state
     config = state.config
+    replay? = replay_producer?(work)
 
     invocation = %{
       table: state.table,
@@ -377,6 +421,8 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
       Task.Supervisor.async_nolink(
         state.task_supervisor,
         fn ->
+          :ok = await_producer_start(replay?, state.table, token, work.reservation)
+
           output =
             if reply_needed?(work),
               do:
@@ -391,7 +437,10 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
           case output do
             {:ok, output} ->
               proposal = invoke(invocation, work, config, snapshot)
-              prepare_proposal(proposal, invocation, work, config, snapshot, output)
+
+              CallbackContext.with_context(invocation, fn ->
+                prepare_proposal(proposal, invocation, work, config, snapshot, output)
+              end)
 
             {:error, reason} ->
               {:output_failure, reason}
@@ -399,6 +448,8 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
         end,
         shutdown: config.cancel_grace_ms
       )
+
+    if replay?, do: publish_producer(state, token, task.pid, work)
 
     output =
       if reply_needed?(work),
@@ -416,7 +467,45 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
     :exit, _reason -> state |> fail(token, :handler_start_failed) |> remove_work(token)
   end
 
+  defp replay_producer?(work),
+    do: match?(%{http: %{format: :legacy_sse}}, Keyword.get(work.opts, :output))
+
+  defp publish_producer(state, token, producer, work) do
+    proof = %{
+      producer: producer,
+      generation: state.generation,
+      phase: work.reservation.output_phase,
+      deadline: work.reservation.deadline,
+      initialization: work.request["method"] == "initialize"
+    }
+
+    # One payload-free row per live callback, precharged by HTTP ingress.
+    true = :erlang.external_size({token, proof}) <= 512
+    :ets.insert(state.producers, {token, proof})
+    send(producer, {:runtime_output_producer_ready, token, work.reservation.output_phase})
+  end
+
+  defp await_producer_start(false, _table, _token, _reservation), do: :ok
+
+  defp await_producer_start(
+         true,
+         table,
+         token,
+         %{output_phase: phase, deadline: deadline} = reservation
+       ) do
+    receive do
+      {:runtime_output_producer_ready, ^token, ^phase} ->
+        case output_producer_metadata(table, reservation) do
+          {:ok, _metadata} -> :ok
+          _retired -> exit(:output_producer_expired)
+        end
+    after
+      max(0, deadline - now()) -> exit(:output_producer_expired)
+    end
+  end
+
   defp complete(state, token, proposal) do
+    :ets.delete(state.producers, token)
     work = Map.fetch!(state.work, token)
     {proposal, ticket} = restore_proposal(proposal)
 
@@ -586,6 +675,8 @@ defmodule Arbor.MCP.Server.Runtime.Scheduler do
   end
 
   defp remove_work(state, token) do
+    :ets.delete(state.producers, token)
+
     case Map.pop(state.work, token) do
       {nil, _work} ->
         state

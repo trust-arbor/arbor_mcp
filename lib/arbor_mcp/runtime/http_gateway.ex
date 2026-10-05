@@ -47,7 +47,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
            lifecycle_metadata_reserve:
              :binary.copy(
                <<0>>,
-               4_512 + 2 * :erlang.external_size({proof.scope, proof.lease, identity}) +
+               5_024 + 2 * :erlang.external_size({proof.scope, proof.lease, identity}) +
                  HTTPCancellation.marker_metadata_bytes(
                    runtime,
                    proof.scope,
@@ -147,7 +147,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
       format = Keyword.get(opts, :format, :json)
       dispatch = Keyword.get(opts, :dispatch_opts, [])
 
-      if format in [:json, :sse] and Keyword.keyword?(dispatch),
+      if format in [:json, :sse, :legacy_sse] and Keyword.keyword?(dispatch),
         do: {:ok, format, dispatch},
         else: {:error, :invalid_http_gateway_options}
     else
@@ -384,6 +384,18 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
     end
   end
 
+  defp output_http(state, %{format: :legacy_sse} = job, token) do
+    session =
+      case Runtime.service(state.runtime, :sessions) do
+        {:ok, service} -> %{service: service, lease: job.lease}
+        _unavailable -> nil
+      end
+
+    %{binding: job.binding, format: job.format, source: token, session: session}
+  end
+
+  defp output_http(_state, job, _token), do: %{binding: job.binding, format: job.format}
+
   defp dispatch(token, request, job, state) do
     if valid_envelope?(request),
       do: dispatch_valid(token, request, job, state),
@@ -405,7 +417,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
       edge: self(),
       connection: job.binding,
       batch?: job.batch?,
-      http: %{binding: job.binding, format: job.format}
+      http: output_http(state, job, token)
     }
 
     with {:ok, reservation} <- Admission.promote(state.table, token, invalid, kind: :rpc),
@@ -430,7 +442,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
       edge: self(),
       connection: job.binding,
       batch?: job.batch?,
-      http: %{binding: job.binding, format: job.format}
+      http: output_http(state, job, token)
     }
 
     with {:ok, reservation} <- Admission.promote(state.table, token, request, kind: :rpc),

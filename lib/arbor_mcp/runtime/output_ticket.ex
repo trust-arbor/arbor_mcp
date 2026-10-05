@@ -1,7 +1,7 @@
 defmodule Arbor.MCP.Server.Runtime.OutputTicket do
   @moduledoc false
   @enforce_keys [:ledger, :table, :generation, :token, :scope]
-  defstruct [:ledger, :table, :generation, :token, :scope, :http_effect]
+  defstruct [:ledger, :table, :generation, :token, :scope, :http_effect, :session_effect]
   @scope_limit 4_096
 
   @opaque t :: %__MODULE__{
@@ -10,7 +10,8 @@ defmodule Arbor.MCP.Server.Runtime.OutputTicket do
             generation: reference(),
             token: reference(),
             scope: term(),
-            http_effect: Arbor.MCP.Server.Runtime.HTTPWriteTicket.t() | nil
+            http_effect: Arbor.MCP.Server.Runtime.HTTPWriteTicket.t() | nil,
+            session_effect: Arbor.MCP.SessionManager.EventTicket.t() | nil
           }
 
   @type error :: {:error, atom()}
@@ -26,6 +27,13 @@ defmodule Arbor.MCP.Server.Runtime.OutputTicket do
 
   @spec http(t()) :: Arbor.MCP.Server.Runtime.HTTPWriteTicket.t() | nil
   def http(%__MODULE__{http_effect: effect}), do: effect
+
+  @spec with_session(t(), Arbor.MCP.SessionManager.EventTicket.t()) :: t()
+  def with_session(%__MODULE__{session_effect: nil} = ticket, effect),
+    do: %{ticket | session_effect: effect}
+
+  @spec session(t()) :: Arbor.MCP.SessionManager.EventTicket.t() | nil
+  def session(%__MODULE__{session_effect: effect}), do: effect
 
   @spec same?(t(), t()) :: boolean()
   def same?(%__MODULE__{} = left, %__MODULE__{} = right) do
