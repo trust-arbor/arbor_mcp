@@ -10,19 +10,15 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownGuard do
   def format_status(status),
     do: Arbor.MCP.Server.Runtime.Diagnostics.format_status(status, __MODULE__)
 
-  alias Arbor.MCP.Server.Runtime.{Deadline, Initialization, ServiceStartup}
-
-  @cleanup_grace_ms 50
+  alias Arbor.MCP.Server.Runtime.{Deadline, Initialization, ServiceStartup, ShutdownControl}
 
   def start(supervisor, table, config) do
-    case Initialization.current(table) do
-      {:ok, %{status: :starting}} ->
-        GenServer.start(__MODULE__, {supervisor, table, config},
-          timeout: Initialization.remaining(table)
-        )
+    with {:ok, control} <- ShutdownControl.start(supervisor, table, config) do
+      constructor = fn -> {supervisor, table, config, control} end
 
-      _standalone ->
-        GenServer.start(__MODULE__, {supervisor, table, config})
+      GenServer.start(__MODULE__, constructor,
+        timeout: ShutdownControl.startup_timeout(table, config)
+      )
     end
   end
 
@@ -57,25 +53,12 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownGuard do
     :exit, _reason -> {:error, :service_start_timeout}
   end
 
-  def stop(table, reason) do
-    [{:shutdown_guard, guard}] = :ets.lookup(table, :shutdown_guard)
-    GenServer.call(guard, {:stop, reason}, :infinity)
-  rescue
-    ArgumentError -> {:error, :runtime_unavailable}
-  catch
-    :exit, _reason -> {:error, :runtime_unavailable}
-  end
+  def stop(table, reason),
+    do: Arbor.MCP.Server.Runtime.stop(:ets.info(table, :owner), reason)
 
-  # An owned edge cannot synchronously wait for its own root to stop. This
-  # fixed control uses the guard's one stopper and existing overall budget.
-  def request_stop(table, reason) do
-    case :ets.lookup(table, :shutdown_guard) do
-      [{:shutdown_guard, guard}] -> GenServer.cast(guard, {:request_stop, reason})
-      _ -> {:error, :runtime_unavailable}
-    end
-  rescue
-    ArgumentError -> {:error, :runtime_unavailable}
-  end
+  # Owned edges publish the same fixed stop record without waiting for their
+  # own root. The original cutoff is enforced independently of this mailbox.
+  def request_stop(table, reason), do: ShutdownControl.request(table, reason)
 
   def begin_drain(table, edge, connection, deadline) do
     case :ets.lookup(table, :shutdown_guard) do
@@ -121,8 +104,10 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownGuard do
   end
 
   @impl true
-  def init({supervisor, table, config}) do
+  def init(constructor) do
+    {supervisor, table, config, control} = constructor.()
     :ok = Initialization.track(table, self(), :guard)
+    :ok = ShutdownControl.bind_guard(table, self())
 
     {:ok,
      %{
@@ -131,11 +116,12 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownGuard do
        root_down: false,
        table: table,
        budget: config.shutdown_timeout_ms,
+       control_monitor: Process.monitor(ShutdownControl.observer(control)),
        children: %{},
        monitors: %{},
-       waiters: [],
        phase: :running,
        timer: nil,
+       timer_deadline: nil,
        stopper: nil
      }}
   end
@@ -150,24 +136,7 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownGuard do
     {:reply, {:error, :runtime_stopped}, watch_pid(state, pid)}
   end
 
-  def handle_call({:stop, reason}, from, state) do
-    state = begin_shutdown(state)
-    state = %{state | waiters: [from | state.waiters]}
-
-    if state.stopper do
-      {:noreply, state}
-    else
-      root = state.root
-      stopper = spawn(fn -> Supervisor.stop(root, reason, :infinity) end)
-      {:noreply, %{watch_pid(state, stopper) | stopper: stopper}}
-    end
-  end
-
   @impl true
-  def handle_cast({:request_stop, reason}, state) do
-    {:noreply, request_shutdown(state, reason)}
-  end
-
   def handle_cast({:begin_drain, edge, connection, deadline}, %{phase: :running} = state) do
     if :ets.lookup(state.table, :edge_connection) == [{:edge_connection, edge, connection}] and
          is_integer(deadline) do
@@ -194,6 +163,14 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownGuard do
   def handle_cast({:begin_drain, _edge, _connection, _deadline}, state), do: {:noreply, state}
 
   @impl true
+  def handle_info(:shutdown_control, state), do: {:noreply, control_shutdown(state)}
+
+  def handle_info({:DOWN, monitor, :process, _pid, _reason}, %{control_monitor: monitor} = state) do
+    ShutdownControl.failure(state.table)
+    force_children(state)
+    {:noreply, %{state | phase: :cleanup}}
+  end
+
   def handle_info({:drain_deadline, ref}, %{phase: :running, drain: %{id: ref} = drain} = state) do
     if :ets.lookup(state.table, :edge_connection) == [
          {:edge_connection, drain.edge, drain.connection}
@@ -223,34 +200,43 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownGuard do
   end
 
   def handle_info(:shutdown_deadline, state) do
-    force_children(state)
-    Process.send_after(self(), :force_root, @cleanup_grace_ms)
-    {:noreply, %{state | phase: :cleanup}}
-  end
-
-  def handle_info(:force_root, state) do
     if not state.root_down, do: Process.exit(state.root, :kill)
     force_children(state)
-    finish_or_wait(state)
+    finish_or_wait(%{state | phase: :cleanup})
   end
 
-  defp begin_shutdown(%{phase: :running} = state) do
-    close_route(state.table)
-    timer = Process.send_after(self(), :shutdown_deadline, state.budget)
-    %{state | phase: :stopping, timer: timer}
+  defp begin_shutdown(state, deadline) do
+    if is_nil(state.timer_deadline) or deadline < state.timer_deadline do
+      close_route(state.table)
+      if state.timer, do: Process.cancel_timer(state.timer)
+      timer = Process.send_after(self(), :shutdown_deadline, Deadline.remaining(deadline))
+      %{state | phase: :stopping, timer: timer, timer_deadline: deadline}
+    else
+      state
+    end
   end
-
-  defp begin_shutdown(state), do: state
 
   defp request_shutdown(state, reason) do
-    state = begin_shutdown(state)
+    ShutdownControl.request(state.table, reason)
+    control_shutdown(state)
+  end
 
-    if state.stopper do
-      state
-    else
-      root = state.root
-      stopper = spawn(fn -> Supervisor.stop(root, reason, :infinity) end)
-      %{watch_pid(state, stopper) | stopper: stopper}
+  defp control_shutdown(state) do
+    case ShutdownControl.command(state.table) do
+      {:ok, reason, _cutoff, force_at} ->
+        state = begin_shutdown(state, force_at)
+
+        if state.stopper do
+          state
+        else
+          case ShutdownControl.stopper(state.table, state.root, reason) do
+            {:ok, pid} -> %{watch_pid(state, pid) | stopper: pid}
+            _unavailable -> state
+          end
+        end
+
+      _unavailable ->
+        state
     end
   end
 
@@ -345,7 +331,6 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownGuard do
   defp finish_or_wait(%{root_down: true, children: children} = state)
        when map_size(children) == 0 do
     if state.timer, do: Process.cancel_timer(state.timer)
-    for waiter <- state.waiters, do: GenServer.reply(waiter, :ok)
     {:stop, :normal, state}
   end
 

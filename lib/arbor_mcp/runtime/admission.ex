@@ -17,6 +17,7 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
     Initialization,
     Ref,
     RetainedTerm,
+    ShutdownControl,
     ShutdownGuard
   }
 
@@ -109,7 +110,9 @@ defmodule Arbor.MCP.Server.Runtime.Admission do
   def route(table) do
     case :ets.lookup(table, :route) do
       [{:route, %{scheduler: scheduler} = route}] when is_pid(scheduler) ->
-        if Process.alive?(scheduler), do: {:ok, route}, else: {:error, :runtime_unavailable}
+        if Process.alive?(scheduler) and ShutdownControl.available?(table),
+          do: {:ok, route},
+          else: {:error, :runtime_unavailable}
 
       _ ->
         {:error, :runtime_unavailable}

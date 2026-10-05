@@ -80,7 +80,25 @@ forward "/mcp", Arbor.MCP.HttpPlug, runtime: MyApp.MountedMCP
 - `start_link/1` returns the runtime supervisor PID with ordinary OTP links.
 - `ref/1` accepts that PID, a runtime name, or an existing opaque runtime
   reference and returns `{:ok, ref}` or `{:error, :runtime_unavailable}`.
-- `stop/2` stops the whole owned subtree within a configured shutdown budget.
+- `stop/2` captures one original `shutdown_timeout_ms` budget at API entry.
+  A persistent runtime-owned observer enforces that cutoff independently of the
+  graceful shutdown guard. Concurrent stops coalesce into one detached reason
+  (at most 4,096 retained bytes) and one token wake per actor; later calls cannot
+  renew the cutoff. Ownership registration has a fixed 16,384 live-PID inventory
+  plus the one observer; registration is rejected before owned work if full.
+  Native children and registered adapter processes retain their actual parents.
+  The observer uses only those authenticated identities, never a link graph or
+  caller-supplied borrowed PID. A small forced-cleanup allowance is reserved
+  inside the original budget. `:ok` requires actual root, registered-owned and
+  observer DOWN receipts before the caller's original cutoff. A late or incomplete
+  result is `{:error, :shutdown_cleanup_unconfirmed}`. Loss of the authority fails the
+  runtime closed with `{:error, :shutdown_control_unavailable}` and never creates
+  an empty replacement authority. Entered borrowed IO retains its existing
+  transport liabilities and receipts; root DOWN does not prove that IO settled.
+  Registered-name lookups retain the documented trusted finite lookup contract.
+  Host supervisors retain their child restart policy and borrowed services or
+  mounted listeners survive. Use `Supervisor.terminate_child/2` to remove a
+  managed endpoint rather than allowing a permanent child to restart.
 - The opaque reference identifies the supervisor instance, not a scheduler
   child PID. Internal child restart does not require a new reference; replacing
   the whole supervisor does. A registered name can resolve a replacement.
@@ -126,11 +144,22 @@ once in the state-owner lifecycle; it is not called on each HTTP request.
 Startup is not considered ready until initialization succeeds. Bound startup
 with `init_timeout_ms`, and bound shutdown with `shutdown_timeout_ms`.
 
+Owned Cowboy startup uses the qualified native callbacks described in
+[HTTP_LISTENERS.md](./HTTP_LISTENERS.md), including real acceptor parent links
+and registration before startup ACK or stock Ranch IO. A normal acceptor child
+restart inside a healthy listener captures one new finite constructor cutoff
+without reinitializing handler state. Constructor return checks the same runtime
+epoch and original cutoff. A late queued ACK is rejected; the exact owned child
+is signalled for termination and remains registered until actual DOWN. Native
+restart escalation follows the owned listener failure policy below. Borrowed
+stock listener constructors remain host-owned.
+
 | Failure | Required outcome |
 |---|---|
 | Callback exception/exit | Fail that invocation; release its reservation after its worker is down; retain committed state; no sibling request or runtime crash. |
 | Scheduler or task-supervisor crash | Restart the execution subtree together so orphan workers cannot commit into replacement state. New handler state is initialized; pending requests fail, without automatic replay. |
-| Listener/stream crash | Cancel work owned by the lost connection; restart the transport where applicable. Keep runtime state, sessions and durable replay store. |
+| Test/BEAM edge or HTTP request-stream crash | Cancel work owned by the lost connection; restart the edge where applicable. Keep the healthy runtime state, sessions and replay store. |
+| Owned standalone HTTP listener failure | Fail-stop this runtime instance. Its host supervisor applies the configured restart policy; a replacement has a new runtime reference and initializes new handler state. Borrowed host listeners survive. |
 | ETS session/event owner crash | Invalidate affected sessions/indexes and restart dependent execution/transports. Never retain indexes pointing to vanished tables. The other runtime is untouched. |
 | Durable adapter owner crash | Fail closed until reopened. Recovered data follows adapter contracts; do not acknowledge an append before durability is confirmed. Dependent execution/transports restart; no callback replay. |
 | Whole runtime stop | Close admission, cancel queued work, signal running work, reap workers/listeners/transports, close stores, and leave other runtimes running. |

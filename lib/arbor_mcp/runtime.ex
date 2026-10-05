@@ -74,8 +74,17 @@ defmodule Arbor.MCP.Server.Runtime do
   accepted work or its state commit. `request/3` creates and manages its own
   alias, overriding any supplied `reply_to` option.
 
-  `stop/2` starts one overall shutdown budget, then forcefully cleans explicitly
-  registered children and callback tasks. A parent supervisor applies the same
+  `stop/2` captures one overall shutdown budget at public API entry. Concurrent
+  calls coalesce without extending it. A runtime-owned observer enforces the
+  original cutoff even if the graceful shutdown guard stalls. Actual root and
+  registered child DOWN receipts before that cutoff are required for success;
+  late or incomplete cleanup returns `{:error, :shutdown_cleanup_unconfirmed}`.
+  Loss of the observer fails admission closed and returns
+  `{:error, :shutdown_control_unavailable}`. Registration has a fixed 16,384
+  live-PID inventory plus this one observer, and stop reasons are limited to
+  4,096 retained bytes. Borrowed IO liabilities retain their existing transport
+  receipts; process DOWN never invents a physical IO completion.
+  It forcefully cleans explicitly registered children and callback tasks. A parent supervisor applies the same
   finite budget through this runtime's child specification. Forced cleanup may
   interrupt handler or store termination hooks; it does not promise persisted
   store data or cleanup of arbitrary processes spawned outside owned children.
@@ -101,6 +110,7 @@ defmodule Arbor.MCP.Server.Runtime do
     Initialization,
     Ref,
     RetainedTerm,
+    ShutdownControl,
     ShutdownGuard
   }
 
@@ -321,15 +331,76 @@ defmodule Arbor.MCP.Server.Runtime do
 
   @spec stop(server(), term()) :: :ok | {:error, term()}
   def stop(server, reason \\ :normal) do
-    with {:ok, runtime} <- ref(server) do
-      domain = HTTPWriterProxy.domain(runtime)
-      HTTPWriterProxy.seal(domain)
-      Process.unlink(Ref.supervisor(runtime))
+    started = Deadline.now()
 
-      case ShutdownGuard.stop(Ref.table(runtime), reason) do
-        :ok -> HTTPWriterProxy.cleanup_status(domain)
-        error -> error
+    with {:ok, runtime} <- ref(server), {:ok, reason} <- ShutdownControl.reason(reason) do
+      root = Ref.supervisor(runtime)
+      table = Ref.table(runtime)
+      domain = HTTPWriterProxy.domain(runtime)
+      previous_trap = Process.flag(:trap_exit, true)
+
+      result =
+        try do
+          case ShutdownControl.prepare(table, reason, started) do
+            {:ok, control, deadline} ->
+              Process.unlink(root)
+              HTTPWriterProxy.seal(domain)
+
+              case ShutdownControl.await(control, deadline, previous_trap) do
+                :ok ->
+                  receipt = HTTPWriterProxy.cleanup_status(domain)
+
+                  if Deadline.now() < deadline,
+                    do: receipt,
+                    else: {:error, :shutdown_cleanup_unconfirmed}
+
+                error ->
+                  error
+              end
+
+            {:error, :shutdown_control_unavailable} = error ->
+              Process.unlink(root)
+              ShutdownControl.failure(table)
+              error
+
+            error ->
+              error
+          end
+        after
+          restore_stop_exit_policy(root, previous_trap)
+        end
+
+      case result do
+        {:foreign_exit, exit_reason} -> Process.exit(self(), exit_reason)
+        other -> other
       end
+    end
+  end
+
+  defp restore_stop_exit_policy(root, previous_trap) do
+    flush_owned_exit(root)
+    if not previous_trap, do: forward_foreign_exit()
+    Process.flag(:trap_exit, previous_trap)
+  end
+
+  defp forward_foreign_exit do
+    receive do
+      {:EXIT, _pid, :normal} ->
+        forward_foreign_exit()
+
+      {:EXIT, _pid, reason} ->
+        Process.flag(:trap_exit, false)
+        Process.exit(self(), reason)
+    after
+      0 -> :ok
+    end
+  end
+
+  defp flush_owned_exit(root) do
+    receive do
+      {:EXIT, ^root, _reason} -> flush_owned_exit(root)
+    after
+      0 -> :ok
     end
   end
 

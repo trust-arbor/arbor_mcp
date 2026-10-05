@@ -1,7 +1,15 @@
 defmodule Arbor.MCP.Server.Runtime.Initialization do
   @moduledoc false
 
-  alias Arbor.MCP.Server.Runtime.{Admission, Config, Deadline, OutputController, ShutdownGuard}
+  alias Arbor.MCP.Server.Runtime.{
+    Admission,
+    Config,
+    Deadline,
+    OutputController,
+    ShutdownControl,
+    ShutdownGuard
+  }
+
   alias Arbor.MCP.Server.Stdio.OutputAuthority
 
   @timer_limit 4_294_967_295
@@ -132,6 +140,14 @@ defmodule Arbor.MCP.Server.Runtime.Initialization do
   end
 
   def begin(table, config, scope, deadline \\ nil) do
+    if :ets.member(table, :closing) do
+      {:error, :runtime_stopped}
+    else
+      begin_open(table, config, scope, deadline)
+    end
+  end
+
+  defp begin_open(table, config, scope, deadline) do
     result =
       case current(table) do
         {:ok, %{status: :starting} = context} ->
@@ -185,7 +201,7 @@ defmodule Arbor.MCP.Server.Runtime.Initialization do
 
   def ready?(table) do
     case current(table) do
-      {:ok, %{status: :ready}} -> true
+      {:ok, %{status: :ready}} -> ShutdownControl.available?(table)
       _pending -> false
     end
   end
@@ -257,8 +273,19 @@ defmodule Arbor.MCP.Server.Runtime.Initialization do
   def track(table, pid, role \\ :worker)
 
   def track(table, pid, role) when is_pid(pid) and node(pid) == node() do
-    :ets.insert(table, {{:runtime_owned, pid}, role})
+    with :ok <- ShutdownControl.track(table, pid, role) do
+      # This peer must survive initialization-owner failure and root DOWN. Its
+      # own bounded ledger already contains the root/owned proof; it must not
+      # block installation on the initialization observer it outlives.
+      if role == :shutdown_observer, do: :ok, else: track_initialization(table, pid, role)
+    end
+  rescue
+    ArgumentError -> {:error, :runtime_unavailable}
+  end
 
+  def track(_table, _pid, _role), do: {:error, :invalid_owned_process}
+
+  defp track_initialization(table, pid, role) do
     case current(table) do
       {:ok, %{status: :starting} = context} ->
         if current?(table, context) do
@@ -285,8 +312,6 @@ defmodule Arbor.MCP.Server.Runtime.Initialization do
   catch
     :exit, _reason -> {:error, :runtime_init_timeout}
   end
-
-  def track(_table, _pid, _role), do: {:error, :invalid_owned_process}
 
   def watch(table, pid, type \\ :worker) do
     case current(table) do
@@ -351,8 +376,9 @@ defmodule Arbor.MCP.Server.Runtime.Initialization do
   end
 
   def commit_ready(table, context, route) do
-    if current?(table, context) and :atomics.compare_exchange(context.phase, 1, 0, 1) == :ok do
-      if Deadline.now() < context.deadline do
+    if current?(table, context) and ShutdownControl.available?(table) and
+         :atomics.compare_exchange(context.phase, 1, 0, 1) == :ok do
+      if Deadline.now() < context.deadline and ShutdownControl.available?(table) do
         :ets.insert(table, {:route, route})
         ready_return(table, context)
       else
@@ -367,7 +393,7 @@ defmodule Arbor.MCP.Server.Runtime.Initialization do
   def ready_return(table, context) do
     case current(table) do
       {:ok, %{epoch: epoch, status: :ready}} when epoch == context.epoch ->
-        if Deadline.now() < context.deadline do
+        if Deadline.now() < context.deadline and ShutdownControl.available?(table) do
           :ok
         else
           abort(table, context)
@@ -404,6 +430,7 @@ defmodule Arbor.MCP.Server.Runtime.Initialization do
   def preserve_record?({key, _value}) do
     key in [
       :shutdown_guard,
+      :shutdown_control,
       :closing,
       :runtime_initialization,
       :runtime_requirements,
@@ -542,12 +569,17 @@ defmodule Arbor.MCP.Server.Runtime.Initialization do
   end
 
   defp kill_known(known, root) do
-    for {pid, _role} <- known, pid != root and pid != self(), do: Process.exit(pid, :kill)
+    for {pid, role} <- known,
+        pid != root and pid != self() and role != :shutdown_observer,
+        do: Process.exit(pid, :kill)
+
     if root != self(), do: Process.exit(root, :kill)
   end
 
   defp finish_root_down(known, context) do
-    for {pid, role} <- known, role != :guard and pid != context.root, do: Process.exit(pid, :kill)
+    for {pid, role} <- known,
+        role not in [:guard, :shutdown_observer] and pid != context.root,
+        do: Process.exit(pid, :kill)
 
     case Enum.find(known, fn {_pid, role} -> role == :guard end) do
       {guard, :guard} ->

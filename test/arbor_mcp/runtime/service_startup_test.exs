@@ -6,6 +6,7 @@ defmodule Arbor.MCP.Server.RuntimeServiceStartupTest do
   alias Arbor.MCP.Server.Runtime.{
     Config,
     Deadline,
+    Initialization,
     Ref,
     ServiceAdapter,
     ServiceBinding,
@@ -225,6 +226,7 @@ defmodule Arbor.MCP.Server.RuntimeServiceStartupTest do
 
         receive do
           {:"ETS-TRANSFER", ^table, ^parent, :start} ->
+            :ok = Initialization.track(table, self())
             StoreSupervisor.start_link(table: table, config: config)
         end
       end)
@@ -347,8 +349,9 @@ defmodule Arbor.MCP.Server.RuntimeServiceStartupTest do
   defp start_cohort(table, config) do
     parent = self()
 
-    spawn(fn ->
+    :proc_lib.spawn(fn ->
       Process.flag(:trap_exit, true)
+      :ok = Initialization.track(table, self())
       started = Deadline.now()
       result = StoreSupervisor.start_link(table: table, config: config)
       send(parent, {:cohort_result, result, Deadline.now() - started})

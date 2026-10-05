@@ -926,14 +926,22 @@ defmodule Arbor.MCP.Server.RuntimeTest do
 
   test "finite stop remains responsive when admission cannot answer scheduler cleanup" do
     runtime = start_runtime(label: :stuck_admission, shutdown_timeout_ms: 100)
+    root = Ref.supervisor(runtime)
     {:ok, route} = Admission.route(Ref.table(runtime))
     :sys.suspend(route.admission)
     [{:shutdown_guard, guard}] = :ets.lookup(Ref.table(runtime), :shutdown_guard)
     guard_monitor = Process.monitor(guard)
     started = System.monotonic_time(:millisecond)
-    assert :ok = Runtime.stop(Ref.supervisor(runtime))
+    assert :ok = Runtime.stop(root)
     assert System.monotonic_time(:millisecond) - started < 450
-    assert_receive {:DOWN, ^guard_monitor, :process, ^guard, :normal}
+
+    assert_receive {:DOWN, ^guard_monitor, :process, ^guard, reason}
+
+    assert reason in [:normal, :killed] or
+             reason == {:killed, {GenServer, :stop, [root, :normal, :infinity]}}
+
+    refute Process.alive?(guard)
+
     assert :undefined == :ets.info(Ref.table(runtime))
   end
 

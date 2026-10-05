@@ -3,7 +3,15 @@ defmodule Arbor.MCP.Server.HTTP.Cowboy.Owned do
   use Supervisor
 
   alias Arbor.MCP.Server.HTTP.CowboyClaims
-  alias Arbor.MCP.Server.Runtime.{Diagnostics, Initialization, Ref}
+
+  alias Arbor.MCP.Server.Runtime.{
+    Admission,
+    Deadline,
+    Diagnostics,
+    Initialization,
+    Ref,
+    ShutdownGuard
+  }
 
   @version ~c"1.8.1"
 
@@ -16,6 +24,7 @@ defmodule Arbor.MCP.Server.HTTP.Cowboy.Owned do
           {:ranch_listener_sup, :init, 1},
           {:ranch_acceptors_sup, :init, 1},
           {:ranch_conns_sup, :init, 4},
+          {:ranch_acceptor, :loop, 4},
           {:ranch_server, :set_new_listener_opts, 5}
         ],
         fn {module, function, arity} ->
@@ -79,9 +88,104 @@ defmodule Arbor.MCP.Server.HTTP.Cowboy.Owned do
     {:ok, {supervisor_flags(flags), children}}
   end
 
-  defp init_role(%{role: :acceptors, arguments: arguments}) do
+  defp init_role(%{role: :acceptors, arguments: arguments} = opts) do
     {:ok, {flags, children}} = :ranch_acceptors_sup.init(arguments)
+    children = Enum.map(children, &owned_acceptor(&1, opts))
     {:ok, {supervisor_flags(flags), children}}
+  end
+
+  defp owned_acceptor(
+         {id, {:ranch_acceptor, :start_link, arguments}, restart, shutdown, type, modules},
+         opts
+       ) do
+    constructor = fn -> start_acceptor(opts.runtime, arguments) end
+    {id, {Diagnostics, :start_child, [constructor]}, restart, shutdown, type, modules}
+  end
+
+  defp start_acceptor(runtime, arguments) do
+    table = Ref.table(runtime)
+
+    with {:ok, context, deadline} <- acceptor_phase(table),
+         true <- acceptor_current?(table, context, deadline) do
+      parent = self()
+      constructor = fn -> {parent, table, context, deadline, arguments} end
+
+      result =
+        :proc_lib.start_link(
+          __MODULE__,
+          :init_acceptor,
+          [constructor],
+          Deadline.remaining(deadline)
+        )
+
+      acceptor_started(result, table, context, deadline)
+    else
+      _ -> {:error, :http_listener_start_failed}
+    end
+  end
+
+  defp acceptor_started({:ok, pid} = result, table, context, deadline) do
+    if acceptor_current?(table, context, deadline) do
+      result
+    else
+      Process.unlink(pid)
+      Process.exit(pid, :kill)
+      {:error, :http_listener_start_failed}
+    end
+  end
+
+  defp acceptor_started(result, _table, _context, _deadline), do: result
+
+  @doc false
+  @spec init_acceptor((-> {pid(), :ets.tid(), map(), integer(), list()})) :: no_return()
+  def init_acceptor(constructor) do
+    {parent, table, context, deadline, arguments} = constructor.()
+
+    with true <- acceptor_current?(table, context, deadline),
+         :ok <- ShutdownGuard.watch(table, self(), :worker, deadline),
+         true <- acceptor_current?(table, context, deadline) do
+      :proc_lib.init_ack(parent, {:ok, self()})
+      [socket, transport, logger, connections] = arguments
+      :ranch_acceptor.loop(socket, transport, logger, connections)
+    else
+      _ ->
+        :proc_lib.init_fail(
+          parent,
+          {:error, :http_listener_start_failed},
+          {:exit, :http_listener_start_failed}
+        )
+    end
+  catch
+    _kind, _reason -> exit(:http_listener_start_failed)
+  end
+
+  defp acceptor_phase(table) do
+    case Initialization.current(table) do
+      {:ok, %{status: :starting} = context} ->
+        {:ok, context, context.deadline}
+
+      {:ok, %{status: :ready} = context} ->
+        with {:ok, route} <- Admission.route(table) do
+          {:ok, context, Deadline.now() + route.config.init_timeout_ms}
+        end
+
+      _ ->
+        {:error, :http_listener_start_failed}
+    end
+  end
+
+  defp acceptor_current?(table, context, deadline) do
+    Deadline.now() < deadline and
+      case Initialization.current(table) do
+        {:ok, %{epoch: epoch, status: :starting}} when epoch == context.epoch ->
+          Initialization.current?(table, context)
+
+        {:ok, %{epoch: epoch, status: :ready}} when epoch == context.epoch ->
+          Initialization.ready?(table)
+
+        _ ->
+          false
+      end
   end
 
   defp supervisor_flags({strategy, intensity, period}),

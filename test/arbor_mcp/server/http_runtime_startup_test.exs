@@ -257,6 +257,22 @@ defmodule Arbor.MCP.Server.HTTPRuntimeStartupTest do
     http_supervisor = child(root, Arbor.MCP.Server.HTTP.Supervisor)
     assert {:dictionary, dictionary} = Process.info(listener, :dictionary)
     assert hd(dictionary[:"$ancestors"]) == http_supervisor
+    acceptors = child(listener, :ranch_acceptors_sup)
+    acceptor_children = Supervisor.which_children(acceptors)
+    expected_acceptors = Map.get(:ranch.get_transport_options(ranch_ref), :num_acceptors, 10)
+    assert length(acceptor_children) == expected_acceptors
+
+    acceptor_monitors =
+      for {_id, pid, :worker, _modules} <- acceptor_children do
+        assert :proc_lib.translate_initial_call(pid) ==
+                 {Arbor.MCP.Server.HTTP.Cowboy.Owned, :init_acceptor, 1}
+
+        assert {:dictionary, native} = Process.info(pid, :dictionary)
+        assert hd(native[:"$ancestors"]) == acceptors
+        assert :ets.member(Ref.table(runtime), {:runtime_owned, pid})
+        {pid, Process.monitor(pid)}
+      end
+
     assert Process.alive?(scheduler)
     port = :ranch.get_port(ranch_ref)
     initialize(port, 1)
@@ -265,6 +281,10 @@ defmodule Arbor.MCP.Server.HTTPRuntimeStartupTest do
     assert :ok = Supervisor.terminate_child(test_supervisor(), Runtime)
     await_closed(port)
     refute Process.alive?(listener)
+
+    for {pid, monitor} <- acceptor_monitors,
+        do: assert_receive({:DOWN, ^monitor, :process, ^pid, _reason}, 1_000)
+
     assert {:error, :runtime_unavailable} = Runtime.ref(runtime)
   end
 
@@ -596,7 +616,7 @@ defmodule Arbor.MCP.Server.HTTPRuntimeStartupTest do
 
     callers =
       for _ <- 1..1_100 do
-        spawn(fn ->
+        owned_producer(runtime, fn ->
           result =
             Connection.start_link({{runtime, %{}}, [timeout: 2_000]})
 
@@ -637,8 +657,16 @@ defmodule Arbor.MCP.Server.HTTPRuntimeStartupTest do
     {:ok, runtime} = Runtime.ref(root)
     table = Ref.table(runtime)
     {:ok, %{epoch: old_epoch}} = Initialization.current(table)
-    {:ok, connection} = Connection.start_link({{runtime, %{}}, []})
-    Process.unlink(connection)
+    connection_result = make_ref()
+    parent = self()
+
+    owned_producer(runtime, fn ->
+      result = Connection.start_link({{runtime, %{}}, []})
+      if match?({:ok, _}, result), do: Process.unlink(elem(result, 1))
+      send(parent, {connection_result, result})
+    end)
+
+    assert_receive {^connection_result, {:ok, connection}}, 1_000
     on_exit(fn -> if Process.alive?(connection), do: Process.exit(connection, :kill) end)
     deadline = Deadline.now() + 10_000
     pending = fill_connection_slots(runtime, deadline, [], 10_000)
@@ -679,7 +707,7 @@ defmodule Arbor.MCP.Server.HTTPRuntimeStartupTest do
     parent = self()
 
     caller =
-      spawn(fn ->
+      owned_producer(runtime, fn ->
         result =
           Connection.start_link(
             {{runtime, %{}}, [timeout: 1_000, name: {:via, HeldConnectionName, parent}]}
@@ -1103,6 +1131,55 @@ defmodule Arbor.MCP.Server.HTTPRuntimeStartupTest do
 
     for key <- [:max_conns, :trans_opts, :proto_opts, :listener_start_args, :listener_sup] do
       assert [] == :ets.lookup(:ranch_server, {key, ref})
+    end
+  end
+
+  # One actual native child of the Runtime task supervisor creates native
+  # producers; neither test processes nor borrowed hosts are adopted as owned.
+  defp owned_producer(runtime, fun) do
+    table = Ref.table(runtime)
+    key = {__MODULE__, :producer_parent, table}
+
+    factory =
+      case Process.get(key) do
+        nil ->
+          [{:callback_tasks, supervisor}] = :ets.lookup(table, :callback_tasks)
+          caller = self()
+          ready = make_ref()
+
+          {:ok, factory} =
+            Task.Supervisor.start_child(supervisor, fn ->
+              :ok = Initialization.track(table, self())
+              send(caller, {ready, self()})
+              producer_loop(table)
+            end)
+
+          assert_receive {^ready, ^factory}, 1_000
+          on_exit(fn -> if Process.alive?(factory), do: Process.exit(factory, :kill) end)
+          Process.put(key, factory)
+          factory
+
+        factory ->
+          factory
+      end
+
+    tag = make_ref()
+    send(factory, {:producer, self(), tag, fun})
+    assert_receive {^tag, producer}, 1_000
+    producer
+  end
+
+  defp producer_loop(table) do
+    receive do
+      {:producer, caller, tag, fun} ->
+        producer =
+          :proc_lib.spawn_link(fn ->
+            :ok = Initialization.track(table, self())
+            fun.()
+          end)
+
+        send(caller, {tag, producer})
+        producer_loop(table)
     end
   end
 
