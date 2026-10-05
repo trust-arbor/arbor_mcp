@@ -1977,13 +1977,14 @@ defmodule Arbor.MCP.HttpPlugTest do
       assert get_resp_header(result_conn, "content-type") == ["text/event-stream"]
     end
 
-    test "does not expose the deprecated route in modern-only mode" do
+    test "modern-only mode rejects the deprecated GET route with its method policy" do
       conn =
         conn(:get, "/sse")
         |> HttpPlug.call(HttpPlug.init(protocol_mode: :modern_only, legacy_http_sse: true))
 
-      assert conn.status == 404
-      assert conn.resp_body == "SSE not enabled"
+      assert conn.status == 405
+      assert get_resp_header(conn, "allow") == ["POST"]
+      assert Jason.decode!(conn.resp_body) == %{"error" => "Method not allowed"}
     end
 
     test "legacy POST sends its JSON-RPC response on the open SSE stream" do

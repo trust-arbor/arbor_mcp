@@ -44,6 +44,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPLegacyAliasWireTest do
         path: "/mcp",
         protocol_mode: :legacy_only,
         legacy_http_sse: true,
+        sse_mode: :stream,
         allowed_origins: :any
       ]
     )
@@ -55,6 +56,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPLegacyAliasWireTest do
         path: "/mcp",
         protocol_mode: :legacy_only,
         legacy_http_sse: true,
+        sse_mode: :stream,
         allowed_origins: :any
       ]
     )
@@ -66,6 +68,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPLegacyAliasWireTest do
         path: "/sse",
         protocol_mode: :legacy_only,
         legacy_http_sse: false,
+        sse_mode: :stream,
         allowed_origins: :any
       ]
     )
@@ -77,6 +80,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPLegacyAliasWireTest do
         path: "/message",
         protocol_mode: :prefer_modern,
         legacy_http_sse: true,
+        sse_mode: :stream,
         allowed_origins: :any
       ]
     )
@@ -89,6 +93,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPLegacyAliasWireTest do
         protocol_mode: :prefer_modern,
         legacy_http_sse: true,
         legacy_http_sse_post_path: "/",
+        sse_mode: :stream,
         allowed_origins: :any
       ]
     )
