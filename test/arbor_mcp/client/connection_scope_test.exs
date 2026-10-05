@@ -257,11 +257,16 @@ defmodule Arbor.MCP.Client.ConnectionScopeTest do
         end)
       end)
 
-    assert_receive {:owned, client, guardian}
-    Process.exit(owner, :kill)
-    wait_down(client)
-    wait_down(guardian)
-    assert Process.alive?(backend)
+    try do
+      assert_receive {:owned, client, guardian}, 1000
+      Process.exit(owner, :kill)
+      wait_down(client)
+      wait_down(guardian)
+      assert Process.alive?(backend)
+    after
+      Process.exit(owner, :kill)
+      wait_down(owner)
+    end
   end
 
   test "caller suspended past queued startup success cannot invoke callback or consume late reply" do

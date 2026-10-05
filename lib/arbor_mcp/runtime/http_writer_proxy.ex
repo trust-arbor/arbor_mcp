@@ -53,7 +53,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterProxy do
          {:ok, record} <- record(runtime),
          {:ok, deadline} <- entry_deadline(started, record.request_timeout_ms, opts),
          {:ok, proxy} <- active_proxy(runtime) do
-      HTTPWriterRegistry.capture(record.domain, proxy, deadline)
+      HTTPWriterRegistry.capture(record.domain, proxy, deadline, started)
     else
       false -> {:error, :runtime_unavailable}
       error -> error
@@ -106,13 +106,22 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterProxy do
           :ets.insert(
             table,
             {:http_writer_domain,
-             %{domain: domain, request_timeout_ms: config.request_timeout_ms}}
+             %{
+               domain: domain,
+               request_timeout_ms: config.request_timeout_ms,
+               listener_lifetime_ms: listener_lifetime(config)
+             }}
           )
 
           {:ok, domain}
         end
     end
   end
+
+  defp listener_lifetime(%{services: %{subscriptions: nil}}), do: nil
+
+  defp listener_lifetime(%{services: %{subscriptions: service}}),
+    do: Keyword.get(service.options, :max_lifetime_ms, 3_600_000)
 
   defp registry_options(table, root, config, context) do
     [

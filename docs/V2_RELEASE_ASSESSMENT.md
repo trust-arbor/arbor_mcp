@@ -661,7 +661,34 @@ charged until Admission's actual acknowledgment. See
 [queued and future controls](./V2_HTTP_FUTURE_CONTROL_SLICE.md). Both full merged-source suites pass 5,207 executed tests, 20 doctests and
 34 properties, with 82 exclusions. Formatting, production compilation, strict
 Credo, ExDoc and normal minimum Dialyzer pass, as does actual local newest
-production compilation. Final HTTP changes and release-wide qualification remain
+production compilation. The exact `d3ce77b` [fresh CI](https://github.com/trust-arbor/arbor_mcp/actions/runs/37249145133) finishes eleven of twelve jobs green. The sole newest-toolchain failure is the ordinary Client owner-death fixture's default 100 ms startup observation; compilation and all other 4,490 unit tests in that job pass. The failure is retained, and the fixture correction requires a fresh run.
+
+The [listener lifetime core](./V2_HTTP_LISTENER_LIFETIME_CORE.md), immutable manifest
+`f71715b7bb11450dec0862dfef3e94843add15979d582967680e5e88ec19ccd1`,
+merges as five exact source files on `d3ce77b`. It captures the potential listener
+cutoff once at Plug entry and grants a separate nonce-bound target capability
+only to an actually admitted scalar Gateway invocation. Ordinary request and
+publication authority retain their original cutoffs. The source packet passes
+48 pure cases on minimum/current/newest, warnings-as-errors and formatting on
+all three, current Credo and ExDoc, and normal/raw supported Dialyzer with no
+new filters or owned production warnings. Mounted routing, actual socket
+receipts and SDK subscription behavior remain required; this core is an
+unwired prerequisite. Its merged canonical graph also passes the same 48 pure
+cases and warnings-as-errors on all three toolchains.
+
+The one-file readiness fixture correction, immutable manifest
+`f58bc3b4a005005d6e571ecec6d1769e76ae57e76bb001233105e5dd7092d9a8`,
+observes startup for up to 1,000 ms and confirms the test-owned process is DOWN
+on failure. A separate 150 ms pre-start delay reproduces the original 100 ms
+assertion failure and passes with the corrected fixture on all three toolchains.
+Production establishment/cleanup deadlines and client/guardian/borrowed-backend
+assertions are unchanged. The exact corrected case also passes against the merged
+canonical graph on all three toolchains. Current strict Credo checks 741 files
+without issues, supported formatting and production warnings-as-errors pass,
+and current ExDoc and normal minimum Dialyzer pass with the same 66 existing
+filters. A fresh CI run remains required.
+
+Final HTTP changes and release-wide qualification remain
 distinct from the earlier green CI.
 
 ## Full-roadmap work still outstanding

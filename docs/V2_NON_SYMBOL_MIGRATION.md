@@ -21,6 +21,9 @@ candidate; the final compiled graph, HTTP cutover and RC gates remain open.
 | Retained HTTP session freeze, manifest `f52627b2f5e0976473881f7feb592b454c4121b4bb8fed9c128f3ad96f57e4a4` | Twelve-path addressed legacy GET/replay/DELETE overlay merged with the committed Gateway/Client source. Canonical retained session/wire selection passes 19 cases and broader actual Gateway wire selection passes 40 on each toolchain. Notification-array continuation, subscriptions, cancellation, MRTR, initialization arrays and aliases remain separate gates. |
 | Native store/retention freeze, manifest `33a9e5ff434dc8abbaad592930df61dc592cf7f4532332a6e68c52cc72eb3227` | Twenty-two store/retention paths plus a separate two-path running-deadline fixture; canonical pressure selection passes 158 and retained Runtime/Gateway selection passes 329 on each toolchain. Native payload admission and final mutation guards preserve original cutoffs. Default-limit RSS, native write admission and durable filesystem qualification remain open. |
 
+| Mounted HTTP control convergence manifest `59bca49d96ee0dccd7341ae193a2fc9b5ae8cbc9f2dc0f6ae0a0a92795ae12a4` | Accepted legacy notification/init arrays, charged same-lease/trusted-modern cancellation controls and actual MRTR retry/replay; canonical combined23 wire/pure,19 retained-session,43 Gateway wire and332 runtime cases pass both. Merge retains pressure/phase/deadline rules and adds endpoint default fallback; queued/future controls, subscriptions/listeners and finalAPI retirement remain required. |
+| Native RPC write admission, ACP `27f5606` | Aggregate count/byte reservation precedes payload copying and Actor enqueue; final native admission checks original producer cutoff and identity. Canonical RPC113 cases pass all three local toolchains and exact-commit Linux CI passes9/9 including archives. Actual32-producer probe admits3/rejects29 and has zero new native writes after cutoff. Native acknowledgement does not prove vendor consumption or child/group cleanup. |
+
 The historical census is retained under
 `tmp/v2-semantic-census-69b0a39/{SEMANTIC_CENSUS.md,semantic-inventory.json,REVIEW_NOTES.md}`.
 The Client and runtime privacy freezes are retained under
@@ -38,8 +41,6 @@ redirect does not rename a Hex package, application or Elixir module.
 
 | Owner | Application and modules |
 | --- | --- |
-| Mounted HTTP control convergence manifest `59bca49d96ee0dccd7341ae193a2fc9b5ae8cbc9f2dc0f6ae0a0a92795ae12a4` | Accepted legacy notification/init arrays, charged same-lease/trusted-modern cancellation controls and actual MRTR retry/replay; canonical combined23 wire/pure,19 retained-session,43 Gateway wire and332 runtime cases pass both. Merge retains pressure/phase/deadline rules and adds endpoint default fallback; queued/future controls, subscriptions/listeners and finalAPI retirement remain required. |
-| Native RPC write admission, ACP `27f5606` | Aggregate count/byte reservation precedes payload copying and Actor enqueue; final native admission checks original producer cutoff and identity. Canonical RPC113 cases pass all three local toolchains and exact-commit Linux CI passes9/9 including archives. Actual32-producer probe admits3/rejects29 and has zero new native writes after cutoff. Native acknowledgement does not prove vendor consumption or child/group cleanup. |
 | MCP | `:arbor_mcp`, `Arbor.MCP.*` |
 | ACP core and generic adapter contract | `:arbor_acp`, `Arbor.ACP.*` |
 | Optional vendor implementations | `:arbor_acp_adapters`, `Arbor.ACP.Adapters.*`; core ACP does not depend on the bundle. |
@@ -385,6 +386,14 @@ cross-session cancellation, MRTR, notification and initialization arrays, aliase
 and listener API migration remain required. The retained stream keeps its original
 HTTP entry cutoff and a reconnect preserves its typed session. Modern GET/DELETE
 remain sessionless 405. See [session streams](./V2_HTTP_SESSION_STREAM_SLICE.md).
+A separate [listener capability](./V2_HTTP_LISTENER_LIFETIME_CORE.md) captures
+its potential lifetime at entry, default one hour from the subscription service.
+Only an actually admitted scalar Gateway invocation can establish it. The exact
+nonce/cohort/owner capability governs target IO after ordinary request expiry;
+it cannot renew callback, store or publication-source authority. Entered IO
+remains charged until its actual completion receipt or writer death. Mounted
+subscription routing and SDK behavior are not qualified by this core alone.
+
 Preserve
 forwarded mounts, parsed bodies, host/origin/OAuth, modern discovery, legacy
 initialization, request-owned SSE and opt-in `legacy_http_sse`. Deprecated

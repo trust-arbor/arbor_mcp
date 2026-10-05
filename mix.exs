@@ -237,6 +237,7 @@ defmodule Arbor.MCP.MixProject do
         "docs/V2_HTTP_SESSION_STREAM_SLICE.md",
         "docs/V2_HTTP_CONTROL_CONVERGENCE_SLICE.md",
         "docs/V2_HTTP_FUTURE_CONTROL_SLICE.md",
+        "docs/V2_HTTP_LISTENER_LIFETIME_CORE.md",
         "docs/V2_PACKAGE_RELEASE.md",
         "docs/V2_NATIVE_STORE_PRESSURE.md",
         "docs/V2_DETS_LIFECYCLE.md",
