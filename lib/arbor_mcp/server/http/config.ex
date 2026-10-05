@@ -1,6 +1,7 @@
 defmodule Arbor.MCP.Server.HTTP.Config do
   @moduledoc false
 
+  alias Arbor.MCP.HttpPlug.Configuration
   alias Arbor.MCP.Server.HTTP.{Bandit, Cowboy, CowboyClaims}
   alias Arbor.MCP.Server.HTTP.Bandit.Options
   alias Arbor.MCP.Server.HTTP.Bandit.Owned, as: OwnedBandit
@@ -59,6 +60,7 @@ defmodule Arbor.MCP.Server.HTTP.Config do
   def new(opts, ownership \\ :owned) do
     with {:ok, opts} <- options(opts),
          :ok <- validate_retired(opts),
+         :ok <- Configuration.subscription_options(opts),
          {:ok, backend, adapter} <- adapter(opts),
          :ok <- available(adapter, backend),
          :ok <- owned_abi(backend, ownership),

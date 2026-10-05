@@ -496,6 +496,28 @@ are replaced by `:legacy_http_sse`; `:handler_call_timeout` moves to root
 are rejected. See [HTTP listeners](./HTTP_LISTENERS.md) for the exact constructor
 migration and remaining mounted subscription/reverse-helper gates.
 
+### Explicit server state ownership
+
+The current v2 application no longer implicitly starts the eight standalone
+server owners: `Server.ReplayCache.ETS`, `Tasks.Store.ETS`,
+`Server.Subscriptions`, `HttpPlug.SessionRegistry`, `Server.Cancellation`,
+`SubscriptionRegistry`, `SessionManager` and `ProgressTracker`. Their exported
+APIs and child specs remain available for explicit host supervision. Generic
+facades addressed by the module name require that explicit owner; they never
+select a runtime implicitly. Package-wide client/security/reliability facilities
+and the bounded standalone DETS path authority remain application-owned.
+
+Every `HttpPlug.init/1` mount requires `:runtime`; `call/2` also validates the
+captured configuration before effects. Removed handler/server/store/registry
+selectors are rejected even alongside a valid runtime. Legacy wire eras and
+`legacy_http_sse` remain supported. Handler initialization belongs to the root,
+while static/function/MFA `handler_opts` becomes charged request context.
+Mount subscription filter/publication policy is conjunctive with the root's
+policy; queue, message-byte, aggregate-byte and lifetime caps can only narrow it.
+Final combined qualification and the sealed compiled API audit remain required.
+Historical slice receipts above describe their original source checkpoints.
+See [runtime HTTP cutover](./V2_HTTP_RUNTIME_CUTOVER.md).
+
 ## Telemetry, diagnostics and final qualification
 
 Attach consumers to `[:arbor_mcp, ...]` and `[:arbor_acp, ...]`. The old server

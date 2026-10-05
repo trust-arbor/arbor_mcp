@@ -4,18 +4,13 @@ defmodule Arbor.MCP.ProgressTrackerMinimalTest do
   alias Arbor.MCP.ProgressTracker
 
   setup do
-    # Start the application to ensure ProgressTracker is available.
-    # It is deliberately left running: test_helper.exs starts :arbor_mcp for the
-    # whole run, and stopping it here took down supervised singletons (such as
-    # Arbor.MCP.SessionManager) for every test that ran afterwards.
-    {:ok, _} = Application.ensure_all_started(:arbor_mcp)
-
+    start_supervised!(ProgressTracker)
     :ok
   end
 
   test "basic progress tracker functionality" do
     # This is a minimal test to verify the ProgressTracker works
-    # with proper application setup
+    # with explicit host supervision
 
     sender_pid = self()
 
@@ -34,7 +29,7 @@ defmodule Arbor.MCP.ProgressTrackerMinimalTest do
 
       {:error, _reason} ->
         # ProgressTracker may not be started correctly
-        flunk("ProgressTracker should be available when application is started")
+        flunk("ProgressTracker should be available when explicitly supervised")
     end
   end
 end

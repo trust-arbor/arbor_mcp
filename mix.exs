@@ -237,6 +237,7 @@ defmodule Arbor.MCP.MixProject do
         "docs/V2_ORDINARY_CLIENT_LIFETIME.md",
         "docs/V2_CLIENT_DIAGNOSTICS.md",
         "docs/V2_HTTP_GATEWAY_SLICE.md",
+        "docs/V2_HTTP_RUNTIME_CUTOVER.md",
         "docs/V2_HTTP_SESSION_STREAM_SLICE.md",
         "docs/V2_HTTP_CONTROL_CONVERGENCE_SLICE.md",
         "docs/V2_HTTP_FUTURE_CONTROL_SLICE.md",

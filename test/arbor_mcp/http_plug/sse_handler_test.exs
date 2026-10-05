@@ -1,9 +1,15 @@
 defmodule Arbor.MCP.HttpPlug.SSEHandlerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.HttpPlug.SessionRegistry
   alias Arbor.MCP.HttpPlug.SSEHandler
   alias Arbor.MCP.SessionManager
+
+  setup do
+    start_supervised!(SessionManager)
+    start_supervised!(SessionRegistry)
+    :ok
+  end
 
   # Test double for the SSE socket. A hand-written in-process stub implementing
   # the `Arbor.MCP.HttpPlug.SSEConnection` behaviour — no mocking library needed.
@@ -179,7 +185,6 @@ defmodule Arbor.MCP.HttpPlug.SSEHandlerTest do
 
       on_exit(fn ->
         SessionRegistry.unregister(session_id)
-        SessionManager.terminate_session(session_id)
       end)
 
       managed_opts = Map.put(opts(), :session_manager, SessionManager)

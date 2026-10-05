@@ -1,5 +1,5 @@
 defmodule Arbor.MCP.ProgressTrackerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.ProgressTracker
 
@@ -7,8 +7,7 @@ defmodule Arbor.MCP.ProgressTrackerTest do
   @valid_integer_token 456
 
   setup do
-    # ProgressTracker is already started by the application
-    # Clear any existing state for test isolation
+    start_supervised!(ProgressTracker)
     ProgressTracker.clear_all()
     :ok
   end

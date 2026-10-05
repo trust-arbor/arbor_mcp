@@ -6,6 +6,12 @@ defmodule Arbor.MCP.HttpPlugOAuthAuthorizationServerTest do
 
   @moduletag :oauth
 
+  setup do
+    runtime = Arbor.MCP.Test.RuntimeHTTPFixture.start()
+    Process.put(:oauth_runtime, runtime)
+    :ok
+  end
+
   describe "/.well-known/oauth-authorization-server endpoint" do
     setup do
       on_exit(fn ->
@@ -27,7 +33,7 @@ defmodule Arbor.MCP.HttpPlugOAuthAuthorizationServerTest do
 
       opts =
         HttpPlug.init(
-          handler: nil,
+          runtime: Process.get(:oauth_runtime),
           endpoint: "/mcp",
           server_info: %{name: "test-server", version: "1.0.0"},
           oauth_enabled: true,
@@ -92,7 +98,7 @@ defmodule Arbor.MCP.HttpPlugOAuthAuthorizationServerTest do
     test "returns 404 when OAuth is disabled" do
       opts =
         HttpPlug.init(
-          handler: nil,
+          runtime: Process.get(:oauth_runtime),
           endpoint: "/mcp",
           server_info: %{name: "test-server"},
           # OAuth disabled
@@ -117,7 +123,7 @@ defmodule Arbor.MCP.HttpPlugOAuthAuthorizationServerTest do
 
       opts =
         HttpPlug.init(
-          handler: nil,
+          runtime: Process.get(:oauth_runtime),
           endpoint: "/mcp",
           server_info: %{name: "test-server"},
           oauth_enabled: true,
@@ -236,7 +242,7 @@ defmodule Arbor.MCP.HttpPlugOAuthAuthorizationServerTest do
     test "rejects OAuth configuration without protected-resource metadata" do
       assert_raise ArgumentError, ~r/requires.*authorization_servers/, fn ->
         HttpPlug.init(
-          handler: nil,
+          runtime: Process.get(:oauth_runtime),
           oauth_enabled: true,
           resource: "https://mcp.test/mcp"
         )

@@ -1,9 +1,14 @@
 defmodule Arbor.MCP.Server.ContextTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.Server.Cancellation
   alias Arbor.MCP.Server.Context
   alias Arbor.MCP.Server.RequestContext
+
+  setup do
+    start_supervised!(Cancellation)
+    :ok
+  end
 
   defp context(request_id) do
     %RequestContext{

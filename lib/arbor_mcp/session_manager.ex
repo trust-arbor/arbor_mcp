@@ -446,7 +446,13 @@ defmodule Arbor.MCP.SessionManager do
   finite store wait, bounded by the unchanged claim cutoff and any shorter caller
   deadline. Retrying a timed-out call does not refresh the claim's lifetime.
   """
-  def complete_initialization(%ServiceRef{} = service, claim, version, opts),
+  @spec complete_initialization(
+          ServiceRef.t(),
+          Arbor.MCP.SessionManager.InitializationClaim.t(),
+          binary(),
+          keyword()
+        ) :: :ok | {:error, term()}
+  def complete_initialization(service, claim, version, opts),
     do: Addressed.complete_initialization(service, claim, version, opts)
 
   @doc "Appends a bounded replay event before any downstream delivery."
@@ -498,7 +504,8 @@ defmodule Arbor.MCP.SessionManager do
     do: Addressed.leased(service, lease, :get, [], opts)
 
   @doc "Reads aggregate addressed session service accounting."
-  def get_stats(%ServiceRef{} = service, opts),
+  @spec get_stats(ServiceRef.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  def get_stats(service, opts),
     do: Addressed.call(service, :stats, [], opts)
 
   ## GenServer Callbacks

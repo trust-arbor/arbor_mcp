@@ -158,6 +158,7 @@ defmodule Arbor.MCP.Server.RequestStateTest do
 
     assert_raise ArgumentError, ~r/invalid MRTR requestState configuration/, fn ->
       Arbor.MCP.HttpPlug.init(
+        runtime: __MODULE__.UnstartedRuntime,
         mrtr: true,
         request_state: [active_key_id: "bad", keys: %{"bad" => "too short"}]
       )

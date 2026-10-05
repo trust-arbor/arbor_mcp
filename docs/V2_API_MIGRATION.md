@@ -182,8 +182,16 @@ resume/replay, OAuth, origin/host checks or explicitly supported legacy HTTP+SSE
 retirement. They only started the application-owned session registry. In supported
 1.x the replacement is ensuring `:ex_mcp` is started, not starting another session
 owner manually. V2 mounts an explicit Runtime owning its configured services;
-replay stays opt-in. The application still starts the standalone SessionRegistry
-for retained APIs: retiring the helper does not retire that owner accidentally.
+replay stays opt-in. V2 package startup does not start server state owners.
+The standalone `SessionRegistry`, `SessionManager`, resource registry,
+ProgressTracker, Cancellation, Tasks ETS, Replay ETS and Subscriptions APIs remain
+exported for explicit host supervision. Start only the standalone owner an
+application intentionally uses; mounted HTTP never selects those global owners.
+Handler-only mounts and raw store/registry selectors raise before effects.
+`:handler_opts` supplies charged per-request application context; initialize the
+handler once with root `:handler_args`. Mount subscription authorizers must
+compose with the root service policy and mount limits may only narrow root caps
+and the original listener cutoff. See [runtime HTTP cutover](./V2_HTTP_RUNTIME_CUTOVER.md).
 Mounted POST/request-SSE, addressed sessions/replay, cancellation/arrays/MRTR and
 legacy aliases have implemented checkpoints. Addressed resource subscription
 tracking and durable fanout are implemented; publication requires the actual

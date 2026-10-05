@@ -1,364 +1,216 @@
 defmodule Arbor.MCP.SessionManagementIntegrationTest do
-  @moduledoc """
-  Integration tests for Session Management with streamable HTTP.
-
-  Tests the complete session management workflow including:
-  - Session creation during SSE connections
-  - Event storage and replay for connection resumption
-  - Session termination via DELETE requests
-  - Integration with HttpPlug and SSEHandler
-  """
+  @moduledoc "Addressed HTTP session lifecycle, durable replay and reconnect integration."
   use ExUnit.Case, async: false
-
-  alias Arbor.MCP.{HttpPlug, SessionManager}
-  alias Arbor.MCP.HttpPlug.{SessionRegistry, SSEHandler}
-
   import Plug.Test
   import Plug.Conn
+  alias Arbor.MCP.{HttpPlug, SessionManager}
+  alias Arbor.MCP.Server.Runtime
+  alias Arbor.MCP.Test.RuntimeHTTPFixture
+
+  defmodule ObservedAdapter do
+    alias Plug.Adapters.Test.Conn
+    defdelegate read_req_body(state, opts), to: Conn
+    defdelegate send_resp(state, status, headers, body), to: Conn
+    defdelegate send_chunked(state, status, headers), to: Conn
+
+    def chunk(state, data) do
+      send(state.observer, {:stream_wire, self(), IO.iodata_to_binary(data)})
+      Conn.chunk(state, data)
+    end
+  end
 
   setup do
-    # Ensure the Arbor.MCP application is started (provides SessionManager)
-    Application.ensure_all_started(:arbor_mcp)
-
-    # Configure test mode to prevent actual SSE handler startup
-    original_test_mode = Application.get_env(:arbor_mcp, :test_mode, false)
-    Application.put_env(:arbor_mcp, :test_mode, true)
-
-    # Clean up any existing sessions before starting the test
-    existing_sessions = SessionManager.list_sessions()
-
-    Enum.each(existing_sessions, fn session ->
-      SessionManager.terminate_session(session.id)
-    end)
-
-    on_exit(fn ->
-      # Clean up all sessions created during this test
-      sessions = SessionManager.list_sessions()
-
-      Enum.each(sessions, fn session ->
-        SessionManager.terminate_session(session.id)
-      end)
-
-      # Don't stop the global SessionManager
-      Application.put_env(:arbor_mcp, :test_mode, original_test_mode)
-    end)
-
-    # Basic HttpPlug options
-    opts = %{
-      handler: fn _request -> {:ok, %{result: "test"}} end,
-      server_info: %{name: "test-server", version: "1.0.0"},
-      session_manager: Arbor.MCP.SessionManager,
-      sse_enabled: true,
-      cors_enabled: false,
-      oauth_enabled: false,
-      auth_config: %{}
-    }
-
-    # Track session count after cleanup so tests can assert relative changes
-    baseline_count = length(SessionManager.list_sessions())
-
-    {:ok, plug_opts: opts, baseline_count: baseline_count}
+    runtime = RuntimeHTTPFixture.start()
+    {:ok, service} = Runtime.service(runtime, :sessions)
+    opts = RuntimeHTTPFixture.options(runtime, legacy_http_sse: true, sse_mode: :oneshot)
+    %{runtime: runtime, service: service, opts: opts}
   end
 
-  describe "session creation" do
-    test "creates new session on SSE connection", %{plug_opts: opts, baseline_count: baseline} do
-      # Connect to SSE endpoint
-      conn =
-        conn(:get, "/sse")
-        |> put_req_header("accept", "text/event-stream")
-        |> HttpPlug.call(opts)
-
-      assert conn.status == 200
-      assert get_resp_header(conn, "content-type") == ["text/event-stream"]
-
-      # Verify a session was created
-      sessions = SessionManager.list_sessions()
-      assert length(sessions) >= baseline + 1
-
-      sse_sessions = Enum.filter(sessions, &(&1.transport == :sse && &1.status == :active))
-      assert length(sse_sessions) >= 1
-
-      session = hd(sse_sessions)
-      assert is_binary(session.id)
-    end
-
-    test "reuses existing session with session ID header", %{
-      plug_opts: opts,
-      baseline_count: baseline
-    } do
-      # Create a session first
-      existing_session_id =
-        SessionManager.create_session(%{
-          transport: :sse,
-          client_info: %{test: true}
-        })
-
-      count_before = length(SessionManager.list_sessions())
-
-      # Connect with existing session ID
-      conn =
-        conn(:get, "/sse")
-        |> put_req_header("accept", "text/event-stream")
-        |> put_req_header("mcp-session-id", existing_session_id)
-        |> HttpPlug.call(opts)
-
-      assert conn.status == 200
-
-      # Should not have created an additional session
-      sessions = SessionManager.list_sessions()
-      assert length(sessions) >= baseline + 1
-      assert length(sessions) <= count_before + 1
-
-      session = Enum.find(sessions, &(&1.id == existing_session_id))
-      assert session != nil
-      assert session.transport == :sse
-    end
-
-    test "rejects a referenced session that does not exist", %{
-      plug_opts: opts,
-      baseline_count: baseline
-    } do
-      # Connect with non-existent session ID
-      conn =
-        conn(:get, "/sse")
-        |> put_req_header("accept", "text/event-stream")
-        |> put_req_header("mcp-session-id", "non-existent-session")
-        |> HttpPlug.call(opts)
-
-      assert conn.status == 404
-
-      # A caller-supplied ID is never allowed to mint a replacement session.
-      sessions = SessionManager.list_sessions()
-      assert length(sessions) == baseline
-      refute Enum.any?(sessions, &(&1.id == "non-existent-session"))
-    end
+  test "creates a new addressed session on the deprecated SSE handshake", %{
+    service: service,
+    opts: opts
+  } do
+    result = conn(:get, "/sse") |> HttpPlug.call(opts)
+    assert result.status == 200
+    assert get_resp_header(result, "content-type") == ["text/event-stream"]
+    id = alias_session_id(result)
+    assert {:ok, lease} = SessionManager.ensure_session(service, id, %{}, [])
+    assert {:ok, %{id: ^id, initialized: false}} = SessionManager.get_session(service, lease, [])
+    assert {:ok, %{sessions: 1}} = SessionManager.get_stats(service, [])
+    assert is_nil(Process.whereis(SessionManager))
   end
 
-  describe "event storage and messaging" do
-    test "stores events when sending SSE responses", %{
-      plug_opts: _opts
-    } do
-      # Create a session first
-      session_id =
-        SessionManager.create_session(%{
-          transport: :sse,
-          client_info: %{test: true}
-        })
-
-      # Mock a simple MCP request that would generate an SSE response
-      _request = %{
-        "jsonrpc" => "2.0",
-        "method" => "test/echo",
-        "params" => %{"message" => "hello"},
-        "id" => 1
-      }
-
-      # We're simulating the SSE handler behavior directly
-
-      # Simulate processing the request (normally done by HttpPlug.handle_mcp_request)
-      response = %{
-        "jsonrpc" => "2.0",
-        "result" => %{"echo" => "hello"},
-        "id" => 1
-      }
-
-      # Store the event directly in SessionManager (simulating what SSE handler would do)
-      event = %{
-        id: "event_#{System.unique_integer([:positive])}",
-        session_id: session_id,
-        type: "message",
-        data: response,
-        timestamp: DateTime.utc_now()
-      }
-
-      SessionManager.store_event(session_id, event)
-
-      # Verify event was stored
-      # Give time for async storage
-      Process.sleep(10)
-
-      events = SessionManager.replay_events_after(session_id, nil)
-      # Events may or may not be stored depending on handler availability
-      assert length(events) >= 0
-    end
+  test "reuses the exact existing session with its session header", %{
+    runtime: runtime,
+    service: service,
+    opts: opts
+  } do
+    id = RuntimeHTTPFixture.session(runtime, false)
+    result = conn(:get, "/sse") |> put_req_header("mcp-session-id", id) |> HttpPlug.call(opts)
+    assert result.status == 200
+    assert alias_session_id(result) == id
+    assert {:ok, %{sessions: 1}} = SessionManager.get_stats(service, [])
   end
 
-  describe "session termination" do
-    test "terminates session via DELETE request", %{plug_opts: opts} do
-      # Create a session
-      session_id =
-        SessionManager.create_session(%{
-          transport: :sse,
-          client_info: %{test: true}
-        })
-
-      # Verify session exists and is active
-      {:ok, session} = SessionManager.get_session(session_id)
-      assert session.status == :active
-
-      # Send DELETE request
-      conn =
-        conn(:delete, "/sse/#{session_id}")
-        |> HttpPlug.call(opts)
-
-      assert conn.status == 204
-
-      # Verify session is terminated
-      {:ok, session} = SessionManager.get_session(session_id)
-      assert session.status == :terminated
-    end
-
-    test "rejects DELETE for a non-existent session", %{plug_opts: opts} do
-      # Send DELETE request for non-existent session
-      conn =
-        conn(:delete, "/sse/non-existent-session")
-        |> HttpPlug.call(opts)
-
-      assert conn.status == 404
-    end
-  end
-
-  describe "session persistence and replay" do
-    test "a disconnected GET stream retains and replays events published during the gap", %{
-      plug_opts: opts
-    } do
-      stream_opts = Map.put(opts, :sse_mode, :stream)
-
-      first_stream =
-        Task.async(fn ->
-          conn(:get, "/sse")
-          |> put_req_header("accept", "text/event-stream")
-          |> HttpPlug.call(stream_opts)
-        end)
-
-      assert {:ok, session_id, first_handler} = await_stream_registration()
-
-      assert :ok = SSEHandler.request_send(first_handler)
-      SSEHandler.send_event(first_handler, "message", %{message: "before-gap"})
-      _state = :sys.get_state(first_handler)
-
-      assert [first_event] = SessionManager.replay_events_after(session_id, nil)
-
-      SSEHandler.close(first_handler)
-      _conn = Task.await(first_stream, 1_000)
-
-      assert {:ok, %{status: :active}} = SessionManager.get_session(session_id)
-      assert [^first_event] = SessionManager.replay_events_after(session_id, nil)
-
-      assert {:ok, gap_event} =
-               SessionManager.append_event(session_id, "message", %{message: "during-gap"})
-
-      second_stream =
-        Task.async(fn ->
-          conn(:get, "/sse")
-          |> put_req_header("accept", "text/event-stream")
-          |> put_req_header("mcp-session-id", session_id)
-          |> put_req_header("last-event-id", first_event.id)
-          |> HttpPlug.call(stream_opts)
-        end)
-
-      assert {:ok, ^session_id, second_handler} = await_stream_registration(session_id)
-
-      chunks = :sys.get_state(second_handler).conn.adapter |> elem(1) |> Map.fetch!(:chunks)
-      assert chunks =~ "id: #{gap_event.id}"
-      assert chunks =~ ~s(data: {"message":"during-gap"})
-      refute chunks =~ "before-gap"
-
-      SSEHandler.close(second_handler)
-      _conn = Task.await(second_stream, 1_000)
-    end
-
-    test "session persists across connections", %{plug_opts: _opts} do
-      # Create initial session
-      session_id =
-        SessionManager.create_session(%{
-          transport: :sse,
-          client_info: %{version: "1.0"}
-        })
-
-      # Store some events
-      events = [
-        %{
-          id: "event-1",
-          session_id: session_id,
-          type: "notification",
-          data: %{message: "First event"},
-          timestamp: System.system_time(:microsecond)
-        },
-        %{
-          id: "event-2",
-          session_id: session_id,
-          type: "response",
-          data: %{result: "success"},
-          timestamp: System.system_time(:microsecond) + 1000
-        }
-      ]
-
-      Enum.each(events, &SessionManager.store_event(session_id, &1))
-
-      # Simulate reconnection with Last-Event-ID
-      replayed_events = SessionManager.replay_events_after(session_id, "event-1")
-      assert length(replayed_events) == 1
-      assert hd(replayed_events).data.result == "success"
-
-      # Verify complete replay
-      all_events = SessionManager.replay_events_after(session_id, nil)
-      assert length(all_events) == 2
-    end
-  end
-
-  describe "session cleanup" do
-    test "provides session statistics", %{plug_opts: _opts} do
-      # Create multiple sessions
-      session1 = SessionManager.create_session(%{transport: :sse})
-      _session2 = SessionManager.create_session(%{transport: :http})
-
-      # Add events to one session
-      events =
-        for i <- 1..3 do
-          %{
-            id: "event-#{i}",
-            session_id: session1,
-            type: "test",
-            data: %{counter: i},
-            timestamp: System.system_time(:microsecond) + i * 1000
-          }
-        end
-
-      Enum.each(events, &SessionManager.store_event(session1, &1))
-
-      # Get statistics
-      stats = SessionManager.get_stats()
-
-      assert stats.total_sessions >= 2
-      assert stats.active_sessions >= 2
-      assert stats.total_events >= 3
-      assert is_integer(stats.memory_usage)
-      assert stats.memory_usage > 0
-    end
-  end
-
-  defp await_stream_registration(expected_session_id \\ nil, attempts \\ 100)
-
-  defp await_stream_registration(_expected_session_id, 0), do: {:error, :timeout}
-
-  defp await_stream_registration(expected_session_id, attempts) do
+  test "a caller-supplied unknown session cannot mint a replacement", %{
+    service: service,
+    opts: opts
+  } do
     result =
-      SessionManager.list_sessions()
-      |> Enum.find_value(fn session ->
-        if is_nil(expected_session_id) or session.id == expected_session_id do
-          case SessionRegistry.lookup(session.id) do
-            {:ok, handler} -> {:ok, session.id, handler}
-            _other -> nil
-          end
-        end
+      conn(:get, "/sse")
+      |> put_req_header("mcp-session-id", "non-existent-session")
+      |> HttpPlug.call(opts)
+
+    assert result.status == 404
+    assert {:ok, %{sessions: 0}} = SessionManager.get_stats(service, [])
+  end
+
+  test "appends an exact durable response before replay", %{runtime: runtime, service: service} do
+    id = RuntimeHTTPFixture.session(runtime)
+    {:ok, lease} = SessionManager.ensure_session(service, id, %{}, [])
+    response = %{"jsonrpc" => "2.0", "id" => 1, "result" => %{"echo" => "hello"}}
+    assert {:ok, event} = SessionManager.append_event(service, lease, "message", response, [])
+
+    assert {:ok, %{events: [^event], more?: false}} =
+             SessionManager.replay_page(service, lease, nil, [])
+  end
+
+  test "DELETE closes only the captured addressed session", %{
+    runtime: runtime,
+    service: service,
+    opts: opts
+  } do
+    id = RuntimeHTTPFixture.session(runtime)
+    sibling = RuntimeHTTPFixture.session(runtime)
+    {:ok, lease} = SessionManager.ensure_session(service, id, %{}, [])
+
+    result =
+      conn(:delete, "/mcp")
+      |> put_req_header("mcp-session-id", id)
+      |> put_req_header("mcp-protocol-version", "2025-06-18")
+      |> HttpPlug.call(opts)
+
+    assert result.status == 204
+    assert {:error, :session_not_found} = SessionManager.ensure_session(service, id, %{}, [])
+    assert {:error, _retired} = SessionManager.get_session(service, lease, [])
+    assert {:ok, %{initialized: true}} = RuntimeHTTPFixture.session_state(runtime, sibling)
+  end
+
+  test "DELETE cannot close an unknown session", %{service: service, opts: opts} do
+    result =
+      conn(:delete, "/mcp")
+      |> put_req_header("mcp-session-id", "non-existent-session")
+      |> put_req_header("mcp-protocol-version", "2025-06-18")
+      |> HttpPlug.call(opts)
+
+    assert result.status == 404
+    assert {:ok, %{sessions: 0}} = SessionManager.get_stats(service, [])
+  end
+
+  test "a disconnected GET preserves replay and reconnects after the opaque cursor", %{
+    runtime: runtime,
+    service: service,
+    opts: opts
+  } do
+    id = RuntimeHTTPFixture.session(runtime)
+    {:ok, lease} = SessionManager.ensure_session(service, id, %{}, [])
+    observer = self()
+
+    first =
+      Task.async(fn ->
+        connection =
+          conn(:get, "/mcp")
+          |> put_req_header("accept", "text/event-stream")
+          |> put_req_header("mcp-session-id", id)
+          |> put_req_header("mcp-protocol-version", "2025-06-18")
+
+        {_, state} = connection.adapter
+
+        connection = %{
+          connection
+          | adapter: {ObservedAdapter, Map.put(state, :observer, observer)}
+        }
+
+        HttpPlug.call(connection, Map.put(opts, :sse_mode, :stream))
       end)
 
-    if result do
-      result
-    else
-      Process.sleep(10)
-      await_stream_registration(expected_session_id, attempts - 1)
-    end
+    pid = first.pid
+    assert_receive {:stream_wire, ^pid, handshake}, 1_000
+    assert handshake =~ "event: connected"
+
+    assert {:ok, before_gap} =
+             SessionManager.append_event(service, lease, "message", %{message: "before-gap"}, [])
+
+    assert_receive {:stream_wire, ^pid, delivered}, 1_000
+    assert delivered =~ "id: #{before_gap.id}"
+    assert Task.shutdown(first, :brutal_kill) == nil
+    assert {:ok, %{initialized: true}} = SessionManager.get_session(service, lease, [])
+
+    assert {:ok, gap} =
+             SessionManager.append_event(service, lease, "message", %{message: "during-gap"}, [])
+
+    result =
+      conn(:get, "/mcp")
+      |> put_req_header("accept", "text/event-stream")
+      |> put_req_header("mcp-session-id", id)
+      |> put_req_header("mcp-protocol-version", "2025-06-18")
+      |> put_req_header("last-event-id", before_gap.id)
+      |> HttpPlug.call(opts)
+
+    assert result.status == 200
+    assert result.resp_body =~ "id: #{gap.id}"
+    assert result.resp_body =~ "during-gap"
+    refute result.resp_body =~ "before-gap"
+  end
+
+  test "the session and tagged replay cursor persist across separate readers", %{
+    runtime: runtime,
+    service: service
+  } do
+    id = RuntimeHTTPFixture.session(runtime)
+    {:ok, lease} = SessionManager.ensure_session(service, id, %{}, [])
+
+    {:ok, first} =
+      SessionManager.append_event(service, lease, "notification", %{message: "first"}, [])
+
+    {:ok, second} =
+      SessionManager.append_event(service, lease, "response", %{result: "success"}, [])
+
+    assert {:ok, renewed} = SessionManager.ensure_session(service, id, %{}, [])
+
+    assert {:ok, %{events: [^second]}} =
+             SessionManager.replay_page(service, renewed, first.id, [])
+
+    assert {:ok, %{events: [^first, ^second]}} =
+             SessionManager.replay_page(service, renewed, nil, [])
+  end
+
+  test "addressed session accounting includes the retained replay", %{
+    runtime: runtime,
+    service: service
+  } do
+    id = RuntimeHTTPFixture.session(runtime)
+    _other = RuntimeHTTPFixture.session(runtime)
+    {:ok, lease} = SessionManager.ensure_session(service, id, %{}, [])
+
+    for n <- 1..3,
+        do:
+          assert(
+            match?(
+              {:ok, _},
+              SessionManager.append_event(service, lease, "test", %{counter: n}, [])
+            )
+          )
+
+    assert {:ok, %{sessions: 2, events: 3, replay_bytes: bytes, metadata_bytes: metadata}} =
+             SessionManager.get_stats(service, [])
+
+    assert bytes > 0
+    assert metadata > 0
+  end
+
+  defp alias_session_id(conn) do
+    [_, endpoint] = Regex.run(~r/event: endpoint\s+data: ([^\r\n]+)/, conn.resp_body)
+    endpoint |> URI.parse() |> Map.fetch!(:query) |> URI.decode_query() |> Map.fetch!("sessionId")
   end
 end

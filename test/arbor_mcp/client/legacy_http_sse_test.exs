@@ -37,16 +37,21 @@ defmodule Arbor.MCP.Client.LegacyHttpSseTest do
     end
   end
 
-  setup do
+  setup context do
+    if context[:transport_config], do: :ok, else: start_listener()
+  end
+
+  defp start_listener do
+    runtime = Arbor.MCP.Test.RuntimeHTTPFixture.start(Handler, protocol_mode: :legacy_only)
     port = free_port()
     ranch_ref = {:legacy_http_sse_test, System.unique_integer([:positive])}
 
-    {:ok, _pid} =
+    {:ok, listener} =
       Plug.Cowboy.http(
         PathRecorder,
         [
           owner: self(),
-          handler: Handler,
+          runtime: runtime,
           protocol_mode: :legacy_only,
           legacy_http_sse: true,
           sse_mode: :stream,
@@ -57,18 +62,15 @@ defmodule Arbor.MCP.Client.LegacyHttpSseTest do
         ref: ranch_ref
       )
 
-    on_exit(fn ->
-      try do
-        Plug.Cowboy.shutdown(ranch_ref)
-      catch
-        :exit, _reason -> :ok
-      end
-    end)
+    on_exit(fn -> stop_listener(listener, ranch_ref, port) end)
 
-    {:ok, port: port}
+    {:ok, port: port, runtime: runtime}
   end
 
-  test "start_link with transport :sse initializes and calls a tool", %{port: port} do
+  test "start_link with transport :sse initializes and calls a tool", %{
+    port: port,
+    runtime: runtime
+  } do
     {:ok, client} =
       Client.start_link(
         transport: :sse,
@@ -98,18 +100,19 @@ defmodule Arbor.MCP.Client.LegacyHttpSseTest do
 
     assert_received {:http_request, "POST", "/message"}
     refute_received {:http_request, "GET", "/mcp"}
+    assert_borrowed_listener_survives(runtime, port)
   end
 
-  test "sse_path override hits the configured GET path, not the MCP endpoint", %{port: _port} do
+  test "sse_path override hits the configured GET path, not the MCP endpoint", %{runtime: runtime} do
     custom_port = free_port()
     ranch_ref = {:legacy_http_sse_custom, System.unique_integer([:positive])}
 
-    {:ok, _pid} =
+    {:ok, listener} =
       Plug.Cowboy.http(
         PathRecorder,
         [
           owner: self(),
-          handler: Handler,
+          runtime: runtime,
           protocol_mode: :legacy_only,
           legacy_http_sse: true,
           legacy_http_sse_path: "/events",
@@ -122,13 +125,7 @@ defmodule Arbor.MCP.Client.LegacyHttpSseTest do
         ref: ranch_ref
       )
 
-    on_exit(fn ->
-      try do
-        Plug.Cowboy.shutdown(ranch_ref)
-      catch
-        :exit, _reason -> :ok
-      end
-    end)
+    on_exit(fn -> stop_listener(listener, ranch_ref, custom_port) end)
 
     {:ok, client} =
       Client.start_link(
@@ -153,8 +150,10 @@ defmodule Arbor.MCP.Client.LegacyHttpSseTest do
     assert {:ok, %{"tools" => tools}} = Client.list_tools(client, format: :map)
     assert Enum.any?(tools, fn tool -> tool["name"] == "echo" end)
     assert_received {:http_request, "POST", "/inbox"}
+    assert_borrowed_listener_survives(runtime, custom_port)
   end
 
+  @tag :transport_config
   test "transport :sse is wired as LegacySSE and is not use_sse Streamable HTTP" do
     assert {:ok, [transports: [{LegacySSE, opts}]]} =
              ConnectionManager.prepare_transport_config(
@@ -174,6 +173,32 @@ defmodule Arbor.MCP.Client.LegacyHttpSseTest do
 
     assert http_opts[:use_sse] == true
     assert http_opts[:url] == "http://127.0.0.1:4000/mcp"
+  end
+
+  defp assert_borrowed_listener_survives(runtime, port) do
+    assert :ok = Arbor.MCP.Server.Runtime.stop(runtime)
+    assert {:ok, socket} = :gen_tcp.connect({127, 0, 0, 1}, port, [:binary, active: false], 1_000)
+    assert :ok = :gen_tcp.close(socket)
+  end
+
+  defp stop_listener(listener, ranch_ref, port) do
+    monitor = Process.monitor(listener)
+    assert :ok = Plug.Cowboy.shutdown(ranch_ref)
+    assert_receive {:DOWN, ^monitor, :process, ^listener, _reason}, 1_000
+    assert_refused(port, System.monotonic_time(:millisecond) + 1_000)
+  end
+
+  defp assert_refused(port, deadline) do
+    case :gen_tcp.connect({127, 0, 0, 1}, port, [:binary, active: false], 50) do
+      {:error, :econnrefused} ->
+        :ok
+
+      other ->
+        if match?({:ok, _}, other), do: :gen_tcp.close(elem(other, 1))
+        assert System.monotonic_time(:millisecond) < deadline
+        Process.sleep(5)
+        assert_refused(port, deadline)
+    end
   end
 
   defp free_port do

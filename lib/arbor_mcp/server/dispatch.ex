@@ -32,6 +32,7 @@ defmodule Arbor.MCP.Server.Dispatch do
   alias Arbor.MCP.Internal.MessageValidator
   alias Arbor.MCP.Protocol.{ErrorCodes, Initialize, Methods}
   alias Arbor.MCP.Server.{Context, Discover, MRTR, RequestContext, ResultNormalizer}
+  alias Arbor.MCP.Transport.HTTP.ToolHeaders
   alias Arbor.RPC.JSONRPC
 
   @type handler_state :: term()
@@ -173,9 +174,12 @@ defmodule Arbor.MCP.Server.Dispatch do
   end
 
   defp do_dispatch("initialize", ctx, state) do
-    call(ctx, :handle_initialize, [ctx.params, state], "Initialize error", state,
-      on_ok: &Initialize.build_initialize_result(ctx.params, &1)
-    )
+    result =
+      call(ctx, :handle_initialize, [ctx.params, state], "Initialize error", state,
+        on_ok: &Initialize.build_initialize_result(ctx.params, &1)
+      )
+
+    validate_http_initialize(ctx, result, state)
   end
 
   defp do_dispatch("ping", ctx, state) do
@@ -202,9 +206,20 @@ defmodule Arbor.MCP.Server.Dispatch do
     name = Map.get(ctx.params, "name")
     arguments = tool_arguments(ctx.params)
 
-    call(ctx, :handle_call_tool, [name, arguments, state], "Tool call error", state,
-      on_ok: &ResultNormalizer.tool_result(&1, wrap_bare_map: true)
-    )
+    case validate_tool_headers(ctx, name, arguments, state) do
+      {:ok, validated_state} ->
+        call(
+          ctx,
+          :handle_call_tool,
+          [name, arguments, validated_state],
+          "Tool call error",
+          validated_state,
+          on_ok: &ResultNormalizer.tool_result(&1, wrap_bare_map: true)
+        )
+
+      {:error, message} ->
+        {:response, JSONRPC.error(ctx.id, ErrorCodes.header_mismatch(), message), state}
+    end
   end
 
   defp do_dispatch("resources/list", ctx, state) do
@@ -483,6 +498,71 @@ defmodule Arbor.MCP.Server.Dispatch do
   end
 
   defp normalize_protocol_result(other, _request_context, _handler_module), do: other
+
+  defp validate_http_initialize(
+         ctx,
+         {:response, %{"result" => result} = response, next_state},
+         state
+       ) do
+    expected = Keyword.get(ctx.dispatch_opts, :http_expected_protocol_version)
+
+    if is_binary(expected) and result["protocolVersion"] != expected do
+      error =
+        JSONRPC.error(ctx.id, ErrorCodes.internal_error(), "Service unavailable", %{
+          "type" => "session_manager_unavailable"
+        })
+
+      {:response, error, state}
+    else
+      {:response, response, next_state}
+    end
+  end
+
+  defp validate_http_initialize(_ctx, result, _state), do: result
+
+  defp validate_tool_headers(
+         %{request_context: %{era: :modern}, dispatch_opts: opts} = ctx,
+         name,
+         arguments,
+         state
+       ) do
+    if Keyword.has_key?(opts, :request_headers) do
+      tools =
+        Context.with_context(ctx.request_context, fn ->
+          ctx.module.handle_list_tools(nil, state)
+        end)
+
+      case tools do
+        {:ok, entries, _cursor, next_state} when is_list(entries) ->
+          validate_tool_header_entries(entries, name, arguments, opts, next_state)
+
+        {:ok, entries, next_state} when is_list(entries) ->
+          validate_tool_header_entries(entries, name, arguments, opts, next_state)
+
+        _unavailable ->
+          {:error, "Tool schema unavailable"}
+      end
+    else
+      {:ok, state}
+    end
+  end
+
+  defp validate_tool_headers(_ctx, _name, _arguments, state), do: {:ok, state}
+
+  defp validate_tool_header_entries(entries, name, arguments, opts, state) do
+    tool = Enum.find(ResultNormalizer.stringify_keys(entries), &(&1["name"] == name))
+
+    case ToolHeaders.compile(tool) do
+      {:ok, annotations} ->
+        case ToolHeaders.validate_request(opts[:request_headers], annotations, arguments) do
+          :ok -> {:ok, state}
+          error -> error
+        end
+
+      {:error, _invalid} ->
+        {:error, "Tool x-mcp-header annotations are invalid"}
+    end
+  end
 
   defp handler_server_info(handler_module) do
     if exported?(handler_module, :__server_info__, 0),

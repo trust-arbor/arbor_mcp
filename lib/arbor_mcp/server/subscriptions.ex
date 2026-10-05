@@ -22,7 +22,7 @@ defmodule Arbor.MCP.Server.Subscriptions do
     Services
   }
 
-  alias Arbor.MCP.Server.Subscriptions.{Entry, ETS, Mailbox, Origin}
+  alias Arbor.MCP.Server.Subscriptions.{Entry, ETS, HTTPPolicy, Mailbox, Origin}
   alias Arbor.MCP.SubscriptionFilter
   alias Arbor.MCP.Tasks.Extension, as: TasksExtension
   alias Arbor.MCP.Tasks.StoreCall
@@ -81,10 +81,24 @@ defmodule Arbor.MCP.Server.Subscriptions do
     with {:ok, proof} <- HTTPListenerBinding.validate(binding),
          true <- proof.gateway == self(),
          {:ok, __MODULE__, resolved} <-
-           Services.subscription_options(Keyword.put(opts, :runtime, proof.runtime)),
+           Services.subscription_options(
+             opts
+             |> Keyword.drop([
+               :authorize_filter,
+               :authorize_publication,
+               :max_queue,
+               :max_message_bytes,
+               :max_queue_bytes,
+               :max_lifetime_ms
+             ])
+             |> Keyword.put(:runtime, proof.runtime)
+           ),
          true <- Deadline.remaining(proof.source_deadline) > 0 do
       resolved =
-        resolved |> Keyword.put(:http_listener, binding) |> Keyword.put(:runtime, proof.runtime)
+        resolved
+        |> HTTPPolicy.restrict(opts)
+        |> Keyword.put(:http_listener, binding)
+        |> Keyword.put(:runtime, proof.runtime)
 
       GenServer.call(
         resolved[:registry],

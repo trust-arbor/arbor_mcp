@@ -15,7 +15,7 @@ defmodule Arbor.MCP.HttpPlug.RuntimeWriter do
     defexception message: "MCP HTTP response capacity unavailable"
   end
 
-  def capture(conn, nil), do: conn
+  def capture(_conn, nil), do: raise(ArgumentError, "MCP HTTP requires an explicit runtime")
 
   def capture(conn, runtime) do
     with {:ok, runtime} <- Arbor.MCP.Server.Runtime.ref(runtime),

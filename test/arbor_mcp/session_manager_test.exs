@@ -5,7 +5,7 @@ defmodule Arbor.MCP.SessionManagerTest do
   Tests session lifecycle management, event storage and replay,
   session expiration, and integration with SSE transport.
   """
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.SessionManager
 
@@ -468,9 +468,14 @@ defmodule Arbor.MCP.SessionManagerTest do
   end
 
   describe "SSE handler integration" do
+    setup do
+      start_supervised!(SessionManager, id: make_ref())
+      :ok
+    end
+
     test "replays events to SSE handler process" do
-      # These tests use the global SessionManager since the 3-arg replay_events_after
-      # function internally calls the global API
+      # Explicit host supervision supplies the retained default-name façade.
+      # The 3-argument replay API intentionally addresses that standalone owner.
       session_id = SessionManager.create_session(%{transport: :sse})
 
       # Create a mock SSE handler process

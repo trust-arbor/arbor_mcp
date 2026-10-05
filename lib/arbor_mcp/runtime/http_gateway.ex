@@ -544,21 +544,22 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
              listener,
              request["id"],
              get_in(request, ["params", "notifications"]),
-             principal_id: job.dispatch_opts[:principal_id],
-             tenant_id: job.dispatch_opts[:tenant_id],
-             audience: job.dispatch_opts[:endpoint] || "/mcp",
-             authorization_required: not is_nil(job.identity),
-             client_capabilities: context.client_capabilities
+             job.dispatch_opts
+             |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+             |> Subscriptions.runtime_options()
+             |> Keyword.put(:audience, job.dispatch_opts[:endpoint] || "/mcp")
+             |> Keyword.update(:authorization_required, false, &(&1 or not is_nil(job.identity)))
+             |> Keyword.put(:client_capabilities, context.client_capabilities)
            ),
          :ok <- attach_subscription(listener, entry) do
       Admission.complete_output_phase(state.table, token)
       Admission.terminal(state.table, token, {:ok, :subscription})
       finish(token, state)
     else
-      _invalid ->
+      invalid ->
         HTTPWriterRegistry.reject_listener_setup(job.binding, token)
         output = Keyword.fetch!(work_opts, :output)
-        response = Arbor.RPC.JSONRPC.error(request["id"], -32602, "Invalid subscription request")
+        response = subscription_error(request["id"], invalid)
 
         case OutputController.edge_result(state.table, token, output, response) do
           :ok -> put_in(state.jobs[token].output?, true)
@@ -603,6 +604,31 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
     send(route.scheduler, {:submit, route.generation, token, request, work_opts})
     state
   end
+
+  defp subscription_error(id, {:error, %Arbor.MCP.Error.ProtocolError{} = error}),
+    do: Arbor.RPC.JSONRPC.error(id, error.code, error.message, error.data)
+
+  # Only these fixed parser reason codes are public; custom authorizer failures stay opaque.
+  defp subscription_error(id, {:error, :unknown_subscription_filter}),
+    do:
+      Arbor.RPC.JSONRPC.error(id, -32602, "Invalid subscription request", %{
+        "reason" => "unknown_subscription_filter"
+      })
+
+  defp subscription_error(id, {:error, :invalid_subscription_filter}),
+    do:
+      Arbor.RPC.JSONRPC.error(id, -32602, "Invalid subscription request", %{
+        "reason" => "invalid_subscription_filter"
+      })
+
+  defp subscription_error(id, {:error, :subscription_filter_required}),
+    do:
+      Arbor.RPC.JSONRPC.error(id, -32602, "Invalid subscription request", %{
+        "reason" => "subscription_filter_required"
+      })
+
+  defp subscription_error(id, _invalid),
+    do: Arbor.RPC.JSONRPC.error(id, -32602, "Invalid subscription request")
 
   defp attach_subscription(binding, entry) do
     case HTTPWriterRegistry.attach_listener(

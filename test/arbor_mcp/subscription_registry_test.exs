@@ -5,65 +5,58 @@ defmodule Arbor.MCP.SubscriptionRegistryTest do
   import Plug.Test
 
   alias Arbor.MCP.{HttpPlug, SessionManager, SubscriptionRegistry}
-  alias Arbor.MCP.HttpPlug.SessionRegistry
+  alias Arbor.MCP.Server.Runtime
+  alias Arbor.MCP.Test.RuntimeHTTPFixture
 
   defmodule SubscriptionHandler do
     use Arbor.MCP.Server.Handler
-
-    @impl true
-    def init(opts), do: {:ok, Map.new(opts)}
-
-    @impl true
+    def init(opts), do: {:ok, %{observer: opts[:observer]}}
     def handle_subscribe_resource(_uri, state), do: {:ok, %{}, state}
-
-    @impl true
     def handle_unsubscribe_resource(_uri, state), do: {:ok, %{}, state}
+
+    def handle_call_tool("broadcast", %{"uri" => uri}, state) do
+      result = Arbor.MCP.Server.notify_resource_update(uri)
+      send(state.observer, {:publication, result})
+      {:ok, %{"content" => []}, state}
+    end
   end
 
-  defmodule DeliveryHandler do
-    use GenServer
+  defmodule ObservedAdapter do
+    alias Plug.Adapters.Test.Conn
+    defdelegate send_chunked(state, status, headers), to: Conn
+    defdelegate read_req_body(state, options), to: Conn
+    defdelegate send_resp(state, status, headers, body), to: Conn
 
-    def start_link(owner), do: GenServer.start_link(__MODULE__, owner)
-
-    @impl true
-    def init(owner), do: {:ok, owner}
-
-    @impl true
-    def handle_call(:request_send, _from, owner), do: {:reply, :ok, owner}
-
-    @impl true
-    def handle_cast({:send_event, type, data, opts}, owner) do
-      send(owner, {:sse_event, self(), type, data, opts})
-      {:noreply, owner}
+    def chunk(state, wire) do
+      send(state.observer, {:stream_wire, self(), IO.iodata_to_binary(wire)})
+      Conn.chunk(state, wire)
     end
   end
 
   test "HTTP sessions subscribe and unsubscribe independently" do
+    {runtime, opts, resources, sessions} = host()
     uri = "test://shared"
-    session_a = SessionManager.create_session(%{transport: :http})
-    session_b = SessionManager.create_session(%{transport: :http})
-    :ok = SessionManager.claim_initialization(session_a)
-    :ok = SessionManager.complete_initialization(session_a, "2025-06-18")
-    :ok = SessionManager.claim_initialization(session_b)
-    :ok = SessionManager.complete_initialization(session_b, "2025-06-18")
+    ids = for _ <- 1..2, do: RuntimeHTTPFixture.session(runtime)
+    [session_a, session_b] = ids
+    assert post_resource_request(opts, session_a, "resources/subscribe", uri).status == 200
+    assert post_resource_request(opts, session_b, "resources/subscribe", uri).status == 200
 
-    on_exit(fn ->
-      SessionManager.terminate_session(session_a)
-      SessionManager.terminate_session(session_b)
-    end)
+    {:ok, lease_a} = SessionManager.ensure_session(sessions, session_a, %{}, [])
+    {:ok, lease_b} = SessionManager.ensure_session(sessions, session_b, %{}, [])
+    assert {:ok, [^uri]} = SubscriptionRegistry.subscriptions(resources, lease_a, [])
+    assert {:ok, [^uri]} = SubscriptionRegistry.subscriptions(resources, lease_b, [])
+    assert post_resource_request(opts, session_a, "resources/unsubscribe", uri).status == 200
+    assert {:ok, []} = SubscriptionRegistry.subscriptions(resources, lease_a, [])
+    assert {:ok, [^uri]} = SubscriptionRegistry.subscriptions(resources, lease_b, [])
 
-    assert post_resource_request(session_a, "resources/subscribe", uri).status == 200
-    assert post_resource_request(session_b, "resources/subscribe", uri).status == 200
-    assert SubscriptionRegistry.sessions(uri) == Enum.sort([session_a, session_b])
+    for id <- ids,
+        do: assert(match?({:ok, %{id: ^id}}, RuntimeHTTPFixture.session_state(runtime, id)))
 
-    assert post_resource_request(session_a, "resources/unsubscribe", uri).status == 200
-    assert SubscriptionRegistry.sessions(uri) == [session_b]
-
-    assert {:ok, %{id: ^session_a}} = SessionManager.get_session(session_a)
-    assert {:ok, %{id: ^session_b}} = SessionManager.get_session(session_b)
+    assert is_nil(Process.whereis(SubscriptionRegistry))
   end
 
-  test "terminating and expiring sessions remove every subscription" do
+  test "terminating and expiring explicitly supervised standalone sessions remove subscriptions" do
+    start_supervised!(SubscriptionRegistry)
     manager_name = {:global, {:subscription_session_manager, make_ref()}}
 
     manager =
@@ -73,74 +66,112 @@ defmodule Arbor.MCP.SubscriptionRegistryTest do
 
     terminated = GenServer.call(manager, {:create_session, %{transport: :http}})
     expired = GenServer.call(manager, {:create_session, %{transport: :http}})
-
-    :ok = SubscriptionRegistry.subscribe(terminated, "test://one")
-    :ok = SubscriptionRegistry.subscribe(terminated, "test://two")
-
-    :ok = GenServer.call(manager, {:terminate_session, terminated})
+    assert :ok = SubscriptionRegistry.subscribe(terminated, "test://one")
+    assert :ok = SubscriptionRegistry.subscribe(terminated, "test://two")
+    assert :ok = GenServer.call(manager, {:terminate_session, terminated})
     assert SubscriptionRegistry.subscriptions(terminated) == []
-
-    :ok = SubscriptionRegistry.subscribe(expired, "test://one")
-
+    assert :ok = SubscriptionRegistry.subscribe(expired, "test://one")
     send(manager, :cleanup_expired_sessions)
     assert {:ok, %{status: :terminated}} = GenServer.call(manager, {:get_session, expired})
     assert SubscriptionRegistry.subscriptions(expired) == []
   end
 
-  test "resource broadcasts deliver independently to every connected subscriber" do
+  test "runtime callback broadcasts durably reach all subscribers and physically deliver to live streams" do
+    {runtime, opts, _resources, sessions} = host()
     uri = "test://broadcast"
-    sessions = Enum.map(1..3, fn _ -> SessionManager.create_session(%{transport: :sse}) end)
+    ids = for _ <- 1..3, do: RuntimeHTTPFixture.session(runtime)
 
-    handlers =
-      for session_id <- Enum.take(sessions, 2) do
-        child = Supervisor.child_spec({DeliveryHandler, self()}, id: make_ref())
-        handler = start_supervised!(child)
-        :ok = SessionRegistry.register(session_id, handler)
-        {session_id, handler}
+    for id <- ids,
+        do: assert(post_resource_request(opts, id, "resources/subscribe", uri).status == 200)
+
+    observer = self()
+
+    streams =
+      for id <- Enum.take(ids, 2) do
+        task =
+          Task.async(fn ->
+            connection =
+              conn(:get, "/mcp")
+              |> put_req_header("accept", "text/event-stream")
+              |> put_req_header("mcp-session-id", id)
+              |> put_req_header("mcp-protocol-version", "2025-06-18")
+
+            {_, state} = connection.adapter
+
+            connection = %{
+              connection
+              | adapter: {ObservedAdapter, Map.put(state, :observer, observer)}
+            }
+
+            HttpPlug.call(connection, Map.put(opts, :sse_mode, :stream))
+          end)
+
+        pid = task.pid
+        assert_receive {:stream_wire, ^pid, initial}, 1_000
+        assert initial =~ "event: connected"
+        task
       end
 
-    on_exit(fn ->
-      Enum.each(sessions, &SessionManager.terminate_session/1)
-      Enum.each(sessions, &SessionRegistry.unregister/1)
-    end)
+    result =
+      request(opts, hd(ids), "tools/call", %{
+        "name" => "broadcast",
+        "arguments" => %{"uri" => uri}
+      })
 
-    Enum.each(sessions, fn session_id ->
-      assert :ok = SubscriptionRegistry.subscribe(session_id, uri)
-    end)
+    assert result.status == 200
+    assert_receive {:publication, %{subscribers: 3, delivered: 2}}, 1_000
 
-    assert %{subscribers: 3, delivered: 2} = Arbor.MCP.Server.notify_resource_update(uri)
+    for task <- streams do
+      pid = task.pid
+      assert_receive {:stream_wire, ^pid, notification}, 1_000
+      assert notification =~ "notifications/resources/updated"
+      assert notification =~ uri
+    end
 
-    notification = %{
-      "jsonrpc" => "2.0",
-      "method" => "notifications/resources/updated",
-      "params" => %{"uri" => uri}
-    }
+    for id <- ids do
+      {:ok, lease} = SessionManager.ensure_session(sessions, id, %{}, [])
 
-    Enum.each(handlers, fn {session_id, handler} ->
-      assert_receive {:sse_event, ^handler, "message", ^notification,
-                      [event_id: event_id, persist: false]}
+      assert {:ok,
+              %{
+                events: [
+                  %{
+                    data: %{
+                      "method" => "notifications/resources/updated",
+                      "params" => %{"uri" => ^uri}
+                    }
+                  }
+                ]
+              }} = SessionManager.replay_page(sessions, lease, nil, [])
+    end
 
-      assert [%{id: ^event_id, data: ^notification}] =
-               SessionManager.replay_events_after(session_id, nil)
-    end)
-
-    offline_session = List.last(sessions)
-
-    assert [%{data: ^notification}] =
-             SessionManager.replay_events_after(offline_session, nil)
+    for task <- streams, do: Task.shutdown(task, :brutal_kill)
+    assert {:error, :no_request_context} = Arbor.MCP.Server.notify_resource_update(uri)
+    assert is_nil(Process.whereis(Arbor.MCP.HttpPlug.SessionRegistry))
   end
 
-  defp post_resource_request(session_id, method, uri) do
+  defp host do
+    runtime = RuntimeHTTPFixture.start(SubscriptionHandler, handler_args: [observer: self()])
+    opts = RuntimeHTTPFixture.options(runtime, sse_mode: :oneshot)
+    {:ok, resources} = Runtime.service(runtime, :resource_subscriptions)
+    {:ok, sessions} = Runtime.service(runtime, :sessions)
+    {runtime, opts, resources, sessions}
+  end
+
+  defp post_resource_request(opts, id, method, uri),
+    do: request(opts, id, method, %{"uri" => uri})
+
+  defp request(opts, session_id, method, params) do
     request = %{
       "jsonrpc" => "2.0",
       "id" => System.unique_integer([:positive]),
       "method" => method,
-      "params" => %{"uri" => uri}
+      "params" => params
     }
 
-    conn(:post, "/", Jason.encode!(request))
+    conn(:post, "/mcp", Jason.encode!(request))
     |> put_req_header("content-type", "application/json")
     |> put_req_header("mcp-session-id", session_id)
-    |> HttpPlug.call(HttpPlug.init(handler: SubscriptionHandler, sse_enabled: false))
+    |> put_req_header("mcp-protocol-version", "2025-06-18")
+    |> HttpPlug.call(opts)
   end
 end

@@ -14,11 +14,20 @@ defmodule Arbor.MCP.Compliance.ServerStreamableHTTPComplianceTest do
   4. Server MUST include mcp-protocol-version in responses
   """
 
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   import Plug.Test
   import Plug.Conn
 
   alias Arbor.MCP.HttpPlug
+  alias Arbor.MCP.Server.Runtime
+  alias Arbor.MCP.SessionManager
+  alias Arbor.MCP.Test.RuntimeHTTPFixture
+
+  setup do
+    runtime = RuntimeHTTPFixture.start(__MODULE__.ComplianceTestServer)
+    Process.put(:compliance_runtime, runtime)
+    :ok
+  end
 
   # A simple MCP server handler for testing
   defmodule ComplianceTestServer do
@@ -91,7 +100,14 @@ defmodule Arbor.MCP.Compliance.ServerStreamableHTTPComplianceTest do
       |> put_req_header("content-type", "application/json")
 
     c = Enum.reduce(extra_headers, c, fn {k, v}, acc -> put_req_header(acc, k, v) end)
-    HttpPlug.call(c, HttpPlug.init(init_opts))
+
+    c =
+      if get_req_header(c, "mcp-session-id") != [] and
+           get_req_header(c, "mcp-protocol-version") == [],
+         do: put_req_header(c, "mcp-protocol-version", "2025-06-18"),
+         else: c
+
+    HttpPlug.call(c, mount_opts(init_opts))
   end
 
   defp initialize_session(plug_opts \\ []) do
@@ -178,7 +194,7 @@ defmodule Arbor.MCP.Compliance.ServerStreamableHTTPComplianceTest do
         |> put_req_header("accept", "text/event-stream")
         |> put_req_header("mcp-session-id", session_id)
         |> put_req_header("mcp-protocol-version", "2025-06-18")
-        |> HttpPlug.call(HttpPlug.init(handler: ComplianceTestServer, sse_enabled: true))
+        |> HttpPlug.call(mount_opts(handler: ComplianceTestServer, sse_enabled: true))
 
       # Should start SSE (200 with text/event-stream), not 404
       assert conn.status == 200,
@@ -196,7 +212,7 @@ defmodule Arbor.MCP.Compliance.ServerStreamableHTTPComplianceTest do
         |> put_req_header("accept", "text/event-stream")
         |> put_req_header("mcp-session-id", session_id)
         |> put_req_header("mcp-protocol-version", "2025-06-18")
-        |> HttpPlug.call(HttpPlug.init(handler: ComplianceTestServer, sse_enabled: true))
+        |> HttpPlug.call(mount_opts(handler: ComplianceTestServer, sse_enabled: true))
 
       assert conn.status == 200,
              "GET to /mcp should start SSE when that's the MCP endpoint, got status #{conn.status}"
@@ -205,14 +221,16 @@ defmodule Arbor.MCP.Compliance.ServerStreamableHTTPComplianceTest do
     end
 
     test "GET to /mcp/v1 endpoint starts SSE connection" do
-      session_id = initialize_session(sse_enabled: true)
+      session_id = initialize_session(sse_enabled: true, path: "/mcp/v1")
 
       conn =
         conn(:get, "/mcp/v1")
         |> put_req_header("accept", "text/event-stream")
         |> put_req_header("mcp-session-id", session_id)
         |> put_req_header("mcp-protocol-version", "2025-06-18")
-        |> HttpPlug.call(HttpPlug.init(handler: ComplianceTestServer, sse_enabled: true))
+        |> HttpPlug.call(
+          mount_opts(handler: ComplianceTestServer, sse_enabled: true, path: "/mcp/v1")
+        )
 
       assert conn.status == 200,
              "GET to /mcp/v1 should start SSE, got status #{conn.status}"
@@ -221,16 +239,16 @@ defmodule Arbor.MCP.Compliance.ServerStreamableHTTPComplianceTest do
     end
 
     test "headerless Streamable HTTP GET does not mint a session" do
-      before_count = length(Arbor.MCP.SessionManager.list_sessions())
+      before_count = session_count()
 
       conn =
         conn(:get, "/")
         |> put_req_header("accept", "text/event-stream")
-        |> HttpPlug.call(HttpPlug.init(handler: ComplianceTestServer, sse_enabled: true))
+        |> HttpPlug.call(mount_opts(handler: ComplianceTestServer, sse_enabled: true))
 
       assert conn.status == 400
       assert get_resp_header(conn, "mcp-session-id") == []
-      assert length(Arbor.MCP.SessionManager.list_sessions()) == before_count
+      assert session_count() == before_count
     end
   end
 
@@ -345,7 +363,7 @@ defmodule Arbor.MCP.Compliance.ServerStreamableHTTPComplianceTest do
       conn =
         conn(:post, "/", "invalid json")
         |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(HttpPlug.init(init_opts))
+        |> HttpPlug.call(mount_opts(init_opts))
 
       assert conn.status == 400
 
@@ -354,5 +372,21 @@ defmodule Arbor.MCP.Compliance.ServerStreamableHTTPComplianceTest do
       assert length(version_headers) == 1,
              "Error responses MUST include mcp-protocol-version header"
     end
+  end
+
+  defp mount_opts(options) do
+    options =
+      options
+      |> Keyword.drop([:handler, :sse_enabled])
+      |> Keyword.put(:runtime, Process.get(:compliance_runtime))
+      |> Keyword.put_new(:sse_mode, :oneshot)
+
+    HttpPlug.init(options)
+  end
+
+  defp session_count do
+    {:ok, service} = Runtime.service(Process.get(:compliance_runtime), :sessions)
+    {:ok, stats} = SessionManager.get_stats(service, [])
+    stats.sessions
   end
 end

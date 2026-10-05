@@ -6,9 +6,10 @@ defmodule Arbor.MCP.HttpPlugTest do
 
   alias Arbor.MCP.HttpPlug
   alias Arbor.MCP.HttpPlug.Core
-  alias Arbor.MCP.HttpPlug.SessionRegistry
-  alias Arbor.MCP.HttpPlug.SSEHandler
+  alias Arbor.MCP.Server.Context
+  alias Arbor.MCP.Server.Runtime
   alias Arbor.MCP.SessionManager
+  alias Arbor.MCP.Test.RuntimeHTTPFixture
   alias Arbor.MCP.Transport.HTTP.RequestHeaders
 
   defmodule LegacyCaptureConn do
@@ -52,14 +53,16 @@ defmodule Arbor.MCP.HttpPlugTest do
     use Arbor.MCP.Server.Handler
 
     @impl true
-    def init(opts), do: {:ok, Map.new(opts)}
+    def init(_opts), do: {:ok, %{}}
 
     @impl true
     def handle_initialize(_params, state) do
+      context = Map.new(Context.current().application_context)
+
       {:ok,
        %{
-         name: Map.fetch!(state, :request_path),
-         version: Map.fetch!(state, :request_method),
+         name: Map.fetch!(context, :request_path),
+         version: Map.fetch!(context, :request_method),
          capabilities: %{}
        }, state}
     end
@@ -123,166 +126,6 @@ defmodule Arbor.MCP.HttpPlugTest do
     end
   end
 
-  defmodule TrackingSessionManager do
-    @table :http_plug_test_session_manager
-
-    def start_link(owner, opts \\ []) do
-      if :ets.whereis(@table) != :undefined do
-        :ets.delete(@table)
-      end
-
-      :ets.new(@table, [:named_table, :public, :set])
-      :ets.insert(@table, {:owner, owner})
-      :ets.insert(@table, {:max_request_ids, Keyword.get(opts, :max_request_ids, :infinity)})
-      :ets.insert(@table, {:claim_behavior, Keyword.get(opts, :claim_behavior, :normal)})
-      {:ok, self()}
-    end
-
-    def get_session(session_id) do
-      case :ets.lookup(@table, {:session, session_id}) do
-        [{{:session, ^session_id}, session}] -> {:ok, session}
-        [] -> {:error, :session_not_found}
-      end
-    end
-
-    def create_session(attrs) do
-      :ets.insert(@table, {
-        {:session, "tracked_session"},
-        Map.merge(attrs, %{
-          id: "tracked_session",
-          status: :active,
-          initialized: false,
-          initialization_claimed: false,
-          protocol_version: nil
-        })
-      })
-
-      notify({:session_created, "tracked_session", attrs})
-      "tracked_session"
-    end
-
-    def update_session(session_id, attrs) do
-      with {:ok, session} <- get_session(session_id) do
-        :ets.insert(@table, {{:session, session_id}, Map.merge(session, attrs)})
-      end
-
-      notify({:session_updated, session_id, attrs})
-    end
-
-    def ensure_session(session_id, attrs) do
-      case get_session(session_id) do
-        {:ok, _session} -> notify({:session_ensured, session_id, attrs})
-        {:error, _reason} = error -> error
-      end
-    end
-
-    def ensure_initialized_session(session_id, attrs) do
-      with {:ok, session} <- get_session(session_id) do
-        cond do
-          session.status != :active -> {:error, :session_not_found}
-          session.initialized != true -> {:error, :session_not_initialized}
-          true -> notify({:session_ensured, session_id, attrs})
-        end
-      end
-    end
-
-    def claim_initialization(session_id) do
-      with {:ok, session} <- get_session(session_id) do
-        cond do
-          session.initialized ->
-            {:error, :session_already_initialized}
-
-          session.initialization_claimed ->
-            {:error, :initialization_in_progress}
-
-          true ->
-            :ets.insert(
-              @table,
-              {{:session, session_id}, %{session | initialization_claimed: true}}
-            )
-
-            :ok
-        end
-      end
-    end
-
-    def complete_initialization(session_id, version) do
-      with {:ok, session} <- get_session(session_id) do
-        :ets.insert(
-          @table,
-          {{:session, session_id},
-           %{
-             session
-             | initialized: true,
-               initialization_claimed: false,
-               protocol_version: version
-           }}
-        )
-
-        :ok
-      end
-    end
-
-    def claim_request_id(session_id, request_id) do
-      case :ets.lookup(@table, :claim_behavior) do
-        [{:claim_behavior, :invalid}] ->
-          :invalid
-
-        [{:claim_behavior, :exit}] ->
-          exit(:claim_failed)
-
-        _normal ->
-          key = {:request_id, session_id, request_id}
-
-          cond do
-            :ets.member(@table, key) ->
-              {:error, :duplicate_request_id}
-
-            request_id_capacity_reached?(session_id) ->
-              {:error, :request_id_limit_exceeded}
-
-            :ets.insert_new(@table, {key, true}) ->
-              :ok
-
-            true ->
-              {:error, :duplicate_request_id}
-          end
-      end
-    end
-
-    def terminate_session(session_id) do
-      with {:ok, session} <- get_session(session_id) do
-        :ets.insert(@table, {{:session, session_id}, %{session | status: :terminated}})
-      end
-
-      notify({:session_terminated, session_id})
-    end
-
-    defp notify(message) do
-      case :ets.lookup(@table, :owner) do
-        [{:owner, owner}] -> send(owner, message)
-        [] -> :ok
-      end
-
-      :ok
-    end
-
-    defp request_id_capacity_reached?(session_id) do
-      [{:max_request_ids, max_request_ids}] = :ets.lookup(@table, :max_request_ids)
-
-      max_request_ids != :infinity and
-        length(:ets.match_object(@table, {{:request_id, session_id, :_}, :_})) >=
-          max_request_ids
-    end
-  end
-
-  defmodule FullSessionManager do
-    def create_session(_attrs), do: {:error, :session_limit_exceeded}
-    def ensure_session(_session_id, _attrs), do: {:error, :session_not_found}
-    def claim_request_id(_session_id, _request_id), do: {:error, :session_not_found}
-    def terminate_session(_session_id), do: :ok
-  end
-
   describe "HTTP Plug behavior" do
     test "implements Plug behavior correctly" do
       Code.ensure_loaded!(HttpPlug)
@@ -297,11 +140,12 @@ defmodule Arbor.MCP.HttpPlugTest do
         server_info: %{name: "test", version: "1.0.0"}
       ]
 
-      config = HttpPlug.init(opts)
+      config = mount_opts(opts)
 
-      assert config.handler == TestServer
+      assert {:ok, _ref} = Runtime.ref(config.runtime)
       assert config.server_info.name == "test"
-      assert config.sse_enabled == false
+      refute Map.has_key?(config, :sse_enabled)
+      refute Map.has_key?(config, :handler)
       assert config.legacy_http_sse == false
       assert config.cors_enabled == false
       assert config.validate_origin == true
@@ -309,14 +153,14 @@ defmodule Arbor.MCP.HttpPlugTest do
       assert config.allowed_hosts == :any
       assert config.body_limit == 1_000_000
       assert config.handler_opts == []
-      assert config.handler_call_timeout == 10_000
+      refute Map.has_key?(config, :handler_call_timeout)
       assert config.subscription_max_message_bytes == nil
       assert config.subscription_max_queue_bytes == nil
     end
 
     test "init/1 preserves subscription byte limits" do
       config =
-        HttpPlug.init(
+        mount_opts(
           handler: TestServer,
           subscription_max_message_bytes: 12_345,
           subscription_max_queue_bytes: 67_890
@@ -327,54 +171,58 @@ defmodule Arbor.MCP.HttpPlugTest do
     end
 
     test "init/1 accepts a server-side handler call deadline" do
-      assert HttpPlug.init(handler_call_timeout: 250).handler_call_timeout == 250
+      assert_raise ArgumentError, ~r/retired/, fn ->
+        HttpPlug.init(runtime: __MODULE__.Unavailable, handler_call_timeout: 250)
+      end
     end
 
     test "default initialized options are safe to embed at compile time" do
-      assert Macro.escape(HttpPlug.init([]))
+      assert Macro.escape(HttpPlug.init(runtime: __MODULE__.NamedRuntime))
     end
 
-    test "retains sse_enabled as an alias for the deprecated transport" do
-      assert HttpPlug.init(sse_enabled: true).legacy_http_sse == true
-      assert HttpPlug.init(legacy_http_sse: true).sse_enabled == true
-      assert HttpPlug.init(legacy_http_sse: false, sse_enabled: true).legacy_http_sse == false
+    test "retires sse_enabled while retaining explicit legacy HTTP transport" do
+      assert_raise ArgumentError, ~r/retired/, fn ->
+        HttpPlug.init(runtime: __MODULE__.Unavailable, sse_enabled: true)
+      end
+
+      assert mount_opts(legacy_http_sse: true).legacy_http_sse == true
     end
 
     test "normalizes legacy HTTP+SSE paths" do
       config =
-        HttpPlug.init(legacy_http_sse_path: "events", legacy_http_sse_post_path: "inbox")
+        mount_opts(legacy_http_sse_path: "events", legacy_http_sse_post_path: "inbox")
 
       assert config.legacy_http_sse_path == "/events"
       assert config.legacy_http_sse_post_path == "/inbox"
     end
 
     test "init/1 resolves the SSE mode instead of branching at request time" do
-      assert HttpPlug.init(sse_mode: :stream).sse_mode == :stream
-      assert HttpPlug.init(sse_mode: :oneshot).sse_mode == :oneshot
-      assert HttpPlug.init([]).sse_mode in [:stream, :oneshot]
+      assert mount_opts(sse_mode: :stream).sse_mode == :stream
+      assert mount_opts(sse_mode: :oneshot).sse_mode == :oneshot
+      assert mount_opts([]).sse_mode in [:stream, :oneshot]
     end
   end
 
   describe "session deletion" do
-    test "uses the configured session manager" do
-      {:ok, _} = TrackingSessionManager.start_link(self())
-      session_id = TrackingSessionManager.create_session(%{transport: :http})
-      :ok = TrackingSessionManager.claim_initialization(session_id)
-      :ok = TrackingSessionManager.complete_initialization(session_id, "2025-06-18")
+    test "DELETE uses the runtime-owned session service" do
+      opts = mount_opts(handler: TestServer)
+      initialized = initialize_session_conn(1_200) |> call_http(opts)
+      [id] = get_resp_header(initialized, "mcp-session-id")
+      assert {:ok, %{initialized: true}} = session_state(id)
 
-      conn =
+      result =
         conn(:delete, "/mcp")
-        |> put_req_header("mcp-session-id", session_id)
+        |> put_req_header("mcp-session-id", id)
         |> put_req_header("mcp-protocol-version", "2025-06-18")
-        |> HttpPlug.call(HttpPlug.init(session_manager: TrackingSessionManager))
+        |> call_http(opts)
 
-      assert conn.status == 204
-      assert_received {:session_terminated, ^session_id}
+      assert result.status == 204
+      assert {:error, :session_not_found} = session_state(id)
     end
 
     test "rejects duplicate session headers without terminating the session" do
-      opts = HttpPlug.init(handler: TestServer, sse_enabled: false)
-      initialized = initialize_session_conn(1_201) |> HttpPlug.call(opts)
+      opts = mount_opts(handler: TestServer, sse_enabled: false)
+      initialized = initialize_session_conn(1_201) |> call_http(opts)
       [session_id] = get_resp_header(initialized, "mcp-session-id")
 
       base =
@@ -389,9 +237,9 @@ defmodule Arbor.MCP.HttpPlugTest do
                 Enum.reject(base.req_headers, fn {name, _value} -> name == "mcp-session-id" end)
         }
 
-        rejected = HttpPlug.call(duplicated, opts)
+        rejected = call_http(duplicated, opts)
         assert rejected.status == 400
-        assert {:ok, %{status: :active}} = SessionManager.get_session(session_id)
+        assert {:ok, %{initialized: true}} = session_state(session_id)
       end
     end
 
@@ -405,26 +253,26 @@ defmodule Arbor.MCP.HttpPlugTest do
           else: Application.put_env(:arbor_mcp, :protocol_version_required, previous)
       end)
 
-      opts = HttpPlug.init(handler: TestServer, sse_enabled: false)
-      initialized = initialize_session_conn(1_202) |> HttpPlug.call(opts)
+      opts = mount_opts(handler: TestServer, sse_enabled: false)
+      initialized = initialize_session_conn(1_202) |> call_http(opts)
       [session_id] = get_resp_header(initialized, "mcp-session-id")
 
       missing =
         conn(:delete, "/mcp")
         |> put_req_header("mcp-session-id", session_id)
-        |> HttpPlug.call(opts)
+        |> call_http(opts)
 
       assert missing.status == 400
-      assert {:ok, %{status: :active}} = SessionManager.get_session(session_id)
+      assert {:ok, %{initialized: true}} = session_state(session_id)
 
       mismatched =
         conn(:delete, "/mcp")
         |> put_req_header("mcp-session-id", session_id)
         |> put_req_header("mcp-protocol-version", "2025-03-26")
-        |> HttpPlug.call(opts)
+        |> call_http(opts)
 
       assert mismatched.status == 400
-      assert {:ok, %{status: :active}} = SessionManager.get_session(session_id)
+      assert {:ok, %{initialized: true}} = session_state(session_id)
 
       duplicate_base =
         conn(:delete, "/mcp")
@@ -438,24 +286,24 @@ defmodule Arbor.MCP.HttpPlugTest do
           ]
       }
 
-      assert HttpPlug.call(duplicated_version, opts).status == 400
-      assert {:ok, %{status: :active}} = SessionManager.get_session(session_id)
+      assert call_http(duplicated_version, opts).status == 400
+      assert {:ok, %{initialized: true}} = session_state(session_id)
 
       valid =
         conn(:delete, "/mcp")
         |> put_req_header("mcp-session-id", session_id)
         |> put_req_header("mcp-protocol-version", "2025-06-18")
-        |> HttpPlug.call(opts)
+        |> call_http(opts)
 
       assert valid.status == 204
-      assert {:ok, %{status: :terminated}} = SessionManager.get_session(session_id)
+      assert {:error, :session_not_found} = session_state(session_id)
     end
   end
 
   describe "handler call timeout" do
     @describetag capture_log: true
 
-    test "threads the plug deadline into MessageProcessor" do
+    test "runtime request deadline reaps a held callback" do
       request = %{
         "jsonrpc" => "2.0",
         "method" => "tools/list",
@@ -467,11 +315,11 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_active_legacy_session()
-        |> HttpPlug.call(
-          HttpPlug.init(
+        |> call_http(
+          mount_opts(
             handler: BlockingRequestServer,
-            handler_opts: [test_pid: self()],
-            handler_call_timeout: 25,
+            handler_args: [test_pid: self()],
+            request_timeout_ms: 25,
             sse_enabled: false
           )
         )
@@ -488,7 +336,7 @@ defmodule Arbor.MCP.HttpPlugTest do
     test "handles OPTIONS preflight request for explicitly allowed wildcard CORS" do
       conn =
         conn(:options, "/")
-        |> HttpPlug.call(HttpPlug.init(cors_enabled: true, allowed_origins: :any))
+        |> call_http(mount_opts(cors_enabled: true, allowed_origins: :any))
 
       assert conn.status == 200
       assert get_resp_header(conn, "access-control-allow-origin") == ["*"]
@@ -501,7 +349,7 @@ defmodule Arbor.MCP.HttpPlugTest do
     test "rejects OPTIONS when CORS disabled" do
       conn =
         conn(:options, "/")
-        |> HttpPlug.call(HttpPlug.init(cors_enabled: false))
+        |> call_http(mount_opts(cors_enabled: false))
 
       assert conn.status == 405
     end
@@ -517,7 +365,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_req_header("origin", "https://evil.example")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 403
       assert conn.resp_body == "Origin not allowed"
@@ -537,7 +385,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_req_header("origin", "http://www.example.com")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 403
       assert conn.resp_body == "Origin not allowed"
@@ -558,9 +406,7 @@ defmodule Arbor.MCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(
-          HttpPlug.init(handler: TestServer, sse_enabled: false, validate_origin: true)
-        )
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false, validate_origin: true))
 
       assert conn.status == 200
     end
@@ -581,8 +427,8 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_req_header("origin", "https://client.example")
-        |> HttpPlug.call(
-          HttpPlug.init(
+        |> call_http(
+          mount_opts(
             handler: TestServer,
             sse_enabled: false,
             cors_enabled: true,
@@ -681,20 +527,14 @@ defmodule Arbor.MCP.HttpPlugTest do
   end
 
   defp put_active_legacy_session(conn) do
-    session_id = SessionManager.create_session(%{transport: :http})
-    :ok = SessionManager.claim_initialization(session_id)
-    :ok = SessionManager.complete_initialization(session_id, "2025-06-18")
-
-    on_exit(fn -> SessionManager.terminate_session(session_id) end)
-
-    put_req_header(conn, "mcp-session-id", session_id)
+    put_req_header(conn, "x-fixture-create-session", "true")
   end
 
   describe "host validation" do
     test "default allowed_hosts :any accepts any Host" do
       conn =
         initialize_conn()
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 200
     end
@@ -703,8 +543,8 @@ defmodule Arbor.MCP.HttpPlugTest do
       conn =
         initialize_conn()
         |> with_host("evil.example")
-        |> HttpPlug.call(
-          HttpPlug.init(handler: TestServer, sse_enabled: false, allowed_hosts: ["localhost"])
+        |> call_http(
+          mount_opts(handler: TestServer, sse_enabled: false, allowed_hosts: ["localhost"])
         )
 
       assert conn.status == 421
@@ -718,8 +558,8 @@ defmodule Arbor.MCP.HttpPlugTest do
       # No explicit Host header: falls back to conn.host (www.example.com).
       conn =
         initialize_conn()
-        |> HttpPlug.call(
-          HttpPlug.init(handler: TestServer, sse_enabled: false, allowed_hosts: ["localhost"])
+        |> call_http(
+          mount_opts(handler: TestServer, sse_enabled: false, allowed_hosts: ["localhost"])
         )
 
       assert conn.status == 421
@@ -729,8 +569,8 @@ defmodule Arbor.MCP.HttpPlugTest do
       conn =
         initialize_conn()
         |> with_host("localhost")
-        |> HttpPlug.call(
-          HttpPlug.init(handler: TestServer, sse_enabled: false, allowed_hosts: ["localhost"])
+        |> call_http(
+          mount_opts(handler: TestServer, sse_enabled: false, allowed_hosts: ["localhost"])
         )
 
       assert conn.status == 200
@@ -740,9 +580,7 @@ defmodule Arbor.MCP.HttpPlugTest do
       conn =
         initialize_conn()
         |> with_host("::1")
-        |> HttpPlug.call(
-          HttpPlug.init(handler: TestServer, sse_enabled: false, allowed_hosts: ["::1"])
-        )
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false, allowed_hosts: ["::1"]))
 
       assert conn.status == 200
     end
@@ -765,8 +603,6 @@ defmodule Arbor.MCP.HttpPlugTest do
 
   describe "session ID validation" do
     test "modern requests are stateless and ignore legacy session headers" do
-      {:ok, _} = TrackingSessionManager.start_link(self())
-
       request = %{
         "jsonrpc" => "2.0",
         "method" => "tools/list",
@@ -785,11 +621,10 @@ defmodule Arbor.MCP.HttpPlugTest do
         |> put_modern_headers(request)
         |> put_req_header("mcp-session-id", "ignored legacy session")
         |> put_req_header("last-event-id", "ignored-event")
-        |> HttpPlug.call(
-          HttpPlug.init(
+        |> call_http(
+          mount_opts(
             handler: TestServer,
             protocol_mode: :modern_only,
-            session_manager: TrackingSessionManager,
             sse_enabled: false
           )
         )
@@ -801,37 +636,32 @@ defmodule Arbor.MCP.HttpPlugTest do
     end
 
     test "legacy requests retain session-scoped behavior" do
-      {:ok, _} = TrackingSessionManager.start_link(self())
-
       conn =
         initialize_session_conn()
-        |> HttpPlug.call(
-          HttpPlug.init(
+        |> call_http(
+          mount_opts(
             handler: TestServer,
             protocol_mode: :prefer_modern,
-            session_manager: TrackingSessionManager,
             sse_enabled: false
           )
         )
 
       assert conn.status == 200
       assert [session_id] = get_resp_header(conn, "mcp-session-id")
-      assert session_id == "tracked_session"
-      assert_received {:session_created, ^session_id, %{transport: :http}}
+
+      assert {:ok, %{initialized: true, metadata: %{transport: :http}}} =
+               session_state(session_id)
     end
 
     test "rejects a duplicate request ID in the same legacy session before dispatch" do
-      {:ok, _} = TrackingSessionManager.start_link(self())
-
       opts =
-        HttpPlug.init(
+        mount_opts(
           handler: TestServer,
           protocol_mode: :prefer_modern,
-          session_manager: TrackingSessionManager,
           sse_enabled: false
         )
 
-      initialized = initialize_session_conn(991) |> HttpPlug.call(opts)
+      initialized = initialize_session_conn(991) |> call_http(opts)
       assert initialized.status == 200
       assert [session_id] = get_resp_header(initialized, "mcp-session-id")
 
@@ -841,7 +671,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_req_header("mcp-session-id", session_id)
-        |> HttpPlug.call(opts)
+        |> call_http(opts)
 
       assert duplicate.status == 400
       assert get_resp_header(duplicate, "mcp-session-id") == [session_id]
@@ -856,16 +686,16 @@ defmodule Arbor.MCP.HttpPlugTest do
     end
 
     test "rejects a second initialize for an established legacy session" do
-      opts = HttpPlug.init(handler: TestServer, sse_enabled: false)
+      opts = mount_opts(handler: TestServer, sse_enabled: false)
 
-      initialized = initialize_session_conn(1_101) |> HttpPlug.call(opts)
+      initialized = initialize_session_conn(1_101) |> call_http(opts)
       assert initialized.status == 200
       assert [session_id] = get_resp_header(initialized, "mcp-session-id")
 
       duplicate =
         initialize_session_conn(1_102)
         |> put_req_header("mcp-session-id", session_id)
-        |> HttpPlug.call(opts)
+        |> call_http(opts)
 
       assert duplicate.status == 400
       assert get_resp_header(duplicate, "mcp-session-id") == [session_id]
@@ -877,8 +707,7 @@ defmodule Arbor.MCP.HttpPlugTest do
     end
 
     test "rejects requests on a legacy session whose initialization has not completed" do
-      session_id = SessionManager.create_session(%{transport: :http})
-      on_exit(fn -> SessionManager.terminate_session(session_id) end)
+      session_id = RuntimeHTTPFixture.session(runtime_for(TestServer), false)
 
       rejected =
         session_request_conn()
@@ -887,7 +716,7 @@ defmodule Arbor.MCP.HttpPlugTest do
           "mcp-protocol-version",
           Arbor.MCP.Internal.VersionRegistry.latest_version()
         )
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert rejected.status == 400
 
@@ -896,32 +725,22 @@ defmodule Arbor.MCP.HttpPlugTest do
     end
 
     test "terminates and does not expose a session when initialization fails" do
-      handler = fn _request -> {:error, :initialization_failed} end
+      handler = __MODULE__.FailedInitializeServer
 
       failed =
         initialize_session_conn(1_103)
-        |> HttpPlug.call(HttpPlug.init(handler: handler, sse_enabled: false))
+        |> call_http(mount_opts(handler: handler, sse_enabled: false))
 
       assert failed.status == 500
       assert get_resp_header(failed, "mcp-session-id") == []
     end
 
     test "rejects a successful initialize response with a different supported version" do
-      handler = fn request ->
-        %{
-          "jsonrpc" => "2.0",
-          "id" => request["id"],
-          "result" => %{
-            "protocolVersion" => "2025-03-26",
-            "capabilities" => %{},
-            "serverInfo" => %{"name" => "bad-version", "version" => "1"}
-          }
-        }
-      end
+      handler = __MODULE__.WrongVersionServer
 
       rejected =
         initialize_session_conn(1_104)
-        |> HttpPlug.call(HttpPlug.init(handler: handler, sse_enabled: false))
+        |> call_http(mount_opts(handler: handler, sse_enabled: false))
 
       assert rejected.status == 503
       assert get_resp_header(rejected, "mcp-session-id") == []
@@ -931,17 +750,16 @@ defmodule Arbor.MCP.HttpPlugTest do
     end
 
     test "fails closed with a bounded response when a legacy session reaches its ID cap" do
-      {:ok, _} = TrackingSessionManager.start_link(self(), max_request_ids: 1)
+      Process.put(:http_session_limits, max_request_ids_per_session: 1)
 
       opts =
-        HttpPlug.init(
+        mount_opts(
           handler: TestServer,
           protocol_mode: :prefer_modern,
-          session_manager: TrackingSessionManager,
           sse_enabled: false
         )
 
-      initialized = initialize_session_conn(992) |> HttpPlug.call(opts)
+      initialized = initialize_session_conn(992) |> call_http(opts)
       assert initialized.status == 200
       assert [session_id] = get_resp_header(initialized, "mcp-session-id")
 
@@ -951,7 +769,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_req_header("mcp-session-id", session_id)
-        |> HttpPlug.call(opts)
+        |> call_http(opts)
 
       assert rejected.status == 429
       assert get_resp_header(rejected, "retry-after") == ["1"]
@@ -966,25 +784,12 @@ defmodule Arbor.MCP.HttpPlugTest do
              } = Jason.decode!(rejected.resp_body)
     end
 
-    for claim_behavior <- [:invalid, :exit] do
-      test "rolls back initialization when request-ID tracking returns #{claim_behavior}" do
-        claim_behavior = unquote(claim_behavior)
-        {:ok, _} = TrackingSessionManager.start_link(self(), claim_behavior: claim_behavior)
-
-        failed =
-          initialize_session_conn(1_105)
-          |> HttpPlug.call(
-            HttpPlug.init(
-              handler: TestServer,
-              session_manager: TrackingSessionManager,
-              sse_enabled: false
-            )
-          )
-
-        assert failed.status == 503
-        assert get_resp_header(failed, "mcp-session-id") == []
-        assert_received {:session_terminated, "tracked_session"}
+    test "a raw manager override is rejected before runtime or request effects" do
+      assert_raise ArgumentError, ~r/retired/, fn ->
+        HttpPlug.init(runtime: __MODULE__.Unavailable, session_manager: SessionManager)
       end
+
+      assert is_nil(Process.whereis(SessionManager))
     end
 
     test "rejects a well-formed but unknown UUID session id" do
@@ -993,19 +798,22 @@ defmodule Arbor.MCP.HttpPlugTest do
       conn =
         initialize_session_conn()
         |> put_req_header("mcp-session-id", uuid)
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 404
       assert get_resp_header(conn, "mcp-session-id") == []
     end
 
     test "returns a bounded overload response when session capacity is exhausted" do
+      Process.put(:http_session_limits, max_sessions: 1)
+      opts = mount_opts(handler: TestServer)
+      assert initialize_session_conn(70_001) |> call_http(opts) |> Map.get(:status) == 200
+
       conn =
         initialize_session_conn()
-        |> HttpPlug.call(
-          HttpPlug.init(
+        |> call_http(
+          mount_opts(
             handler: TestServer,
-            session_manager: FullSessionManager,
             sse_enabled: false
           )
         )
@@ -1018,20 +826,20 @@ defmodule Arbor.MCP.HttpPlugTest do
     end
 
     test "requires initialization before a headerless legacy request" do
-      session_count = length(SessionManager.list_sessions())
+      session_count = session_count()
 
       conn =
         session_request_conn()
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 400
       assert get_resp_header(conn, "mcp-session-id") == []
       assert Jason.decode!(conn.resp_body)["error"]["message"] == "Session ID required"
-      assert length(SessionManager.list_sessions()) == session_count
+      assert session_count() == session_count
     end
 
     test "does not mint a session for a headerless legacy notification" do
-      session_count = length(SessionManager.list_sessions())
+      session_count = session_count()
 
       notification = %{
         "jsonrpc" => "2.0",
@@ -1042,11 +850,11 @@ defmodule Arbor.MCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(notification))
         |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 400
       assert get_resp_header(conn, "mcp-session-id") == []
-      assert length(SessionManager.list_sessions()) == session_count
+      assert session_count() == session_count
     end
 
     test "rejects session ids longer than 128 bytes without echoing them" do
@@ -1055,7 +863,7 @@ defmodule Arbor.MCP.HttpPlugTest do
       conn =
         session_request_conn()
         |> put_req_header("mcp-session-id", long_id)
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 400
       assert get_resp_header(conn, "mcp-session-id") == []
@@ -1070,7 +878,7 @@ defmodule Arbor.MCP.HttpPlugTest do
       base = session_request_conn()
       conn = %{base | req_headers: [{"mcp-session-id", "bad\nid"} | base.req_headers]}
 
-      conn = HttpPlug.call(conn, HttpPlug.init(handler: TestServer, sse_enabled: false))
+      conn = call_http(conn, mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 400
       assert get_resp_header(conn, "mcp-session-id") == []
@@ -1081,7 +889,7 @@ defmodule Arbor.MCP.HttpPlugTest do
       conn =
         session_request_conn()
         |> put_req_header("mcp-session-id", "not a valid id!")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 400
       refute conn.resp_body =~ "not a valid id!"
@@ -1091,7 +899,7 @@ defmodule Arbor.MCP.HttpPlugTest do
       conn =
         session_request_conn()
         |> put_req_header("x-session-id", "bad session id")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 400
     end
@@ -1100,7 +908,7 @@ defmodule Arbor.MCP.HttpPlugTest do
       conn =
         conn(:get, "/sse")
         |> put_req_header("mcp-session-id", "bad session id")
-        |> HttpPlug.call(HttpPlug.init(sse_enabled: true))
+        |> call_http(mount_opts(sse_enabled: true))
 
       assert conn.status == 400
     end
@@ -1109,7 +917,7 @@ defmodule Arbor.MCP.HttpPlugTest do
       conn =
         conn(:delete, "/mcp")
         |> put_req_header("mcp-session-id", "bad session id")
-        |> HttpPlug.call(HttpPlug.init([]))
+        |> call_http(mount_opts([]))
 
       assert conn.status == 400
     end
@@ -1118,7 +926,7 @@ defmodule Arbor.MCP.HttpPlugTest do
   describe "modern-only HTTP methods" do
     test "rejects GET and DELETE on the MCP endpoint with 405" do
       opts =
-        HttpPlug.init(
+        mount_opts(
           handler: TestServer,
           path: "/mcp",
           protocol_mode: :modern_only,
@@ -1128,12 +936,12 @@ defmodule Arbor.MCP.HttpPlugTest do
       get_conn =
         conn(:get, "/mcp")
         |> put_req_header("accept", "text/event-stream")
-        |> HttpPlug.call(opts)
+        |> call_http(opts)
 
       delete_conn =
         conn(:delete, "/mcp")
         |> put_req_header("mcp-session-id", "legacy-session")
-        |> HttpPlug.call(opts)
+        |> call_http(opts)
 
       assert get_conn.status == 405
       assert delete_conn.status == 405
@@ -1141,7 +949,7 @@ defmodule Arbor.MCP.HttpPlugTest do
     end
 
     test "rejects GET and DELETE at the mount root behind a router forward" do
-      opts = HttpPlug.init(handler: TestServer, protocol_mode: :modern_only)
+      opts = mount_opts(handler: TestServer, protocol_mode: :modern_only)
 
       # Phoenix `scope "/api/mcp" do forward "/", Arbor.MCP.HttpPlug` strips the
       # prefix into script_name and leaves an empty path_info.
@@ -1153,13 +961,13 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:get, "/api/mcp")
         |> put_req_header("accept", "text/event-stream")
         |> forwarded.()
-        |> HttpPlug.call(opts)
+        |> call_http(opts)
 
       delete_conn =
         conn(:delete, "/api/mcp")
         |> put_req_header("mcp-session-id", "legacy-session")
         |> forwarded.()
-        |> HttpPlug.call(opts)
+        |> call_http(opts)
 
       assert get_conn.status == 405
       assert delete_conn.status == 405
@@ -1169,14 +977,14 @@ defmodule Arbor.MCP.HttpPlugTest do
 
   describe "pipeline termination" do
     test "halts the conn after responding" do
-      opts = HttpPlug.init(handler: TestServer, sse_enabled: false)
+      opts = mount_opts(handler: TestServer, sse_enabled: false)
 
       post_conn =
         conn(:post, "/", Jason.encode!(%{"jsonrpc" => "2.0", "method" => "ping", "id" => 1}))
         |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(opts)
+        |> call_http(opts)
 
-      get_conn = conn(:get, "/") |> HttpPlug.call(opts)
+      get_conn = conn(:get, "/") |> call_http(opts)
 
       assert post_conn.state == :sent
       assert post_conn.halted
@@ -1202,7 +1010,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_modern_headers(request)
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 400
       assert Jason.decode!(conn.resp_body)["error"]["code"] == -32602
@@ -1225,8 +1033,8 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_modern_headers(request)
-        |> HttpPlug.call(
-          HttpPlug.init(
+        |> call_http(
+          mount_opts(
             handler: TestServer,
             server_info: %{name: "configured-server", version: "1"},
             sse_enabled: false
@@ -1238,8 +1046,8 @@ defmodule Arbor.MCP.HttpPlugTest do
       assert result["resultType"] == "complete"
 
       assert result["_meta"]["io.modelcontextprotocol/serverInfo"] == %{
-               "name" => "configured-server",
-               "version" => "1"
+               "name" => "test",
+               "version" => "1.0.0"
              }
     end
 
@@ -1260,8 +1068,8 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_modern_headers(request)
-        |> HttpPlug.call(
-          HttpPlug.init(
+        |> call_http(
+          mount_opts(
             handler: TestServer,
             server_info: %{name: "discoverable", version: "1"},
             protocol_mode: :modern_only,
@@ -1297,7 +1105,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_modern_headers(request)
-        |> HttpPlug.call(HttpPlug.init(handler: CapabilityErrorServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: CapabilityErrorServer, sse_enabled: false))
 
       assert conn.status == 400
       error = Jason.decode!(conn.resp_body)["error"]
@@ -1311,7 +1119,7 @@ defmodule Arbor.MCP.HttpPlugTest do
       missing =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert missing.status == 400
       assert Jason.decode!(missing.resp_body)["error"]["code"] == -32020
@@ -1321,7 +1129,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         |> put_req_header("content-type", "application/json")
         |> put_modern_headers(request)
         |> put_req_header("mcp-method", "resources/list")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert mismatched.status == 400
       assert Jason.decode!(mismatched.resp_body)["error"]["code"] == -32020
@@ -1345,7 +1153,7 @@ defmodule Arbor.MCP.HttpPlugTest do
           |> put_req_header("content-type", "application/json")
           |> put_req_header("mcp-protocol-version", "2026-07-28")
           |> put_req_header("mcp-method", "server/discover")
-          |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+          |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
         assert conn.status == 400
         error = Jason.decode!(conn.resp_body)["error"]
@@ -1367,7 +1175,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         |> put_req_header("content-type", "application/json")
         |> put_modern_headers(request)
         |> put_req_header("mcp-name", RequestHeaders.encode_value("test_tool"))
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert accepted.status == 200, accepted.resp_body
       assert get_resp_header(accepted, "mcp-protocol-version") == ["2026-07-28"]
@@ -1377,7 +1185,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         |> put_req_header("content-type", "application/json")
         |> put_modern_headers(request)
         |> put_req_header("mcp-name", "another_tool")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert rejected.status == 400
       assert Jason.decode!(rejected.resp_body)["error"]["code"] == -32020
@@ -1390,7 +1198,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_modern_headers(request)
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 404
       assert Jason.decode!(conn.resp_body)["error"]["code"] == -32601
@@ -1409,12 +1217,12 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_modern_headers(request)
-        |> HttpPlug.call(
-          HttpPlug.init(
+        |> call_http(
+          mount_opts(
             handler: TestServer,
             protocol_mode: :modern_only,
             subscription_keepalive_interval_ms: 5,
-            subscription_max_lifetime_ms: 25
+            subscription_max_lifetime_ms: 1000
           )
         )
 
@@ -1459,7 +1267,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_modern_headers(request)
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, protocol_mode: :modern_only))
+        |> call_http(mount_opts(handler: TestServer, protocol_mode: :modern_only))
 
       assert conn.status == 200
       assert get_resp_header(conn, "content-type") == ["application/json; charset=utf-8"]
@@ -1481,9 +1289,9 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_modern_headers(request)
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, protocol_mode: :modern_only))
+        |> call_http(mount_opts(handler: TestServer, protocol_mode: :modern_only))
 
-      assert conn.status == 200
+      assert conn.status == 400
       assert get_resp_header(conn, "content-type") == ["application/json; charset=utf-8"]
 
       error = Jason.decode!(conn.resp_body)["error"]
@@ -1508,7 +1316,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         |> put_modern_headers(request)
         |> put_req_header("mcp-param-region", "us-west1")
         |> put_req_header("mcp-param-limit", "42.0")
-        |> HttpPlug.call(HttpPlug.init(handler: HeaderToolServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: HeaderToolServer, sse_enabled: false))
 
       assert accepted.status == 200, accepted.resp_body
 
@@ -1517,7 +1325,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         |> put_req_header("content-type", "application/json")
         |> put_modern_headers(request)
         |> put_req_header("mcp-param-region", "us-west1")
-        |> HttpPlug.call(HttpPlug.init(handler: HeaderToolServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: HeaderToolServer, sse_enabled: false))
 
       assert missing.status == 400
       assert Jason.decode!(missing.resp_body)["error"]["code"] == -32020
@@ -1528,7 +1336,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         |> put_modern_headers(request)
         |> put_req_header("mcp-param-region", "eu-central1")
         |> put_req_header("mcp-param-limit", "42")
-        |> HttpPlug.call(HttpPlug.init(handler: HeaderToolServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: HeaderToolServer, sse_enabled: false))
 
       assert mismatched.status == 400
       assert Jason.decode!(mismatched.resp_body)["error"]["code"] == -32020
@@ -1565,7 +1373,7 @@ defmodule Arbor.MCP.HttpPlugTest do
           |> put_modern_headers(request)
           |> put_req_header("mcp-param-region", secret)
           |> put_req_header("mcp-param-limit", "42")
-          |> HttpPlug.call(HttpPlug.init(handler: HeaderToolServer, sse_enabled: false))
+          |> call_http(mount_opts(handler: HeaderToolServer, sse_enabled: false))
         end)
 
       refute log =~ secret
@@ -1589,7 +1397,7 @@ defmodule Arbor.MCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 200
       assert get_resp_header(conn, "content-type") == ["application/json; charset=utf-8"]
@@ -1617,7 +1425,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> Plug.Parsers.call(Plug.Parsers.init(parsers: [:json], json_decoder: Jason))
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 200
 
@@ -1644,7 +1452,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> Plug.Parsers.call(Plug.Parsers.init(parsers: [:json], json_decoder: Jason))
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 200
     end
@@ -1656,7 +1464,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> Plug.Parsers.call(Plug.Parsers.init(parsers: [:json], json_decoder: Jason))
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 200
     end
@@ -1666,7 +1474,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", "")
         |> put_req_header("content-type", "application/json")
         |> Plug.Parsers.call(Plug.Parsers.init(parsers: [:json], json_decoder: Jason))
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       {:ok, response} = Jason.decode(conn.resp_body)
       assert response["error"]["code"] == -32_700
@@ -1683,7 +1491,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_active_legacy_session()
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 200
 
@@ -1709,7 +1517,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_active_legacy_session()
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 200
 
@@ -1741,8 +1549,8 @@ defmodule Arbor.MCP.HttpPlugTest do
       conn =
         conn(:post, "/mcp", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(
-          HttpPlug.init(
+        |> call_http(
+          mount_opts(
             handler: RequestAwareServer,
             handler_opts: handler_opts,
             sse_enabled: false
@@ -1783,7 +1591,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_active_legacy_session()
-        |> HttpPlug.call(opts)
+        |> call_http(opts)
 
       assert conn.status == 200
 
@@ -1796,7 +1604,7 @@ defmodule Arbor.MCP.HttpPlugTest do
       conn =
         conn(:post, "/", "invalid json")
         |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer))
+        |> call_http(mount_opts(handler: TestServer))
 
       assert conn.status == 400
 
@@ -1810,7 +1618,7 @@ defmodule Arbor.MCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!("not a request"))
         |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer))
+        |> call_http(mount_opts(handler: TestServer))
 
       assert conn.status == 400
 
@@ -1825,7 +1633,7 @@ defmodule Arbor.MCP.HttpPlugTest do
       conn =
         conn(:post, "/", body)
         |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, body_limit: 8))
+        |> call_http(mount_opts(handler: TestServer, body_limit: 8))
 
       assert conn.status == 413
       assert conn.resp_body == "Request body too large"
@@ -1847,8 +1655,8 @@ defmodule Arbor.MCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(
-          HttpPlug.init(
+        |> call_http(
+          mount_opts(
             handler: TestServer,
             oauth_enabled: true,
             resource: "https://mcp.test/",
@@ -1873,7 +1681,7 @@ defmodule Arbor.MCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_active_legacy_session()
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> call_http(mount_opts(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 200
 
@@ -1881,27 +1689,12 @@ defmodule Arbor.MCP.HttpPlugTest do
       assert response["jsonrpc"] == "2.0"
       assert response["id"] == 4
       assert response["error"]["code"] == -32601
-      assert response["error"]["message"] == "Method not found"
+      assert response["error"]["message"] == "Method not found: unknown/method"
     end
 
-    test "handles missing handler" do
-      request = %{
-        "jsonrpc" => "2.0",
-        "method" => "initialize",
-        "id" => 5
-      }
-
-      conn =
-        conn(:post, "/", Jason.encode!(request))
-        |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(HttpPlug.init([]))
-
-      assert conn.status == 500
-
-      {:ok, response} = Jason.decode(conn.resp_body)
-      assert response["jsonrpc"] == "2.0"
-      assert response["error"]["code"] == -32603
-      assert response["error"]["message"] == "Internal error"
+    test "requires an explicitly configured runtime before request effects" do
+      assert_raise ArgumentError, ~r/runtime/, fn -> HttpPlug.init([]) end
+      assert is_nil(Process.whereis(SessionManager))
     end
   end
 
@@ -1909,7 +1702,7 @@ defmodule Arbor.MCP.HttpPlugTest do
     test "does not enable the deprecated HTTP+SSE route by default" do
       conn =
         conn(:get, "/sse")
-        |> HttpPlug.call(HttpPlug.init([]))
+        |> call_http(mount_opts([]))
 
       assert conn.status == 404
       assert conn.resp_body == "SSE not enabled"
@@ -1918,7 +1711,7 @@ defmodule Arbor.MCP.HttpPlugTest do
     test "handles SSE connection request" do
       conn =
         conn(:get, "/sse")
-        |> HttpPlug.call(HttpPlug.init(legacy_http_sse: true))
+        |> call_http(mount_opts(legacy_http_sse: true))
 
       assert conn.status == 200
       assert get_resp_header(conn, "content-type") == ["text/event-stream"]
@@ -1932,8 +1725,8 @@ defmodule Arbor.MCP.HttpPlugTest do
     test "supports configured legacy GET and POST paths" do
       conn =
         conn(:get, "/events")
-        |> HttpPlug.call(
-          HttpPlug.init(
+        |> call_http(
+          mount_opts(
             legacy_http_sse: true,
             legacy_http_sse_path: "/events",
             legacy_http_sse_post_path: "/inbox"
@@ -1948,7 +1741,7 @@ defmodule Arbor.MCP.HttpPlugTest do
     test "rejects SSE when disabled" do
       conn =
         conn(:get, "/sse")
-        |> HttpPlug.call(HttpPlug.init(sse_enabled: false))
+        |> call_http(mount_opts(sse_enabled: false))
 
       assert conn.status == 404
       assert conn.resp_body == "SSE not enabled"
@@ -1958,21 +1751,17 @@ defmodule Arbor.MCP.HttpPlugTest do
     test "uses provided session ID" do
       # We can't easily test the full SSE flow in sync tests
       # but we can verify the headers are processed
-      opts = HttpPlug.init(sse_enabled: true)
+      opts = mount_opts(sse_enabled: true)
 
-      session_id = SessionManager.create_session(%{transport: :sse})
-
-      on_exit(fn ->
-        SessionRegistry.unregister(session_id)
-        SessionManager.terminate_session(session_id)
-      end)
+      first = conn(:get, "/sse") |> call_http(opts)
+      session_id = alias_session_id(first)
 
       conn =
         conn(:get, "/sse")
-        |> put_req_header("x-session-id", session_id)
+        |> put_req_header("mcp-session-id", session_id)
 
       # Test that the plug would start SSE (indicated by chunked response)
-      result_conn = HttpPlug.call(conn, opts)
+      result_conn = call_http(conn, opts)
       assert result_conn.status == 200
       assert get_resp_header(result_conn, "content-type") == ["text/event-stream"]
     end
@@ -1980,121 +1769,44 @@ defmodule Arbor.MCP.HttpPlugTest do
     test "modern-only mode rejects the deprecated GET route with its method policy" do
       conn =
         conn(:get, "/sse")
-        |> HttpPlug.call(HttpPlug.init(protocol_mode: :modern_only, legacy_http_sse: true))
+        |> call_http(mount_opts(protocol_mode: :modern_only, legacy_http_sse: true))
 
       assert conn.status == 405
       assert get_resp_header(conn, "allow") == ["POST"]
       assert Jason.decode!(conn.resp_body) == %{"error" => "Method not allowed"}
     end
 
-    test "legacy POST sends its JSON-RPC response on the open SSE stream" do
-      session_id = SessionManager.create_session(%{transport: :sse})
+    test "legacy POST persists its response in the addressed alias session" do
+      opts = mount_opts(handler: TestServer, legacy_http_sse: true, sse_mode: :oneshot)
+      hello = conn(:get, "/sse") |> call_http(opts)
+      id = alias_session_id(hello)
+      request = initialize_session_conn(77) |> Map.get(:adapter) |> elem(1) |> Map.get(:req_body)
 
-      on_exit(fn ->
-        SessionRegistry.unregister(session_id)
-        SessionManager.terminate_session(session_id)
-      end)
-
-      {:ok, handler} =
-        SSEHandler.start_link(%LegacyCaptureConn{}, session_id, %{
-          conn_module: LegacyCaptureConn,
-          session_manager: SessionManager,
-          initial_sse_event: {"endpoint", {:raw, "/message?sessionId=#{session_id}"}}
-        })
-
-      :ok = SessionRegistry.register(session_id, handler)
-
-      request = %{
-        "jsonrpc" => "2.0",
-        "method" => "initialize",
-        "params" => %{
-          "protocolVersion" => "2024-11-05",
-          "capabilities" => %{},
-          "clientInfo" => %{"name" => "legacy-client", "version" => "1.0.0"}
-        },
-        "id" => 77
-      }
-
-      conn =
-        conn(:post, "/message?sessionId=#{session_id}", Jason.encode!(request))
+      result =
+        conn(:post, "/message?sessionId=#{id}", request)
         |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, legacy_http_sse: true))
+        |> call_http(opts)
 
-      assert conn.status == 202
-      assert conn.resp_body == ""
+      assert result.status == 202
+      {:ok, service} = Runtime.service(opts.runtime, :sessions)
+      {:ok, lease} = SessionManager.ensure_session(service, id, %{}, [])
 
-      chunks = :sys.get_state(handler).conn.chunks
-      message = List.last(chunks)
-      assert message =~ "event: message"
-      assert message =~ ~s("id":77)
-      assert message =~ ~s("protocolVersion":"2024-11-05")
+      assert {:ok, %{events: [%{data: response}]}} =
+               SessionManager.replay_page(service, lease, nil, [])
 
-      assert [%{type: "message", data: persisted_response}] =
-               SessionManager.replay_events_after(session_id, nil)
-
-      assert persisted_response["id"] == 77
-      assert persisted_response["result"]["protocolVersion"] == "2024-11-05"
-
-      SSEHandler.close(handler)
-    end
-
-    test "legacy initialization rolls back when its SSE response cannot be delivered" do
-      session_id = SessionManager.create_session(%{transport: :sse})
-
-      {:ok, handler} =
-        SSEHandler.start_link(%LegacyCaptureConn{}, session_id, %{
-          conn_module: LegacyCaptureConn,
-          session_manager: SessionManager,
-          initial_sse_event: {"endpoint", {:raw, "/message?sessionId=#{session_id}"}}
-        })
-
-      Process.unlink(handler)
-      :ok = SessionRegistry.register(session_id, handler)
-
-      on_exit(fn ->
-        SessionRegistry.unregister(session_id)
-        SessionManager.terminate_session(session_id)
-      end)
-
-      request = %{
-        "jsonrpc" => "2.0",
-        "method" => "initialize",
-        "params" => %{
-          "protocolVersion" => "2024-11-05",
-          "capabilities" => %{},
-          "clientInfo" => %{"name" => "legacy-client", "version" => "1.0.0"}
-        },
-        "id" => 78
-      }
-
-      failing_handler = fn request ->
-        Process.exit(handler, :kill)
-
-        %{
-          "jsonrpc" => "2.0",
-          "id" => request["id"],
-          "result" => %{
-            "protocolVersion" => "2024-11-05",
-            "capabilities" => %{},
-            "serverInfo" => %{"name" => "legacy", "version" => "1"}
-          }
-        }
-      end
-
-      failed =
-        conn(:post, "/message?sessionId=#{session_id}", Jason.encode!(request))
-        |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(HttpPlug.init(handler: failing_handler, legacy_http_sse: true))
-
-      assert failed.status == 404
-      assert {:ok, %{status: :terminated}} = SessionManager.get_session(session_id)
+      assert response["id"] == 77
+      assert response["result"]["protocolVersion"] == "2025-06-18"
     end
 
     test "legacy POST rejects an unknown SSE session" do
       conn =
-        conn(:post, "/message?sessionId=missing", Jason.encode!(%{"jsonrpc" => "2.0"}))
+        conn(
+          :post,
+          "/message?sessionId=missing",
+          Jason.encode!(%{"jsonrpc" => "2.0", "id" => 78, "method" => "ping"})
+        )
         |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, legacy_http_sse: true))
+        |> call_http(mount_opts(handler: TestServer, legacy_http_sse: true))
 
       assert conn.status == 404
       assert Jason.decode!(conn.resp_body)["error"]["message"] == "Session not found"
@@ -2105,7 +1817,7 @@ defmodule Arbor.MCP.HttpPlugTest do
     test "returns 404 for unknown paths" do
       conn =
         conn(:get, "/unknown/path")
-        |> HttpPlug.call(HttpPlug.init([]))
+        |> call_http(mount_opts([]))
 
       assert conn.status == 404
       assert get_resp_header(conn, "content-type") == ["application/json; charset=utf-8"]
@@ -2117,9 +1829,103 @@ defmodule Arbor.MCP.HttpPlugTest do
     test "returns 404 for unsupported methods" do
       conn =
         conn(:put, "/")
-        |> HttpPlug.call(HttpPlug.init([]))
+        |> call_http(mount_opts([]))
 
       assert conn.status == 404
     end
+  end
+
+  defmodule FailedInitializeServer do
+    use Arbor.MCP.Server.Handler
+    def handle_initialize(_params, state), do: {:error, :initialization_failed, state}
+  end
+
+  defmodule WrongVersionServer do
+    use Arbor.MCP.Server.Handler
+
+    def handle_initialize(_params, state),
+      do:
+        {:ok,
+         %{
+           protocolVersion: "2025-03-26",
+           capabilities: %{},
+           serverInfo: %{name: "wrong", version: "1"}
+         }, state}
+  end
+
+  defp alias_session_id(conn) do
+    [_, endpoint] = Regex.run(~r/event: endpoint\s+data: ([^\r\n]+)/, conn.resp_body)
+    endpoint |> URI.parse() |> Map.fetch!(:query) |> URI.decode_query() |> Map.fetch!("sessionId")
+  end
+
+  defp runtime_for(handler, options \\ []) do
+    options = Keyword.merge([handler_args: [], request_timeout_ms: 10_000], options)
+    key = {__MODULE__, handler, options, Process.get(:http_session_limits, [])}
+
+    case Process.get(key) do
+      nil ->
+        services = [sessions: [options: Process.get(:http_session_limits, [])]]
+        runtime = RuntimeHTTPFixture.start(handler, Keyword.put(options, :services, services))
+        Process.put(key, runtime)
+        Process.put(:http_runtime, runtime)
+        runtime
+
+      runtime ->
+        Process.put(:http_runtime, runtime)
+        runtime
+    end
+  end
+
+  defp mount_opts(options) do
+    {handler, options} = Keyword.pop(options, :handler, TestServer)
+    {arguments, options} = Keyword.pop(options, :handler_args, [])
+    {timeout, options} = Keyword.pop(options, :request_timeout_ms, 10_000)
+
+    {legacy, options} =
+      Keyword.pop(options, :sse_enabled, Keyword.get(options, :legacy_http_sse, false))
+
+    runtime = runtime_for(handler, handler_args: arguments, request_timeout_ms: timeout)
+
+    options =
+      options |> Keyword.put(:legacy_http_sse, legacy) |> Keyword.put_new(:sse_mode, :oneshot)
+
+    HttpPlug.init(Keyword.put(options, :runtime, runtime))
+  end
+
+  defp call_http(conn, %{runtime: _runtime} = options) do
+    conn =
+      if get_req_header(conn, "x-fixture-create-session") == ["true"] do
+        metadata = %{
+          transport_endpoint:
+            if(conn.script_name == [],
+              do: options.endpoint,
+              else: "/" <> Enum.join(conn.script_name, "/")
+            )
+        }
+
+        id = RuntimeHTTPFixture.session(options.runtime, true, metadata)
+
+        conn =
+          delete_req_header(conn, "x-fixture-create-session")
+          |> put_req_header("mcp-session-id", id)
+
+        if get_req_header(conn, "mcp-protocol-version") == [],
+          do: put_req_header(conn, "mcp-protocol-version", "2025-06-18"),
+          else: conn
+      else
+        conn
+      end
+
+    HttpPlug.call(conn, options)
+  end
+
+  defp call_http(conn, options), do: call_http(conn, mount_opts(Map.to_list(options)))
+
+  defp session_state(id), do: RuntimeHTTPFixture.session_state(Process.get(:http_runtime), id)
+
+  defp session_count do
+    {:ok, service} = Runtime.service(runtime_for(TestServer), :sessions)
+    {:ok, stats} = SessionManager.get_stats(service, [])
+    stats.sessions
   end
 end

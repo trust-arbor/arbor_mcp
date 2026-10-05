@@ -1,5 +1,5 @@
 defmodule Arbor.MCP.Server.RuntimeServicesTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.Server.{HandlerServer, ReplayCache, Runtime, Subscriptions}
   alias Arbor.MCP.Server.Runtime.{Admission, Ref, ServiceAdapter, Services}
@@ -219,6 +219,7 @@ defmodule Arbor.MCP.Server.RuntimeServicesTest do
   end
 
   test "callbacks automatically use isolated owned task stores with equal IDs" do
+    start_supervised!({Tasks.Store.ETS, []})
     a = start_runtime()
     b = start_runtime()
 
@@ -421,6 +422,7 @@ defmodule Arbor.MCP.Server.RuntimeServicesTest do
   end
 
   test "disabled or stale explicit task services never fall back to an available global task" do
+    start_supervised!({Tasks.Store.ETS, []})
     id = "global-#{System.unique_integer([:positive])}"
     assert {:ok, _task} = Tasks.create("legacy", %{}, id: id, notify: false)
     runtime = start_runtime(services: [tasks: nil])
@@ -436,6 +438,7 @@ defmodule Arbor.MCP.Server.RuntimeServicesTest do
   end
 
   test "workers retain captured service and owner without inheriting callback context" do
+    start_supervised!({Tasks.Store.ETS, []})
     runtime = start_runtime()
     assert {:error, :no_runtime_context} = Runtime.service(:tasks)
 

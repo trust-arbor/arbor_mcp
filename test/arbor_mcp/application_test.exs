@@ -1,124 +1,77 @@
 defmodule Arbor.MCP.ApplicationTest do
   use ExUnit.Case, async: false
 
-  setup do
-    # These tests own the application lifecycle, so they stop it first and take
-    # over supervision themselves.
-    Application.stop(:arbor_mcp)
-    # Give time for cleanup
-    Process.sleep(10)
+  @server_owners [
+    Arbor.MCP.Server.ReplayCache.ETS,
+    Arbor.MCP.Tasks.Store.ETS,
+    Arbor.MCP.Server.Subscriptions,
+    Arbor.MCP.HttpPlug.SessionRegistry,
+    Arbor.MCP.Server.Cancellation,
+    Arbor.MCP.SubscriptionRegistry,
+    Arbor.MCP.SessionManager,
+    Arbor.MCP.ProgressTracker
+  ]
 
-    # Restore it afterwards: later tests (and any supervised singleton such as
-    # Arbor.MCP.SessionManager) rely on the application being up, and HttpPlug now
-    # fails fast rather than lazily starting a request-linked SessionManager
-    # (audit M14).
-    on_exit(fn ->
-      {:ok, _} = Application.ensure_all_started(:arbor_mcp)
-    end)
+  test "application supervisor owns package facilities and no default server state" do
+    {:ok, _} = Application.ensure_all_started(:arbor_mcp)
+    supervisor = Process.whereis(Arbor.MCP.Supervisor)
+    assert is_pid(supervisor)
+    assert Process.alive?(supervisor)
+    children = Supervisor.which_children(supervisor)
+    ids = Enum.map(children, &elem(&1, 0))
 
-    :ok
-  end
-
-  describe "start/2" do
-    test "starts the application supervisor" do
-      # Start the application
-      assert {:ok, pid} = Arbor.MCP.Application.start(:normal, [])
-      assert is_pid(pid)
-
-      # Verify the supervisor is running
-      assert Process.alive?(pid)
-
-      # Verify it has the correct name
-      assert Process.whereis(Arbor.MCP.Supervisor) == pid
-
-      # Clean up
-      Process.exit(pid, :normal)
+    for owner <- @server_owners do
+      refute owner in ids
+      assert is_nil(Process.whereis(owner))
     end
 
-    test "starts runtime infrastructure" do
-      # Start the application
-      {:ok, sup_pid} = Arbor.MCP.Application.start(:normal, [])
-
-      # Give it a moment to start children
-      Process.sleep(50)
-
-      session_manager_pid = Process.whereis(Arbor.MCP.SessionManager)
-      progress_tracker_pid = Process.whereis(Arbor.MCP.ProgressTracker)
-      task_store_pid = Process.whereis(Arbor.MCP.Tasks.Store.ETS)
-      cancellation_pid = Process.whereis(Arbor.MCP.Server.Cancellation)
-
-      assert is_pid(session_manager_pid)
-      assert Process.alive?(session_manager_pid)
-      assert is_pid(progress_tracker_pid)
-      assert Process.alive?(progress_tracker_pid)
-      assert is_pid(task_store_pid)
-      assert Process.alive?(task_store_pid)
-      assert is_pid(cancellation_pid)
-      assert Process.alive?(cancellation_pid)
-
-      # Clean up
-      Process.exit(sup_pid, :normal)
-    end
-
-    test "supervisor restarts children on failure" do
-      # Trap exits so the linked supervisor doesn't take down the test process
-      Process.flag(:trap_exit, true)
-
-      # Start the application
-      {:ok, sup_pid} = Arbor.MCP.Application.start(:normal, [])
-
-      # Give it a moment to start children
-      Process.sleep(50)
-
-      # Use a simple GenServer child (SessionManager) to test restart behavior.
-      # Registry is a supervisor with internal partitions — killing it with :kill
-      # causes cascading exits that exceed the restart intensity.
-      child_pid = Process.whereis(Arbor.MCP.SessionManager)
-      assert is_pid(child_pid)
-
-      # Kill the child
-      Process.exit(child_pid, :kill)
-
-      # Give supervisor time to restart it
-      Process.sleep(200)
-
-      # Verify a new child is running
-      new_child_pid = Process.whereis(Arbor.MCP.SessionManager)
-      assert is_pid(new_child_pid)
-      assert new_child_pid != child_pid
-      assert Process.alive?(new_child_pid)
-
-      # Clean up
-      Process.exit(sup_pid, :normal)
-    end
-
-    test "uses one_for_one strategy" do
-      # Start the application
-      {:ok, sup_pid} = Arbor.MCP.Application.start(:normal, [])
-
-      # Get supervisor info
-      sup_info = Supervisor.which_children(sup_pid)
-
-      # Verify we have children
-      assert length(sup_info) > 0
-
-      # Verify core runtime children are supervised.
-      assert Enum.any?(sup_info, fn {id, _child, _type, _modules} ->
-               id == Arbor.MCP.SessionManager
-             end)
-
-      # Clean up
-      Process.exit(sup_pid, :normal)
+    for facility <- [
+          Arbor.MCP.Internal.SessionStore.DETS.PathClaims,
+          Arbor.MCP.DynamicSupervisor,
+          Arbor.MCP.Internal.ConsentCache,
+          Arbor.MCP.Client.EraCache,
+          Arbor.MCP.Authorization.OAuthTransactionStore,
+          Arbor.MCP.Reliability.Supervisor
+        ] do
+      assert is_pid(Process.whereis(facility))
     end
   end
 
-  describe "application behaviour" do
-    test "module implements Application behaviour" do
-      assert {:module, Arbor.MCP.Application} = Code.ensure_compiled(Arbor.MCP.Application)
+  test "a package facility restarts without restarting healthy siblings" do
+    cache = Process.whereis(Arbor.MCP.Client.EraCache)
+    consent = Process.whereis(Arbor.MCP.Internal.ConsentCache)
+    monitor = Process.monitor(cache)
+    Process.exit(cache, :kill)
+    assert_receive {:DOWN, ^monitor, :process, ^cache, :killed}, 1_000
+    replacement = wait_for_replacement(cache, 100)
+    assert is_pid(replacement)
+    assert replacement != cache
+    assert Process.alive?(replacement)
+    assert Process.whereis(Arbor.MCP.Internal.ConsentCache) == consent
+  end
 
-      # Check that it exports the required functions
-      functions = Arbor.MCP.Application.__info__(:functions)
-      assert {:start, 2} in functions
+  test "standalone session state remains explicitly supervisable" do
+    manager = start_supervised!({Arbor.MCP.SessionManager, name: nil})
+    session = GenServer.call(manager, {:create_session, %{transport: :test}})
+    assert {:ok, %{id: ^session}} = GenServer.call(manager, {:get_session, session})
+    assert is_nil(Process.whereis(Arbor.MCP.SessionManager))
+  end
+
+  test "module implements the Application callback" do
+    assert {:module, Arbor.MCP.Application} = Code.ensure_compiled(Arbor.MCP.Application)
+    assert function_exported?(Arbor.MCP.Application, :start, 2)
+  end
+
+  defp wait_for_replacement(_old, 0), do: flunk("package facility did not restart")
+
+  defp wait_for_replacement(old, attempts) do
+    case Process.whereis(Arbor.MCP.Client.EraCache) do
+      pid when is_pid(pid) and pid != old ->
+        pid
+
+      _pending ->
+        Process.sleep(5)
+        wait_for_replacement(old, attempts - 1)
     end
   end
 end

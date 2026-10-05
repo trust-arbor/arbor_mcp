@@ -7,10 +7,11 @@ defmodule Arbor.MCP.HttpPlug do
   integration with standard Elixir web applications. Modern SSE responses are
   owned by the POST request that opened them and require no transport flag.
 
-  The deprecated MCP 2024-11-05 HTTP+SSE transport remains available throughout
-  Arbor.MCP 1.x by explicitly setting `legacy_http_sse: true`. The rc.5
-  `sse_enabled: true` option remains an alias for compatibility. New servers do
-  not enable this deprecated transport by default.
+  The deprecated MCP 2024-11-05 HTTP+SSE transport remains available with
+  `legacy_http_sse: true`. The server options `:sse_enabled` and `:use_sse`
+  are retired. New servers do not enable this deprecated transport by default.
+  Every mount requires an explicit supervised Runtime; handler-only mounts and
+  raw session, replay or subscription-manager overrides raise before effects.
 
   ## Runtime mounts and request context
 
@@ -32,7 +33,8 @@ defmodule Arbor.MCP.HttpPlug do
 
       # In the host application's supervision tree
       {Arbor.MCP.Server.Runtime,
-       name: MyApp.MCPRuntime, handler: MyApp.MCPServer, handler_args: []}
+       name: MyApp.MCPRuntime, transport: :mounted_http,
+       handler: MyApp.MCPServer, handler_args: []}
 
       # Borrow the host listener and mount the existing runtime
       {:ok, _} = Plug.Cowboy.http(Arbor.MCP.HttpPlug,
@@ -96,13 +98,13 @@ defmodule Arbor.MCP.HttpPlug do
   ### Deprecated HTTP+SSE (`:legacy_http_sse`, `:sse_mode`)
 
   `:legacy_http_sse` explicitly enables the standalone GET transport used by
-  legacy MCP revisions. It defaults to `false`. `:sse_enabled` is a retained
-  1.x alias and is planned for removal in Arbor.MCP 2.0.
+  legacy MCP revisions. It defaults to `false`.
 
-  `:sse_mode` is `:stream` (default) or `:oneshot`. `:stream` starts an
-  `Arbor.MCP.HttpPlug.SSEHandler` and holds the request open for the lifetime of
-  the stream; `:oneshot` writes a single `connected` event and returns, which
-  suits test harnesses and health checks.
+  `:sse_mode` is `:stream` (default) or `:oneshot`. The captured socket process
+  serves the addressed Runtime session stream. `:oneshot` writes the handshake
+  and any requested replay page, then returns. The deprecated GET handshake
+  announces its POST alias; the Streamable HTTP GET uses a `connected` event.
+  Neither mode starts a standalone global SSEHandler or session manager.
 
   MCP 2026-07-28 does not use that GET stream. A modern
   `subscriptions/listen` POST owns its SSE response directly. The response
@@ -116,6 +118,11 @@ defmodule Arbor.MCP.HttpPlug do
   JSON-RPC response that closes the stream. A disconnect or chunk failure
   cancels that request's worker without affecting other
   requests or subscriptions.
+
+  Mount subscription authorizers are composed with the Runtime service policy;
+  both must authorize. Mount queue, message-byte, aggregate-byte and lifetime
+  limits may only narrow the root caps and original listener cutoff. Configure
+  broader policies in the supervised Runtime descriptor, not on a mount.
 
   ### Session ids
 
@@ -138,6 +145,7 @@ defmodule Arbor.MCP.HttpPlug do
   alias Arbor.MCP.Authorization.ServerGuard
   alias Arbor.MCP.Error.ProtocolError
   alias Arbor.MCP.FeatureFlags
+  alias Arbor.MCP.HttpPlug.Configuration
   alias Arbor.MCP.HttpPlug.Core
   alias Arbor.MCP.HttpPlug.ModernStream
   alias Arbor.MCP.HttpPlug.RequestStream
@@ -161,17 +169,15 @@ defmodule Arbor.MCP.HttpPlug do
   """
   @impl Plug
   def init(opts) do
+    Configuration.validate!(opts)
     validate_mrtr_configuration!(opts)
     protected_resource_metadata = protected_resource_metadata!(opts)
 
-    legacy_http_sse =
-      Keyword.get(opts, :legacy_http_sse, Keyword.get(opts, :sse_enabled, false))
+    legacy_http_sse = Keyword.get(opts, :legacy_http_sse, false)
 
     %{
       runtime: Keyword.get(opts, :runtime),
-      handler: Keyword.get(opts, :handler),
       handler_opts: Keyword.get(opts, :handler_opts, []),
-      handler_call_timeout: Keyword.get(opts, :handler_call_timeout, 10_000),
       server_info: Keyword.get(opts, :server_info, %{name: "ex_mcp_server", version: "1.0.0"}),
       server_capabilities: Keyword.get(opts, :server_capabilities),
       protocol_mode: Keyword.get(opts, :protocol_mode),
@@ -180,11 +186,9 @@ defmodule Arbor.MCP.HttpPlug do
       endpoint: Keyword.get(opts, :path, "/mcp"),
       max_input_requests: Keyword.get(opts, :max_input_requests, 16),
       max_mrtr_bytes: Keyword.get(opts, :max_mrtr_bytes, 1_048_576),
-      replay_cache: Keyword.get(opts, :replay_cache),
       require_replay_protection: Keyword.get(opts, :require_replay_protection, false),
       principal_id: Keyword.get(opts, :principal_id),
       tenant_id: Keyword.get(opts, :tenant_id),
-      subscription_registry: Keyword.get(opts, :subscription_registry),
       authorize_subscription_filter: Keyword.get(opts, :authorize_subscription_filter),
       authorize_subscription_publication: Keyword.get(opts, :authorize_subscription_publication),
       subscription_max_queue: Keyword.get(opts, :subscription_max_queue),
@@ -195,10 +199,6 @@ defmodule Arbor.MCP.HttpPlug do
         subscription_keepalive_interval!(
           Keyword.get(opts, :subscription_keepalive_interval_ms, 15_000)
         ),
-      session_manager: Keyword.get(opts, :session_manager, Arbor.MCP.SessionManager),
-      # Keep the rc.5 field so callers that inspect initialized Plug options do
-      # not lose public shape during 1.x.
-      sse_enabled: legacy_http_sse,
       legacy_http_sse: legacy_http_sse,
       legacy_http_sse_path:
         normalize_legacy_http_sse_path(Keyword.get(opts, :legacy_http_sse_path, "/sse")),
@@ -306,6 +306,7 @@ defmodule Arbor.MCP.HttpPlug do
   """
   @impl Plug
   def call(conn, opts) do
+    Configuration.validate!(Map.to_list(opts), :request)
     conn = RuntimeWriter.capture(conn, Map.get(opts, :runtime))
 
     try do
@@ -693,8 +694,8 @@ defmodule Arbor.MCP.HttpPlug do
       |> get_req_header("accept")
       |> Enum.any?(&String.contains?(&1, "text/event-stream"))
 
-    if legacy_http_sse_enabled?(opts) and accepts_sse do
-      handle_sse_connection(conn, opts)
+    if legacy_http_sse_enabled?(opts) and accepts_sse and mcp_endpoint_path?(conn, opts) do
+      handle_runtime_session_endpoint(conn, opts)
     else
       conn
       |> put_resp_content_type("application/json")
@@ -1014,6 +1015,47 @@ defmodule Arbor.MCP.HttpPlug do
   end
 
   defp reject_mcp_request(
+         {:error, :invalid_session_id},
+         conn,
+         opts,
+         _manager,
+         _id,
+         _reference
+       ),
+       do: reject_invalid_session_id(conn, opts)
+
+  defp reject_mcp_request(
+         {:error, {:runtime_context_rejected, id, reason}},
+         conn,
+         opts,
+         _manager,
+         _session_id,
+         _reference
+       ) do
+    response =
+      case reason do
+        %ProtocolError{} = error -> JSONRPC.error(id, error.code, error.message, error.data)
+        _context -> RequestContext.error_response(reason, id, opts.protocol_mode)
+      end
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> add_protocol_version_header()
+    |> put_resp_content_type("application/json")
+    |> send_resp(400, Jason.encode!(response))
+  end
+
+  defp reject_mcp_request(
+         {:error, {:runtime_session_rejected, id, reason}},
+         conn,
+         opts,
+         _manager,
+         _session_id,
+         _reference
+       ),
+       do: reject_mcp_request({:error, reason}, conn, opts, nil, id, {:existing_session, id})
+
+  defp reject_mcp_request(
          {:error, {:header_mismatch, request_id, message}},
          conn,
          opts,
@@ -1206,13 +1248,19 @@ defmodule Arbor.MCP.HttpPlug do
   end
 
   defp reject_mcp_request(
-         {:error, :session_limit_exceeded},
+         {:error, reason},
          conn,
          opts,
          _session_manager,
          _session_id,
          _session_reference
-       ) do
+       )
+       when reason in [
+              :session_limit_exceeded,
+              :session_capacity_exhausted,
+              :session_exists_or_limit_exceeded,
+              :session_metadata_capacity_exhausted
+            ] do
     session_limit_response(conn, opts)
   end
 
@@ -1360,7 +1408,7 @@ defmodule Arbor.MCP.HttpPlug do
          conn = assign_request_protocol_version_runtime(conn, request),
          :ok <- runtime_route_policy(conn, request),
          :ok <- runtime_array_policy(conn, request, opts),
-         :ok <- runtime_validate_methods(request),
+         :ok <- runtime_validate_methods(conn, request, opts),
          {:ok, token_info} <- authorize_request_runtime(conn, request, opts),
          :ok <- RuntimeWriter.current(conn),
          {:ok, resolved} <- resolve_handler_opts(conn, request, opts),
@@ -1388,6 +1436,10 @@ defmodule Arbor.MCP.HttpPlug do
          :ok <- runtime_response_ready(response) do
       conn =
         conn
+        |> Plug.Conn.put_private(
+          :arbor_mcp_http_initialization,
+          not is_nil(RuntimeSession.initialization_request(request))
+        )
         |> maybe_add_cors_headers(opts)
         |> add_protocol_version_header()
         |> maybe_put_session_header(RuntimeSession.id(session))
@@ -1448,10 +1500,36 @@ defmodule Arbor.MCP.HttpPlug do
 
   defp runtime_array_policy(_conn, _request, _opts), do: :ok
 
-  defp runtime_validate_methods(request) when is_list(request), do: :ok
+  defp runtime_validate_methods(_conn, request, _opts) when is_list(request), do: :ok
 
-  defp runtime_validate_methods(request) do
-    with :ok <- validate_modern_method(request), do: validate_request_method_params(request)
+  defp runtime_validate_methods(conn, request, opts) do
+    with :ok <- validate_modern_method(request),
+         :ok <- validate_request_method_params(request),
+         :ok <- runtime_validate_headers(conn, request) do
+      runtime_validate_context(request, opts)
+    end
+  end
+
+  defp runtime_validate_context(request, opts) do
+    with {:ok, context} <- RequestContext.from_message(request),
+         :ok <- RequestContext.validate_protocol_mode(context, opts.protocol_mode),
+         :ok <- RequestContext.validate_method(context) do
+      :ok
+    else
+      {:error, reason} ->
+        {:error, {:runtime_context_rejected, request["id"], reason}}
+    end
+  end
+
+  defp runtime_validate_headers(conn, request) do
+    if modern_http_request?(conn, request) do
+      case validate_protocol_version(conn, request, nil, nil) do
+        {:ok, _conn} -> :ok
+        error -> error
+      end
+    else
+      :ok
+    end
   end
 
   defp authorize_request_runtime(conn, request, opts) when is_list(request) do
@@ -1546,13 +1624,21 @@ defmodule Arbor.MCP.HttpPlug do
       :max_mrtr_bytes,
       :require_replay_protection,
       :principal_id,
-      :tenant_id
+      :tenant_id,
+      :oauth_enabled,
+      :authorize_subscription_filter,
+      :authorize_subscription_publication,
+      :subscription_max_queue,
+      :subscription_max_message_bytes,
+      :subscription_max_queue_bytes,
+      :subscription_max_lifetime_ms
     ]
 
     Enum.map(keys, &{&1, Map.get(opts, &1)}) ++
       [
         application_context: opts.handler_opts,
         request_headers: conn.req_headers,
+        http_expected_protocol_version: conn.assigns[:request_protocol_version],
         replay_cache: runtime_replay_cache(conn),
         request_notification_target: runtime_notification_target(opts, conn)
       ]
@@ -1652,7 +1738,8 @@ defmodule Arbor.MCP.HttpPlug do
 
   defp write_runtime_response(conn, effect, wire, :json) do
     conn = put_resp_content_type(conn, "application/json")
-    RuntimeWriter.perform(conn, effect, wire, &Plug.Conn.send_resp(&1, 200, &2))
+    status = runtime_json_status(conn, wire)
+    RuntimeWriter.perform(conn, effect, wire, &Plug.Conn.send_resp(&1, status, &2))
   end
 
   defp write_runtime_response(conn, effect, wire, :sse) do
@@ -1692,6 +1779,31 @@ defmodule Arbor.MCP.HttpPlug do
           _uncertain ->
             raise RuntimeWriter.AdmissionError
         end
+    end
+  end
+
+  defp runtime_json_status(conn, wire) do
+    case Jason.decode(wire) do
+      {:ok, %{"error" => %{"code" => code}}} ->
+        cond do
+          get_in(Jason.decode!(wire), ["error", "data", "type"]) == "session_manager_unavailable" ->
+            503
+
+          conn.private[:arbor_mcp_http_initialization] ->
+            500
+
+          code in [ErrorCodes.header_mismatch(), ErrorCodes.missing_required_client_capability()] ->
+            400
+
+          code == ErrorCodes.method_not_found() and modern_protocol_header?(conn) ->
+            404
+
+          true ->
+            200
+        end
+
+      _other ->
+        200
     end
   end
 
@@ -2523,16 +2635,15 @@ defmodule Arbor.MCP.HttpPlug do
     end
   end
 
-  # The default session manager is supervised by the :arbor_mcp application
-  # (see Arbor.MCP.Application). If it is not running, fail fast instead of
-  # lazily starting an unsupervised copy linked to the HTTP request process.
+  # Retained standalone helpers require explicit host supervision. Mounted
+  # execution cannot enter this legacy branch without an addressed Runtime.
   defp ensure_session_manager(Arbor.MCP.SessionManager) do
     if Process.whereis(Arbor.MCP.SessionManager) do
       {:ok, Arbor.MCP.SessionManager}
     else
       Logger.error(
-        "Arbor.MCP.SessionManager is not running. Start the :arbor_mcp application " <>
-          "(or add Arbor.MCP.SessionManager to your supervision tree) before " <>
+        "Arbor.MCP.SessionManager is not running. Add Arbor.MCP.SessionManager " <>
+          "to your explicit standalone supervision tree before " <>
           "serving MCP session requests."
       )
 
@@ -2745,7 +2856,7 @@ defmodule Arbor.MCP.HttpPlug do
         :duplicate_request_id ->
           {400, "Request ID has already been used in this session", "duplicate_request_id"}
 
-        :request_id_limit_exceeded ->
+        reason when reason in [:request_id_limit_exceeded, :request_id_capacity_exhausted] ->
           {429, "Request ID tracking capacity exceeded", "request_id_capacity_exceeded"}
 
         _other ->

@@ -12,9 +12,9 @@ defmodule Arbor.MCP.I18nRoundTripTest do
   import Plug.Conn, only: [put_req_header: 3]
   import Plug.Test
 
-  alias Arbor.MCP.{Client, HttpPlug, SessionManager}
+  alias Arbor.MCP.{Client, HttpPlug}
   alias Arbor.MCP.Server.HandlerServer
-  alias Arbor.MCP.Test.I18nCorpus
+  alias Arbor.MCP.Test.{I18nCorpus, RuntimeHTTPFixture}
 
   defmodule I18nServer do
     use Arbor.MCP.Server.Handler
@@ -37,6 +37,12 @@ defmodule Arbor.MCP.I18nRoundTripTest do
   end
 
   describe "over HTTP" do
+    setup do
+      runtime = RuntimeHTTPFixture.start(I18nServer)
+      Process.put(:i18n_runtime, runtime)
+      :ok
+    end
+
     test "a tool's own non-ASCII output survives" do
       %{"result" => %{"content" => [%{"text" => text}]}} =
         post_call(%{"name" => "generate", "arguments" => %{}})
@@ -72,7 +78,7 @@ defmodule Arbor.MCP.I18nRoundTripTest do
         conn(:post, "/", I18nCorpus.invalid_utf8_frame())
         |> put_req_header("content-type", "application/json")
         |> put_active_legacy_session()
-        |> HttpPlug.call(HttpPlug.init(handler: I18nServer, sse_enabled: false))
+        |> HttpPlug.call(RuntimeHTTPFixture.options(Process.get(:i18n_runtime)))
 
       assert conn.status in [200, 400]
       assert %{"error" => %{"code" => -32_700}} = Jason.decode!(conn.resp_body)
@@ -142,17 +148,14 @@ defmodule Arbor.MCP.I18nRoundTripTest do
       conn(:post, "/", body)
       |> put_req_header("content-type", "application/json")
       |> put_active_legacy_session()
-      |> HttpPlug.call(HttpPlug.init(handler: I18nServer, sse_enabled: false))
+      |> HttpPlug.call(RuntimeHTTPFixture.options(Process.get(:i18n_runtime)))
 
     assert conn.status == 200
     Jason.decode!(conn.resp_body)
   end
 
   defp put_active_legacy_session(conn) do
-    session_id = SessionManager.create_session(%{transport: :http})
-    :ok = SessionManager.claim_initialization(session_id)
-    :ok = SessionManager.complete_initialization(session_id, "2025-06-18")
-    on_exit(fn -> SessionManager.terminate_session(session_id) end)
+    session_id = RuntimeHTTPFixture.session(Process.get(:i18n_runtime))
     put_req_header(conn, "mcp-session-id", session_id)
   end
 end

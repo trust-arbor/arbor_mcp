@@ -12,6 +12,17 @@ defmodule Arbor.MCP.ProtocolVersionTest do
   import Plug.Conn
 
   alias Arbor.MCP.HttpPlug
+  alias Arbor.MCP.Test.RuntimeHTTPFixture
+
+  defmodule Handler do
+    use Arbor.MCP.Server.Handler
+
+    def handle_list_tools(_cursor, state),
+      do: {:ok, [%{"name" => "echo", "inputSchema" => %{"type" => "object"}}], nil, state}
+
+    def handle_call_tool("echo", params, state),
+      do: {:ok, %{"content" => [], "structuredContent" => params}, state}
+  end
 
   setup do
     # Enable protocol version header validation for tests
@@ -26,37 +37,8 @@ defmodule Arbor.MCP.ProtocolVersionTest do
       end
     end)
 
-    # Basic test handler
-    handler = fn request ->
-      case request do
-        %{"method" => "initialize", "id" => id} ->
-          {:ok,
-           %{
-             "jsonrpc" => "2.0",
-             "result" => %{
-               "protocolVersion" => "2025-06-18",
-               "capabilities" => %{},
-               "serverInfo" => %{"name" => "test-server", "version" => "1.0.0"}
-             },
-             "id" => id
-           }}
-
-        %{"method" => "test/echo", "params" => params} ->
-          {:ok, %{"jsonrpc" => "2.0", "result" => params, "id" => request["id"]}}
-
-        _ ->
-          {:error, :method_not_found}
-      end
-    end
-
-    opts = %{
-      handler: handler,
-      server_info: %{name: "test-server", version: "1.0.0"},
-      cors_enabled: false,
-      sse_enabled: false,
-      oauth_enabled: false,
-      auth_config: %{}
-    }
+    runtime = RuntimeHTTPFixture.start(Handler)
+    opts = HttpPlug.init(runtime: runtime, protocol_mode: :legacy_only)
 
     {:ok, opts: opts}
   end
@@ -89,7 +71,7 @@ defmodule Arbor.MCP.ProtocolVersionTest do
       session_id = initialize_session(opts)
 
       assert {:ok, %{protocol_version: "2025-06-18"}} =
-               Arbor.MCP.SessionManager.get_session(session_id)
+               RuntimeHTTPFixture.session_state(opts.runtime, session_id)
     end
 
     test "accepts requests with correct protocol version header", %{opts: opts} do
@@ -97,8 +79,8 @@ defmodule Arbor.MCP.ProtocolVersionTest do
 
       request = %{
         "jsonrpc" => "2.0",
-        "method" => "test/echo",
-        "params" => %{"message" => "hello"},
+        "method" => "tools/call",
+        "params" => %{"name" => "echo", "arguments" => %{"message" => "hello"}},
         "id" => 1
       }
 
@@ -112,7 +94,7 @@ defmodule Arbor.MCP.ProtocolVersionTest do
       assert conn.status == 200
 
       response = Jason.decode!(conn.resp_body)
-      assert response["result"] == %{"message" => "hello"}
+      assert response["result"]["structuredContent"] == %{"message" => "hello"}
     end
 
     test "rejects requests with incorrect protocol version", %{opts: opts} do
@@ -120,8 +102,8 @@ defmodule Arbor.MCP.ProtocolVersionTest do
 
       request = %{
         "jsonrpc" => "2.0",
-        "method" => "test/echo",
-        "params" => %{"message" => "hello"},
+        "method" => "tools/call",
+        "params" => %{"name" => "echo", "arguments" => %{"message" => "hello"}},
         "id" => 1
       }
 
@@ -136,7 +118,10 @@ defmodule Arbor.MCP.ProtocolVersionTest do
 
       response = Jason.decode!(conn.resp_body)
       assert response["error"]["code"] == -32600
-      assert response["error"]["message"] =~ "Unsupported MCP-Protocol-Version: 2024-01-01"
+
+      assert response["error"]["message"] =~
+               "MCP-Protocol-Version does not match the negotiated version."
+
       assert response["error"]["data"]["expectedVersion"] == "2025-06-18"
     end
 
@@ -145,8 +130,8 @@ defmodule Arbor.MCP.ProtocolVersionTest do
 
       request = %{
         "jsonrpc" => "2.0",
-        "method" => "test/echo",
-        "params" => %{"message" => "hello"},
+        "method" => "tools/call",
+        "params" => %{"name" => "echo", "arguments" => %{"message" => "hello"}},
         "id" => 1
       }
 
@@ -171,8 +156,8 @@ defmodule Arbor.MCP.ProtocolVersionTest do
 
       request = %{
         "jsonrpc" => "2.0",
-        "method" => "test/echo",
-        "params" => %{"message" => "hello"},
+        "method" => "tools/call",
+        "params" => %{"name" => "echo", "arguments" => %{"message" => "hello"}},
         "id" => 1
       }
 
@@ -197,8 +182,8 @@ defmodule Arbor.MCP.ProtocolVersionTest do
 
       request = %{
         "jsonrpc" => "2.0",
-        "method" => "test/echo",
-        "params" => %{"message" => "hello"},
+        "method" => "tools/call",
+        "params" => %{"name" => "echo", "arguments" => %{"message" => "hello"}},
         "id" => 1
       }
 
@@ -218,8 +203,8 @@ defmodule Arbor.MCP.ProtocolVersionTest do
 
       request = %{
         "jsonrpc" => "2.0",
-        "method" => "test/echo",
-        "params" => %{"message" => "hello"},
+        "method" => "tools/call",
+        "params" => %{"name" => "echo", "arguments" => %{"message" => "hello"}},
         "id" => 1
       }
 
@@ -244,8 +229,8 @@ defmodule Arbor.MCP.ProtocolVersionTest do
 
       request = %{
         "jsonrpc" => "2.0",
-        "method" => "test/echo",
-        "params" => %{"message" => "hello"},
+        "method" => "tools/call",
+        "params" => %{"name" => "echo", "arguments" => %{"message" => "hello"}},
         "id" => 1
       }
 
@@ -258,7 +243,7 @@ defmodule Arbor.MCP.ProtocolVersionTest do
 
       assert conn.status == 200
       response = Jason.decode!(conn.resp_body)
-      assert response["result"] == %{"message" => "hello"}
+      assert response["result"]["structuredContent"] == %{"message" => "hello"}
 
       # Per MCP spec, server MUST always include mcp-protocol-version in responses,
       # even when incoming validation is disabled by feature flag
@@ -274,8 +259,8 @@ defmodule Arbor.MCP.ProtocolVersionTest do
 
       request = %{
         "jsonrpc" => "2.0",
-        "method" => "test/echo",
-        "params" => %{"message" => "hello"},
+        "method" => "tools/call",
+        "params" => %{"name" => "echo", "arguments" => %{"message" => "hello"}},
         "id" => 1
       }
 
@@ -289,7 +274,7 @@ defmodule Arbor.MCP.ProtocolVersionTest do
       assert conn.status == 400
 
       assert Jason.decode!(conn.resp_body)["error"]["message"] =~
-               "Unsupported MCP-Protocol-Version"
+               "MCP-Protocol-Version does not match the negotiated version."
     end
   end
 

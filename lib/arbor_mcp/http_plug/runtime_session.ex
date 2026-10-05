@@ -22,8 +22,18 @@ defmodule Arbor.MCP.HttpPlug.RuntimeSession do
     with {:ok, service} <- Runtime.service(runtime, :sessions),
          {:ok, proof} <- HTTPWriterBinding.validate(binding, runtime),
          opts = [deadline: proof.deadline],
-         {:ok, lease} <- lease(service, reference, request, metadata, opts),
-         :ok <- bind(binding, lease),
+         {:ok, lease} <- lease(service, reference, request, metadata, opts) do
+      prepare_lease(service, binding, lease, request, opts)
+    else
+      {:error, reason} -> {:error, {:runtime_session_rejected, reference_id(reference), reason}}
+    end
+  end
+
+  defp reference_id({:existing_session, id}), do: id
+  defp reference_id(_new), do: nil
+
+  defp prepare_lease(service, binding, lease, request, opts) do
+    with :ok <- bind(binding, lease),
          {:ok, claim} <-
            claim(
              service,
@@ -33,6 +43,8 @@ defmodule Arbor.MCP.HttpPlug.RuntimeSession do
            ),
          :ok <- claim_ids(service, lease, request, opts) do
       {:ok, %{service: service, lease: lease, claim: claim, opts: opts}}
+    else
+      {:error, reason} -> {:error, {:runtime_session_rejected, SessionLease.id(lease), reason}}
     end
   end
 

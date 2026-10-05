@@ -2,12 +2,14 @@ defmodule Arbor.MCP.HttpPlug.SessionRegistry do
   @moduledoc """
   Supervised owner of the SSE session table used by `Arbor.MCP.HttpPlug`.
 
-  `Arbor.MCP.HttpPlug` runs inside short-lived HTTP request processes, so the ETS
+  The retained standalone SSEHandler runs inside short-lived HTTP request processes, so the ETS
   table mapping session ids to SSE handler pids must be owned by a long-lived
   process — otherwise every registration would vanish as soon as the request
   process that happened to create the table exits. This GenServer creates the
-  named public table in `init/1` and simply holds it for the lifetime of the
-  `:arbor_mcp` application, which starts it as part of its supervision tree.
+  named public table in `init/1`. Hosts using the standalone SSEHandler must
+  explicitly supervise this owner. Application startup does not start server
+  state owners. Runtime mounts use their addressed runtime session service and
+  do not use this registry.
   """
 
   use GenServer
@@ -29,8 +31,8 @@ defmodule Arbor.MCP.HttpPlug.SessionRegistry do
   Registers the SSE handler pid for a session id.
 
   Returns `{:error, :registry_not_started}` when the owning process (and thus
-  the table) is not running, which usually means the `:arbor_mcp` application has
-  not been started.
+  the table) is not running. Starting `:arbor_mcp` does not start this owner;
+  supervise this module explicitly for retained standalone SSEHandler use.
   """
   @spec register(String.t(), pid()) :: :ok | {:error, :registry_not_started}
   def register(session_id, handler_pid) when is_binary(session_id) and is_pid(handler_pid) do
