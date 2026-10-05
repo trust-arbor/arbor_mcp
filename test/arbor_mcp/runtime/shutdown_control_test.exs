@@ -175,15 +175,39 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
     :sys.suspend(observer)
     parent = self()
 
+    :erlang.trace_pattern({ShutdownControl, :await, 3}, true, [])
+    on_exit(fn -> :erlang.trace_pattern({ShutdownControl, :await, 3}, false, []) end)
+
     callers =
       for _ <- 1..128 do
         spawn(fn ->
-          send(parent, {:caller, self()})
-          send(parent, {:result, Runtime.stop(ref)})
+          receive do
+            :stop ->
+              send(parent, {:caller, self()})
+              send(parent, {:result, Runtime.stop(ref)})
+          end
         end)
       end
 
+    on_exit(fn ->
+      Enum.each(callers, fn caller ->
+        if Process.alive?(caller), do: Process.exit(caller, :kill)
+      end)
+    end)
+
+    Enum.each(callers, fn caller ->
+      :erlang.trace(caller, true, [:call, :arity, {:tracer, parent}])
+      send(caller, :stop)
+    end)
+
     for _ <- callers, do: assert_receive({:caller, _}, 1_000)
+
+    # Entry into await proves each public stop accepted the original control;
+    # a marker sent before Runtime.stop cannot establish that barrier.
+    for caller <- callers do
+      assert_receive {:trace, ^caller, :call, {ShutdownControl, :await, 3}}, 1_000
+    end
+
     eventually(fn -> match?(%{stop_records: 1, phase: 1}, ShutdownControl.stats(table)) end)
     Process.sleep(20)
     assert %{stop_records: 1} = ShutdownControl.stats(table)

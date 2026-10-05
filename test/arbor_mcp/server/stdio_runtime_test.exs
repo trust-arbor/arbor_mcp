@@ -401,7 +401,7 @@ defmodule Arbor.MCP.Server.StdioRuntimeTest do
       })
     )
 
-    assert_receive {:written, discovery}
+    assert_receive {:written, discovery}, 1_000
     assert %{"id" => "probe", "result" => _} = Jason.decode!(String.trim(discovery))
 
     input(

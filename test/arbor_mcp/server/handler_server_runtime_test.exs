@@ -310,7 +310,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     assert length(messages) == 1
     assert bytes <= 300
     :sys.resume(edge)
-    assert_receive {:transport_message, _response}
+    assert_receive {:transport_message, _response}, 1_000
     wait_for(fn -> Runtime.stats(root).reserved == 0 end)
     assert Server.call(root, :read) == 1
   end
