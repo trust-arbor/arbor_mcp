@@ -6,6 +6,8 @@ Elixir clients and servers for the [Model Context Protocol](https://modelcontext
 
 ACP clients, agents and the optional vendor adapter bundle are developed in [Arbor.ACP](https://github.com/trust-arbor/arbor_acp). MCP and ACP depend on the small shared `arbor_rpc` package and can be installed independently.
 
+Upgrading from `ex_mcp` 1.x? Start with the [v1-to-v2 migration guide](docs/guides/MIGRATING_V1_TO_V2.md). It covers package selection, namespace and configuration changes, supervision, HTTP mounting, removed APIs and the RC testing checklist. The [RC notes](docs/guides/V2_RELEASE_CANDIDATE.md) describe the candidate's qualification status and known limits.
+
 ## Development checkout
 
 Until the shared package is published, select its checkout explicitly:
@@ -53,6 +55,8 @@ HTTP applications mount `Arbor.MCP.HttpPlug` with an explicit Runtime inside an 
 
 ## Guides and examples
 
+- [Migrate from v1 to v2](docs/guides/MIGRATING_V1_TO_V2.md)
+- [Version 2 release candidate](docs/guides/V2_RELEASE_CANDIDATE.md)
 - [Getting started](https://github.com/trust-arbor/arbor_mcp/tree/master/docs/getting-started)
 - [User guide](docs/guides/USER_GUIDE.md)
 - [Server DSL](docs/DSL_GUIDE.md)
@@ -61,6 +65,6 @@ HTTP applications mount `Arbor.MCP.HttpPlug` with an explicit Runtime inside an 
 - [Examples](https://github.com/trust-arbor/arbor_mcp/tree/master/examples)
 - [Changelog](CHANGELOG.md)
 
-Published 1.x API documentation is available at [hexdocs.pm/ex_mcp](https://hexdocs.pm/ex_mcp). It describes the previous package and namespace. Version 2 migration guidance and API documentation will be published with the qualified release.
+Published 1.x API documentation is available at [hexdocs.pm/ex_mcp](https://hexdocs.pm/ex_mcp). It describes the previous package and namespace. The v2 migration guide is available in this checkout and is included in the package and ExDoc documentation.
 
 Licensed under the [MIT license](https://github.com/trust-arbor/arbor_mcp/blob/master/LICENSE).

@@ -1,7 +1,7 @@
 # Coordinated package preparation
 
 This is a source-preparation and installation policy, not a release approval.
-The current literal version remains `2.0.0-dev`. No tags or packages are published
+The current literal version is `2.0.0-rc.1`. No tags or packages are published
 by the preparation or archive-consumer scripts.
 
 ## Versions, dependencies and tags
@@ -95,6 +95,14 @@ compiler-free assembled release. `--metadata-only` performs just the first phase
 qualification may explicitly set `ARCHIVE_CONSUMER_EXTERNAL_DEPS` to independent
 external source copies; CI must also qualify normal Hex resolution.
 
-Every RC and stable release still requires final compiled API/semantic comparison,
-full transport/interoperability/cleanup qualification, all supported toolchains,
-and successful installation of archives rebuilt from the final tagged source.
+RC publication enables downstream migration testing before stable qualification
+finishes. Publish the coordinated RC only after source/API checks, supported
+toolchain CI, archive inspection and installed/release rehearsals pass for the
+selected payloads. Record known limits and outstanding sustained qualification
+in the [RC notes](guides/V2_RELEASE_CANDIDATE.md). Verify normal registry
+installation as each dependency becomes available.
+
+Stable publication additionally requires the accepted continuous 48-hour run,
+performance acceptance and all remaining release gates. Rebuild archives from
+the final tagged source, and verify their installed versions and dependency
+ranges; an RC or a passed short rehearsal does not qualify the stable release.

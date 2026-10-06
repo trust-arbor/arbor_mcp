@@ -40,7 +40,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 03cd82a9f1a888164d942f994c60b7ca9ed108b3
+        ref: ad97ce433b1ed3b09a16ce7b2d362579cd476425
         path: .arbor-v2/acp
         persist-credentials: false
 

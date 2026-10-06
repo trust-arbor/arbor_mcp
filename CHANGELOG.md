@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Version 2 release candidate
+
+- Prepare `arbor_mcp` `2.0.0-rc.1` under `Arbor.MCP.*`. ACP moves to
+  `arbor_acp`, vendor adapters to optional `arbor_acp_adapters`, and shared
+  subprocess/framing support to `arbor_rpc`.
+- Route server transports through a supervised per-server Runtime with bounded
+  scheduling, admission, output, cancellation and shutdown.
+- Replace legacy HTTP endpoint wrappers with Runtime-backed `Arbor.MCP.HttpPlug`
+  mounts and optional standalone listeners. Retire the old `Server.Tools` family
+  and deprecated compatibility APIs.
+- Add the [v1-to-v2 migration guide](docs/guides/MIGRATING_V1_TO_V2.md) and
+  [RC testing notes](docs/guides/V2_RELEASE_CANDIDATE.md), including the documented
+  request-ID capacity, native build requirements and open stable-release gates.
+- Avoid redundant JSON validation and nil-control accounting work while retaining
+  lifetime and capacity guarantees. Fixed scheduling costs remain measurable.
+
 ### Fixed
 
 - **Security:** `ExMCP.Authorization.ProtectedResourceMetadata.discover/2`

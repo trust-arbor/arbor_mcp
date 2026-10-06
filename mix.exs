@@ -169,8 +169,7 @@ defmodule Arbor.MCP.MixProject do
         "GitHub" => @github_url,
         "Changelog" => "#{@github_url}/blob/master/CHANGELOG.md",
         "MCP Spec" => "https://modelcontextprotocol.io",
-        "MCP Migration" =>
-          "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_PLAN.md"
+        "MCP Migration" => "#{@github_url}/blob/v#{@version}/docs/guides/MIGRATING_V1_TO_V2.md"
       },
       # NOTE: `dev/` (repo-only mix tasks + Arbor.MCP.SpecSync) is intentionally
       # not listed, so it never ships to Hex.
@@ -227,6 +226,8 @@ defmodule Arbor.MCP.MixProject do
       skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
       extras: [
         "README.md",
+        "docs/guides/MIGRATING_V1_TO_V2.md",
+        "docs/guides/V2_RELEASE_CANDIDATE.md",
         "docs/guides/USER_GUIDE.md",
         "docs/guides/PHOENIX_GUIDE.md",
         "docs/DSL_GUIDE.md",
@@ -264,7 +265,7 @@ defmodule Arbor.MCP.MixProject do
       groups_for_extras: [
         Introduction: ~r/README/,
         Guides:
-          ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|V2_SCHEMA_DIALECT|V2_CLIENT_CONNECTION_SCOPE|TRANSPORT_GUIDE|HTTP_LISTENERS|PROTOCOL_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
+          ~r/MIGRATING_V1_TO_V2|V2_RELEASE_CANDIDATE|USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|V2_SCHEMA_DIALECT|V2_CLIENT_CONNECTION_SCOPE|TRANSPORT_GUIDE|HTTP_LISTENERS|PROTOCOL_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
         Changelog: ~r/CHANGELOG/
       ],
       groups_for_modules: [
