@@ -551,8 +551,11 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthorityTest do
       assert_receive {:invoked, 1}, 1_000
       assert_receive {:retained, ^output, _, _}, 1_000
 
+      # Physical output can settle before Scheduler and edge ownership. The
+      # replacement exercised here requires the whole request to be idle.
       eventually(fn ->
-        stats(ref).frames == 0 and OutputController.stats(Ref.table(runtime)).frames == 0
+        stats(ref).frames == 0 and OutputController.stats(Ref.table(runtime)).frames == 0 and
+          match?(%{active: 0, queued: 0, reserved: 0, confirmed: 0}, Runtime.stats(runtime))
       end)
 
       Enum.each(2..4, fn id ->
@@ -574,7 +577,8 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthorityTest do
         assert_receive {:retained, ^output, _, _}, 1_000
 
         eventually(fn ->
-          stats(ref).frames == 0 and OutputController.stats(Ref.table(runtime)).frames == 0
+          stats(ref).frames == 0 and OutputController.stats(Ref.table(runtime)).frames == 0 and
+            match?(%{active: 0, queued: 0, reserved: 0, confirmed: 0}, Runtime.stats(runtime))
         end)
 
         assert stats(ref).monitors <= 4
