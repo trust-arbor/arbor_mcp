@@ -155,7 +155,7 @@ defmodule Arbor.MCP.DocRegressionTest do
     end
 
     refute readme =~ "**2025-11-25** (latest stable)"
-    assert readme =~ "**Version 2 is under development.**"
+    assert readme =~ "**Version 2 release candidate preparation.**"
     assert readme =~ "`arbor_mcp` 2.0 has not been released"
     assert readme =~ "`ex_mcp`"
     assert readme =~ "protocol_mode: :prefer_modern"

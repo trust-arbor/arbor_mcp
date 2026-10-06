@@ -1,5 +1,5 @@
 defmodule Arbor.MCP.Server.StdioRuntimeTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.Server.{HandlerServer, Runtime, StdioServer}
   alias Arbor.MCP.Server.Runtime.{Admission, OutputController, OutputTicket, Ref, ShutdownGuard}
