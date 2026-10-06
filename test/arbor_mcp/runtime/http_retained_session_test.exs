@@ -285,7 +285,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPRetainedSessionTest do
   end
 
   test "live GET writes from its socket process and expires without closing the session" do
-    {runtime, opts, id, service, lease} = session(request_timeout_ms: 150)
+    {runtime, opts, id, service, lease} = initialized_session(request_timeout_ms: 150)
     parent = self()
     socket = socket()
     stream_opts = %{opts | sse_mode: :stream}
@@ -428,8 +428,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPRetainedSessionTest do
     runtime
   end
 
-  # DELETE's short socket deadline is under test, rather than HTTP initialize.
-  # Set up its session through the supported addressed service API with one
+  # These GET/DELETE fixtures test a short socket deadline, rather than HTTP initialize.
+  # Set up their sessions through the supported addressed service API with one
   # separate finite cutoff and the installed Plug's private mount domain.
   # Other fixtures retain actual wire initialization.
   defp initialized_session(extra) do

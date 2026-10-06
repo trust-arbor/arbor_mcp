@@ -124,10 +124,64 @@ defmodule CombinedArchiveConsumer do
     after
       Runtime.stop(runtime)
 
-      for pid <- [client, agent, peer],
-          do: if(Process.alive?(pid), do: GenServer.stop(pid, :normal, 1_000))
+      for pid <- [client, agent, peer], do: :ok = stop_owned_process(pid)
     end
   end
+
+  # Disconnect can make the ACP agent exit normally while stop/3 is entering
+  # :sys.terminate. Accept that race only after exact native DOWN confirmation.
+  # Stop and confirmation share the original 1,000 ms cleanup budget.
+  defp stop_owned_process(pid) do
+    deadline = System.monotonic_time(:millisecond) + 1_000
+    monitor = Process.monitor(pid)
+
+    stopped =
+      try do
+        GenServer.stop(pid, :normal, cleanup_remaining(deadline))
+      catch
+        :exit, reason -> {:exit, reason}
+      end
+
+    down =
+      receive do
+        {:DOWN, ^monitor, :process, ^pid, reason} -> {:down, reason}
+      after
+        cleanup_remaining(deadline) -> :unconfirmed
+      end
+
+    Process.demonitor(monitor, [:flush])
+
+    case {stopped, down} do
+      {:ok, {:down, :normal}} ->
+        :ok
+
+      {{:exit, reason}, {:down, actual}} when actual in [:normal, :noproc] ->
+        if normal_stop_race?(reason, pid),
+          do: :ok,
+          else: {:error, {:owned_process_stop_failed, reason, down}}
+
+      _other ->
+        {:error, {:owned_process_stop_failed, stopped, down}}
+    end
+  end
+
+  defp normal_stop_race?({reason, {GenServer, :stop, [pid, :normal, _timeout]}}, pid) do
+    case reason do
+      normal when normal in [:normal, :noproc] ->
+        true
+
+      {normal, {:sys, :terminate, [^pid, :normal, _timeout]}} when normal in [:normal, :noproc] ->
+        true
+
+      _other ->
+        false
+    end
+  end
+
+  defp normal_stop_race?(_reason, _pid), do: false
+
+  defp cleanup_remaining(deadline),
+    do: max(deadline - System.monotonic_time(:millisecond), 0)
 
   defp request(id), do: %{"jsonrpc" => "2.0", "id" => id, "method" => "increment"}
 
