@@ -370,13 +370,13 @@ defmodule Arbor.MCP.Testing.AssertionsTest do
 
   describe "assert_performance" do
     test "passes when operation completes within time limit" do
+      # This exercises the helper's success path, not the host's scheduling latency.
       result =
         assert_performance(
           fn ->
-            Process.sleep(10)
             :completed
           end,
-          max_time: 100
+          max_time: 5_000
         )
 
       assert result == :completed

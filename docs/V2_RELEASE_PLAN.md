@@ -21,8 +21,10 @@ changes must establish their own result and source/archive association.
 
 The remaining work is to:
 
-1. Qualify the HTTP optional-range/owned-listener correction and Claude
-   `max_bytes` fix, preserving the accepted lifetime, capacity and wire contracts.
+1. Finish qualification of the ZCode settings/correlation correction and the
+   latest-BEAM assertion-helper test fix. The preceding HTTP optional-range,
+   owned-listener and Claude `max_bytes` changes pass their source-archive and
+   supported CI checks, as recorded in the current release assessment.
 2. Complete the requested performance investigation for MCP and ACP, including
    MCP BEAM paths, and record the workload budgets or accepted costs.
 3. Close applicable final-source conformance, pinned SDK/credential-free CLI,

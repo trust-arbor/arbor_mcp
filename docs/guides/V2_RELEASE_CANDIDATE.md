@@ -32,9 +32,11 @@ Earlier implementation checkpoints passed current/minimum production API
 comparisons, four-package source-archive checks, MCP/ACP CI, four
 installed/assembled-release mixed-load rehearsals, and six additional public
 negative controls. Those receipts retain their original source identities.
-The October 6 documentation, dependency-range and Claude file-limit fixes
-require updated package and CI qualification; the new macOS cleanup lane and
-current ZCode lifecycle smoke have open failures under investigation. See the
+The October 6 documentation, dependency-range and Claude file-limit fixes pass
+updated source-archive and supported CI qualification. RPC's macOS native lane
+and all four credential-free CLI lifecycle checks pass. Later ZCode settings
+fixes and a flaky assertion-helper test in the separate latest-BEAM lane still
+require updated evidence. Lifecycle checks do not qualify model turns. See the
 [current release assessment](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/V2_RELEASE_ASSESSMENT.md) for active gates.
 Earlier checks do not qualify these changes or establish a completed soak.
 
@@ -52,13 +54,14 @@ The stable 48-hour qualification remains open.
   Completion does not evict IDs. A replacement peer establishes a fresh scope.
   Choose a finite capacity and an application connection-lifecycle policy;
   callers must handle the capacity error.
-- **Local-call overhead:** the qualified local microbenchmarks measured about
-  0.305 ms for BEAM ping and 0.912 ms for a 256 KiB echo, versus about 0.005 ms
-  and 0.013 ms in v1.5. A separate controlled v2 optimization comparison reduced
-  large echo latency by 31.2%. Measure your application's workload; these are
-  microbenchmark results, not an end-to-end latency promise. The timing run
-  preceded the private RPC write fix; it is retained evidence, not a fresh run
-  of that corrected graph.
+- **Local-call overhead:** the October 6 comparison of MCP `0d831a7` and RPC
+  `d2a6fcf` measured median BEAM ping at 315 µs versus 5 µs in v1.5, and a
+  256 KiB BEAM echo at 928.5 µs versus 13.5 µs. Four paired rounds use the same
+  runner and Elixir 1.19.5 / OTP 28.4.1 toolchain. These are sequential checked
+  round trips, not saturated throughput or application latency promises.
+  Investigation of repeated memory accounting, JSON preparation and real
+  application workloads remains open; completing the measurement does not
+  accept those costs for stable release.
 - **Native installation:** macOS/Linux source installation requires a C17
   compiler, including when `arbor_rpc` is only a transitive dependency. Assembled
   releases include the built helper and need no runtime compiler. Native

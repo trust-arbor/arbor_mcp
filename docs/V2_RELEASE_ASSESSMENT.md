@@ -15,13 +15,23 @@ scoped services/stores, Result/DSL/lifecycle APIs and accepted retirements. The
 migration and operator guides describe these contracts. There is no outstanding
 major architectural feature implied by the older remaining-work tables below.
 
-The earlier standalone-repository selection passed all 63 selected CI jobs.
-Current documentation and audit follow-ups are a later source selection: HTTP
-optional dependency ranges versus qualified owned-listener versions and Claude
-`max_bytes` handling are being corrected and still require qualification.
-Detailed performance investigation for MCP and ACP, including MCP BEAM paths,
-remains pending. Historical timing results do not establish acceptance of those
-costs or a measurement of subsequent changes.
+The October 6 follow-ups qualify HTTP optional dependency ranges separately from
+owned-listener versions, enforce Claude `max_bytes`, and complete the package
+documentation review. MCP `0d831a7` passes all 22 supported CI jobs; ACP
+`991fc41` passes its package and latest-BEAM workflows; RPC `d2a6fcf` passes all
+nine package jobs, including macOS native installation and assembled release.
+All four source archives pass a combined consumer with normal Hex resolution;
+Cowboy-owned, Bandit-owned and host-owned Cowboy consumers also pass installed
+and assembled-release checks. These results belong to those source selections.
+
+Later ZCode settings/correlation fixes and a scheduler-sensitive assertion-helper
+unit test found by MCP's separate latest-BEAM workflow require new qualification.
+Credential-free lifecycle smoke passes for Claude 2.1.289, Codex 0.160.1,
+Pi 1.0.2 and ZCode 0.16.9 after correcting the isolated ZCode fixture's built-in
+provider path. Lifecycle smoke does not establish model-turn compatibility.
+Detailed performance investigation includes fresh paired MCP BEAM measurements
+and isolated AVWE/Arbor application integrations. Historical timing results do
+not establish acceptance of those costs or a measurement of subsequent changes.
 
 RC1 is unpublished and no continuous soak is active. The refreshed Hex account
 check succeeds; registry installation and publication are still pending. Final
