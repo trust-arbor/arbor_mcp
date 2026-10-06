@@ -160,9 +160,72 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthorityTest do
 
   defp stats(ref), do: OutputAuthority.stats(ref, Deadline.after_ms(1_000))
 
+  defp assert_completed_runtime_stop(root, runtime, authority, iteration) do
+    table = Ref.table(runtime)
+    {:ok, control} = Arbor.MCP.Server.Runtime.ShutdownControl.lookup(table)
+
+    owned = [
+      root: root,
+      output_controller: child(runtime, :output_controller),
+      edge: child(runtime, :edge),
+      scheduler: child(runtime, :scheduler),
+      writer: writer(runtime),
+      guard: child(runtime, :shutdown_guard),
+      observer: control.pid
+    ]
+
+    monitors = Enum.map(owned, fn {role, pid} -> {role, pid, Process.monitor(pid)} end)
+
+    try do
+      before_stop = %{
+        runtime: Runtime.stats(runtime),
+        output: OutputController.stats(table),
+        authority: stats(authority)
+      }
+
+      started = Deadline.now()
+      result = Runtime.stop(root)
+      returned_at = Deadline.now()
+
+      observation = %{
+        iteration: iteration,
+        result: result,
+        elapsed_ms: returned_at - started,
+        cutoff: :atomics.get(control.cells, 1),
+        returned_at: returned_at,
+        shutdown_phase: :atomics.get(control.cells, 2),
+        before_stop: before_stop,
+        owned:
+          Map.new(owned, fn {role, pid} ->
+            {role,
+             %{
+               pid: pid,
+               alive?: Process.alive?(pid),
+               process: Process.info(pid, [:status, :current_function, :message_queue_len])
+             }}
+          end)
+      }
+
+      assert :ok = result,
+             "Completed runtime cleanup was not confirmed: #{inspect(observation, limit: :infinity)}"
+
+      for {role, pid, monitor} <- monitors do
+        assert_receive {:DOWN, ^monitor, :process, ^pid, _reason},
+                       1_000,
+                       "Missing #{role} DOWN after successful stop: #{inspect(observation, limit: :infinity)}"
+      end
+    after
+      for {_role, _pid, monitor} <- monitors, do: Process.demonitor(monitor, [:flush])
+    end
+  end
+
   test "64 completed device deaths before endpoint retirement reclaim capacity without weakening exclusive leases" do
     {_authority, ref} = authority()
     input = device()
+
+    # This tests completed-output capacity reclamation. Shutdown deadline behavior
+    # remains covered by the separate short-budget and late-completion tests.
+    shutdown_opts = [shutdown_timeout_ms: 5_000]
 
     for id <- 1..64 do
       output =
@@ -171,12 +234,20 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthorityTest do
           id: make_ref()
         )
 
-      {:ok, root} = StdioServer.start_link(opts(ref, input, output))
+      {:ok, root} = StdioServer.start_link(opts(ref, input, output, shutdown_opts))
       assert_receive {:initialized, _}, 1_000
+      {:ok, runtime} = Runtime.ref(root)
       :ok = invoke(input, id)
       assert_receive {:invoked, 1}, 1_000
       assert_receive {:retained, ^output, _sender, _wire}, 1_000
-      eventually(fn -> match?(%{frames: 0, bytes: 0}, stats(ref)) end)
+
+      # The authority releases physical IO first; controller and request ownership
+      # must also settle before this test claims the output was completed.
+      eventually(fn ->
+        match?(%{frames: 0, bytes: 0}, stats(ref)) and
+          OutputController.stats(Ref.table(runtime)).frames == 0 and
+          match?(%{active: 0, queued: 0, reserved: 0, confirmed: 0}, Runtime.stats(runtime))
+      end)
 
       monitor = Process.monitor(output)
       Process.exit(output, :kill)
@@ -184,14 +255,15 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthorityTest do
       eventually(fn -> match?(%{devices: 1, poisoned: 0, frames: 0}, stats(ref)) end)
       assert Process.alive?(root)
 
-      assert :ok = Runtime.stop(root)
+      assert_completed_runtime_stop(root, runtime, ref, id)
       eventually(fn -> match?(%{devices: 0, monitors: 0, bytes: 0}, stats(ref)) end)
     end
 
     replacement = device()
-    {:ok, root} = StdioServer.start_link(opts(ref, input, replacement))
+    {:ok, root} = StdioServer.start_link(opts(ref, input, replacement, shutdown_opts))
     assert_receive {:initialized, _}, 1_000
-    assert :ok = Runtime.stop(root)
+    {:ok, runtime} = Runtime.ref(root)
+    assert_completed_runtime_stop(root, runtime, ref, :replacement)
     assert Process.alive?(input) and Process.alive?(replacement)
   end
 
