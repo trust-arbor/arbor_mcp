@@ -17,7 +17,7 @@
 The repository has moved to [trust-arbor/arbor_mcp](https://github.com/trust-arbor/arbor_mcp).
 The supported 1.x package remains `ex_mcp`. This is the `codex/maintenance-1.x`
 branch: fixes and compatible minor releases continue here, so migration is
-optional. See the [maintenance policy](docs/MAINTENANCE_POLICY.md).
+optional. See the [maintenance policy](https://github.com/trust-arbor/arbor_mcp/blob/codex/maintenance-1.x/docs/MAINTENANCE_POLICY.md).
 Version 2 is being prepared as
 `arbor_mcp` (`Arbor.MCP.*`) and `arbor_acp` (`Arbor.ACP.*`), with vendor adapters
 in the optional `arbor_acp_adapters` package. The target is October 9, 2026,
