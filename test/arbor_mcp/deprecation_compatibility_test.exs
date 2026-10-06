@@ -66,7 +66,7 @@ defmodule Arbor.MCP.DeprecationCompatibilityTest do
       {doc, metadata} = compiled_doc(module, name, arity)
       normalized_doc = normalize_whitespace(doc)
       assert normalized_doc =~ "deprecated as of 2026-07-28"
-      assert normalized_doc =~ "Arbor.MCP 2.x for pinned legacy protocol revisions"
+      assert normalized_doc =~ "ArborMCP 2.x for pinned legacy protocol revisions"
       refute metadata[:deprecated]
     end
 

@@ -112,7 +112,7 @@ defmodule Arbor.MCP.DocRegressionTest do
 
     for term <- [
           "rc.5 / legacy MCP",
-          "Arbor.MCP 1.0 includes MCP 2026-07-28 support",
+          "ArborMCP 1.0 includes MCP 2026-07-28 support",
           "Recommended rollout",
           "Modern observations are pinned",
           "legacy_http_sse: true"
@@ -120,7 +120,7 @@ defmodule Arbor.MCP.DocRegressionTest do
       assert migration =~ term, "migration guide is missing #{inspect(term)}"
     end
 
-    refute migration =~ "Arbor.MCP does not\n  implement it yet"
+    refute migration =~ "ArborMCP does not\n  implement it yet"
     assert mixfile =~ ~s("docs/getting-started/MIGRATION.md")
   end
 
