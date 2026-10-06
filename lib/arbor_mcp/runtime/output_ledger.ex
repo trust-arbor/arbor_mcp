@@ -1165,7 +1165,12 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
       }
     }
 
-    RetainedTerm.bytes(pending) + 64
+    # The nil control contains only maps, tuples, atoms, integers, a PID and a
+    # reference. Non-nil scope keys may retain function environments.
+    bytes =
+      if is_nil(scope), do: :erlang.external_size(pending), else: RetainedTerm.bytes(pending)
+
+    bytes + 64
   end
 
   defp ticket(ref, token, scope),

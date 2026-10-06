@@ -10,9 +10,10 @@
 ## Release conclusion
 
 The library has a stable protocol baseline and integrated package/runtime,
-Runtime-only HTTP and bounded reverse implementations. The final combined
-qualification, sealed four-package artifacts and continuous RC soak are not
-complete. Earlier audit conclusions below retain their original source context.
+Runtime-only HTTP and bounded reverse implementations. API5 production artifacts
+and selected consumers are qualified for their exact source; final changed-source
+and RC qualification, publication and continuous soak remain open. Earlier audit
+conclusions below retain their original source context.
 
 **Accepted on 2026-10-03:** v2 includes the per-server runtime, unified
 dispatch and bounded handler scheduler as well as the MCP/ACP split, any
@@ -715,8 +716,9 @@ aggregate release total, and the earlier snapshot receipts remain distinct.
 
 The working followups include six passing direct Plug OAuth cases, with validated
 methodless response default scopes `[]` while full ServerGuard, custom mapping
-and exact identity/endpoint/session/source checks remain. Actual OAuth wire
-execution remains pending. Four pure legacy JSON Context progress cases preserve
+and exact identity/endpoint/session/source checks remain. Actual OAuth wire was
+pending at that checkpoint; the later API5 result is recorded below. Four pure
+legacy JSON Context progress cases preserve
 the final JSON response and authenticated addressed-session delivery. The
 shutdown wait-order fix reads completion after actual observer death under the
 unchanged cutoff. It resolves the accepted-await minimum selection failure;
@@ -744,16 +746,16 @@ toolchains, and modern 0.2.0-alpha.11 passes 149 server and 387 client cases on
 both. These selected-profile successes do not qualify the final package graph.
 
 MCP migration documentation and ACP documentation checkpoints are pushed.
-Concrete final four-package production API and actual 2024 continuous-consumer
-preparations are source-only. Final builds, complete CI/conformance/SDKs, actual
-authenticated wire and installed/release consumers, same-runner performance and
-the accepted continuous 48-hour final-RC run remain required. No RC or stable
-release is qualified by these interim receipts.
+At this dated checkpoint, four-package API and actual 2024 continuous-consumer
+preparations were source-only. Later API5 and consumer execution is recorded
+below; the accepted continuous 48-hour final-RC run and release qualification
+remain open. The earlier interim receipts remain preserved.
 
-## Latest Client and DETS qualification checkpoint — `e16c0da`
+## Current qualification checkpoint — API5 and selected consumers
 
-This section supersedes the active status of the dated checkpoint above. Its
-historical source selections, counts and failed receipts remain unchanged.
+This section supersedes earlier active status statements. The Client/DETS
+selection at `e16c0da` and other historical sources, counts and failed receipts
+remain unchanged; separate selections are not an aggregate release total.
 
 The Client followup keeps the native legacy SSE GET loop available while owned,
 bounded asynchronous senders wait for established request POSTs. Single and
@@ -770,28 +772,66 @@ both. The corrected DETS module passes 16 cases on minimum, current and newest;
 this is a separate selection, not an aggregate release test count. Forced test
 compilation passes both, and the unfiltered warning comparison adds no warnings
 or filters. The full minimum performance/stress command passes 5,573 tests,
-20 doctests and 34 properties with zero failures. Fresh complete CI for this
-checkpoint remains pending. The preceding `be1ae4a` CI passed 15 of 16 jobs, including stress
+20 doctests and 34 properties with zero failures. The later MCP `f240699` CI
+passes all 16 jobs; changed candidates still need fresh complete CI. The
+preceding `be1ae4a` CI passed 15 of 16 jobs, including stress
 and both previously failed minimum unit/archive jobs. Its sole newest failure
 was state inspection after a short-budget setup storage error and deliberate
 manager fail-stop; that failed receipt remains preserved.
 
-Four independently compiled package API captures at MCP `9d18d9b` and ACP
-`47c9e8a` were actual historical passes, not source-only preparation. They do
-not qualify this Client checkpoint, which adds three internal deadline-aware
-spawn/watch arities. Copied compiler metadata later invalidated the current
-live build cache; the original capture verdict remains evidence for its
-original source. Fresh source-only dependency/build domains and a new
-four-package compiled API and semantic comparison are required. Copying or
-restoring old build metadata does not establish a fresh graph.
+The historical API4 captures at MCP `9d18d9b` and ACP `47c9e8a` remain
+actual passes for their original sources. Copied compiler metadata later
+invalidated the current live cache; that failure and the original captures
+remain preserved. API5 uses fresh independent production graphs at MCP
+`18727b66d62d707fbf0c702f42b7f97516db58a2` and ACP/RPC/adapters
+`47c9e8a303cb0b3fcbb9c1c748e49edfa53a377b`. Both supported toolchains complete
+all 23 driver commands, including forced compilation with warnings as errors in
+each owning package root and fresh reflection. The API4 semantic census is
+unchanged; three added hidden deadline-aware spawn/watch exports belong to MCP.
+See [the API census](./V2_API_MIGRATION.md#current-compiled-api-census-api4-snapshot).
 
-The selected Client source passes three actual authenticated legacy reverse
-wire cases on both supported toolchains within the 163 cases above. Final sealed-package authenticated
-wire remains required. Published stable server conformance remains 38 passed
-and one failed on both; a prepared private header diagnostic is not an official
-published pass. Final archive/installed/release consumers, paired performance,
-RC metadata and publication, and the accepted continuous 48-hour final-RC run
-remain gates. No RC or stable release is qualified by this checkpoint.
+Fresh API5 source archives pass exact source association on both toolchains.
+Each combined installed/compiler-free release consumer completes eight stages;
+Cowboy and Bandit each pass installed and release consumers on both toolchains.
+Three authenticated legacy HTTP reverse wire cases and fifteen Phoenix wire
+groups pass per toolchain. OAuth provider HTTP/DNS remains a fixture seam, not
+external-provider interoperability proof. Unpublished Arbor packages use
+extracted archive paths with normal Hex dependencies; published-package
+resolution and the actual Arbor host's pre-existing compile-warning gate remain
+open.
+
+The codec-only experiment compares API5 with fresh changed-source graphs and
+matching runtime dependency versions: all 22 checks in eight timing VMs pass.
+Median 256 KiB BEAM echo falls from 1,524 to 995.5 microseconds (34.7%), and Test
+echo from 2,584 to 2,034.5 microseconds (21.3%). Small operations show no fixed
+improvement. This does not qualify final RC performance or replace the retained
+released-1.x comparison.
+
+The cached-scope/Node Ledger shortcut was rejected because unobserved
+distribution transitions can leave stale charges. The nil-only leaf candidate
+retains every full metadata admission check; its 40-case suite and own compilation
+with warnings as errors pass all three toolchains. Header compatibility's
+93-case and 142-case selections, warnings-as-errors compilation and formatting
+also pass all three. Fresh codec-plus-nil compilation completes all four phases;
+both 22-case smoke selections and eight timing VMs pass. The paired medians
+show 256 KiB BEAM echo falling from 1,502.5 to 1,033 microseconds (31.2%) and
+Test echo from 2,584 to 2,076 microseconds (19.7%), with identical retained output
+sizes. Small-call reductions fall about 15%, but wall latency is mixed: BEAM
+ping improves from 350.5 to 321 microseconds and Test ping increases from 324 to
+338. The small source changes are selected; this experiment does not qualify a
+final release graph or restore the released 1.x latency profile.
+
+Published stable server conformance remains 38 passed and one failed on both
+supported toolchains. A modified local diagnostic is not an official pass; the
+fresh unmodified full 39-scenario run remains required. The earlier rejection
+was the library's strict equality policy for compatible 2025 headers; the header
+fix preserves the negotiated session version. ALL11 current5 and current6
+installed selector captures pass independently. Release capture advanced past
+the ASN1 inventory check and still requires normalization of its loaded
+consolidated protocol paths; the failed receipts remain preserved. No qualified
+ALL11 short run or continuous 48-hour final-RC run has started. Final RC metadata, changed-source static/full-CI and API/package/
+consumer association, final performance qualification, publication ownership
+and Hex remain open. No RC or stable release is qualified by these selected-source receipts.
 
 ## Full-roadmap work still outstanding
 
@@ -801,8 +841,8 @@ remain gates. No RC or stable release is qualified by this checkpoint.
 | 2: runtime | Installed HTTP POST, retained sessions and queued/future cancellation are integrated. Mounted subscriptions, durable legacy resource publication, aliases, Runtime-only mounts and reverse controls are integrated. Complete final combined and authenticated wire qualification. Final cross-runtime crash/restart/stop and upgrade evidence remains required. |
 | 3: dispatch/scheduler | Test/BEAM, stdio, custom calls and HTTP Gateway prepare bounded output before serialized state commit, with grouped batches and actual writer receipts. Subscription/publication and bounded reverse wiring are integrated. Qualify final cross-transport equivalence, authenticated wire and crash-log privacy on the sealed graph. |
 | 4: stores | Built-in Runtime session storage is ETS; unqualified durable session backends reject explicitly. Standalone DETS has bounded operations, path ownership and confirmed/unconfirmed cleanup. Final combined persistence/recovery, lifetime and payload-safe telemetry evidence remains required. |
-| 5: public API | Shared `Server.Result`, default 2020-12 validation, selected DSL composition, media/options migration, dynamic owned tools, `with_connection` and ordinary Client cleanup pass their integrated selections. All 102 accepted callable removals, ten module retirements and four type retirements are implemented in source. Finish the final compiled absence audit and configuration/default contracts. |
-| 6–7: migration/release | Final four-package compiled API and non-symbol migration comparison, final compiled retirement audit, cross-transport equivalence, runtime pressure/isolation/privacy/upgrade evidence and v2 RC/soak. |
+| 5: public API | Shared `Server.Result`, default 2020-12 validation, selected DSL composition, media/options migration, dynamic owned tools, `with_connection` and ordinary Client cleanup pass their integrated selections. All 102 accepted callable removals, ten module retirements and four type retirements pass the API5 compiled comparison. Bind any later accepted source and RC metadata to fresh compiled evidence and final configuration/default contracts. |
+| 6–7: migration/release | Associate any later accepted source and RC metadata with fresh four-package API/package/consumer evidence; complete cross-transport, pressure/isolation/privacy/upgrade, published conformance, performance and v2 RC/soak gates. |
 
 The accepted runtime contract specifies callback PID/links, state order,
 cancellation, ownership and restart behavior. The common runtime implements

@@ -3,7 +3,8 @@
 Status: all 102 accepted callable retirements, the eight Tools modules and two
 legacy HTTP wrappers, and four type retirements are implemented in the reviewed
 source candidate.
-The final sealed four-package compiled comparison remains pending.
+API5 passes the fresh four-package compiled comparison on current/minimum;
+later accepted source and final RC metadata still require their own association.
 Seven additional implementation exports deliberately retire with the reviewed
 runtime redesign; they are recorded separately below. During migration, supported
 1.x remains on the default `master` branch; a later default-branch change is a
@@ -49,9 +50,10 @@ mix run --no-start scripts/check_v2_api_retirements.exs
 The historical minimum/current artifacts confirm 96 callable, eight module and
 four type removals. Later source followups remove the four HTTP-wrapper callables
 and `HttpPlug.start_link/0,1`, completing the accepted source retirement inventory.
-Run `--complete` on freshly compiled final sources; it fails while any planned
-removal is present. Source absence is not a sealed compiled 102-callable result,
-and this audit does not replace the final four-package API/consumer comparison.
+API5 confirms all 102 accepted retirements in its compiled comparison. Run
+`--complete` again on freshly compiled final sources; it fails while any planned
+removal is present. Source absence alone and this audit do not replace the
+four-package API/consumer comparison for a later changed graph.
 
 The historical four-package comparison maps 333 of 341 old modules; the eight
 missing modules are accepted Tools retirements. Its 104 missing callables are
@@ -65,6 +67,16 @@ changed types/struct meanings and generated consumer modules require their own
 review even when the old export name remains.
 
 ### Current compiled API census: API4 snapshot
+
+API5 at MCP `18727b66d62d707fbf0c702f42b7f97516db58a2` and ACP/RPC/adapters
+`47c9e8a303cb0b3fcbb9c1c748e49edfa53a377b` supplies the fresh current/minimum
+compiled association for the legacy Client async-POST followup. Across the four
+packages it contains 695 types, 153 callbacks, 94 structs, 832 fields and 541
+default-argument groups. The API4 type, callback, struct and default census is
+unchanged; three added hidden deadline-aware spawn/watch exports are MCP-owned,
+with no new unintended omissions or wrapper differences. The API4 tables and
+anchors below retain the historical explanations. Later accepted optimization,
+Header and final RC source require their own compiled association.
 
 The fresh four-package production comparison at MCP
 `9d18d9b6266260acbda45b5f7399c19c11c01327` and ACP/RPC/adapters
@@ -90,10 +102,10 @@ entrypoints have explicit function documentation linking their replacement and
 Runtime ownership contracts. This documentation followup changes no production
 forms, signatures or retirement-plan classifications.
 
-API4 is a source-qualified `2.0.0-dev` API snapshot, not release qualification.
-The later legacy Client async-POST correction requires a new source association
-and reflection. Final RC metadata, external consumers, paired performance,
-platform/wire qualification and the continuous soak remain separate gates.
+API4 and API5 are source-qualified `2.0.0-dev` snapshots, not release
+qualification. API5 includes the later Client correction; final changed-source
+and RC metadata, external consumers, performance, platform/wire and continuous
+soak remain separate gates.
 
 ## Deliberate implementation-surface retirements
 
@@ -246,8 +258,9 @@ gates and 13 actual SDK stdio/HTTP cases pass both; the full current rerun passe
 original paced workload has passing actual progress coverage. Stable server
 conformance reports 38/1 on both, retaining the published version-header
 mismatch; stable client 218 and modern server 149/client 387 cases pass both.
-Final full minimum/CI, actual OAuth wire, complete stable conformance and the
-sealed compiled API audit remain gates. See
+Those receipts predate the API5 compiled comparison, authenticated reverse wire
+and package consumers. Fresh unmodified stable conformance and final changed-source
+full CI remain gates. See
 [current release status](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_PLAN.md) for the separate source receipts
 and remaining package, consumer, performance and continuous-soak gates.
 
@@ -490,9 +503,9 @@ negotiation. Check those features with replacement-path tests before deleting
 compatibility code.
 
 The accepted six HTTP signatures and two wrappers are retired in the reviewed
-source candidate; Plug `init/1` and `call/2` remain. Rebuild the final four-package
-API against
-the frozen baseline, recording accepted removals, the ACP facade move, the
+source and API5 compiled snapshot; Plug `init/1` and `call/2` remain. Rebuild the
+four-package API for later accepted source and final RC metadata against the
+frozen baseline, recording accepted removals, the ACP facade move, the
 seven implementation retirements and all unexpected differences in callables,
 callbacks, types and struct meanings. Validate actual installed consumer graphs,
 published version constraints, retained wire eras and the final RC/soak matrix.

@@ -142,8 +142,9 @@ These counts describe separate selections and must not be added together.
 The followups keep bearer introspection and exact identity/endpoint/session
 checks while assigning empty default scopes only to a validated methodless
 JSON-RPC response; custom scope mapping remains unchanged. Six direct Plug
-OAuth cases pass on all three toolchains, but the actual OAuth wire fixture has
-not run. Legacy JSON callbacks can report progress through their authenticated
+OAuth cases pass on all three toolchains; actual OAuth wire was pending at
+that checkpoint. The later API5 result is recorded below. Legacy JSON callbacks
+can report progress through their authenticated
 session's addressed GET while keeping the final POST response JSON. Four pure
 regressions pass; the actual official progress scenario now observes all three
 ordered notifications. The
@@ -170,15 +171,16 @@ conformance passes 218 cases on both supported toolchains. Modern
 0.2.0-alpha.11 conformance passes 149 server and 387 client cases on both.
 These are the selected profile receipts, not final package qualification.
 
-The four-package production API audit and actual 2024 `/sse` to `/message`
-continuous-consumer preparations are source-only. Fresh final builds, physical
-consumer/short-mode proof and the unbroken 48-hour final-RC run remain required.
-Preparation is not execution or release qualification.
+At this dated checkpoint, the four-package production API audit and actual 2024
+`/sse` to `/message` continuous-consumer preparations were source-only. Later
+API5 and package consumer execution is recorded below. A qualified ALL11 short
+run and the unbroken 48-hour final-RC run remain required.
 
-## Latest Client and DETS qualification checkpoint — `e16c0da`
+## Current qualification checkpoint — API5 and selected consumers
 
-This section supersedes the active status of the dated checkpoint above. Its
-historical source selections, counts and failed receipts remain unchanged.
+This section supersedes earlier active status statements. The Client/DETS
+selection at `e16c0da` and other historical sources, counts and failed receipts
+remain unchanged; separate selections are not an aggregate release total.
 
 The Client followup keeps the native legacy SSE GET loop available while owned,
 bounded asynchronous senders wait for established request POSTs. Single and
@@ -195,28 +197,66 @@ both. The corrected DETS module passes 16 cases on minimum, current and newest;
 this is a separate selection, not an aggregate release test count. Forced test
 compilation passes both, and the unfiltered warning comparison adds no warnings
 or filters. The full minimum performance/stress command passes 5,573 tests,
-20 doctests and 34 properties with zero failures. Fresh complete CI for this
-checkpoint remains pending. The preceding `be1ae4a` CI passed 15 of 16 jobs, including stress
+20 doctests and 34 properties with zero failures. The later MCP `f240699` CI
+passes all 16 jobs; changed candidates still need fresh complete CI. The
+preceding `be1ae4a` CI passed 15 of 16 jobs, including stress
 and both previously failed minimum unit/archive jobs. Its sole newest failure
 was state inspection after a short-budget setup storage error and deliberate
 manager fail-stop; that failed receipt remains preserved.
 
-Four independently compiled package API captures at MCP `9d18d9b` and ACP
-`47c9e8a` were actual historical passes, not source-only preparation. They do
-not qualify this Client checkpoint, which adds three internal deadline-aware
-spawn/watch arities. Copied compiler metadata later invalidated the current
-live build cache; the original capture verdict remains evidence for its
-original source. Fresh source-only dependency/build domains and a new
-four-package compiled API and semantic comparison are required. Copying or
-restoring old build metadata does not establish a fresh graph.
+The historical API4 captures at MCP `9d18d9b` and ACP `47c9e8a` remain
+actual passes for their original sources. Copied compiler metadata later
+invalidated the current live cache; that failure and the original captures
+remain preserved. API5 uses fresh independent production graphs at MCP
+`18727b66d62d707fbf0c702f42b7f97516db58a2` and ACP/RPC/adapters
+`47c9e8a303cb0b3fcbb9c1c748e49edfa53a377b`. Both supported toolchains complete
+all 23 driver commands, including forced compilation with warnings as errors in
+each owning package root and fresh reflection. The API4 semantic census is
+unchanged; three added hidden deadline-aware spawn/watch exports belong to MCP.
+See [the API census](./V2_API_MIGRATION.md#current-compiled-api-census-api4-snapshot).
 
-The selected Client source passes three actual authenticated legacy reverse
-wire cases on both supported toolchains within the 163 cases above. Final sealed-package authenticated
-wire remains required. Published stable server conformance remains 38 passed
-and one failed on both; a prepared private header diagnostic is not an official
-published pass. Final archive/installed/release consumers, paired performance,
-RC metadata and publication, and the accepted continuous 48-hour final-RC run
-remain gates. No RC or stable release is qualified by this checkpoint.
+Fresh API5 source archives pass exact source association on both toolchains.
+Each combined installed/compiler-free release consumer completes eight stages;
+Cowboy and Bandit each pass installed and release consumers on both toolchains.
+Three authenticated legacy HTTP reverse wire cases and fifteen Phoenix wire
+groups pass per toolchain. OAuth provider HTTP/DNS remains a fixture seam, not
+external-provider interoperability proof. Unpublished Arbor packages use
+extracted archive paths with normal Hex dependencies; published-package
+resolution and the actual Arbor host's pre-existing compile-warning gate remain
+open.
+
+The codec-only experiment compares API5 with fresh changed-source graphs and
+matching runtime dependency versions: all 22 checks in eight timing VMs pass.
+Median 256 KiB BEAM echo falls from 1,524 to 995.5 microseconds (34.7%), and Test
+echo from 2,584 to 2,034.5 microseconds (21.3%). Small operations show no fixed
+improvement. This does not qualify final RC performance or replace the retained
+released-1.x comparison.
+
+The cached-scope/Node Ledger shortcut was rejected because unobserved
+distribution transitions can leave stale charges. The nil-only leaf candidate
+retains every full metadata admission check; its 40-case suite and own compilation
+with warnings as errors pass all three toolchains. Header compatibility's
+93-case and 142-case selections, warnings-as-errors compilation and formatting
+also pass all three. Fresh codec-plus-nil compilation completes all four phases;
+both 22-case smoke selections and eight timing VMs pass. The paired medians
+show 256 KiB BEAM echo falling from 1,502.5 to 1,033 microseconds (31.2%) and
+Test echo from 2,584 to 2,076 microseconds (19.7%), with identical retained output
+sizes. Small-call reductions fall about 15%, but wall latency is mixed: BEAM
+ping improves from 350.5 to 321 microseconds and Test ping increases from 324 to
+338. The small source changes are selected; this experiment does not qualify a
+final release graph or restore the released 1.x latency profile.
+
+Published stable server conformance remains 38 passed and one failed on both
+supported toolchains. A modified local diagnostic is not an official pass; the
+fresh unmodified full 39-scenario run remains required. The earlier rejection
+was the library's strict equality policy for compatible 2025 headers; the header
+fix preserves the negotiated session version. ALL11 current5 and current6
+installed selector captures pass independently. Release capture advanced past
+the ASN1 inventory check and still requires normalization of its loaded
+consolidated protocol paths; the failed receipts remain preserved. No qualified
+ALL11 short run or continuous 48-hour final-RC run has started. Final RC metadata, changed-source static/full-CI and API/package/
+consumer association, final performance qualification, publication ownership
+and Hex remain open. No RC or stable release is qualified by these selected-source receipts.
 
 ## Outstanding release blockers
 
@@ -224,28 +264,34 @@ remain gates. No RC or stable release is qualified by this checkpoint.
   HTTP reverse controls, legacy progress/log delivery, mounted modern
   subscriptions, Runtime-only HTTP mounts and explicit standalone server
   ownership are integrated. Legacy JSON progress has passing actual official
-  coverage; actual OAuth wire and the published stable conformance scenario
-  mismatch remain open.
+  coverage; selected API5 authenticated reverse wire passes with fixture provider
+  HTTP/DNS. The fresh unmodified published stable suite and final changed-source
+  transport qualification remain open.
   Addressed resource subscription tracking and durable fanout are implemented
   and described in [the resource slice](https://github.com/trust-arbor/arbor_mcp/blob/f08c090c44edcda3a53478fd04a7a944c0bf2b7f/docs/V2_HTTP_RESOURCE_PUBLICATION_SLICE.md). Runtime/scheduler, store/result
   contracts, owned listeners and accepted API retirements have implemented slices;
   their interim receipts do not establish final cross-transport qualification.
-- Freeze the final four-package compiled ABI/defaults, exact subprocess and
-  dependency contracts, versions/tags and named human release owners. Independent
-  package CI and the accepted 48-hour duration do not replace those final gates.
+- Bind the selected codec-plus-nil Ledger changes and final RC metadata to
+  fresh compiled evidence. The nil-only 40-case and Header selections pass all
+  three toolchains; the cached-scope/Node shortcut is rejected. Requalify the
+  final graph's performance, and associate it with the compiled
+  API/defaults, exact package/dependency contracts, static/full CI and consumers.
+  Record versions/tags and named human release owners.
 - Qualify the shared-handle integration candidates and their exact immutable
   dependency pins. Canonical v2 ACP is now in its own repository; preserve the
   original extraction and dirty spike as migration evidence, without regenerating
   over the canonical implementation.
-- Complete packaged consumer, extension/range and publishing qualification.
-  Independent ACP manifests and CI exist; Hex ownership/credentials, final
-  links and namespace/config/telemetry migration still need release evidence.
+- Retain API5 archive, combined installed/release, Cowboy/Bandit, OAuth and
+  Phoenix passes for their selected source. Finish extension/range, actual Arbor
+  host and publishing qualification. Hex ownership/credentials, normal published
+  package resolution and final links still need release evidence.
 - Requalify installed HTTP sessions, reverse controls, aliases, replay and
   optional listeners at the final package commit. Complete full CI, official
   legacy/current conformance, tagged TypeScript HTTP and SDK coverage, Phoenix,
   actual Arbor/combined/OTP-release consumers, adapter compatibility and
-  same-runner performance against the released 1.x artifact. Run the final RC's
-  actual 48-hour soak only after the exact package graph is qualified.
+  same-runner performance against the released 1.x artifact. Complete a qualified
+  ALL11 installed/release selection and short run before starting the unchanged
+  final RC's continuous 48-hour soak.
 
 Stable publication requires all blockers cleared and the final RC's full evidence
 reviewed. Keep the frozen 1.x manifest and preserved migration worktrees available

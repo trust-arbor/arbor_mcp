@@ -506,6 +506,210 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedgerTest do
     send(consumer, :stop)
   end
 
+  test "claim-only transitions retain the exact metadata cap while new scopes remain bounded" do
+    probe = ledger(max_output_frames: 8)
+    assert :ok = Ledger.subscribe(probe, :session, self())
+    budget = Ledger.stats(probe).metadata_bytes
+    ref = ledger(max_output_frames: 8, max_scope_bytes: budget)
+    assert :ok = Ledger.subscribe(ref, :session, self())
+    assert {:ok, ticket} = prepare(ref)
+    assert {:ok, %{"ok" => true}} = Ledger.value(ticket)
+    assert :ok = Ledger.handoff(ticket)
+    assert :ok = Ledger.publish(ticket)
+    assert %{frames: 1, queued: 1, metadata_bytes: ^budget} = Ledger.stats(ref)
+    assert {:error, :output_scope_limit} = Ledger.open_scope(ref, :extra)
+    assert %{scopes: 1, frames: 1, metadata_bytes: ^budget} = Ledger.stats(ref)
+    assert {:ok, ^ticket, %{"ok" => true}, _} = Ledger.checkout(ref, :session)
+    assert :ok = Ledger.ack(ticket)
+    assert %{scopes: 1, frames: 0, bytes: 0, metadata_bytes: ^budget} = Ledger.stats(ref)
+    assert :ok = Ledger.retire_scope(ref, :session)
+    assert :ok = Ledger.open_scope(ref, :session)
+    assert Ledger.stats(ref).metadata_bytes == budget
+  end
+
+  test "external producers cannot skip a smaller metadata limit by copying actor dictionary state" do
+    ref = ledger()
+    budget = Ledger.stats(ref).metadata_bytes
+    altered = %{ref | limits: %{ref.limits | max_scope_bytes: budget - 1}}
+    assert {:error, :output_scope_limit} = prepare(altered)
+    key = {Ledger, :reference}
+    previous = Process.get(key)
+    :sys.suspend(ref.pid)
+    Process.put(key, altered)
+
+    try do
+      assert {:error, :output_scope_limit} = prepare(altered)
+
+      assert %{frames: 0, bytes: 0, pending_controls: 0, metadata_bytes: ^budget} =
+               Ledger.stats(ref)
+    after
+      if is_nil(previous), do: Process.delete(key), else: Process.put(key, previous)
+      :sys.resume(ref.pid)
+    end
+
+    assert {:ok, ticket} = prepare(ref)
+    assert :ok = Ledger.release(ticket)
+  end
+
+  test "actor confirmation does not inherit a larger external producer metadata limit" do
+    probe = ledger(max_output_frames: 8)
+    budget = Ledger.stats(probe).metadata_bytes
+    ref = ledger(max_output_frames: 8, max_scope_bytes: budget)
+    altered = %{ref | limits: %{ref.limits | max_scope_bytes: budget * 64}}
+    parent = self()
+    :sys.suspend(ref.pid)
+
+    producers =
+      for _ <- 1..8 do
+        producer =
+          spawn(fn ->
+            send(parent, {:prepared, self(), prepare(altered, %{}, owner: self())})
+          end)
+
+        on_exit(fn ->
+          if Process.alive?(producer), do: Process.exit(producer, :kill)
+        end)
+
+        producer
+      end
+
+    first =
+      try do
+        eventually(fn ->
+          stats = Ledger.stats(ref)
+          {:messages, messages} = Process.info(ref.pid, :messages)
+          queued = Enum.count(messages, &match?({:"$gen_call", _, {:operation, _}}, &1))
+          stats.prepared == 8 and stats.pending_controls == 8 and queued == 8
+        end)
+
+        assert Ledger.stats(ref).metadata_bytes > budget
+        {:messages, messages} = Process.info(ref.pid, :messages)
+
+        Enum.find_value(messages, fn
+          {:"$gen_call", {producer, _}, {:operation, _}} -> producer
+          _ -> nil
+        end)
+      after
+        :sys.resume(ref.pid)
+      end
+
+    assert first in producers
+    assert_receive {:prepared, ^first, {:error, :output_scope_limit}}, 1_000
+    outcomes = results(7)
+
+    assert Enum.all?(outcomes, fn {_, result} ->
+             match?({:ok, _}, result) or result == {:error, :output_scope_limit}
+           end)
+
+    eventually(fn ->
+      Ledger.stats(ref).frames == 0 and Ledger.stats(ref).pending_controls == 0
+    end)
+  end
+
+  test "growing pending ticket controls cannot bypass the exact scope metadata cap" do
+    probe = ledger(max_output_frames: 8)
+    budget = Ledger.stats(probe).metadata_bytes
+    ref = ledger(max_output_frames: 8, max_scope_bytes: budget)
+    parent = self()
+
+    producers =
+      for _ <- 1..8 do
+        producer =
+          spawn(fn ->
+            result = prepare(ref, %{"ok" => true}, owner: self())
+            send(parent, {:prepared, self(), result})
+
+            receive do
+              :value ->
+                {:ok, ticket} = result
+                send(parent, {:metadata_value, self(), Ledger.value(ticket)})
+            end
+
+            receive do
+              :stop ->
+                {:ok, ticket} = result
+                Ledger.release(ticket)
+            end
+          end)
+
+        on_exit(fn ->
+          if Process.alive?(producer), do: Process.exit(producer, :kill)
+        end)
+
+        assert [{^producer, {:ok, _}}] = results(1)
+        producer
+      end
+
+    :sys.suspend(ref.pid)
+
+    try do
+      Enum.each(producers, &send(&1, :value))
+
+      eventually(fn ->
+        {:messages, messages} = Process.info(self(), :messages)
+        completed = Enum.count(messages, &match?({:metadata_value, _, _}, &1))
+        Ledger.stats(ref).pending_controls + completed == 8
+      end)
+
+      assert %{frames: 8, scopes: 1, pending_controls: pending} = Ledger.stats(ref)
+      assert pending > 0 and pending < 8
+      assert Ledger.stats(ref).metadata_bytes <= budget
+    after
+      :sys.resume(ref.pid)
+    end
+
+    outcomes =
+      for _ <- producers do
+        assert_receive {:metadata_value, producer, result}, 1_000
+        assert producer in producers
+        result
+      end
+
+    assert {:ok, %{"ok" => true}} in outcomes
+    assert {:error, :output_scope_limit} in outcomes
+    assert Enum.all?(outcomes, &(&1 in [{:ok, %{"ok" => true}}, {:error, :output_scope_limit}]))
+    Enum.each(producers, &send(&1, :stop))
+
+    eventually(fn ->
+      Ledger.stats(ref).frames == 0 and Ledger.stats(ref).pending_controls == 0
+    end)
+
+    assert Ledger.stats(ref).metadata_bytes == budget
+  end
+
+  test "non-nil scope controls still charge function-captured binary backing" do
+    ref = ledger(max_scope_bytes: 2_000)
+    before = Ledger.stats(ref)
+    backing = String.duplicate("x", 16_384)
+    slice = binary_part(backing, 0, 128)
+    marker = make_ref()
+    scope = fn -> {marker, slice} end
+    assert :erlang.external_size(scope) < 4_096
+    assert :binary.referenced_byte_size(slice) > byte_size(slice)
+    assert {:error, :output_scope_limit} = Ledger.open_scope(ref, scope)
+    assert Ledger.stats(ref) == before
+    assert :sys.get_state(ref.pid).monitors == %{}
+  end
+
+  test "generation replacement cannot authorize old claim-only changes or lose metadata limits" do
+    probe = ledger(max_output_frames: 8)
+    budget = Ledger.stats(probe).metadata_bytes
+    ref = ledger(max_output_frames: 8, max_scope_bytes: budget)
+    assert {:ok, old} = prepare(ref)
+    assert :ok = Ledger.handoff(old)
+    assert {:ok, fresh} = Ledger.reset_generation(ref, make_ref())
+    assert {:ok, ^fresh} = Ledger.ref(ref.pid)
+    assert {:error, :output_unavailable} = Ledger.publish(old)
+    assert {:error, :output_unavailable} = prepare(ref)
+    assert %{frames: 0, bytes: 0, scopes: 0, pending_controls: 0} = Ledger.stats(fresh)
+    assert :ok = Ledger.open_scope(fresh, :session)
+    assert {:error, :output_scope_limit} = Ledger.open_scope(fresh, :extra)
+    assert {:ok, ticket} = prepare(fresh)
+    assert :ok = Ledger.handoff(ticket)
+    assert :ok = Ledger.release(ticket)
+    assert %{frames: 0, bytes: 0, scopes: 1, metadata_bytes: ^budget} = Ledger.stats(fresh)
+  end
+
   test "metadata reserved at admission permits drain and retirement at the exact cap" do
     probe = ledger()
     assert :ok = Ledger.subscribe(probe, :session, self())

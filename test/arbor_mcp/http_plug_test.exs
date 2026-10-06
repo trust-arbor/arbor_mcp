@@ -243,7 +243,7 @@ defmodule Arbor.MCP.HttpPlugTest do
       end
     end
 
-    test "requires the negotiated protocol version before standard DELETE" do
+    test "rejects missing, unsupported and duplicate headers before standard DELETE" do
       previous = Application.get_env(:arbor_mcp, :protocol_version_required)
       Application.put_env(:arbor_mcp, :protocol_version_required, true)
 
@@ -265,13 +265,13 @@ defmodule Arbor.MCP.HttpPlugTest do
       assert missing.status == 400
       assert {:ok, %{initialized: true}} = session_state(session_id)
 
-      mismatched =
+      unsupported =
         conn(:delete, "/mcp")
         |> put_req_header("mcp-session-id", session_id)
-        |> put_req_header("mcp-protocol-version", "2025-03-26")
+        |> put_req_header("mcp-protocol-version", "2099-01-01")
         |> call_http(opts)
 
-      assert mismatched.status == 400
+      assert unsupported.status == 400
       assert {:ok, %{initialized: true}} = session_state(session_id)
 
       duplicate_base =
@@ -292,7 +292,7 @@ defmodule Arbor.MCP.HttpPlugTest do
       valid =
         conn(:delete, "/mcp")
         |> put_req_header("mcp-session-id", session_id)
-        |> put_req_header("mcp-protocol-version", "2025-06-18")
+        |> put_req_header("mcp-protocol-version", "2025-03-26")
         |> call_http(opts)
 
       assert valid.status == 204

@@ -4,8 +4,9 @@ This is the consumer migration record for behavior that an export comparison
 cannot establish. It accompanies [the API inventory](./V2_API_MIGRATION.md),
 [package ownership](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/docs/V2_PACKAGE_CONTRACT.md) and
 [the runtime contract](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70421206a0d6b96184523ffa1db9d209d6/docs/V2_RUNTIME_CONTRACT.md). V2 is still an unpublished
-candidate; HTTP reverse and Runtime-only mounts are integrated, while final
-combined transport, compiled graph and RC gates remain open.
+candidate; HTTP reverse and Runtime-only mounts are integrated. API5 compiled
+graph and selected consumer checks pass for their exact source; final changed-source
+and RC gates remain open.
 
 ## Source checkpoints and evidence boundaries
 
@@ -42,9 +43,9 @@ in that batch restores the conformance fixture's original 150 ms workload.
 Actual stable server conformance now reports 38/1 on both supported toolchains;
 the remaining published scenario uses a header inconsistent with its negotiated
 version. Stable client 218 and modern server 149/client 387 cases pass both.
-The earlier failed receipts remain preserved; full minimum/CI, actual OAuth
-wire and final package qualification remain pending. These do not change the historical slice counts or establish the final
-compiled package graph. See [current release status](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_PLAN.md).
+The earlier failed receipts and historical slice counts remain preserved.
+API5 supplies the later compiled and selected-consumer association below; final
+changed-source and RC qualification remain open. See [current release status](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_PLAN.md).
 
 The historical census is retained under
 `tmp/v2-semantic-census-69b0a39/{SEMANTIC_CENSUS.md,semantic-inventory.json,REVIEW_NOTES.md}`.
@@ -315,13 +316,23 @@ and [mock implementation](https://github.com/trust-arbor/arbor_mcp/blob/111a3c70
 
 ### Current API4 type, callback and struct census
 
+API5 at MCP `18727b66d62d707fbf0c702f42b7f97516db58a2` and ACP/RPC/adapters
+`47c9e8a303cb0b3fcbb9c1c748e49edfa53a377b` supplies the fresh current/minimum
+compiled association for the legacy Client async-POST followup. Across the four
+packages it contains 695 types, 153 callbacks, 94 structs, 832 fields and 541
+default-argument groups. The API4 type, callback, struct and default census is
+unchanged; three added hidden deadline-aware spawn/watch exports are MCP-owned,
+with no new unintended omissions or wrapper differences. The API4 tables and
+anchors below retain the historical explanations. Later accepted optimization,
+Header and final RC source require their own compiled association.
+
 The production API4 snapshot is MCP
 `9d18d9b6266260acbda45b5f7399c19c11c01327` plus ACP/RPC/adapters
 `47c9e8a303cb0b3fcbb9c1c748e49edfa53a377b`. Minimum and current captures each
 report eleven retained type changes and sixteen struct changes. The seven-type
 and eight-struct tables above remain historical; this section adds the later
-associations without rewriting them. It does not qualify subsequent Client
-fixes or final RC artifacts.
+associations without rewriting them. API5 supplies the subsequent Client
+association above; neither snapshot qualifies final RC artifacts.
 
 The eleven retained types comprise the seven named historical rows plus these
 four later definitions:
@@ -365,9 +376,9 @@ Unqualified names in this table use `Arbor.MCP.*`. These are reflected shape
 changes, not persisted-term or hot-upgrade compatibility guarantees. Known
 cleanup errors, opaque authority and actual ownership remain behavioral
 contracts even where the exported name or a broad term type is unchanged.
-The final legacy Client async-POST followup and RC metadata require fresh
-compiled association; consumers/performance/continuous soak are not certified
-by this census.
+API5 includes the legacy Client async-POST followup. Later accepted changes and
+RC metadata require fresh compiled association; consumer, performance and
+continuous-soak qualification cannot be inferred from this census.
 
 ## Client, adapter and subprocess ownership
 
@@ -479,7 +490,8 @@ server ownership are implemented at `27f81a1`; its combined 543-case selection
 passes on all three captured toolchains and its 27-case HTTP wire/Client selection
 passes on both supported toolchains. Reverse controls are now integrated at
 `1284440`; their original private evidence remains in [the reverse slice](./V2_HTTP_REVERSE_SLICE.md).
-Final combined/authenticated wire, conformance, package, compiled API, consumer,
+Selected API5 authenticated reverse wire, compiled API and package consumers
+pass for their exact source. Final changed-source conformance, package/consumer,
 performance, full CI and soak qualification remain gates. The legacy JSON
 progress continuation committed at `e284fee` uses the original authenticated
 session target without changing the final JSON response format. Its actual
@@ -489,10 +501,11 @@ remaining published version-header mismatch is still open, without an
 expected-failure adjustment or protocol downgrade.
 Validated methodless OAuth responses use empty default scopes only after normal
 ServerGuard validation. Custom scope mapping and exact callback/session/identity/
-endpoint authority remain required; direct Plug tests do not qualify actual
-OAuth wire behavior.
-The accepted HTTP wrappers/startup helpers are
-retired in the reviewed source; the final compiled absence audit is pending.
+endpoint authority remain required. API5 passes three authenticated legacy
+reverse wire cases per supported toolchain; provider HTTP/DNS remains a fixture
+seam and does not qualify external-provider interoperability. The accepted HTTP
+wrappers/startup helpers are retired in source and the API5 compiled comparison;
+later accepted source and RC metadata require a fresh audit.
 The retained stream keeps its original HTTP entry cutoff and a reconnect preserves its typed session. Modern GET/DELETE
 remain sessionless 405. See [session streams](./V2_HTTP_SESSION_STREAM_SLICE.md).
 A separate [listener capability](./V2_HTTP_LISTENER_LIFETIME_CORE.md) captures
@@ -602,8 +615,9 @@ selectors are rejected even alongside a valid runtime. Legacy wire eras and
 while static/function/MFA `handler_opts` becomes charged request context.
 Mount subscription filter/publication policy is conjunctive with the root's
 policy; queue, message-byte, aggregate-byte and lifetime caps can only narrow it.
-Final combined qualification and the sealed compiled API audit remain required.
-Historical slice receipts above describe their original source checkpoints.
+API5 supplies compiled evidence for this source; final changed-source and RC
+qualification remain required. Historical slice receipts above retain their
+original source checkpoints.
 See [runtime HTTP cutover](./V2_HTTP_RUNTIME_CUTOVER.md).
 
 ## Telemetry, diagnostics and final qualification
@@ -665,8 +679,9 @@ remain separate boundaries; formatter coverage alone cannot prove them.
 
 Before RC, rebuild immutable MCP/ACP/adapters/RPC manifests and reconcile every
 unexpected callable, callback, type and struct change, including the seven
-deliberate hidden retirements and privacy callbacks. The accepted source HTTP
-retirements do not certify their sealed compiled absence or full HTTP convergence.
+deliberate hidden retirements and privacy callbacks. API5 confirms accepted HTTP
+retirements in its compiled snapshot; that does not certify a later changed
+graph or full HTTP convergence.
 Qualify installed archives/releases, native build and priv lookup, package-only consumers, final published dependency constraints,
 both wire eras, cancellation/EOF/output/borrowed survival, physical pressure,
 durable stores, coverage/conformance/SDKs and the supported toolchain/platform

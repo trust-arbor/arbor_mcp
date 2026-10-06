@@ -1623,7 +1623,7 @@ defmodule Arbor.MCP.HttpPlug do
 
     case get_req_header(conn, "mcp-protocol-version") do
       [version] when is_binary(version) ->
-        if VersionRegistry.supported?(version) and version == expected,
+        if compatible_legacy_http_header?(conn, version, expected),
           do: {:ok, assign(conn, :request_protocol_version, expected)},
           else:
             protocol_version_error(
@@ -3518,14 +3518,16 @@ defmodule Arbor.MCP.HttpPlug do
               expected_version
             )
 
-          is_binary(session_id) and version != expected_version ->
+          is_binary(session_id) and
+              not compatible_legacy_http_header?(conn, version, expected_version) ->
             protocol_version_error(
               "MCP-Protocol-Version #{version} does not match the negotiated version #{expected_version}.",
               expected_version
             )
 
           true ->
-            {:ok, assign(conn, :request_protocol_version, version)}
+            request_version = if is_binary(session_id), do: expected_version, else: version
+            {:ok, assign(conn, :request_protocol_version, request_version)}
         end
 
       [] ->
@@ -3544,6 +3546,19 @@ defmodule Arbor.MCP.HttpPlug do
           expected_version
         )
     end
+  end
+
+  # A supported header within the Streamable HTTP legacy family does not
+  # renegotiate the initialized session. Keep its stored version authoritative.
+  # The deprecated 2024 transport and modern per-request metadata keep their
+  # existing independent version fences.
+  defp compatible_legacy_http_header?(conn, version, expected) do
+    family = ["2025-03-26", "2025-06-18", "2025-11-25"]
+
+    VersionRegistry.supported?(version) and
+      (version == expected or
+         (not Map.has_key?(conn.private, :arbor_mcp_legacy_session) and
+            version in family and expected in family))
   end
 
   defp protocol_version_error(message, expected_version) do

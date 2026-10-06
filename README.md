@@ -2,7 +2,7 @@
 
 Elixir clients and servers for the [Model Context Protocol](https://modelcontextprotocol.io/), with stdio, Streamable HTTP and BEAM-local transports.
 
-**Version 2 is under development.** This checkout is the MCP part of the library split. The released 1.x package remains [`ex_mcp`](https://hex.pm/packages/ex_mcp); `arbor_mcp` 2.0 has not been released. The runtime integration, public API cleanup and package qualification described in the [v2 roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md) are release work in progress. Historical 1.x test counts and performance results are not v2 qualification evidence.
+**Version 2 is under development.** This checkout is the MCP part of the library split. The released 1.x package remains [`ex_mcp`](https://hex.pm/packages/ex_mcp); `arbor_mcp` 2.0 has not been released. The supervised Runtime and accepted API cleanup are implemented; final package and release qualification remain in progress. See the [release assessment](docs/V2_RELEASE_ASSESSMENT.md) for the qualified source checkpoints and open gates. Historical 1.x test counts and performance results are not v2 qualification evidence.
 
 ACP clients, agents and the optional vendor adapter bundle are developed in [Arbor.ACP](https://github.com/trust-arbor/arbor_acp). MCP and ACP depend on the small shared `arbor_rpc` package and can be installed independently.
 
@@ -47,9 +47,9 @@ The latest stable MCP revision is `2026-07-28`. `:prefer_modern` allows evidence
 
 ## Servers and transports
 
-Handlers use `Arbor.MCP.Server.Handler` and the declarative `Arbor.MCP.Server.DSL` to define tools, resources and prompts. Version 2 introduces a supervised runtime per server, a scheduler for handler work and explicit session/subscription storage contracts. HTTP, stdio and BEAM integration is being migrated to that runtime. Follow the [roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md) for the final contract and qualification status.
+Handlers use `Arbor.MCP.Server.Handler` and the declarative `Arbor.MCP.Server.DSL` to define tools, resources and prompts. HTTP, stdio and BEAM use a supervised Runtime per server, bounded handler scheduling and explicit session/subscription storage contracts. Follow the [roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md) for the accepted contract.
 
-HTTP applications can mount `Arbor.MCP.HttpPlug` inside an existing Plug/Phoenix server. Standalone HTTP listeners are optional. Install the selected Cowboy or Bandit dependency and choose `http_adapter: :cowboy` or `:bandit`; Cowboy remains the default. See the [HTTP listener guide](docs/HTTP_LISTENERS.md) for startup, shutdown and mounted hosts. HTTP runtime integration remains v2 release work. The [transport guide](docs/TRANSPORT_GUIDE.md) and [examples](https://github.com/trust-arbor/arbor_mcp/tree/master/examples) are being updated alongside the implementation.
+HTTP applications mount `Arbor.MCP.HttpPlug` with an explicit Runtime inside an existing Plug/Phoenix server. Standalone HTTP listeners are optional. Install the selected Cowboy or Bandit dependency and choose `http_adapter: :cowboy` or `:bandit`; Cowboy remains the default. See the [HTTP listener guide](docs/HTTP_LISTENERS.md) for startup, shutdown and mounted-host ownership, and the [transport guide](docs/TRANSPORT_GUIDE.md) for transport contracts.
 
 ## Guides and examples
 

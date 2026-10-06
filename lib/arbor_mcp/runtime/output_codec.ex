@@ -171,8 +171,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputCodec do
   defp json_value(value) when value in [nil, true, false], do: :ok
   defp json_value(value) when is_number(value), do: :ok
 
-  defp json_value(value) when is_binary(value),
-    do: if(String.valid?(value), do: :ok, else: {:error, :invalid_output})
+  defp json_value(value) when is_binary(value), do: :ok
 
   defp json_value(value) when is_list(value), do: json_list(value)
 
@@ -198,8 +197,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputCodec do
   defp json_list(_), do: {:error, :invalid_output}
   defp json_key(key) when is_atom(key), do: {:ok, Atom.to_string(key)}
 
-  defp json_key(key) when is_binary(key),
-    do: if(String.valid?(key), do: {:ok, key}, else: {:error, :invalid_output})
+  defp json_key(key) when is_binary(key), do: {:ok, key}
 
   defp json_key(_), do: {:error, :invalid_output}
 
