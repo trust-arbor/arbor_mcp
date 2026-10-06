@@ -1,8 +1,8 @@
 defmodule Arbor.MCP.Server.RuntimeNativeStorePressureTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.Server.{ReplayCache, Runtime}
-  alias Arbor.MCP.Server.Runtime.{ServiceOperation, Services}
+  alias Arbor.MCP.Server.Runtime.{CallbackContext, ServiceOperation, Services}
   alias Arbor.MCP.Tasks
   alias Arbor.MCP.Tasks.Store.ETS, as: TaskStore
   alias Arbor.MCP.Tasks.Task, as: TaskRecord
@@ -13,8 +13,9 @@ defmodule Arbor.MCP.Server.RuntimeNativeStorePressureTest do
     def init(parent), do: {:ok, parent}
 
     def dispatch(request, _handler, parent, _opts) do
-      send(parent, {:waiting, self()})
-      receive do: (:proceed -> :ok)
+      deadline = CallbackContext.current().deadline
+      entered = System.monotonic_time(:millisecond)
+      send(parent, {:waiting, self(), entered, deadline})
 
       result =
         case request["method"] do
@@ -95,10 +96,13 @@ defmodule Arbor.MCP.Server.RuntimeNativeStorePressureTest do
       :ok = :sys.suspend(binding.server)
       request = %{"jsonrpc" => "2.0", "id" => 1, "method" => unquote(method)}
       {:ok, token} = Runtime.submit(runtime, request)
-      assert_receive {:waiting, worker}, 1_000
+      assert_receive {:waiting, worker, entered, deadline}, 1_000
+      assert entered < deadline
       monitor = Process.monitor(worker)
-      send(worker, :proceed)
       eventually(fn -> ServiceOperation.stats(binding.address).pending_operations == 1 end)
+      [{_operation, entry}] = ServiceOperation.entries(binding.address)
+      assert entry.owner == worker
+      assert entry.deadline == deadline
 
       assert {:error, %{"error" => %{"data" => %{"type" => "handler_timeout"}}}} =
                Runtime.await(token, 1_000)

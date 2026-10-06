@@ -149,7 +149,7 @@ defmodule Arbor.MCP.ProtocolVersionTest do
       assert response["error"]["data"]["expectedVersion"] == "2025-06-18"
     end
 
-    test "rejects a supported header that differs from the negotiated session version", %{
+    test "accepts a compatible header while retaining the negotiated session version", %{
       opts: opts
     } do
       session_id = initialize_session(opts)
@@ -168,11 +168,14 @@ defmodule Arbor.MCP.ProtocolVersionTest do
         |> put_req_header("mcp-protocol-version", "2025-11-25")
         |> HttpPlug.call(opts)
 
-      assert conn.status == 400
+      assert conn.status == 200
       response = Jason.decode!(conn.resp_body)
-      assert response["error"]["message"] =~ "does not match the negotiated version"
-      assert response["error"]["data"]["expectedVersion"] == "2025-06-18"
+      assert response["id"] == 1
+      assert response["result"]["structuredContent"] == %{"message" => "hello"}
       assert get_resp_header(conn, "mcp-protocol-version") == ["2025-06-18"]
+
+      assert {:ok, %{protocol_version: "2025-06-18"}} =
+               RuntimeHTTPFixture.session_state(opts.runtime, session_id)
     end
   end
 

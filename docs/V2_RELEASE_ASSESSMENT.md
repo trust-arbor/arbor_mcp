@@ -821,17 +821,28 @@ ping improves from 350.5 to 321 microseconds and Test ping increases from 324 to
 338. The small source changes are selected; this experiment does not qualify a
 final release graph or restore the released 1.x latency profile.
 
-Published stable server conformance remains 38 passed and one failed on both
-supported toolchains. A modified local diagnostic is not an official pass; the
-fresh unmodified full 39-scenario run remains required. The earlier rejection
-was the library's strict equality policy for compatible 2025 headers; the header
-fix preserves the negotiated session version. ALL11 current5 and current6
-installed selector captures pass independently. Release capture advanced past
-the ASN1 inventory check and still requires normalization of its loaded
-consolidated protocol paths; the failed receipts remain preserved. No qualified
-ALL11 short run or continuous 48-hour final-RC run has started. Final RC metadata, changed-source static/full-CI and API/package/
-consumer association, final performance qualification, publication ownership
-and Hex remain open. No RC or stable release is qualified by these selected-source receipts.
+At MCP `367e151`, the unmodified published 0.1.16 stable server suite passes
+all 39 scenarios on both supported toolchains, with unchanged CLI assertions,
+post-artifact checks and confirmed owned cleanup. The earlier 38/1 receipts and
+modified-header diagnostic remain historical evidence. The header fix allows
+compatible 2025 Streamable HTTP headers while preserving the negotiated session
+version; no filter, exclusion or protocol downgrade produces the current pass.
+
+The `367e151` CI run `37412047958` completes ten successful and six failed jobs.
+An outdated compatible-header assertion and three short-deadline/queue fixture
+assumptions have separate corrections. Those four corrected fixtures pass the
+selected 35 cases and formatting on minimum, current and newest, with production
+source hashes unchanged. These corrections are included in this checkout;
+the local selection does not replace a fresh complete CI run.
+
+ALL11 current8 completes all seven source/build/installed/release-selector phases.
+Its first installed SHORT attempt fails on configuration atom parsing before
+Bootstrap or lane effects, with confirmed owned cleanup. Earlier capture failures
+remain preserved; fixed configuration parsing and capture-output binding require
+new evidence. No ALL11 short run or continuous 48-hour final-RC run is qualified.
+Final RC metadata, changed-source static/full CI and API/package/consumer
+association, final performance qualification, publication ownership and Hex remain
+open. No RC or stable release is qualified by these selected-source receipts.
 
 ## Full-roadmap work still outstanding
 

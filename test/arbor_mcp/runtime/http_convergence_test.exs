@@ -1,8 +1,8 @@
 defmodule Arbor.MCP.Server.Runtime.HTTPConvergenceTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   alias Arbor.MCP.{HttpPlug, SessionManager}
   alias Arbor.MCP.Server.Runtime
-  alias Arbor.MCP.Server.Runtime.{HTTPWriterProxy, HTTPWriterRegistry}
+  alias Arbor.MCP.Server.Runtime.{HTTPWriterBinding, HTTPWriterProxy, HTTPWriterRegistry}
 
   defmodule Handler do
     use Arbor.MCP.Server.Handler
@@ -201,23 +201,50 @@ defmodule Arbor.MCP.Server.Runtime.HTTPConvergenceTest do
   test "invalid or late trusted identity resolution never renews callback authority" do
     {runtime, opts} = runtime(request_timeout_ms: 40)
     opts = mrtr_options(opts)
-    invalid = %{opts | principal_id: fn _conn, _request, _claims -> %{private: true} end}
+    parent = self()
+
+    invalid = %{
+      opts
+      | principal_id: fn conn, _request, _claims ->
+          {entered, deadline} = identity_cutoff(conn, runtime)
+          send(parent, {:invalid_identity_entered, entered, deadline})
+          %{private: true}
+        end
+    }
+
     response = post(collect(1), invalid)
     assert response.status == 500
     assert Jason.decode!(response.resp_body)["error"]["message"] == "Internal error"
+    assert_receive {:invalid_identity_entered, entered, deadline}
+    assert entered < deadline
     refute_receive {:convergence_collect, _}, 5
 
     late = %{
       opts
-      | principal_id: fn _conn, _request, _claims ->
+      | principal_id: fn conn, _request, _claims ->
+          {entered, deadline} = identity_cutoff(conn, runtime)
+          send(parent, {:late_identity_entered, entered, deadline})
           Process.sleep(60)
+          send(parent, {:late_identity_returned, System.monotonic_time(:millisecond)})
           "alice"
         end
     }
 
     assert_raise Arbor.MCP.HttpPlug.RuntimeWriter.AdmissionError, fn -> post(collect(2), late) end
+    assert_receive {:late_identity_entered, entered, deadline}
+    assert entered < deadline
+    assert_receive {:late_identity_returned, returned}
+    assert returned >= deadline
     refute_receive {:convergence_collect, _}, 5
     settled(runtime)
+  end
+
+  defp identity_cutoff(conn, runtime) do
+    binding = conn.private[:arbor_mcp_http_binding]
+    {:ok, proof} = HTTPWriterBinding.validate(binding, runtime)
+    entered = System.monotonic_time(:millisecond)
+    assert entered < proof.deadline
+    {entered, proof.deadline}
   end
 
   defp runtime(extra \\ []) do

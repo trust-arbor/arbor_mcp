@@ -40,12 +40,23 @@ qualified snapshot passes 671 combined cases, WAE/full formatting on all three,
 toolchains. The full current rerun passes 5,344 tests plus doctests/properties,
 and 13 actual SDK stdio/HTTP cases pass both with no skips. The only later change
 in that batch restores the conformance fixture's original 150 ms workload.
-Actual stable server conformance now reports 38/1 on both supported toolchains;
-the remaining published scenario uses a header inconsistent with its negotiated
-version. Stable client 218 and modern server 149/client 387 cases pass both.
+At that earlier checkpoint, stable server conformance reports 38/1 on both
+supported toolchains; the published scenario uses a header inconsistent with its
+negotiated version. Stable client 218 and modern server 149/client 387 cases pass
+both.
 The earlier failed receipts and historical slice counts remain preserved.
-API5 supplies the later compiled and selected-consumer association below; final
-changed-source and RC qualification remain open. See [current release status](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_PLAN.md).
+API5 supplies the later compiled and selected-consumer association below.
+At `367e151`, the unmodified published 0.1.16 full stable server suite passes
+39/0 on both supported toolchains, retaining all assertions and confirmed owned
+cleanup. Earlier 38/1 receipts and the modified-header diagnostic remain
+historical evidence. CI run `37412047958` finishes ten successful and six failed
+jobs; the four fixture corrections pass the selected 35 cases and formatting on
+all three toolchains with unchanged production source. These corrections are
+included in this checkout. Fresh full CI and final changed-source/RC qualification remain
+open. ALL11 current8 completes its seven preparation/build/capture phases;
+its installed SHORT fails before Bootstrap on configuration atom parsing, with
+confirmed cleanup. SHORT and the continuous 48-hour final-RC run remain
+unqualified. See [current release status](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_PLAN.md).
 
 The historical census is retained under
 `tmp/v2-semantic-census-69b0a39/{SEMANTIC_CENSUS.md,semantic-inventory.json,REVIEW_NOTES.md}`.
@@ -496,9 +507,10 @@ performance, full CI and soak qualification remain gates. The legacy JSON
 progress continuation committed at `e284fee` uses the original authenticated
 session target without changing the final JSON response format. Its actual
 official progress scenario passes with three ordered 0/50/100 notifications.
-Stable server conformance reports 38/1 on both supported toolchains; the
-remaining published version-header mismatch is still open, without an
-expected-failure adjustment or protocol downgrade.
+The earlier stable server conformance checkpoint reports 38/1 on both
+supported toolchains. The header compatibility correction at `367e151` passes
+the unmodified published full suite 39/0 on both, without an expected-failure
+adjustment, filter or protocol downgrade.
 Validated methodless OAuth responses use empty default scopes only after normal
 ServerGuard validation. Custom scope mapping and exact callback/session/identity/
 endpoint authority remain required. API5 passes three authenticated legacy

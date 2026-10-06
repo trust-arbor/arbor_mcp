@@ -2,7 +2,7 @@ defmodule Arbor.MCP.Server.SubscriptionOriginRuntimeTest do
   use ExUnit.Case, async: true
 
   alias Arbor.MCP.Server.{Runtime, StdioServer, Subscriptions}
-  alias Arbor.MCP.Server.Runtime.{Admission, Ref}
+  alias Arbor.MCP.Server.Runtime.{Admission, OutputController, Ref}
   alias Arbor.MCP.Server.Subscriptions.Mailbox
   alias Arbor.MCP.Test.StdioRuntimeFixture.Device
 
@@ -157,7 +157,14 @@ defmodule Arbor.MCP.Server.SubscriptionOriginRuntimeTest do
     {_root, runtime, input, output, listener, ack} = pair(opts)
     input(input, request(5, "notify_two"))
     assert_receive {:source_finished, _}
-    eventually(fn -> delivery(listener).closing? end)
+    # The callback result and listener completion have independent producers.
+    # Keep the ACK held until the committed response is actually queued at the
+    # Controller; a callback-entry marker alone does not order those writes.
+    eventually(fn ->
+      delivery(listener).closing? and scheduler_state(runtime).count == 1 and
+        match?(%{writing: true, writes: 1}, OutputController.stats(Ref.table(runtime)))
+    end)
+
     assert queued(listener) == 1
     assert Mailbox.stats(delivery(listener).mailbox).count == 2
     release(output, ack)

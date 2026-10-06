@@ -256,11 +256,21 @@ snapshot passes 671 combined cases with WAE/full formatting on all three and
 gates and 13 actual SDK stdio/HTTP cases pass both; the full current rerun passes
 5,344 tests plus doctests/properties. The later fixture-only restoration of its
 original paced workload has passing actual progress coverage. Stable server
-conformance reports 38/1 on both, retaining the published version-header
-mismatch; stable client 218 and modern server 149/client 387 cases pass both.
-Those receipts predate the API5 compiled comparison, authenticated reverse wire
-and package consumers. Fresh unmodified stable conformance and final changed-source
-full CI remain gates. See
+conformance at that earlier checkpoint reports 38/1 on both, retaining the
+published version-header mismatch; stable client 218 and modern server 149/client
+387 cases pass both. Those historical receipts predate the API5 compiled comparison,
+authenticated reverse wire and package consumers.
+
+At `367e151`, the unmodified published 0.1.16 full stable server suite passes
+39/0 on both supported toolchains with unchanged assertions and confirmed owned
+cleanup. The earlier 38/1 diagnostic history remains preserved. CI run
+`37412047958` finishes ten successful and six failed jobs; four fixture-only
+corrections pass the selected 35 cases and formatting on all three toolchains,
+with unchanged production source. The corrections are included in this checkout.
+Fresh complete CI and final changed-source package/consumer qualification remain
+gates. ALL11 current8 captures pass all seven phases, while its installed SHORT
+attempt fails before Bootstrap on configuration atom parsing. No SHORT or 48-hour
+qualification follows from those captures. See
 [current release status](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_PLAN.md) for the separate source receipts
 and remaining package, consumer, performance and continuous-soak gates.
 
