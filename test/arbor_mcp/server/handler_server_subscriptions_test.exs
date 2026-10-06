@@ -1,5 +1,5 @@
 defmodule Arbor.MCP.Server.HandlerServerSubscriptionsTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.Server
   alias Arbor.MCP.Server.{HandlerServer, Runtime, Subscriptions}
