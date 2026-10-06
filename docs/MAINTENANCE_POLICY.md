@@ -1,4 +1,4 @@
-# ExMCP 1.x maintenance and Arbor v2 releases
+# ExMCP 1.x maintenance and ArborMCP/ArborACP v2 releases
 
 ExMCP 1.x remains supported while ArborMCP, ArborACP, ArborACP adapters and
 ArborRPC 2.x are introduced. Publishing v2 does not require existing applications
