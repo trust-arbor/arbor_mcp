@@ -1,16 +1,38 @@
 # Post-1.0 Maintenance Plan
 
-- **Status:** Stable 1.0 packaging and the focused contract cleanup are
-  complete; the Codex characterization gate is met; adapter modularization
-  and functional-core extraction remain proposed and tracked
-- **Baseline:** ArborMCP `1.0.0`
+- **Status:** Historical 1.x work and deferred tracks preserved; maintained 1.x branch and implemented v2 scope are tracked separately
+- **Baseline:** ExMCP `1.0.0`
 - **Scope:** behavior-preserving modularization, functional-core extraction,
   dependency cleanup, and Hex source-package cleanup
-- **Last updated:** 2026-09-22
+- **Last updated:** 2026-10-06
 
 This is a repository-maintenance document, not user-facing package
 documentation. It records cleanup that is valuable but too invasive to mix
 into the final 1.0 release-candidate cycle.
+
+## Current maintenance disposition — October 6, 2026
+
+ExMCP 1.x remains maintained on `codex/maintenance-1.x`, preserved from
+`3914a927`. Its package/module/configuration identities and compatibility
+contracts remain 1.x. Applicable correctness, security and compatibility fixes
+need regression coverage on that branch; v2 tests are not backport evidence.
+See the [maintenance policy](MAINTENANCE_POLICY.md).
+
+The v2 roadmap's package/runtime/dispatch, store, Result/DSL/composition and
+client-lifecycle work is implemented. Older proposed or deferred labels below
+are dated maintenance history, not evidence that those accepted v2 features are
+missing. Unselected adapter modularization or extraction proposals remain
+follow-up work unless separately accepted. Public middleware, a general dialect
+framework and database/event-sourcing requirements were not added to v2 scope.
+
+Current audit fixes address optional HTTP range versus owned-listener
+qualification and Claude `max_bytes`; their qualification is pending. Detailed
+MCP/ACP performance investigation, including MCP BEAM paths, is also pending.
+The earlier 63 passing CI jobs do not qualify these later changes. RC1 is
+unpublished and no soak is active. The refreshed Hex account check succeeds;
+registry installation and publication remain pending. Follow the
+[current release plan](V2_RELEASE_PLAN.md#current-release-status--october-6-2026)
+for release gates rather than the historical execution order below.
 
 ## Goals and constraints
 

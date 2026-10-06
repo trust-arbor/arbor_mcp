@@ -20,6 +20,11 @@ defmodule Arbor.MCP.HttpPlug do
   its handler once from `Runtime.handler_args`; every POST uses that same
   scheduler and handler state.
 
+  Use `transport: :mounted_http` for a host-managed listener. The host resolves
+  compatible backend dependencies within the package security floors; the
+  exact standalone constructor checks for `transport: :http` do not apply to
+  this mount. See the [HTTP listener guide](HTTP_LISTENERS.md).
+
   On a runtime mount, `:handler_opts` supplies per-request application context,
   available as `Arbor.MCP.Server.Context.current().application_context`. It may
   be a static term, a one-arity function called with the `Plug.Conn`, a two-arity

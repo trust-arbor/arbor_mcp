@@ -2,7 +2,7 @@
 
 This guide covers developing, testing, and contributing to the MCP package.
 Version 2 is under development; use the
-[v2 roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md)
+[v2 roadmap](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/V2_ROADMAP.md)
 for release scope and qualification status.
 
 `ARBOR_RPC_PATH` selects the repository root of a local
@@ -26,18 +26,22 @@ these overrides unset and use the built release artifacts.
 
 - Elixir 1.17+ (enforced by `mix.exs`)
 - Erlang/OTP 27–29 (the current CI matrix)
+- C17 compiler on macOS/Linux (the ArborRPC source dependency builds a native helper)
 - Git with hooks support
+
+The [CI policy](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/.github/BEAM_CI.md) records the tested Elixir 1.17–1.20 /
+OTP 27–29 pairs and latest-version lanes; not every cross-product is supported.
 
 ### Initial Setup
 
 ```bash
 # Clone the repository
-git clone https://github.com/trust-arbor/arbor_mcp.git
+git clone --branch codex/v2-migration https://github.com/trust-arbor/arbor_mcp.git
 cd arbor_mcp
 
 # Until arbor_rpc is published, select its checkout explicitly.
 git clone https://github.com/trust-arbor/arbor_rpc.git ../arbor_rpc
-export ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc
+export ARBOR_RPC_PATH="$(cd ../arbor_rpc && pwd)"
 
 # Install dependencies
 mix deps.get
@@ -48,6 +52,10 @@ mix git_hooks.install
 # Verify setup
 mix compile --warnings-as-errors && mix credo
 ```
+
+While v2 is unmerged, use `codex/v2-migration`; `master` remains the supported
+ExMCP 1.x line. After the default-branch cutover, follow the published release
+instructions. Keep a lockfile for repeatable local dependency resolution.
 
 ### Essential Development Commands
 
@@ -64,8 +72,8 @@ mix dialyzer          # Type checking (run after significant changes)
 mix sobelow --skip    # Security analysis
 
 # Testing
-mix test              # Run all tests
-mix test test/arbor_mcp/protocol_test.exs  # Run specific test file
+mix test              # Default suite; integration/external/slow tags are excluded
+mix test test/arbor_mcp/client_beam_transport_test.exs  # Run specific test file
 mix coveralls.html    # Generate coverage report
 MIX_ENV=test mix compile              # Compile for test environment
 
@@ -95,7 +103,6 @@ mix test --only interop_modern_ts_http_client
 mix test --only interop_modern_ex_mcp_http_client
 
 # After doc or example changes, re-verify key snippets and the getting-started demo:
-#   mix run -e '...'   (see DOCS_EXAMPLES_AUDIT_PLAN.md for example verifiers)
 #   elixir examples/getting_started/demo_client.exs
 #   mix examples.getting_started   # fast alias (see examples/README.md)
 
@@ -125,7 +132,7 @@ ArborMCP uses a comprehensive set of code quality tools to ensure maintainable, 
 - **Usage**: `mix dialyzer`
 - **Purpose**: Find type inconsistencies and potential runtime errors
 - **When to run**: After significant changes or before releases
-- **PLT location**: `_dialyzer/` (gitignored)
+- **PLT location**: `priv/plts/` (gitignored)
 
 ### Sobelow
 - **Tool**: Security analysis
@@ -140,10 +147,10 @@ ArborMCP uses a comprehensive set of code quality tools to ensure maintainable, 
 - **Target**: Aim for >80% coverage on core modules
 
 ### Git Hooks
-- **Pre-commit**: Runs formatter, credo, and compile checks
-- **Pre-push**: Runs full test suite
-- **Setup**: Automatically configured with `make setup`
-- **Bypass**: Use `--no-verify` only in emergencies
+- **Pre-commit**: Checks formatting, compilation, Credo, Dialyzer and staged skip tags
+- **Pre-push**: No tasks are currently configured; run relevant tests before pushing
+- **Setup**: `mix git_hooks.install`; the development config also enables auto-install
+- **Source of truth**: `config/config.exs`
 
 ## Testing Strategy
 
@@ -154,7 +161,7 @@ ArborMCP uses a sophisticated test tagging strategy for efficient test execution
 #### Core Test Suites
 
 ```bash
-# Fast unit tests (default, ~5s)
+# Unit-tagged tests
 mix test.suite unit
 
 # MCP specification compliance tests
@@ -300,61 +307,42 @@ end
 
 ## Test Process Cleanup
 
-Tests that start servers can sometimes leave processes running if they crash. ArborMCP provides several tools to clean up these stray processes:
+Use ExUnit supervision (`start_supervised!/1`) for test-owned server/client
+fixtures and distinct names or ephemeral ports for independent tests. The
+normal test support reports occupied ports; a port number alone does not prove
+that its listener belongs to the test run.
 
-### Automatic Cleanup
-
-```bash
-# Clean up before running tests (automatic with make test)
-mix test.cleanup
-
-# Manual cleanup with verbose output
-mix test.cleanup --verbose
-
-# Dry run to see what would be cleaned
-mix test.cleanup --dry-run
-
-# Skip automatic cleanup if needed
-SKIP_TEST_CLEANUP=true mix test
-```
-
-### What Gets Cleaned
-
-The cleanup tools will:
-- Stop any Cowboy listeners from tests
-- Kill registered test processes
-- Free up commonly used test ports (8080-8085, 9000-9002)
-- Clean up stray beam.smp processes from test runs
-
-### Manual Process Investigation
-
-If you encounter persistent process issues:
+To investigate a collision without stopping anything:
 
 ```bash
-# Check for running beam processes
-ps aux | grep beam
-
-# Check for listening ports
-lsof -i :8080-8085
-
-# Kill specific processes if needed
-pkill -f "beam.*test"
+lsof -nP -iTCP:8080 -sTCP:LISTEN
+mix test.cleanup --dry-run --verbose
 ```
+
+The legacy cleanup task can stop matching listeners/processes and target common
+test ports. Review its dry-run output before using it in a shared development
+session. Stop only processes that you started and can identify; broad `pkill`
+patterns can terminate unrelated applications. Runtime-owned resources should
+normally be reclaimed through their supervising test or Runtime shutdown.
 
 ## Contributing
 
 ### Contribution Workflow
 
 1. **Fork the repository** on GitHub
-2. **Create a feature branch** from `master`:
+2. **Create a feature branch** from the v2 migration branch while it is under review:
    ```bash
+   git checkout codex/v2-migration
    git checkout -b feature/your-feature-name
    ```
 3. **Make your changes** following the coding standards
 4. **Run quality checks**:
    ```bash
-   make quality  # Format, credo, compile checks
-   make test     # Full test suite
+   mix format --check-formatted
+   mix compile --warnings-as-errors
+   mix credo
+   mix test
+   mix docs --warnings-as-errors
    ```
 5. **Commit your changes** with conventional commit messages:
    ```bash
@@ -430,7 +418,7 @@ Include:
 
 ## Release Process
 
-The [v2 release plan](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_PLAN.md)
+The [v2 release plan](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/V2_RELEASE_PLAN.md)
 records the current package split, release order and qualification gates. The
 protocol transition checklist below is the historical 1.0 checklist and does not
 replace the v2 gates. A target date never waives a failing release gate.

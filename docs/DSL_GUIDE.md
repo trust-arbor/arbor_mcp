@@ -24,7 +24,7 @@ dispatching declared capabilities. The generated `start_link/1` supports
 `:beam`, `:test`, `:stdio`, and `:http` transports. Modern HTTP SSE streams are
 owned by the POST request and require no server transport flag. The deprecated
 2024-11-05 two-endpoint transport remains available with
-`legacy_http_sse: true` throughout ArborMCP 1.x.
+`legacy_http_sse: true` in ArborMCP 2.x for pinned legacy protocol revisions.
 
 ## Shared declarations
 
@@ -371,20 +371,21 @@ For a hand-written handler without the DSL:
 
 **Fast verification tip:** After `mix compile`, `mix examples.getting_started` runs a quick in-process demo of the DSL + client patterns shown throughout this guide (and in QUICKSTART.md).
 
-## Deprecated: `Arbor.MCP.Server.Tools`
+## Migrating from removed `ExMCP.Server.Tools`
 
-`Arbor.MCP.Server.Tools` and `Arbor.MCP.Server.Tools.Simplified` are **deprecated** and
-will be retained throughout 1.x, with removal planned for **2.0.0**. They only covered tools (not resources/prompts)
-and overlapped with this DSL.
+The former `ExMCP.Server.Tools` family was removed in v2. There is no
+`Arbor.MCP.Server.Tools` replacement module or compatibility shim. Use
+`Arbor.MCP.Server.Handler` with this DSL, which also covers resources and prompts.
 
 | Old (`Server.Tools`) | New (`Server.DSL`) |
 |----------------------|--------------------|
-| `use Arbor.MCP.Server.Tools` | `use Arbor.MCP.Server.DSL, name: "...", version: "..."` |
+| `use ExMCP.Server.Tools` | `use Arbor.MCP.Server.DSL, name: "...", version: "..."` |
 | `tool "name" do ... handle fn ... end end` | `tool "name" do ... run fn ... end end` |
 | `handle fn args, state -> ... end` | `run fn args, state -> ... end` |
 | (tools only) | also `resource`, `resource_template`, `prompt` |
 
-Using the old modules prints a compile-time deprecation warning.
+See the [v1-to-v2 migration guide](guides/MIGRATING_V1_TO_V2.md) for the
+other retired helpers and package changes.
 
 ## Migration From The Removed Legacy DSL
 

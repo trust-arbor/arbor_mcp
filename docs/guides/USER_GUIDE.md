@@ -1,7 +1,9 @@
 # ArborMCP User Guide
 
-A practical guide to building MCP clients and servers with ArborMCP. Version 2
-is under development; these examples are being qualified with the new runtime.
+A practical guide to building MCP clients and servers with ArborMCP RC1.
+Publication is pending. Start with the [Quickstart](../getting-started/QUICKSTART.md)
+or [v1-to-v2 migration](MIGRATING_V1_TO_V2.md); the
+[RC notes](V2_RELEASE_CANDIDATE.md) describe qualification and known limits.
 
 ## Table Of Contents
 
@@ -21,6 +23,16 @@ is under development; these examples are being qualified with the new runtime.
 Version 2 is unpublished. Use a local MCP checkout for development and set
 `ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc` before fetching dependencies.
 The released 1.x package remains `ex_mcp`.
+
+Clone MCP's `codex/v2-migration` branch and the separate ArborRPC `main`
+checkout as described in the [Quickstart](../getting-started/QUICKSTART.md).
+MCP's default `master` branch still contains 1.x code.
+
+After publication, use `{:arbor_mcp, "== 2.0.0-rc.1"}` for reproducible RC tests.
+MCP brings in ArborRPC; it does not install ACP or vendor adapters. Source
+installation requires a C17 compiler on qualified macOS/Linux platforms even
+for HTTP or BEAM use. An assembled release includes the built helper and needs
+no runtime compiler. Windows native subprocess operations are unsupported.
 
 ```elixir
 def deps do
@@ -77,7 +89,8 @@ defmodule MyServer do
 end
 ```
 
-Start it with the transport you need:
+Start it with the transport you need. The returned PID is the Runtime root;
+see [Runtime operations](../RUNTIME_GUIDE.md) for supervision, limits and shutdown:
 
 ```elixir
 {:ok, server} = MyServer.start_link(transport: :beam)
@@ -164,13 +177,15 @@ When using the DSL the server module gets a `start_link/1`:
 
 {:ok, tools} = Arbor.MCP.Client.list_tools(client)
 {:ok, result} = Arbor.MCP.Client.call_tool(client, "echo", %{"message" => "hello"})
+:ok = Arbor.MCP.Client.stop(client)
+:ok = Arbor.MCP.Server.Runtime.stop(server)
 ```
 
 For a raw handler (no DSL) use `Arbor.MCP.Server.HandlerServer.start_link(handler: MyHandler, ...)` (or `Arbor.MCP.start_server/1`).
 
 **Tip:** `mix examples.getting_started` (after `mix compile`) gives a fast local run of these DSL + Client patterns for quick verification.
 
-BEAM-local MCP follows the selected protocol mode. rc.8 defaults to
+BEAM-local MCP follows the selected protocol mode. New connections default to
 `:prefer_modern`, which uses discovery and per-request context;
 `:legacy_only` uses the legacy initialize handshake. In either era, the
 transport passes MCP-shaped maps/lists as Elixir terms instead of JSON strings.
@@ -206,12 +221,17 @@ Call server features:
 
 ```elixir
 {:ok, tools} = Arbor.MCP.Client.list_tools(client)
-{:ok, result} = Arbor.MCP.Client.call_tool(client, "search", %{"query" => "Elixir"})
+{:ok, result} = Arbor.MCP.Client.call_tool(client, "echo", %{"message" => "Elixir"})
 {:ok, resources} = Arbor.MCP.Client.list_resources(client)
-{:ok, content} = Arbor.MCP.Client.read_resource(client, "file:///docs/readme.md")
+{:ok, content} = Arbor.MCP.Client.read_resource(client, "config://app")
 {:ok, prompts} = Arbor.MCP.Client.list_prompts(client)
-{:ok, prompt} = Arbor.MCP.Client.get_prompt(client, "summarize")
+{:ok, prompt} =
+  Arbor.MCP.Client.get_prompt(client, "summarize", %{"text" => "Text to summarize"})
 ```
+
+These names match the DSL server above; remote servers expose their own catalog.
+Stop clients with `Client.stop/1`, and stop an owned server with `Runtime.stop/1`
+or its parent supervisor. The returned server PID is the Runtime supervisor.
 
 Image, audio, blob, and `get_prompt` patterns are in the
 [DSL Guide](../DSL_GUIDE.md). Elicitation, sampling, roots, ping, progress,
@@ -242,10 +262,9 @@ for negotiation, fallback, and per-connection overrides.
 
 ## Protocol-Deprecated Features
 
-MCP 2026-07-28 deprecates Roots, Sampling, and protocol Logging, but keeps them
-in the specification for at least twelve months. ArborMCP retains their callbacks,
-functions, capability declarations, legacy methods, and modern MRTR handling
-throughout the 1.x line. Existing integrations can continue to use them while
+MCP 2026-07-28 deprecates Roots, Sampling, and protocol Logging. ArborMCP 2.x
+retains compatibility callbacks, functions and legacy methods for pinned legacy
+protocol revisions. Existing integrations can continue to use them while
 migrating; new integrations should use these replacements:
 
 | Deprecated MCP feature | Recommended replacement |
@@ -299,6 +318,10 @@ connection boundary:
 For HTTP servers, put side-effecting concerns such as authentication, request
 signing, CORS, and DNS rebinding protection in the Plug/Phoenix pipeline before
 `Arbor.MCP.HttpPlug`.
+
+Retries do not imply rollback or deduplication. Protect non-idempotent operations
+with application keys and policy; modern response-stream reissue has its own
+`http_stream_retry` contract described in the [transport guide](../TRANSPORT_GUIDE.md).
 
 ## Troubleshooting
 

@@ -197,7 +197,7 @@ When implementing new features:
 2. Add comprehensive tests before implementation
 3. Run `mix format` and `mix credo` before committing
 4. Update type specs in `lib/arbor_mcp/types.ex` if adding new message types
-5. Prefer `Arbor.MCP.Server.DSL` over the deprecated `Arbor.MCP.Server.Tools` API
+5. Use `Arbor.MCP.Server.Handler` and `Arbor.MCP.Server.DSL`; the Tools family is removed in v2
 
 ## Client implementation
 
@@ -268,17 +268,19 @@ The client stack emits telemetry such as:
 ### Server DSL
 
 - Prefer `Arbor.MCP.Server.Handler` + `Arbor.MCP.Server.DSL` for tools/resources/prompts.
-- `Arbor.MCP.Server.Tools` is **deprecated**, retained throughout 1.x, and planned for removal in **2.0.0**.
+- The `Server.Tools` family is removed in v2. Use Handler + DSL and `Arbor.MCP.Server.Result`. ExMCP 1.x retains its deprecated APIs on the maintenance branch.
 
 ## Deprecated / planned removals
 
 | API | Status |
 |-----|--------|
-| `Arbor.MCP.Server.Tools` (+ `Simplified`, helpers) | Deprecated → **planned for removal in 2.0.0** |
+| `Arbor.MCP.Server.Tools` (+ `Simplified`, helpers) | Removed in v2; use Handler + DSL + Result |
 | Client adapter layer (`LegacyAdapter`, etc.) | Already removed; use `Arbor.MCP.Client` |
 
 ## Development notes
 
-- Primary public APIs: `Arbor.MCP`, `Arbor.MCP.Client`, `Arbor.MCP.Server` / `Handler` / `DSL`, transports, `Arbor.MCP.HttpPlug`, `Arbor.MCP.ACP.*`, `Arbor.MCP.Authorization`, `Arbor.MCP.Content`, `Arbor.MCP.Types`.
-- `Arbor.MCP.Internal.VersionRegistry` is the canonical protocol-version registry. `Arbor.MCP.Protocol.VersionNegotiator` is a compatibility shim for public negotiation helpers and retains a separate, non-wire capability vocabulary.
+- Primary public APIs: `Arbor.MCP`, `Arbor.MCP.Client`, `Arbor.MCP.Server` / `Handler` / `DSL`, transports, `Arbor.MCP.HttpPlug`, `Arbor.MCP.Authorization`, `Arbor.MCP.Content`, `Arbor.MCP.Types`.
+- `Arbor.MCP.Internal.VersionRegistry` is the canonical legacy protocol-version registry. The accepted retirement of `VersionNegotiator.build_capabilities/1` removes its separate capability vocabulary; see `docs/V2_API_MIGRATION.md` for retained negotiation helpers.
+- ACP lives in `trust-arbor/arbor_acp` under `Arbor.ACP.*`; shared mechanics live in `trust-arbor/arbor_rpc` under `Arbor.RPC.*`.
+- ExMCP 1.x maintenance and backport rules are in `docs/MAINTENANCE_POLICY.md`.
 - Other modules under `Arbor.MCP.*` are internal unless documented otherwise.

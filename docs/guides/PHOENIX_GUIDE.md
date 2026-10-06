@@ -5,11 +5,11 @@ runtime separately from the host endpoint. The runtime initializes its handler
 once and owns scheduled callbacks, bounded output and configured services. The
 Phoenix request process owns its `Plug.Conn` and the host listener.
 
-Version 2 is under development. Until publication, use a local `arbor_mcp`
+RC1 publication is pending. Until then, use a local `arbor_mcp`
 checkout and set `ARBOR_RPC_PATH` to the sibling `arbor_rpc` package when fetching
-dependencies. The released 1.x package remains `ex_mcp`. Final installed-package
-and Phoenix wire qualification remain release gates; this guide describes the
-v2 runtime mounting contract.
+dependencies. The released 1.x package remains `ex_mcp`. This guide describes
+the Runtime mounting contract; see the [RC notes](V2_RELEASE_CANDIDATE.md) for
+the qualified consumer scope and open stable-release gates.
 
 ## Dependencies
 
@@ -17,6 +17,14 @@ v2 runtime mounting contract.
 # mix.exs, alongside your existing Phoenix dependencies
 {:arbor_mcp, path: "../arbor_mcp"}
 ```
+
+Use MCP's `codex/v2-migration` branch, not its still-1.x `master`, and the
+separate ArborRPC `main` checkout. The [Quickstart](../getting-started/QUICKSTART.md)
+shows the clone and path setup.
+
+After publication, replace the path dependency with
+`{:arbor_mcp, "== 2.0.0-rc.1"}` and remove the local RPC override. Source
+installation still requires C17 even though Phoenix owns the listener.
 
 Use your host application's HTTP adapter. A mounted plug does not require an
 ArborMCP-owned Cowboy or Bandit listener. The consumer qualification fixture pins
@@ -192,7 +200,10 @@ alias Arbor.MCP.Server.Context
 context = Context.current()
 user = context.application_context.user
 MyApp.Authorization.authorize!(user, :read_posts)
-:ok = Context.report_progress(1, 2, "Searching")
+
+if Context.progress_token() do
+  :ok = Context.report_progress(1, 2, "Searching")
+end
 ```
 
 Context and its origin proof are invocation-scoped. Retain neither the context
@@ -209,6 +220,7 @@ session or an `initialize` handshake.
 
 ```bash
 curl http://localhost:4000/api/mcp \
+  -H 'Host: mcp.example.com' \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -H 'MCP-Protocol-Version: 2026-07-28' \
@@ -242,17 +254,28 @@ as `2025-11-25`, then retain the returned `Mcp-Session-Id`. Send the negotiated
 
 ```bash
 curl -i http://localhost:4000/api/mcp \
+  -H 'Host: mcp.example.com' \
   -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"example","version":"1"}}}'
 
 # Substitute the actual returned session ID:
 curl http://localhost:4000/api/mcp \
+  -H 'Host: mcp.example.com' \
+  -H 'Content-Type: application/json' \
+  -H 'Mcp-Session-Id: SESSION_ID' \
+  -H 'MCP-Protocol-Version: 2025-11-25' \
+  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+
+curl http://localhost:4000/api/mcp \
+  -H 'Host: mcp.example.com' \
   -H 'Accept: text/event-stream' \
   -H 'Mcp-Session-Id: SESSION_ID' \
   -H 'MCP-Protocol-Version: 2025-11-25' \
   -H 'Last-Event-ID: LAST_RECEIVED_EVENT_ID'
 
 curl -X DELETE http://localhost:4000/api/mcp \
+  -H 'Host: mcp.example.com' \
   -H 'Mcp-Session-Id: SESSION_ID' \
   -H 'MCP-Protocol-Version: 2025-11-25'
 ```
@@ -263,6 +286,11 @@ that session and its stream without stopping the host listener. An unknown or
 foreign replay cursor fails before an SSE response is started. The deprecated
 2024-11-05 `/sse` and `/message` aliases require explicit
 `legacy_http_sse: true`; they are a compatibility flow, not the modern transport.
+
+The curl examples set `Host` to match the router's allowlist while connecting
+to a local development socket. Use the actual deployment host in production.
+Omit `Last-Event-ID` for a first GET; substitute only a cursor received from
+this initialized session when reconnecting.
 
 ## Ownership, pressure and deployment
 
@@ -302,5 +330,5 @@ host endpoint in library-owned shutdown machinery.
 
 See [DSL guide](../DSL_GUIDE.md), [configuration](../CONFIGURATION.md),
 [API migration](../V2_API_MIGRATION.md) and [security](../SECURITY.md) for the
-remaining contracts. Installed archive consumers, final-source Phoenix wire
-checks and RC soak still determine release readiness.
+remaining contracts. The [RC notes](V2_RELEASE_CANDIDATE.md) distinguish the
+tested installed/Phoenix consumers from continuous-soak and stable-release gates.

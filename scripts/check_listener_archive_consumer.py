@@ -29,9 +29,13 @@ def main():
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--expected-version", required=True)
     parser.add_argument("--adapter", choices=("cowboy", "bandit"), required=True)
+    parser.add_argument("--ownership", choices=("owned", "host"), default="owned",
+                        help="host probes a mounted Runtime on Ranch 2.2.0; owned retains exact constructor constraints")
     parser.add_argument("--selection-manifest", type=Path)
     parser.add_argument("--metadata-only", action="store_true")
     args = parser.parse_args()
+    if args.ownership == "host" and args.adapter != "cowboy":
+        parser.error("The alternative host graph regression uses Cowboy/Ranch 2.2.0")
     if not args.metadata_only and args.selection_manifest is None:
         parser.error("Physical qualification requires a source/archive selection manifest")
     root = Path(__file__).resolve().parent.parent
@@ -51,6 +55,7 @@ def main():
     evidence = {
         "started_utc": datetime.now(timezone.utc).isoformat(),
         "adapter": args.adapter,
+        "ownership": args.ownership,
         "expected_version": args.expected_version,
         "qualified": False,
         "final_release_qualified": False,
@@ -72,6 +77,7 @@ def main():
     ):
         env.pop(key, None)
     env.update(MIX_ENV="prod", LISTENER_ARCHIVE_ADAPTER=args.adapter,
+               LISTENER_ARCHIVE_OWNERSHIP=args.ownership,
                ARCHIVE_EXPECTED_VERSION=args.expected_version)
 
     def run(name, argv, timeout=180, extra=None):
@@ -80,7 +86,8 @@ def main():
         start = time.monotonic()
         step = {"name": name, "argv": [str(arg) for arg in argv], "cwd": str(consumer),
                 "log": str(log), "environment": {key: command_env[key] for key in
-                ("MIX_ENV", "LISTENER_ARCHIVE_ADAPTER", "ARCHIVE_EXPECTED_VERSION", "LISTENER_ARCHIVE_REPORT")
+                ("MIX_ENV", "LISTENER_ARCHIVE_ADAPTER", "LISTENER_ARCHIVE_OWNERSHIP",
+                 "ARCHIVE_EXPECTED_VERSION", "LISTENER_ARCHIVE_REPORT")
                 if key in command_env}}
         try:
             with log.open("wb") as output:
@@ -98,6 +105,23 @@ def main():
             atomic_json(report, evidence)
         if process.returncode != 0:
             raise RuntimeError(f"{name} failed; preserved {log}")
+
+    def probe_receipt(path):
+        receipt = json.loads(path.read_text())
+        if receipt["adapter"] != args.adapter or receipt["ownership"] != args.ownership:
+            raise ValueError("Probe backend/ownership does not match the selected consumer")
+        if args.ownership == "host":
+            if receipt["applications"]["ranch"]["version"] != "2.2.0":
+                raise ValueError("Host regression did not load the alternative Ranch graph")
+            expected = {
+                "unsupported_owned_constructor": "unsupported_owned_ranch_constructor",
+                "mounted_ping": True, "runtime_down": True,
+                "listener_survived_runtime_stop": True,
+                "listener_down": True, "port_closed": True,
+            }
+            if receipt["listener_checks"] != expected:
+                raise ValueError("Host regression lifetime/constructor checks are incomplete")
+        return {"sha256": digest(path), "receipt": receipt}
 
     try:
         selection = None
@@ -140,13 +164,13 @@ def main():
         installed = workspace / "installed-probe.json"
         run("installed-probe", ["mix", "run", "--no-compile", "-e", "ListenerArchiveConsumer.probe()"], 45,
             {"LISTENER_ARCHIVE_REPORT": str(installed)})
-        evidence["installed"] = {"sha256": digest(installed), "receipt": json.loads(installed.read_text())}
+        evidence["installed"] = probe_receipt(installed)
         run("assemble-release", ["mix", "release", "--overwrite"], 180)
         released = workspace / "release-probe.json"
         binary = consumer / "_build/prod/rel/listener_archive_consumer/bin/listener_archive_consumer"
         run("release-probe", [str(binary), "eval", "ListenerArchiveConsumer.probe()"], 45,
             {"LISTENER_ARCHIVE_REPORT": str(released)})
-        evidence["release"] = {"sha256": digest(released), "receipt": json.loads(released.read_text())}
+        evidence["release"] = probe_receipt(released)
         if evidence["resolved_lock"]["sha256"] != digest(lock):
             raise ValueError("Dependency lock changed after resolution")
         for package, receipt in evidence["archives"].items():

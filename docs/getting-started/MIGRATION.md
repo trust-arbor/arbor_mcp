@@ -1,28 +1,39 @@
-# Migration Guide
+# Historical ExMCP Migration Notes
 
-This guide helps you upgrade your ArborMCP applications between versions. Each section covers breaking changes and provides migration examples.
+For the current package split and Runtime APIs, start with the
+[v1-to-v2 migration guide](../guides/MIGRATING_V1_TO_V2.md). ArborMCP RC1 is
+unpublished; its [RC notes](../guides/V2_RELEASE_CANDIDATE.md) describe the
+current testing scope and limits.
+
+The record below preserves the ExMCP 0.x and 1.x migrations, including the
+rc.5-to-modern protocol rollout. Its `ExMCP.*` names, `:ex_mcp` dependencies,
+old API examples and release-candidate planning language belong to those
+historical versions. They are not ArborMCP installation or API instructions.
+For current protocol-mode configuration, use the
+[configuration guide](../CONFIGURATION.md#protocol-eras-and-modes).
+
 
 ## Table of Contents
 
 - [Upgrading from rc.5 / legacy MCP to the 1.0 dual-era release](#upgrading-from-rc5--legacy-mcp-to-the-10-dual-era-release)
 - [Deprecations toward 2.0.0](#deprecations-toward-200)
-- [Planning for ArborMCP 2.0](#planning-for-exmcp-20)
+- [Planning for ExMCP 2.0](#planning-for-exmcp-20)
 - [Upgrading to v0.6.0 from v0.5.x](#upgrading-to-v060-from-v05x)
 - [Upgrading to v0.5.0 from v0.4.x](#upgrading-to-v050-from-v04x)
 - [General Migration Tips](#general-migration-tips)
 
 ## Upgrading from rc.5 / legacy MCP to the 1.0 dual-era release
 
-ArborMCP 1.0 includes MCP 2026-07-28 support. This is the latest stable protocol
+ExMCP 1.0 includes MCP 2026-07-28 support. This is the latest stable protocol
 revision and is wire incompatible with the pre-2026 revisions supported by
-rc.5, but ArborMCP itself has not yet published a stable 1.0 API. Landing the
+rc.5, but ExMCP itself has not yet published a stable 1.0 API. Landing the
 protocol transition in the remaining release candidates gives 1.0 one coherent
-compatibility baseline; waiting for ArborMCP 2.0 would make the first stable
+compatibility baseline; waiting for ExMCP 2.0 would make the first stable
 release immediately obsolete.
 
-This does **not** waive ArborMCP API compatibility. Existing 1.x functions,
+This does **not** waive ExMCP API compatibility. Existing 1.x functions,
 callbacks, struct fields, and legacy protocol behavior remain available. The
-deprecated public APIs identified below are retained until ArborMCP 2.0.
+deprecated public APIs identified below are retained until ExMCP 2.0.
 
 ### What changes on the wire
 
@@ -36,7 +47,7 @@ deprecated public APIs identified below are retained until ArborMCP 2.0.
 | Streamable HTTP | Session IDs, optional GET SSE stream, DELETE termination | Stateless POST; request and subscription SSE stay on their owning POST response; MCP endpoint GET/DELETE return 405 |
 | HTTP routing metadata | Primarily JSON body and session headers | Body-derived `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, and annotated `Mcp-Param-*` headers |
 
-ArborMCP normalizes these differences behind its existing Client and Handler APIs
+ExMCP normalizes these differences behind its existing Client and Handler APIs
 where possible. Code that constructs raw JSON-RPC, inspects wire maps, mounts
 custom HTTP middleware, or implements transport adapters must handle both
 shapes explicitly.
@@ -48,29 +59,17 @@ globally or on each client/server while migrating:
 
 ```elixir
 # config/runtime.exs
-config :arbor_mcp, protocol_mode: :legacy_only
+config :ex_mcp, protocol_mode: :legacy_only
 
 # A per-connection value overrides the application setting.
-Arbor.MCP.Client.start_link(
+ExMCP.Client.start_link(
   transport: :http,
   url: "https://mcp.example.com/mcp",
   protocol_mode: :prefer_modern
 )
 
-# In Application.start/2, before the borrowed Phoenix endpoint:
-children = [
-  {Arbor.MCP.Server.Runtime,
-   name: MyApp.MCPRuntime,
-   handler: MyApp.MCPServer,
-   handler_args: [],
-   transport: :mounted_http,
-   protocol_mode: :prefer_modern}
-]
-Supervisor.start_link(children, strategy: :one_for_one)
-
-# In the router:
-forward "/mcp", Arbor.MCP.HttpPlug,
-  runtime: MyApp.MCPRuntime,
+forward "/mcp", ExMCP.HttpPlug,
+  handler: MyApp.MCPServer,
   protocol_mode: :prefer_modern
 ```
 
@@ -90,11 +89,11 @@ transition.
 ### Recommended rollout
 
 1. Upgrade both sides with `:legacy_only` and run the existing rc.5 tests. This
-   isolates ArborMCP API regressions from protocol-era differences.
+   isolates ExMCP API regressions from protocol-era differences.
 2. Make servers dual-era with `:prefer_legacy`. Legacy clients keep working;
    modern canaries can now establish with `server/discover`.
 3. Move a small client cohort to `:prefer_modern`. Watch the
-   `[:arbor_mcp, :client, :era, ...]` telemetry for the selected era and fallbacks.
+   `[:ex_mcp, :client, :era, ...]` telemetry for the selected era and fallbacks.
 4. Expand `:prefer_modern` only after every peer identity has been observed.
    Modern observations are pinned and cannot silently downgrade. Legacy
    observations expire after five minutes by default so upgraded peers are
@@ -112,7 +111,7 @@ application operation.
 ### HTTP migration notes
 
 `use_sse: true` on an HTTP **client** controls the standalone GET stream used by
-pre-2026 Streamable HTTP. ArborMCP turns it off after a connection settles on the
+pre-2026 Streamable HTTP. ExMCP turns it off after a connection settles on the
 modern era; modern request and subscription SSE responses need no flag.
 
 The older MCP 2024-11-05 two-endpoint HTTP+SSE transport (`GET /sse` plus its
@@ -135,17 +134,17 @@ request/response shapes.
 
 ## Deprecations toward 2.0.0
 
-### `Arbor.MCP.Server.Tools` → `Arbor.MCP.Server.DSL`
+### `ExMCP.Server.Tools` → `ExMCP.Server.DSL`
 
-`Arbor.MCP.Server.Tools`, `Arbor.MCP.Server.Tools.Simplified`, and related helpers
+`ExMCP.Server.Tools`, `ExMCP.Server.Tools.Simplified`, and related helpers
 (`Builder`, `Helpers`, `Registry`, `ResponseNormalizer`, `ASTValidator`) are
 **deprecated**, retained throughout 1.x, and planned for removal in **2.0.0**.
 
 ```elixir
 # Before (deprecated — compile warning)
 defmodule MyServer do
-  use Arbor.MCP.Server.Handler
-  use Arbor.MCP.Server.Tools
+  use ExMCP.Server.Handler
+  use ExMCP.Server.Tools
 
   tool "echo", "Echo" do
     param :message, :string, required: true
@@ -157,8 +156,8 @@ end
 
 # After (supported)
 defmodule MyServer do
-  use Arbor.MCP.Server.Handler
-  use Arbor.MCP.Server.DSL, name: "my-server", version: "1.0.0"
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL, name: "my-server", version: "1.0.0"
 
   tool "echo", "Echo" do
     param :message, :string, required: true
@@ -175,9 +174,9 @@ Notes:
 - DSL modules get `start_link/1` and can declare resources and prompts too.
 - See [DSL_GUIDE.md](../DSL_GUIDE.md) for param types, results, and compile-time checks.
 
-## Planning for ArborMCP 2.0
+## Planning for ExMCP 2.0
 
-The [ArborMCP 2.0 roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md) is the canonical plan for public API
+The [ExMCP 2.0 roadmap](https://github.com/azmaveth/ex_mcp/blob/master/docs/V2_ROADMAP.md) is the canonical plan for public API
 removals, per-server runtime ownership, bounded handler scheduling, replaceable
 state/replay stores, and API consolidation. It also records which ideas are
 eligible for behavior-preserving 1.x backports.
@@ -198,10 +197,10 @@ Update your `mix.exs`:
 
 ```elixir
 # Before (v0.5.x)
-{:arbor_mcp, "~> 0.5.0"}
+{:ex_mcp, "~> 0.5.0"}
 
 # After (v0.6.x)
-{:arbor_mcp, "~> 0.6.0"}
+{:ex_mcp, "~> 0.6.0"}
 ```
 
 Run `mix deps.update ex_mcp` to get the latest version.
@@ -235,7 +234,7 @@ If you're using OAuth features, no breaking changes are required, but new capabi
 
 ```elixir
 # New OAuth configuration options in config/config.exs
-config :arbor_mcp, :oauth2_server_config,
+config :ex_mcp, :oauth2_server_config,
   # Enhanced security features now available
   introspection_endpoint: "https://auth.example.com/introspect",
   authorization_server: "https://auth.example.com",
@@ -245,13 +244,13 @@ config :arbor_mcp, :oauth2_server_config,
 
 ### 4. MCP 2025-06-18 Protocol Support
 
-v0.6.0 added support for the MCP 2025-06-18 protocol version. Current ArborMCP
+v0.6.0 added support for the MCP 2025-06-18 protocol version. Current ExMCP
 versions retain MCP 2025-11-25 as the newest legacy revision and add modern
 MCP 2026-07-28 behind the protocol modes described above.
 
 ```elixir
 # In your configuration
-config :arbor_mcp,
+config :ex_mcp,
   protocol_version: "2025-11-25"
 ```
 
@@ -266,11 +265,11 @@ Use `:beam` for BEAM-local MCP clients and servers:
 
 ```elixir
 # BEAM-local MCP transport
-Arbor.MCP.Client.start_link(transport: :beam, server: server_pid)
+ExMCP.Client.start_link(transport: :beam, server: server_pid)
 MyServer.start_link(transport: :beam)
 ```
 
-The old `Arbor.MCP.Native` direct dispatcher and public `:native` transport alias were removed before 1.0. Use `transport: :beam` with a server pid for BEAM-local MCP.
+The old `ExMCP.Native` direct dispatcher and public `:native` transport alias were removed before 1.0. Use `transport: :beam` with a server pid for BEAM-local MCP.
 
 ### 6. Python MCP SDK Interoperability
 
@@ -290,23 +289,21 @@ The biggest breaking change in v0.5.0 was transport renaming:
 
 ```elixir
 # Before (v0.4.x)
-Arbor.MCP.Client.start_link(transport: :sse, ...)
-MyServer.start_link(transport: :sse, ...)
+ExMCP.Client.start_link(transport: :sse, url: "http://localhost:8080/mcp")
+MyServer.start_link(transport: :sse, port: 8080)
 
 # After (v0.5.x+)
-Arbor.MCP.Client.start_link(transport: :http, ...)
-MyServer.start_link(transport: :http, ...)
+ExMCP.Client.start_link(transport: :http, url: "http://localhost:8080/mcp")
+MyServer.start_link(transport: :http, port: 8080)
 ```
 
 **Rationale:** The `:sse` transport identifier was renamed to `:http` before the
-1.0 release candidates. In current ArborMCP versions, use `transport: :http`.
+1.0 release candidates. In current ExMCP versions, use `transport: :http`.
 Modern SSE streams are owned by their POST requests and require no server flag;
 `use_sse: true` retains the client GET stream for pre-2026 Streamable HTTP.
-The separate MCP 2024-11-05 HTTP+SSE transport remains disabled on new
-servers. ArborMCP 2.x retains it for pinned legacy protocol revisions with
-`legacy_http_sse: true`; the former server aliases `sse_enabled` and `use_sse`
-are rejected. The HTTP client option `use_sse: true` remains available for
-legacy Streamable HTTP GET streams.
+The separate MCP 2024-11-05 HTTP+SSE transport is deprecated, disabled on new
+servers, and available during 1.x only by explicitly setting
+`legacy_http_sse: true` (`sse_enabled: true` remains an rc.5-compatible alias).
 
 ### 2. Authorization API Changes
 
@@ -318,7 +315,7 @@ OAuth 2.1 integration was significantly enhanced:
 
 # After (v0.5.x+)
 # Full OAuth 2.1 Resource Server implementation
-config :arbor_mcp, :oauth2_server_config,
+config :ex_mcp, :oauth2_server_config,
   introspection_endpoint: "https://auth.example.com/introspect",
   required_scopes: ["mcp:read"]
 ```
@@ -329,11 +326,11 @@ Enhanced MCP logging protocol support:
 
 ```elixir
 # New in v0.5.0+
-{:ok, _} = Arbor.MCP.Client.set_log_level(client, "debug")
-:ok = Arbor.MCP.Server.send_log_message(server, "info", "Operation completed", %{result: "success"})
+{:ok, _} = ExMCP.Client.set_log_level(client, "debug")
+:ok = ExMCP.Server.send_log_message(server, "info", "Operation completed", %{result: "success"})
 ```
 
-MCP 2026-07-28 deprecates the protocol Logging feature. ArborMCP retains the
+MCP 2026-07-28 deprecates the protocol Logging feature. ExMCP retains the
 existing logging APIs and legacy methods throughout 1.x, but new integrations
 should write stdio diagnostics to stderr and use OpenTelemetry for structured
 observability.
@@ -341,7 +338,7 @@ observability.
 ### MCP 2026-07-28 feature deprecations
 
 Roots and Sampling are also protocol-deprecated in MCP 2026-07-28. They remain
-available in ArborMCP 1.x for peers that negotiate a revision containing them and
+available in ExMCP 1.x for peers that negotiate a revision containing them and
 for modern MRTR compatibility. Migrate Roots to explicit tool parameters,
 resource URIs, or server configuration. Migrate Sampling to direct LLM provider
 API calls. These notices do not remove or change the existing 1.x public
@@ -367,7 +364,7 @@ Review your `config/config.exs` for new configuration options:
 
 ```elixir
 # Common configuration to review
-config :arbor_mcp,
+config :ex_mcp,
   protocol_mode: :prefer_modern,   # Explicit dual-era policy
   protocol_version: "2025-11-25", # Legacy revision preference
   oauth2_enabled: true,            # If using OAuth
@@ -414,4 +411,4 @@ If you encounter issues during migration:
   re-synced periodically with upstream agent releases.
 - Refresh local MCP reference docs with `mix mcp.sync_spec --version 2026-07-28`.
 
-Keep your ArborMCP version up to date to benefit from the latest MCP protocol features and security improvements.
+Keep your ExMCP version up to date to benefit from the latest MCP protocol features and security improvements.

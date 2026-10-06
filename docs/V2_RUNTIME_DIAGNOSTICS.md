@@ -1,5 +1,11 @@
 # Runtime diagnostics in v2
 
+> **Implementation history.** This page records the runtime-diagnostics implementation checkpoint. Host-owned
+> Logger configuration is now implemented and documented in
+> [Configuration](CONFIGURATION.md#logging). The final paragraph below records
+> the logging gate at this earlier checkpoint, not its current implementation
+> status. Release qualification remains separate.
+
 Runtime diagnostic status replaces handler options, initialized state, admitted
 requests, prepared output and store payloads with a fixed component name and
 aggregate collection counts. GenServer failure reports use the same formatter

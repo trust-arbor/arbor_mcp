@@ -1,7 +1,7 @@
 # v2 Release Plan: October 3–9, 2026
 
 - **Target:** Friday, October 9, 2026, in `America/Chicago`
-- **Status:** Runtime-only HTTP and bounded reverse integration committed; combined followups and final release qualification underway
+- **Status:** Accepted v2 scope implemented; audit fixes and final release qualification underway
 - **Scope:** Full accepted v2, including runtime/scheduler and transport integration
 - **Names:** `Arbor.MCP.*`, `Arbor.ACP.*`, `Arbor.RPC.*`; optional `arbor_acp_adapters` bundle accepted
 - **Repository:** `trust-arbor/arbor_mcp`, transferred with repository ID `989917799` preserved
@@ -11,6 +11,39 @@
 October 9 is a target subject to every gate below. It does not waive scope,
 qualification or soak. A missed implementation gate or a material RC fix moves
 the release date; it does not turn the full redesign into a later minor release.
+
+## Current release status — October 6, 2026
+
+Implementation of the accepted v2 roadmap is complete. Earlier dated sequences
+and checkpoints below retain the source and evidence they describe. The prior
+standalone-repository selection passed 63 selected CI jobs; current follow-up
+changes must establish their own result and source/archive association.
+
+The remaining work is to:
+
+1. Qualify the HTTP optional-range/owned-listener correction and Claude
+   `max_bytes` fix, preserving the accepted lifetime, capacity and wire contracts.
+2. Complete the requested performance investigation for MCP and ACP, including
+   MCP BEAM paths, and record the workload budgets or accepted costs.
+3. Close applicable final-source conformance, pinned SDK/credential-free CLI,
+   dependency-contract and packaged-consumer evidence. For first RC1, the lowest
+   and newest supported package versions may coincide; a compiler/OTP matrix is
+   a separate claim from a dependency-version matrix.
+4. Publish the coordinated RC in dependency order and verify clean registry-based
+   installation. The refreshed Hex account check succeeds; RC1 is currently
+   unpublished, and that check is not publication proof.
+5. Complete the accepted stable-release qualification, including the continuous
+   run, final metadata/source/archive binding, tags and publication. No soak is
+   currently active, and prior unsuccessful attempts remain failed evidence.
+
+RC publication for downstream testing and stable promotion are separate steps.
+Neither the October 9 target nor a green earlier CI selection waives an open
+gate. [RC notes](guides/V2_RELEASE_CANDIDATE.md) describe the candidate's limits.
+
+The preserved `codex/maintenance-1.x` branch starts at `3914a927`; compatible
+1.x fixes use that implementation's own checks under the
+[maintenance policy](MAINTENANCE_POLICY.md). The v2 release does not end 1.x
+maintenance or authorize wholesale architectural backports.
 
 ## Workstreams and accountable owners
 
@@ -47,8 +80,9 @@ evidence below, not by a calendar date or a prepared test harness.
 | **Fri Oct 9 — Stable gate** | Confirm the accepted soak completed on the final RC, all evidence belongs to the release commits/artifacts, and no blocker remains. Publish stable packages in the same dependency order; otherwise record the blocker and a revised target. |
 
 **Accepted soak minimum:** 48 continuous hours on the final qualified RC combination.
-The final 48-hour run has not started. Record its exact source/package selection,
-accepted start timestamp and evidence ledger when it does. To retain an October 9
+No run is currently active, and the earlier attempts did not complete this gate.
+Record the next run's exact source/package selection, accepted start timestamp
+and evidence ledger when it starts. To retain an October 9
 target, the final RC must start early enough on October 7 to complete that window.
 Observable runtime, persistence, lifecycle, security or wire changes restart
 the clock; release metadata alone does not. The date never shortens the accepted

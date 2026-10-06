@@ -17,12 +17,14 @@ defmodule ListenerArchiveConsumer.MixProject do
 
   defp deps do
     # Only the two unpublished Arbor packages use extracted archive paths.
-    # Activate the qualified backend constraints in the host graph: optional
-    # transitive requirements alone do not constrain the root Hex resolution.
+    # Owned listeners use the exact qualified constructor versions. The host
+    # regression mounts HttpPlug on a normally resolved Ranch 2.x listener.
     listener =
-      case System.fetch_env!("LISTENER_ARCHIVE_ADAPTER") do
-        "cowboy" -> [{:plug_cowboy, "~> 2.7"}, {:ranch, "== 1.8.1"}]
-        "bandit" -> [{:bandit, "== 1.12.5"}, {:thousand_island, "== 1.5.0"}]
+      case {System.fetch_env!("LISTENER_ARCHIVE_ADAPTER"),
+            System.get_env("LISTENER_ARCHIVE_OWNERSHIP", "owned")} do
+        {"cowboy", "owned"} -> [{:plug_cowboy, "~> 2.7"}, {:ranch, "== 1.8.1"}]
+        {"bandit", "owned"} -> [{:bandit, "== 1.12.5"}, {:thousand_island, "== 1.5.0"}]
+        {"cowboy", "host"} -> [{:plug_cowboy, "~> 2.7"}, {:ranch, "== 2.2.0"}]
       end
 
     [

@@ -6,6 +6,11 @@ defmodule Arbor.MCP.Server.HTTP.Bandit do
   Listener options are passed to `Bandit.start_link/1`. The returned supervisor
   is linked to the caller and is stopped by PID. Ranch references apply only
   to Cowboy.
+
+  This borrowed adapter uses Bandit's public constructor. A runtime that owns
+  its listener (`transport: :http`) separately requires the qualified exact
+  Bandit 1.12.5 / Thousand Island 1.5.0 pair. Broader package dependency ranges
+  do not widen that owned constructor's support.
   """
 
   @behaviour Arbor.MCP.Server.HTTP.ListenerAdapter

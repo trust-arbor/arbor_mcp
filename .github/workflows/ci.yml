@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, 'codex/maintenance-1.x' ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, master, 'codex/maintenance-1.x' ]
   workflow_dispatch:
 
 permissions:
@@ -56,14 +56,14 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: a395888e7fc36ff58f9aa2d3205457f8bc823ee1
+        ref: 991fc4193a6296abc36ada04f2be83791d2477a8
         path: .arbor-v2/acp
         persist-credentials: false
     - name: Check out unpublished shared RPC
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        ref: d2a6fcfb77ff8d2184f6c6e049eeb85423f852df
         path: .arbor-v2/rpc
         persist-credentials: false
     - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
@@ -137,7 +137,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        ref: d2a6fcfb77ff8d2184f6c6e049eeb85423f852df
         path: .arbor-v2/rpc
         persist-credentials: false
     - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
@@ -185,6 +185,14 @@ jobs:
         --workspace "$RUNNER_TEMP/listener-archive-consumer"
         --expected-version "$ARCHIVE_EXPECTED_VERSION" --adapter ${{ matrix.adapter }}
         --selection-manifest listener-archive-input/source-selection.json
+    - name: Probe host-owned Cowboy installed and compiler-free applications
+      if: matrix.adapter == 'cowboy' && matrix.toolchain.elixir == '1.19.6'
+      run: >
+        python3 -B scripts/check_listener_archive_consumer.py
+        --archives listener-archive-input
+        --workspace "$RUNNER_TEMP/listener-archive-consumer-host"
+        --expected-version "$ARCHIVE_EXPECTED_VERSION" --adapter cowboy --ownership host
+        --selection-manifest listener-archive-input/source-selection.json
     - name: Preserve HTTP archive qualification receipts
       if: always()
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
@@ -197,6 +205,19 @@ jobs:
           ${{ runner.temp }}/listener-archive-consumer/installed-probe.json
           ${{ runner.temp }}/listener-archive-consumer/release-probe.json
           ${{ runner.temp }}/listener-archive-consumer/consumer/mix.lock
+        if-no-files-found: error
+    - name: Preserve host-owned Cowboy archive qualification receipts
+      if: always() && matrix.adapter == 'cowboy' && matrix.toolchain.elixir == '1.19.6'
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      with:
+        name: http-archive-consumer-cowboy-host-${{ matrix.toolchain.elixir }}
+        path: |
+          listener-archive-input/*
+          ${{ runner.temp }}/listener-archive-consumer-host/result.json
+          ${{ runner.temp }}/listener-archive-consumer-host/logs/*
+          ${{ runner.temp }}/listener-archive-consumer-host/installed-probe.json
+          ${{ runner.temp }}/listener-archive-consumer-host/release-probe.json
+          ${{ runner.temp }}/listener-archive-consumer-host/consumer/mix.lock
         if-no-files-found: error
 
   test:
@@ -229,7 +250,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        ref: d2a6fcfb77ff8d2184f6c6e049eeb85423f852df
         path: .arbor-v2/rpc
         persist-credentials: false
 
@@ -288,7 +309,7 @@ jobs:
 
     - name: Generate documentation without warnings
       if: matrix.quality
-      run: MIX_ENV=dev mix docs
+      run: MIX_ENV=dev mix docs --warnings-as-errors
 
     - name: Run unit tests
       run: mix test --exclude compliance
@@ -314,7 +335,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        ref: d2a6fcfb77ff8d2184f6c6e049eeb85423f852df
         path: .arbor-v2/rpc
         persist-credentials: false
 
@@ -369,7 +390,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        ref: d2a6fcfb77ff8d2184f6c6e049eeb85423f852df
         path: .arbor-v2/rpc
         persist-credentials: false
 
@@ -415,7 +436,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        ref: d2a6fcfb77ff8d2184f6c6e049eeb85423f852df
         path: .arbor-v2/rpc
         persist-credentials: false
 
@@ -494,7 +515,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        ref: d2a6fcfb77ff8d2184f6c6e049eeb85423f852df
         path: .arbor-v2/rpc
         persist-credentials: false
 
@@ -554,7 +575,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        ref: d2a6fcfb77ff8d2184f6c6e049eeb85423f852df
         path: .arbor-v2/rpc
         persist-credentials: false
 
@@ -609,7 +630,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        ref: d2a6fcfb77ff8d2184f6c6e049eeb85423f852df
         path: .arbor-v2/rpc
         persist-credentials: false
 

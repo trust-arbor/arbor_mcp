@@ -5,9 +5,9 @@ prompts: elicitation, sampling, roots, ping, progress, and cancellation.
 Each section shows the handler and the client call. This is not a spec
 reprint.
 
-MCP 2026-07-28 deprecated Roots and Sampling. ArborMCP keeps both throughout
-1.x. New work should pass directories through tool parameters or resource
-URIs, and call an LLM provider API directly.
+MCP 2026-07-28 deprecated Roots and Sampling. ArborMCP retains their public
+APIs in 2.x for pinned legacy protocol revisions. New work should pass directories
+through tool parameters or resource URIs, and call an LLM provider API directly.
 
 ## Elicitation
 
@@ -17,7 +17,7 @@ the client for structured input. On MCP 2026-07-28 that pause is an
 matching client capability:
 
 ```elixir
-MyServer.start_link(transport: :beam, protocol_mode: :modern_only, mrtr: true)
+{:ok, server} = MyServer.start_link(transport: :beam, protocol_mode: :modern_only, mrtr: true)
 
 {:ok, client} =
   Arbor.MCP.Client.start_link(
@@ -120,7 +120,7 @@ end
 If the handler only implements `handle_elicitation_create/3`, URL-mode
 requests still arrive there. The second argument is then a map with
 `"mode"`, `"url"`, and `"elicitationId"`. `handle_url_elicitation/3`
-remains for 1.x compatibility and does not receive the id.
+remains for compatibility in v2 and does not receive the id.
 
 ### Schema validation
 
@@ -214,8 +214,8 @@ end
 
 Sampling lets a server ask the **client** to call a model. MCP 2026-07-28
 deprecated it; ArborMCP retains `Arbor.MCP.Server.create_message/2` and
-`c:Arbor.MCP.Client.Handler.handle_create_message/2` throughout 1.x. New code
-should call the LLM provider directly.
+`c:Arbor.MCP.Client.Handler.handle_create_message/2` in 2.x for pinned legacy
+protocol revisions. New code should call the LLM provider directly.
 
 ```elixir
 # Server (legacy server-to-client request, or your own MRTR wrapper)
@@ -270,7 +270,8 @@ The client must declare `%{"sampling" => %{}}`. The same
 ## Roots
 
 Roots are informational directory hints, not an authorization boundary.
-MCP 2026-07-28 deprecated them; ArborMCP retains the callbacks throughout 1.x.
+MCP 2026-07-28 deprecated them; ArborMCP retains the callbacks in 2.x for
+pinned legacy protocol revisions.
 
 ```elixir
 # Client exposes roots the server may ask for

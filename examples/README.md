@@ -1,10 +1,17 @@
 # ArborMCP Examples
 
-This directory contains MCP examples being migrated for version 2. Runtime and HTTP listener integration must pass the release checks before these examples are qualified for 2.0.
+This directory contains MCP examples for the version 2 API. RC1 publication is
+pending; examples are learning fixtures rather than a substitute for the
+qualification described in the [RC notes](../docs/guides/V2_RELEASE_CANDIDATE.md).
 
-Set `ARBOR_RPC_PATH` to your shared RPC checkout while developing the unpublished split; the examples use the local MCP project through `Mix.install/1`.
+Set `ARBOR_RPC_PATH` to your shared RPC checkout while developing the unpublished
+split. Source installation requires C17 on qualified macOS/Linux platforms.
+The standalone scripts load the local MCP project through `Mix.install/1`.
 
-**Note on first runs:** The self-contained `.exs` files (e.g. `elixir examples/basic_dsl_server.exs`) perform a `Mix.install/1` of the local `arbor_mcp` on every invocation. This can take 30s–3+ minutes on a cold cache (subsequent runs are much faster). For the quickest "brand new user" experience, start with the utilities or the `demo_client.exs` (which orchestrates the getting-started servers).
+**First runs:** Standalone scripts call `Mix.install/1`; its cache avoids repeated
+installation of unchanged dependencies, but cold runs can take minutes.
+The compiled alias below is the shortest local DSL/client example. It uses the
+`:test` transport, not every physical transport.
 
 Fast alias (recommended for repo developers after `mix compile`):
 
@@ -18,14 +25,21 @@ mix examples.getting_started
 
 - `01_stdio_server.exs` - stdio server with a `hello` tool
 - `02_http_server.exs` - HTTP server with resources
-- `03_http_sse_server.exs` - HTTP server with SSE enabled
+- `03_http_sse_server.exs` - HTTP server with explicit legacy HTTP+SSE aliases enabled
 - `04_beam_server.exs` - BEAM-local server
-- `demo_client.exs` - self-contained client demo for stdio, HTTP, HTTP+SSE, and BEAM-local
+- `demo_client.exs` - self-contained client demo for stdio, two HTTP configurations, and BEAM-local
 
 ```bash
 cd examples/getting_started
 ./run_demo.sh
 ```
+
+The demo's second HTTP configuration enables legacy aliases on the server but
+its client uses normal HTTP with `use_sse: false` and modern-preferred negotiation.
+It does not prove a 2024 two-endpoint `/sse` connection or replay. Use the
+[protocol and transport guides](../docs/TRANSPORT_GUIDE.md) for that explicit flow.
+The script prints per-transport failures and continues; a final "Demo completed"
+line is not a test verdict for every transport.
 
 ## Server Examples
 
@@ -40,6 +54,7 @@ use Arbor.MCP.Server.DSL, name: "my-server", version: "1.0.0"
 - `advanced_dsl_server.exs` - typed parameters, structured output, templates, and metadata
 - `weather_service.exs` - practical simulated weather tools and resources
 - `file_manager.exs` - sandboxed file operations and file resources
+- `dynamic_tools.exs` - application-owned mutable tool catalog using public Runtime controls
 
 Param types, compile-time checks, and `ToolResult` helpers are documented in [docs/DSL_GUIDE.md](../docs/DSL_GUIDE.md).
 
@@ -51,7 +66,11 @@ elixir examples/basic_dsl_server.exs
 
 Server examples use stdio by default unless their filename calls out another transport.
 
-**For developers** (after `mix compile` in the repo root): you can drive these servers from a client without re-installing on every run by using a small harness or the patterns in `test/doc_regression_test.exs`. The `demo_client.exs` in `getting_started/` is the recommended way to exercise all transports at once.
+**For developers** (after `mix compile` in the repository root),
+`mix examples.getting_started` reuses compiled code. `dynamic_tools.exs` is also
+run in that Mix context: `mix run examples/dynamic_tools.exs --demo`.
+For protocol stdio, keep diagnostics on stderr; cold `Mix.install` compilation
+may still print to stdout, so use an assembled release for production startup.
 
 ## Client Example
 
@@ -77,8 +96,12 @@ ACP examples live in [ArborACP](https://github.com/trust-arbor/arbor_acp). This 
 Current public transports are:
 
 - `:stdio` for subprocess JSON-RPC
-- `:http` for Streamable HTTP, with `use_sse: true` when SSE is needed
+- `:http` for Streamable HTTP; modern POST-owned SSE requires no server flag
 - `:beam` for BEAM-local client/server processes in the same VM
 - `:test` for in-memory tests
 
-The old public `:native` alias and direct dispatcher API were removed before 1.0.
+The HTTP client's `use_sse: true` retains a standalone legacy GET stream after
+legacy negotiation. Server-side 2024 `/sse` compatibility is instead selected
+with `legacy_http_sse: true`; removed server aliases are rejected.
+
+The old public `:native` alias and ExMCP direct dispatcher were removed before 1.0.

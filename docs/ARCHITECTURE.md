@@ -4,11 +4,11 @@ ArborMCP is organized around protocol boundaries: clients, servers, transports,
 HTTP Plug integration, authorization, and internal protocol helpers. Public
 APIs stay small; cross-cutting work is kept at transport or Plug boundaries.
 
-This guide describes the MCP architecture carried forward from 1.x into the
-version 2 development split. The accepted direction for
-per-server runtime ownership, bounded handler scheduling, and replaceable
-state stores is tracked separately in the
-[ArborMCP 2.0 roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md).
+Version 2 implements per-server runtime ownership and bounded callback
+scheduling across HTTP, stdio, BEAM and test transports. The source candidate
+is not yet a published release. Start with the [runtime guide](RUNTIME_GUIDE.md)
+for supervision, limits and shutdown, and the
+[migration guide](guides/MIGRATING_V1_TO_V2.md) for changes from ExMCP 1.x.
 
 ## Public Layers
 
@@ -41,9 +41,17 @@ defmodule MyServer do
 end
 ```
 
-`Arbor.MCP.Server.HandlerServer` is the transport-aware process for in-memory and
-BEAM-local handler execution. HTTP and stdio servers are started through
-`Arbor.MCP.Server.Transport` or the DSL-generated `start_link/1`.
+`Arbor.MCP.Server.Runtime` supervises the handler scheduler, scoped services,
+transport edge and owned work. Stateful callbacks run serially in supervised
+workers; explicit stateless mode permits bounded concurrency without state
+updates. Admission reserves count and byte capacity before queuing payloads.
+
+`Arbor.MCP.Server.HandlerServer.start_link/1` and the DSL-generated
+`start_link/1` return a Runtime supervisor PID. HandlerServer is the BEAM/test
+protocol edge, not the handler state owner. HTTP and stdio dispatch through
+the same Runtime. Client connections and HTTP listeners have their own
+ownership rules; starting a client against a server does not transfer
+ownership of that server.
 
 ### Transports
 
@@ -63,7 +71,7 @@ BEAM-local MCP is selected with `transport: :beam` and requires a server PID:
 {:ok, client} = Arbor.MCP.Client.start_link(transport: :beam, server: server)
 ```
 
-The removed `:native` alias and direct dispatcher API are not part of the 1.0
+The removed `:native` alias and direct dispatcher API are not part of the v2
 public architecture.
 
 ### HTTP Plug
@@ -105,9 +113,11 @@ This package contains MCP clients, servers and transports. ACP clients, native
 agents and optional vendor adapters live in
 [ArborACP](https://github.com/trust-arbor/arbor_acp).
 
-The `arbor_rpc` dependency owns shared JSON-RPC decoding, framing and subprocess
-environment helpers. MCP era negotiation, resource validation and protocol
-semantics remain in this package.
+The [ArborRPC](https://github.com/trust-arbor/arbor_rpc) dependency owns shared
+JSON-RPC decoding, framing, environment policy and bounded native subprocess
+lifetimes. MCP era negotiation, resource validation and protocol semantics
+remain in this package. The optional `arbor_acp_adapters` package supplies
+vendor integrations without adding them to MCP or ACP core.
 
 ## Protocol Era Model
 
@@ -151,8 +161,9 @@ validates the era on each request instead.
 ### Era responsibilities
 
 - Arbor.MCP.Internal.VersionRegistry is the source of truth for known revisions,
-  their era, enabled versions, and preference order. The zero-arity legacy
-  helpers deliberately retain rc.5 behavior during the RC soak.
+  their era, enabled versions, and preference order. The zero-arity
+  `Arbor.MCP.protocol_version/0` helper returns the newest legacy revision,
+  `2025-11-25`, for initialize-based compatibility.
 - `Arbor.MCP.Client.ConnectionManager` applies the selected policy.
   `Arbor.MCP.Client.EraProbe` owns the bounded, side-effect-free
   `server/discover` probe.
@@ -218,6 +229,8 @@ lib/arbor_mcp/
   plugs/               Reusable Plug security/auth components
   protocol/            Public protocol utility modules
   reliability/         Retry, circuit breaker, health check supervisor
+  runtime/             Per-server admission, scheduling, services and shutdown
+  runtime.ex           Public Runtime supervisor and lifecycle API
   server/              Handler behavior, DSL, transport startup
   transport/           Stdio, HTTP, BEAM-local, test transports
 ```
@@ -259,5 +272,5 @@ mix mcp.sync_spec --version 2026-07-28 --force  # refresh local docs/mcp-specs
 - Put transport failure handling in client retry/reliability options.
 - Keep pure protocol transformations in functional modules and side effects in
   GenServer, Port, Plug, or filesystem boundaries.
-- Treat the 2.0 target architecture as future work; do not describe planned
-  runtime ownership or scheduler behavior here until it is implemented.
+- Configure handler state and stores through the Runtime; use supported
+  request/helper APIs so work participates in admission and cleanup accounting.

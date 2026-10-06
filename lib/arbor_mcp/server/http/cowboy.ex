@@ -6,6 +6,11 @@ defmodule Arbor.MCP.Server.HTTP.Cowboy do
   are passed to `Plug.Cowboy.http/3`; `:ref` keeps its Ranch meaning, including
   the default `Arbor.MCP.HttpPlug.HTTP` reference. Stop by the Ranch reference
   or the returned listener PID to remove the listener from Ranch supervision.
+
+  Host-managed listeners may use compatible Ranch 1.x or 2.x within the package
+  requirements. A runtime that owns its listener (`transport: :http`) separately
+  requires the qualified Ranch 1.8.1 constructor; mounting `HttpPlug` with
+  `transport: :mounted_http` does not invoke that owned constructor.
   """
 
   @behaviour Arbor.MCP.Server.HTTP.ListenerAdapter

@@ -20,12 +20,28 @@ defmodule ListenerArchiveConsumer do
         do: ^expected = app |> Application.spec(:vsn) |> to_string()
 
     backend = backend()
-    verify_boundaries(backend)
+    ownership = ownership()
+    verify_boundaries(backend, ownership)
     verify_missing_backend(backend)
     System.put_env("PATH", "/no-runtime-compiler")
     System.put_env("CC", "/compiler-must-not-run")
     nil = System.find_executable("cc")
 
+    checks =
+      case ownership do
+        :owned ->
+          owned_probe(backend)
+          %{sibling_listener_survived: true}
+
+        :host ->
+          host_probe()
+      end
+
+    record(backend, ownership, checks)
+    IO.puts("#{backend}: #{ownership} archive listener lifetime checks pass")
+  end
+
+  defp owned_probe(backend) do
     first = start(backend)
 
     try do
@@ -49,9 +65,6 @@ defmodule ListenerArchiveConsumer do
     after
       Runtime.stop(first)
     end
-
-    record(backend)
-    IO.puts("#{backend}: archive dependencies, owned listeners and sibling lifetime pass")
   end
 
   defp backend do
@@ -61,16 +74,108 @@ defmodule ListenerArchiveConsumer do
     end
   end
 
-  defp verify_boundaries(backend) do
+  defp ownership do
+    case System.get_env("LISTENER_ARCHIVE_OWNERSHIP", "owned") do
+      "owned" -> :owned
+      "host" -> :host
+    end
+  end
+
+  defp verify_boundaries(backend, ownership) do
     for app <- [:arbor_acp, :arbor_acp_adapters, :bypass, :ex_doc, :credo], do: absent(app)
 
     if backend == :cowboy do
-      "1.8.1" = to_string(Application.spec(:ranch, :vsn))
+      expected_ranch = if ownership == :owned, do: "1.8.1", else: "2.2.0"
+      ^expected_ranch = to_string(Application.spec(:ranch, :vsn))
       true = Code.ensure_loaded?(Plug.Cowboy)
       for app <- [:bandit, :thousand_island, :websock], do: absent(app)
     else
       true = Code.ensure_loaded?(Bandit)
       for app <- [:plug_cowboy, :cowboy, :cowlib, :ranch], do: absent(app)
+    end
+  end
+
+  defp host_probe do
+    false = Arbor.MCP.Server.HTTP.Cowboy.Owned.compatible?()
+
+    {:error, :unsupported_owned_ranch_constructor} =
+      Runtime.start_link(
+        handler: Handler,
+        handler_args: [observer: self()],
+        transport: :http,
+        http: [adapter: :cowboy, host: {127, 0, 0, 1}, port: 0]
+      )
+
+    receive do
+      {:consumer_handler_init, _scheduler} ->
+        raise "unsupported owned constructor initialized the handler"
+    after
+      0 -> :ok
+    end
+
+    {:ok, root} =
+      Runtime.start_link(
+        handler: Handler,
+        handler_args: [observer: self()],
+        transport: :mounted_http
+      )
+
+    try do
+      receive do
+        {:consumer_handler_init, _scheduler} -> :ok
+      after
+        1_000 -> raise "mounted handler initialization was not observed"
+      end
+
+      ref = make_ref()
+
+      # The optional Cowboy backend is absent from the Bandit consumer build.
+      {:ok, listener} =
+        apply(Plug.Cowboy, :http, [
+          Arbor.MCP.HttpPlug,
+          [runtime: root, path: "/mcp"],
+          [ip: {127, 0, 0, 1}, port: 0, ref: ref]
+        ])
+
+      try do
+        port = apply(:ranch, :get_port, [ref])
+        ping(port, 1)
+        root_monitor = Process.monitor(root)
+        :ok = Runtime.stop(root)
+
+        receive do
+          {:DOWN, ^root_monitor, :process, ^root, :normal} -> :ok
+        after
+          2_000 -> raise "actual mounted runtime DOWN was not observed"
+        end
+
+        true = Process.alive?(listener)
+        {:ok, socket} = :gen_tcp.connect({127, 0, 0, 1}, port, [:binary, active: false], 1_000)
+        :ok = :gen_tcp.close(socket)
+        monitor = Process.monitor(listener)
+        :ok = Transport.stop_http_server(ref, http_shutdown_timeout: 2_000)
+
+        receive do
+          {:DOWN, ^monitor, :process, ^listener, :shutdown} -> :ok
+        after
+          2_000 -> raise "actual host listener DOWN was not observed"
+        end
+
+        closed(port, System.monotonic_time(:millisecond) + 2_000)
+
+        %{
+          unsupported_owned_constructor: :unsupported_owned_ranch_constructor,
+          mounted_ping: true,
+          runtime_down: true,
+          listener_survived_runtime_stop: true,
+          listener_down: true,
+          port_closed: true
+        }
+      after
+        Transport.stop_http_server(ref, http_shutdown_timeout: 2_000)
+      end
+    after
+      Runtime.stop(root)
     end
   end
 
@@ -215,7 +320,7 @@ defmodule ListenerArchiveConsumer do
     end
   end
 
-  defp record(backend) do
+  defp record(backend, ownership, checks) do
     packages =
       for {app, _description, version} <- Application.loaded_applications(), into: %{} do
         resource =
@@ -281,6 +386,8 @@ defmodule ListenerArchiveConsumer do
       System.fetch_env!("LISTENER_ARCHIVE_REPORT"),
       Jason.encode!(%{
         adapter: backend,
+        ownership: ownership,
+        listener_checks: checks,
         applications: packages,
         beams: beams,
         helper: digest(helper),

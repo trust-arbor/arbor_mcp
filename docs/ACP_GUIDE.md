@@ -2,7 +2,7 @@
 
 ACP clients, native agents and optional vendor adapters now live in
 [ArborACP](https://github.com/trust-arbor/arbor_acp). Use the
-[current ACP guide](https://github.com/trust-arbor/arbor_acp/blob/master/packages/arbor_acp/docs/ACP_GUIDE.md)
+[current ACP guide](https://github.com/trust-arbor/arbor_acp/blob/codex/shared-subprocess/packages/arbor_acp/docs/ACP_GUIDE.md)
 for the separate package.
 
 Historical changelog entries refer to the

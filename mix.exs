@@ -109,16 +109,18 @@ defmodule Arbor.MCP.MixProject do
       external_dep(:excoveralls, "~> 0.18", only: :test),
       external_dep(:git_hooks, "~> 0.7", only: [:dev], runtime: false),
       external_dep(:plug_cowboy, "~> 2.7", optional: true),
-      # Owned startup delegates only this qualified Bandit/Thousand Island ABI;
-      # Bandit 1.12.5 also includes the HTTP/2 validation/flow-control fixes.
-      external_dep(:bandit, "== 1.12.5", optional: true),
-      external_dep(:thousand_island, "== 1.5.0", optional: true),
+      # Host-managed listeners may resolve compatible backend releases. Owned
+      # startup separately checks its qualified Bandit/Thousand Island ABI.
+      # Keep Bandit 1.12.5's HTTP/2 validation/flow-control security floor.
+      external_dep(:bandit, "~> 1.12 and >= 1.12.5", optional: true),
+      external_dep(:thousand_island, "~> 1.0", optional: true),
       # Not used directly; declared so consumers resolve a cowlib that fixes
       # EEF-CVE-2026-43971 (Link header directive smuggling in cow_link),
       # which plug_cowboy's own requirements still allow.
       external_dep(:cowlib, "~> 2.20", optional: true),
-      # Owned Cowboy setup delegates only the qualified Ranch 1.8.1 constructor ABI.
-      external_dep(:ranch, "== 1.8.1", optional: true),
+      # Match Cowboy's supported Ranch families without constraining host-owned
+      # listeners to the separately qualified owned Ranch 1.8.1 constructor ABI.
+      external_dep(:ranch, ">= 1.8.1 and < 3.0.0", optional: true),
       external_dep(:plug, "~> 1.16"),
       external_dep(:fuse, "~> 2.4", optional: true),
       # MCP protocol support
@@ -168,7 +170,7 @@ defmodule Arbor.MCP.MixProject do
       licenses: ["MIT"],
       links: %{
         "GitHub" => @github_url,
-        "Changelog" => "#{@github_url}/blob/master/CHANGELOG.md",
+        "Changelog" => "#{@github_url}/blob/v#{@version}/CHANGELOG.md",
         "MCP Spec" => "https://modelcontextprotocol.io",
         "MCP Migration" => "#{@github_url}/blob/v#{@version}/docs/guides/MIGRATING_V1_TO_V2.md"
       },
@@ -193,6 +195,25 @@ defmodule Arbor.MCP.MixProject do
           docs/TROUBLESHOOTING.md
           docs/getting-started
           docs/guides
+          docs/V2_SCHEMA_DIALECT.md
+          docs/V2_CLIENT_CONNECTION_SCOPE.md
+          docs/V2_STDIO_OUTPUT_LIABILITY.md
+          docs/V2_RUNTIME_DIAGNOSTICS.md
+          docs/V2_ORDINARY_CLIENT_LIFETIME.md
+          docs/V2_CLIENT_DIAGNOSTICS.md
+          docs/V2_HTTP_GATEWAY_SLICE.md
+          docs/V2_HTTP_RUNTIME_CUTOVER.md
+          docs/V2_HTTP_REVERSE_SLICE.md
+          docs/V2_HTTP_SESSION_STREAM_SLICE.md
+          docs/V2_HTTP_CONTROL_CONVERGENCE_SLICE.md
+          docs/V2_HTTP_FUTURE_CONTROL_SLICE.md
+          docs/V2_HTTP_LISTENER_LIFETIME_CORE.md
+          docs/V2_PACKAGE_RELEASE.md
+          docs/V2_NATIVE_STORE_PRESSURE.md
+          docs/V2_DETS_LIFECYCLE.md
+          docs/V2_API_MIGRATION.md
+          docs/V2_NON_SYMBOL_MIGRATION.md
+          docs/RUNTIME_GUIDE.md
         )
     ]
   end
@@ -228,6 +249,7 @@ defmodule Arbor.MCP.MixProject do
         "README.md",
         "docs/guides/MIGRATING_V1_TO_V2.md",
         "docs/guides/V2_RELEASE_CANDIDATE.md",
+        "docs/getting-started/QUICKSTART.md",
         "docs/guides/USER_GUIDE.md",
         "docs/guides/PHOENIX_GUIDE.md",
         "docs/DSL_GUIDE.md",
@@ -252,6 +274,7 @@ defmodule Arbor.MCP.MixProject do
         "docs/TRANSPORT_GUIDE.md",
         "docs/CONFIGURATION.md",
         "docs/HTTP_LISTENERS.md",
+        "docs/RUNTIME_GUIDE.md",
         "docs/PROTOCOL_GUIDE.md",
         "docs/getting-started/MIGRATION.md",
         "docs/SECURITY.md",
@@ -265,7 +288,7 @@ defmodule Arbor.MCP.MixProject do
       groups_for_extras: [
         Introduction: ~r/README/,
         Guides:
-          ~r/MIGRATING_V1_TO_V2|V2_RELEASE_CANDIDATE|USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|V2_SCHEMA_DIALECT|V2_CLIENT_CONNECTION_SCOPE|TRANSPORT_GUIDE|HTTP_LISTENERS|PROTOCOL_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
+          ~r/QUICKSTART|RUNTIME_GUIDE|MIGRATING_V1_TO_V2|V2_RELEASE_CANDIDATE|USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|V2_SCHEMA_DIALECT|V2_CLIENT_CONNECTION_SCOPE|TRANSPORT_GUIDE|HTTP_LISTENERS|PROTOCOL_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
         Changelog: ~r/CHANGELOG/
       ],
       groups_for_modules: [
@@ -297,7 +320,7 @@ defmodule Arbor.MCP.MixProject do
       ],
       filter_modules: fn mod, _ ->
         # Hide pure internals and repo-only tooling from the sidebar.
-        # Deprecated Tools stay visible.
+        # Public replacement APIs remain visible.
         name = inspect(mod)
 
         not String.starts_with?(name, "Arbor.MCP.Internal.") and

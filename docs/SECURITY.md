@@ -1,5 +1,11 @@
 # ArborMCP Security Guide
 
+To report a suspected vulnerability, use the
+[private vulnerability reporting form](https://github.com/trust-arbor/arbor_mcp/security/advisories/new).
+Include the affected version, reproduction steps and potential impact, with
+secrets removed. Use [GitHub issues](https://github.com/trust-arbor/arbor_mcp/issues)
+for other bugs; do not disclose vulnerability details publicly.
+
 Security is handled at the protocol edge: HTTP clients and Plug/Phoenix servers
 use authentication, TLS, origin checks, and CORS; stdio relies on subprocess
 isolation; BEAM-local relies on local process ownership and application-level

@@ -1,13 +1,42 @@
 # ArborMCP v2 Release Assessment
 
-- **Reviewed:** 2026-10-05; historical checkpoint evidence below is preserved
+- **Reviewed:** 2026-10-06; historical checkpoint evidence below is preserved
 - **Released baseline:** `v1.5.0`
 - **Initial integrated audit baseline:** `e4d2fc3`; later qualified v2 checkpoints are recorded below
-- **Status:** Package/runtime and HTTP reverse integration implemented; combined followups and final release qualification in progress
+- **Status:** Accepted v2 scope implemented; audit fixes and final release qualification in progress
 - **Release target:** Friday 2026-10-09, subject to release gates and RC soak
 - **Canonical plan:** [V2_ROADMAP.md](./V2_ROADMAP.md)
 
-## Release conclusion
+## Current assessment — October 6, 2026
+
+The core roadmap is implemented, including the package split, standalone RPC
+repository, optional adapters/listeners, Runtime/scheduler, shared dispatch,
+scoped services/stores, Result/DSL/lifecycle APIs and accepted retirements. The
+migration and operator guides describe these contracts. There is no outstanding
+major architectural feature implied by the older remaining-work tables below.
+
+The earlier standalone-repository selection passed all 63 selected CI jobs.
+Current documentation and audit follow-ups are a later source selection: HTTP
+optional dependency ranges versus qualified owned-listener versions and Claude
+`max_bytes` handling are being corrected and still require qualification.
+Detailed performance investigation for MCP and ACP, including MCP BEAM paths,
+remains pending. Historical timing results do not establish acceptance of those
+costs or a measurement of subsequent changes.
+
+RC1 is unpublished and no continuous soak is active. The refreshed Hex account
+check succeeds; registry installation and publication are still pending. Final
+source/archive associations, applicable conformance and pinned SDK/CLI evidence, performance disposition and stable
+release checks must remain explicit. Existing passing receipts keep their
+original source identities. The
+[current release plan](V2_RELEASE_PLAN.md#current-release-status--october-6-2026)
+is the active gate list; dated checkpoints below retain their historical
+conclusions and counts.
+
+ExMCP 1.x remains maintained on `codex/maintenance-1.x` from `3914a927`, under
+the [maintenance policy](MAINTENANCE_POLICY.md). V2 qualification does not
+qualify a backport or promise conversion of live 1.x process state.
+
+## Historical release conclusion — October 5
 
 The library has a stable protocol baseline and integrated package/runtime,
 Runtime-only HTTP and bounded reverse implementations. API5 production artifacts
@@ -888,9 +917,13 @@ ownership and Hex authentication remain gates. The final qualified RC must still
 complete 48 continuous hours; no RC or stable release is qualified by this
 checkpoint.
 
-## Full-roadmap work still outstanding
+## Historical remaining-work register — October 6 checkpoint
 
-| Phase | Remaining release work |
+The table records the checkpoint's then-open evidence. The current assessment
+above supersedes its implementation/status claims; retained counts belong only
+to the source selections named below.
+
+| Phase | Remaining release work at that checkpoint |
 |---|---|
 | 1: contracts | Reconcile the implemented [removal/replacement inventory](./V2_API_MIGRATION.md), non-symbol migration and result/configuration contracts against the final compiled graph. Freeze and qualify final public defaults and package ranges. |
 | 2: runtime | Installed HTTP POST, retained sessions and queued/future cancellation are integrated. Mounted subscriptions, durable legacy resource publication, aliases, Runtime-only mounts and reverse controls are integrated. Complete final combined and authenticated wire qualification. Final cross-runtime crash/restart/stop and upgrade evidence remains required. |

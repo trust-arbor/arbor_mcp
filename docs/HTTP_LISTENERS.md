@@ -6,6 +6,13 @@ create, adopt or stop the host listener. Unix source installation still builds
 the transitive ArborRPC native helper and requires a C17 compiler; an installed
 release does not require a compiler at runtime.
 
+The published dependency ranges allow compatible host-managed listener graphs:
+Bandit `~> 1.12 and >= 1.12.5`, Thousand Island `~> 1.0`, and Ranch
+`>= 1.8.1 and < 3.0.0`. The selected backend's own requirements still apply;
+for example, Bandit 1.12.5 requires Thousand Island `~> 1.5`. The Bandit and
+Cowlib security floors remain in force. These package ranges do not extend
+ArborMCP's qualified standalone constructor versions below.
+
 ## A runtime that owns its listener
 
 Add `{:plug_cowboy, "~> 2.7"}` and `{:ranch, "== 1.8.1"}` to the host
@@ -55,18 +62,22 @@ can fail after handler initialization (for example, an occupied port); runtime
 startup is not a transaction that rolls back arbitrary handler effects.
 
 Owned Cowboy setup qualifies Ranch **1.8.1** only. Declare that exact requirement
-in the host dependency list as above. Optional transitive requirements validate
-the selected graph but do not automatically constrain the root Hex resolution;
-omitting the host constraint can select an incompatible Ranch version and fail
-Mix dependency validation. Startup also checks the version, required exports and
+in the host dependency list as above when the runtime owns the listener. A host
+that mounts `HttpPlug` in its own listener can resolve another compatible Ranch
+version, including Ranch 2.x, within the package and backend requirements.
+Owned startup checks the version, required exports and
 child-spec shape before handler/listener effects. ArborMCP uses its own real native callback
 modules for listener, connection and acceptor roles; it delegates the qualified
 Ranch `init` functions while preserving their actual OTP parent links and startup
 acknowledgments. The owned listener's initial call identifies
 Arbor.MCP.Server.HTTP.Cowboy.Owned, rather than `:ranch_listener_sup`. Future
-Ranch versions need constructor qualification before widening this requirement.
+Ranch versions need constructor qualification before owned startup accepts them;
+an unsupported version returns `:unsupported_owned_ranch_constructor`.
 Owned Bandit setup qualifies **Bandit 1.12.5** and **Thousand Island 1.5.0** only,
-with optional exact package requirements and pre-effect version/export checks.
+with pre-effect version/export checks. Pin those exact versions in the host
+dependencies when using an owned Bandit listener. Broader host-managed package
+ranges do not bypass these checks; an unsupported pair returns
+`:unsupported_owned_bandit_constructor`.
 ArborMCP's real native supervisor, worker and acceptor callbacks register each
 startup role before delegated Thousand Island initialization or socket work.
 The owned listener's initial call identifies
@@ -77,8 +88,8 @@ is adapted from the pinned Bandit implementation under its MIT license and
 preserves admitted upstream option defaults and validation. Owned startup logs
 retain the configured level/disabled setting but use fixed text without raw Plug
 options. Borrowed Bandit listeners retain the stock constructor and logs.
-Future backend versions require constructor qualification before widening the
-package requirements.
+Future backend versions require constructor qualification before owned startup
+accepts them.
 
 Owned Bandit admits **1..128 acceptors** (upstream default **100**) and at most
 **1,024** pending/active connection constructions across the runtime, including
@@ -218,6 +229,12 @@ forward "/mcp", Arbor.MCP.HttpPlug, runtime: MyApp.MCPRuntime
 The named runtime owns handler state and configured services. The Phoenix/Plug
 host owns its listener, sockets and TLS. Use the same authenticated mounted
 options and request-owned output rules for either optional standalone backend.
-The constructor/wrapper migration is a separate checkpoint from remaining live
-HTTP subscriptions and reverse-helper convergence; those remain release gates
-until their own implementation and physical-ACK qualification land.
+
+Keep the host's normal backend dependencies when mounting `HttpPlug`; no Ranch
+1.8.1 or exact Bandit/Thousand Island pin is required by the mounted runtime.
+For example, a Cowboy host may use `{:plug_cowboy, "~> 2.7"}` with
+`{:ranch, "~> 2.2"}`. Start the runtime with `transport: :mounted_http`, and
+let the host supervise and stop its listener. Using `transport: :http` instead
+selects ArborMCP's owned constructor and its exact qualification checks.
+Listener ownership does not change the runtime's request, subscription or
+reverse-request lifetime and output-acknowledgment rules.

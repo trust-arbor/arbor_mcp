@@ -28,11 +28,15 @@ The package split, `Arbor.MCP.*` / `Arbor.ACP.*` namespaces, optional adapter
 bundle and full server runtime/scheduler redesign are included. The candidate
 also includes the native write-publication race fix found during qualification.
 
-The selected implementation passes current/minimum production API comparisons,
-four-package source-archive checks, all 16 MCP and nine ACP CI jobs, four
+Earlier implementation checkpoints passed current/minimum production API
+comparisons, four-package source-archive checks, MCP/ACP CI, four
 installed/assembled-release mixed-load rehearsals, and six additional public
-negative controls. Those checks cover the tested fixtures and platforms; they
-do not establish a completed continuous soak or live vendor interoperability.
+negative controls. Those receipts retain their original source identities.
+The October 6 documentation, dependency-range and Claude file-limit fixes
+require updated package and CI qualification; the new macOS cleanup lane and
+current ZCode lifecycle smoke have open failures under investigation. See the
+[current release assessment](../V2_RELEASE_ASSESSMENT.md) for active gates.
+Earlier checks do not qualify these changes or establish a completed soak.
 
 The latest continuous attempt stopped after about 50 minutes when the test
 harness exceeded the documented request-ID capacity of one persistent MCP peer

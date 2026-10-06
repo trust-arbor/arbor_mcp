@@ -112,7 +112,7 @@ defmodule Arbor.MCP.DocRegressionTest do
 
     for term <- [
           "rc.5 / legacy MCP",
-          "ArborMCP 1.0 includes MCP 2026-07-28 support",
+          "ExMCP 1.0 includes MCP 2026-07-28 support",
           "Recommended rollout",
           "Modern observations are pinned",
           "legacy_http_sse: true"

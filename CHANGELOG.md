@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Version 2 release candidate
 
+- Preserve the ExMCP 1.x maintenance branch with backport and compatible
+  minor-release policy; document cold restart, cutover and rollback for v2 consumers.
+- Allow compatible optional Bandit, Thousand Island and Ranch updates in host
+  applications. Standalone owned listeners still enforce their qualified
+  constructor versions; mounted host listeners use the host application’s graph.
 - Prepare `arbor_mcp` `2.0.0-rc.1` under `Arbor.MCP.*`. ACP moves to
   `arbor_acp`, vendor adapters to optional `arbor_acp_adapters`, and shared
   subprocess/framing support to `arbor_rpc`.
@@ -22,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   request-ID capacity, native build requirements and open stable-release gates.
 - Avoid redundant JSON validation and nil-control accounting work while retaining
   lifetime and capacity guarantees. Fixed scheduling costs remain measurable.
+
+The following retained development notes were recorded before the package split.
+Their `ExMCP.*` names describe the original APIs; use the migration guide above
+for current owners and replacements. Published historical release sections are
+unchanged.
 
 ### Fixed
 

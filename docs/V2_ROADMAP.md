@@ -1,8 +1,8 @@
-# ExMCP 2.0 Roadmap
+# ArborMCP and ArborACP 2.0 Roadmap
 
-- **Status:** Full v2 scope accepted; independent package projects and runtime foundation implemented; transport integration and release qualification underway
+- **Status:** Accepted v2 implementation complete; audit fixes and release qualification in progress
 - **Target:** ArborMCP and ArborACP v2 release, Friday 2026-10-09, after qualification and RC soak
-- **Last updated:** 2026-10-04
+- **Last updated:** 2026-10-06
 - **Related release work:** [`RELEASE_1_0_0.md`](./RELEASE_1_0_0.md),
   [`API_DIFF_RC5_TO_1_0.md`](./API_DIFF_RC5_TO_1_0.md),
   [`POST_1_0_MAINTENANCE_PLAN.md`](./POST_1_0_MAINTENANCE_PLAN.md),
@@ -16,6 +16,43 @@
   [`V2_RELEASE_PLAN.md`](./V2_RELEASE_PLAN.md)
 
 ---
+
+## Current scope and release status — October 6, 2026
+
+The accepted architectural scope is implemented: independent MCP, ACP and RPC
+projects; the optional adapter bundle and HTTP listeners; per-server Runtime
+ownership; common dispatch and bounded scheduling; scoped stores; unified
+results; DSL constraints/composition; `with_connection`; API retirements and
+migration guidance. The delivery phases and dated decisions below preserve the
+planning history, not a list of features still awaiting implementation.
+
+The current audit follow-up separates optional HTTP dependency ranges from the
+versions qualified for Runtime-owned listeners and corrects Claude adapter
+`max_bytes` handling. These fixes are in progress and have not yet passed final
+qualification. The earlier standalone-repository selection passed 63 CI jobs;
+that result does not qualify later changes. Detailed performance investigation
+is also pending for both MCP and ACP, including MCP BEAM workloads and their
+lifecycle/capacity costs.
+
+RC1 remains unpublished, no continuous soak is active, and stable qualification
+is incomplete. The refreshed Hex account check succeeds; actual registry
+installation and publication remain pending. Release evidence must identify its
+exact source and artifacts. See the
+[release plan](V2_RELEASE_PLAN.md#current-release-status--october-6-2026) for the
+remaining sequence and [RC notes](guides/V2_RELEASE_CANDIDATE.md) for consumer
+limits.
+
+ExMCP 1.x remains maintained on `codex/maintenance-1.x`, preserved from
+`3914a927`. Compatible fixes require their own 1.x qualification; the v2 split,
+namespace changes, scheduler and API removals are not wholesale backports. The
+[maintenance policy](MAINTENANCE_POLICY.md) governs the two release lines.
+
+The earlier design questions now resolve to serialized stateful or explicit
+stateless execution, opaque Runtime/service references, scoped store contracts,
+retained legacy protocol support, and compile-time DSL composition. Package and
+adapter ownership are implemented. Public middleware and a general dialect
+framework remain deliberately deferred; distributed databases/event sourcing
+remain outside core scope. No hot-upgrade guarantee is introduced.
 
 ## 1. Purpose
 
@@ -33,7 +70,7 @@ This roadmap records:
   evolve; and
 - the rules for safely backporting selected work to 1.x.
 
-It is the canonical ExMCP 2.0 planning document. The similarly named
+It is the canonical ArborMCP and ArborACP 2.0 planning document. The similarly named
 [`PRE_2_0_TECH_DEBT_PLAN.md`](./PRE_2_0_TECH_DEBT_PLAN.md) is completed rc.5
 release history, not the 2.0 roadmap.
 
@@ -641,9 +678,10 @@ For the edge count, select xref entries whose source begins with
 `lib/ex_mcp/acp/` and whose target does not. Recompute all figures at the start
 of the spike rather than treating this baseline as a target.
 
-### 10.2 Other open decisions
+### 10.2 Other design questions — historical Phase 1 register
 
-These need focused design records during Phase 1:
+These were the Phase 1 questions. Their current implementation or deferred
+disposition is recorded in the current-status section above:
 
 1. **Handler state model:** whether 2.0 supports serialized stateful and
    concurrent stateless modes only, or also defines isolated/partitioned state.

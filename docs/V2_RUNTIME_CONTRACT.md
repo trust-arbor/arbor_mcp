@@ -1,5 +1,11 @@
 # V2 runtime and scheduler contract
 
+> **Implementation history.** This design records the pre-cutover plan and its source observations. For the
+> implemented v2 supervision, scheduling and lifecycle behavior, read the
+> [runtime guide](RUNTIME_GUIDE.md) and
+> [migration guide](guides/MIGRATING_V1_TO_V2.md). Historical tables below are not
+> a description of the current implementation.
+
 - **Status:** Implementation proposal; the complete runtime/scheduler redesign is required for v2.
 - **Reviewed:** 2026-10-03.
 - **Source:** Current MCP implementation following the integrated `v1.5.0` maintenance work.

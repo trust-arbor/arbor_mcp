@@ -1,7 +1,8 @@
 # ArborMCP Configuration Guide
 
-This guide covers MCP configuration in the v2 development checkout. Runtime
-integration and package qualification are still in progress.
+This guide covers MCP configuration in the v2 source candidate. The Runtime
+redesign is implemented; release qualification and publication remain open.
+See the [runtime guide](RUNTIME_GUIDE.md) for supervision, scheduling and limits.
 
 ## Dependency
 
@@ -169,19 +170,20 @@ changing a production default.
 ## OAuth Client Registration
 
 Modern authorization uses an explicit client registration strategy in the
-HTTP transport's `:auth` map:
+HTTP transport's `:auth` map. Choose one `auth` value below and pass it as
+`auth: auth` when starting the HTTP client:
 
 ```elixir
 # Credentials established with this authorization server. Resolve secrets at
 # use time rather than embedding them in application configuration.
-auth: %{
+auth = %{
   client_registration:
     {:pre_registered, "client-id", {:env, "MCP_CLIENT_SECRET"}},
   credential_issuer: "https://auth.example.com"
 }
 
 # Portable, self-hosted Client ID Metadata Document.
-auth: %{
+auth = %{
   client_registration:
     {:cimd, "https://client.example/oauth/metadata.json"},
   private_key: signing_jwk,
@@ -190,7 +192,7 @@ auth: %{
 }
 
 # Automatic compatibility fallback. DCR is used only when advertised.
-auth: %{
+auth = %{
   client_registration: :auto,
   client_metadata_url: "https://client.example/oauth/metadata.json",
   application_type: :native,
@@ -870,7 +872,7 @@ Arbor.MCP.start_server(handler: MyHandler, transport: :stdio)
 ```
 
 `HandlerServer`-based BEAM/test servers and stdio servers retain request IDs for
-the lifetime of the server process so a client cannot execute the same
+the connection's protocol lifetime so a client cannot execute the same
 JSON-RPC request ID twice. The retained set is bounded to 10,000 IDs by
 default; set `max_request_ids: positive_integer` on server startup to choose a
 deployment-specific fail-closed bound.
@@ -909,7 +911,8 @@ constructor aliases `sse_enabled` and `use_sse` are rejected; the HTTP client's
 separate `use_sse` option remains supported. Optional `legacy_http_sse_path` and
 `legacy_http_sse_post_path` settings default to `/sse` and `/message`.
 Neither dual-era preference mode enables this transport. `:modern_only`
-disables it even when the compatibility option or its rc.5 alias is present.
+disables it even when the compatibility option is present; retired aliases
+remain invalid configuration.
 
 ### OAuth protected-resource metadata
 
@@ -949,39 +952,67 @@ point clients to that metadata document. Custom MCP methods also need an
 explicit `:scope_mapper` returning a non-empty list of scopes. Unmapped or
 invalid policies are denied rather than sharing a catch-all scope.
 
-Legacy session storage is bounded to 10,000 active sessions by default. Each
-session also retains at most 10,000 distinct request IDs, preventing duplicate
-execution without allowing unbounded replay state. Set deployment-specific
-limits when supervising `Arbor.MCP.SessionManager` directly:
-
-```elixir
-{Arbor.MCP.SessionManager,
- max_sessions: 2_000,
- max_request_ids: 5_000,
- max_events_per_session: 500,
- max_event_bytes: 1_048_576,
- max_replay_bytes_per_session: 8_388_608,
- session_ttl_seconds: 900}
-```
-
-At capacity, new session allocation returns HTTP `503` with `Retry-After`;
-existing active sessions continue to work. When a session's request-ID bound
-is reached, new IDs fail closed with HTTP `429`; duplicates return JSON-RPC
-`Invalid Request`. Terminated entries and their request IDs are reclaimed
-before allocating a replacement.
-
-Replay retention also fails closed for any single JSON-encoded event larger
-than `:max_event_bytes`. The per-session replay window evicts its oldest events
-when either `:max_events_per_session` (default 1,000) or
-`:max_replay_bytes_per_session` (default 8 MiB) would be exceeded. The default
-single-event cap is 1 MiB. Counts and byte totals are reset when a session is
-terminated or expires.
-
 The resource server authenticates to introspection with
 `:client_secret_basic` by default; `:client_secret_post` is available through
 `:introspection_auth_method`. An active token is still rejected unless its
 issuer, audience/resource, `exp`, and optional `nbf` satisfy this configuration.
 Only migration deployments should use `legacy_unbound_tokens: true`.
+
+### Session storage
+
+HTTP Runtimes that support legacy sessions create their own session service.
+Its defaults differ from the old standalone `SessionManager` configuration:
+
+| Runtime service option | Default | Scope |
+| --- | --- | --- |
+| `max_sessions` | 128 | Sessions in the service |
+| `max_request_ids` | 1,024 | Retained IDs across the service |
+| `max_request_ids_per_session` | 128 | Retained IDs in one session |
+| `max_request_id_bytes` | 65,536 | Aggregate retained ID bytes |
+| `max_events` | 1,024 | Replay events across the service |
+| `max_events_per_session` | 128 | Replay events in one session |
+| `max_event_bytes` | 65,536 | One encoded replay event |
+| `max_replay_bytes` | 1,000,000 | Aggregate replay bytes |
+| `max_replay_bytes_per_session` | 262,144 | Replay bytes in one session |
+| `session_ttl_ms` | 3,600,000 | Idle session lifetime in milliseconds |
+
+Set limits through the HTTP Runtime's `services:` descriptor. This example
+chooses a smaller session population with a larger per-session ID allowance:
+
+```elixir
+{Arbor.MCP.Server.Runtime,
+ handler: MyApp.MCPServer,
+ transport: :mounted_http,
+ services: [
+   sessions: [
+     options: [
+       max_sessions: 64,
+       max_request_ids: 5_000,
+       max_request_ids_per_session: 500,
+       max_request_id_bytes: 262_144,
+       session_ttl_ms: 900_000
+     ]
+   ]
+ ]}
+```
+
+The aggregate ID/count/byte bounds still apply when an individual session is
+below its own limit. `session_ttl_seconds` belongs to the standalone API and
+does not configure this Runtime service. Metadata and replay-page bounds also
+apply; runtime session storage currently uses ETS.
+
+At capacity, new session allocation returns HTTP `503` with `Retry-After`.
+Exhausted request-ID capacity fails closed with HTTP `429`; duplicates return
+JSON-RPC `Invalid Request`. Retired/expired sessions reclaim their retained IDs
+and replay data. Plan session rotation for long-lived clients instead of assuming
+that completing a request frees its duplicate-execution record.
+
+Replay retention rejects oversized events. Notification append may evict old
+events to satisfy per-session limits. Prepared response publication instead
+reserves retained and pending capacity before state commit and can fail closed
+at capacity. Aggregate bounds apply to both paths. A requested event may have
+expired or been evicted before a reconnect. See the
+[transport guide](TRANSPORT_GUIDE.md) for legacy replay behavior.
 
 ## Multi Round-Trip Requests (MCP 2026-07-28)
 

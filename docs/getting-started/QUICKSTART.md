@@ -1,14 +1,24 @@
 # ArborMCP Quick Start Guide
 
-This guide shows the MCP server, client and BEAM-local patterns in the v2
-development checkout. Runtime integration and package qualification are still
-release work in progress.
+This guide shows a minimal MCP server and client in the `2.0.0-rc.1` checkout.
+Publication is pending; see the [RC notes](../guides/V2_RELEASE_CANDIDATE.md)
+for qualification and known limits, and the
+[v1-to-v2 guide](../guides/MIGRATING_V1_TO_V2.md) when upgrading ExMCP.
 
 **Next Steps:** See the [User Guide](../guides/USER_GUIDE.md), [DSL Guide](../DSL_GUIDE.md), and [Configuration Guide](../CONFIGURATION.md).
 
 ## Installation
 
-Version 2 is not published yet. Use a local checkout while developing the split:
+After RC publication, add `{:arbor_mcp, "== 2.0.0-rc.1"}` to your dependencies.
+Until then, use a local checkout:
+
+```sh
+git clone --branch codex/v2-migration https://github.com/trust-arbor/arbor_mcp.git
+git clone --branch main https://github.com/trust-arbor/arbor_rpc.git
+```
+
+The MCP default `master` branch is still ExMCP 1.x. In a separate consumer
+application with these sibling checkouts, declare the MCP path:
 
 ```elixir
 def deps do
@@ -63,9 +73,9 @@ defmodule MyMCPServer do
   tool "echo", "Echoes back the input message" do
     param :message, :string, required: true
 
-    # Plain strings and maps are normalized; ToolResult is aliased by the DSL
+    # ToolResult is aliased by the DSL and returns a complete result map.
     run fn %{message: message}, state ->
-      {:ok, %{content: [%{type: "text", text: "Echo: #{message}"}]}, state}
+      {:ok, ToolResult.text("Echo: #{message}"), state}
     end
   end
 
@@ -81,6 +91,11 @@ end
 
 {:ok, server} = MyMCPServer.start_link(transport: :stdio)
 ```
+
+Run a stdio server under an application supervisor or a script that stays alive;
+keep diagnostics on stderr. The library does not change the host's Logger policy.
+For HTTP deployment, follow the [Phoenix guide](../guides/PHOENIX_GUIDE.md) or
+[owned listener guide](../HTTP_LISTENERS.md); every mount needs an explicit Runtime.
 
 The DSL generates the MCP list/read/call callbacks plus legacy initialization
 and modern discovery metadata from your declarations. See the
@@ -100,6 +115,7 @@ Connect to a stdio server:
 
 {:ok, tools} = Arbor.MCP.Client.list_tools(client)
 {:ok, result} = Arbor.MCP.Client.call_tool(client, "echo", %{"message" => "Hello"})
+:ok = Arbor.MCP.Client.stop(client)
 ```
 
 Connect to a streamable HTTP server:
@@ -109,8 +125,11 @@ Connect to a streamable HTTP server:
   Arbor.MCP.Client.start_link(
     transport: :http,
     url: "http://localhost:4000/mcp",
+    # Retains a legacy GET stream if this connection negotiates a legacy era.
     use_sse: true
   )
+
+:ok = Arbor.MCP.Client.stop(client)
 ```
 
 ## BEAM-Local MCP
@@ -133,16 +152,20 @@ Use `transport: :beam` when both the client and server are Elixir processes in t
 
 {:ok, tools} = Arbor.MCP.Client.list_tools(client)
 {:ok, result} = Arbor.MCP.Client.call_tool(client, "echo", %{"message" => "Hello"})
+:ok = Arbor.MCP.Client.stop(client)
+:ok = Arbor.MCP.Server.Runtime.stop(server)
 ```
 
-BEAM-local MCP uses the configured protocol mode. rc.8 defaults to
+BEAM-local MCP uses the configured protocol mode. New connections default to
 `:prefer_modern`, which uses MCP 2026-07-28 discovery and per-request context;
 `:legacy_only` retains the initialize handshake. The transport simply passes
 MCP-shaped maps/lists as Elixir terms between local processes.
 
 > **Note for raw handlers:** If you are not using the DSL, start with `Arbor.MCP.Server.HandlerServer.start_link(handler: YourHandler, transport: :beam)` (or `Arbor.MCP.start_server/1`). DSL modules automatically provide `start_link/1`.
 
-For a fast (compiled) run of the patterns in this guide, use `mix examples.getting_started` from the repo root.
+For a fast compiled DSL/client example, use `mix examples.getting_started` from
+the repository root. This alias uses `:test`; the standalone demo exercises
+additional transports and can take longer on a cold dependency cache.
 
 ## Choosing A Transport
 
@@ -155,7 +178,7 @@ For a fast (compiled) run of the patterns in this guide, use `mix examples.getti
 
 ## Resilience
 
-Client connection retries are configured with `retry_policy`:
+Connection and operation retries are configured with `retry_policy`:
 
 ```elixir
 {:ok, client} =
@@ -182,10 +205,14 @@ Transport-level reliability can wrap supported transports with circuit breakers 
 
 For HTTP server-side pipelines, compose normal Plug/Phoenix plugs around `Arbor.MCP.HttpPlug`.
 
+An operation retry can repeat a side effect. Use application idempotency keys
+where needed; a timed-out or broken response does not prove the work was undone.
+
 ## Next Steps
 
 1. Read the [DSL Guide](../DSL_GUIDE.md)
 2. Read the [User Guide](../guides/USER_GUIDE.md)
 3. Review [Transport Guide](../TRANSPORT_GUIDE.md)
-4. Review the [1.0 Migration Guide](MIGRATION.md) for the dual-era rollout
-5. Explore [Examples](https://github.com/trust-arbor/arbor_mcp/tree/master/examples)
+4. Review the [v1-to-v2 migration guide](../guides/MIGRATING_V1_TO_V2.md)
+   and the [historical protocol rollout](MIGRATION.md)
+5. Explore [Examples](https://github.com/trust-arbor/arbor_mcp/tree/codex/v2-migration/examples)

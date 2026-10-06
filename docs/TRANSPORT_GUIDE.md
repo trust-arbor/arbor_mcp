@@ -150,10 +150,11 @@ the complete DNS answer and pins the socket to an approved address while keeping
 the original hostname for HTTP Host, TLS SNI, and certificate validation. Mixed
 public/private answers, link-local addresses, and reserved ranges fail closed.
 
-For OAuth client registration, configure one explicit strategy:
+For OAuth client registration, choose one `auth` value below and pass it as
+`auth: auth` when starting the HTTP client:
 
 ```elixir
-auth: %{
+auth = %{
   client_registration:
     {:pre_registered, "client-id", {:env, "MCP_CLIENT_SECRET"}},
   credential_issuer: "https://auth.example.com",
@@ -161,7 +162,7 @@ auth: %{
 }
 
 # Or a self-hosted Client ID Metadata Document:
-auth: %{
+auth = %{
   client_registration:
     {:cimd, "https://client.example/oauth/metadata.json"}
 }

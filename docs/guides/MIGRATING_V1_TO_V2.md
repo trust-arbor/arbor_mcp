@@ -254,10 +254,46 @@ turnover at public lifecycle boundaries. Raising `:max_request_ids` alone does
 not establish bounded whole-run resource use or a successful 48-hour run. HTTP session and
 replay capacities have their own contracts.
 
+For a test/BEAM peer, supported turnover stops the old Client and starts a new
+Client against the retained HandlerServer/Runtime. `Client.connect(spec, opts)`
+creates a new Client; it does not reconnect an existing Client PID after
+`disconnect/1`. Retired-scope pending work is canceled when the new peer is installed.
+
 Admission, output pressure, timeout and cleanup errors remain explicit. A
 timeout is not proof that an entered side effect was rolled back, and a native
 write ACK is not proof that the remote program consumed the bytes. Preserve
 original deadlines and avoid blindly replaying non-idempotent work.
+
+## 8. Cut over with a cold restart and retain a rollback path
+
+1. Save the working 1.x application release, lockfile, configuration and any
+   application-owned durable data before changing dependencies. Keep a separate
+   build of the new release; do not replace a running VM's modules in place.
+2. Compile the application against the selected v2 packages and review every
+   dependency and configuration change. Test it with representative traffic,
+   finite peer turnover, cancellation, and normal shutdown before routing users
+   to it. Verify native helper installation on the target OS/architecture.
+3. Stop admitting new work to the retiring application instance, drain entered
+   operations within an explicit deadline, and reconcile any side effects whose
+   outcome is unknown. Stop its Clients and Runtimes through their public APIs.
+   A wait timeout does not make an operation safe to replay.
+4. Start a fresh VM/application release with the v2 supervision tree. Create new
+   runtime references and peer connections; do not deserialize old runtime
+   handles, leases, tickets, in-flight requests or callback state into v2.
+   Preserve documented wire/storage identities, but use a tested export/import
+   or application recovery path for durable state; identity preservation is not
+   a promise that every internal storage representation can be reused.
+5. If rollback is needed, stop routing new work to v2, drain and reconcile it,
+   then start the saved 1.x application release with its matching configuration,
+   dependency lock and compatible data. Do not point 1.x blindly at state written
+   by a changed application data model. Existing rollback protocol tests do not
+   replace this application-specific rehearsal.
+
+Hot code upgrade of 1.x process state into v2 is not supported. Whole-runtime
+replacement creates new references even within v2; application supervision must
+publish or resolve the replacement references. The maintained `ex_mcp` 1.x line
+continues to receive applicable fixes and compatible minor releases; see the
+[maintenance policy](https://github.com/trust-arbor/arbor_mcp/blob/codex/maintenance-1.x/docs/MAINTENANCE_POLICY.md).
 
 ## Consumer checklist
 

@@ -3,6 +3,32 @@
 Version 2 is under development. Local `Mix.install/2` examples require
 `ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc` until the shared dependency is published.
 
+## Installation and v1 migration
+
+### Hex cannot find `arbor_mcp` or `arbor_rpc`
+
+The v2 release candidate is not yet published. Follow the source-checkout
+instructions in the [quickstart](getting-started/QUICKSTART.md), using the
+v2 MCP branch and a separate ArborRPC checkout. Set `ARBOR_RPC_PATH` before
+resolving the MCP dependency. Once published, use the exact coordinated RC
+versions from the [RC guide](guides/V2_RELEASE_CANDIDATE.md).
+
+### Native helper does not compile or cannot be found in a release
+
+On macOS/Linux, source installation builds the ArborRPC helper with a C17
+compiler, including HTTP-only and BEAM-only applications. `CC` names one
+compiler executable. Build the release on a compatible target platform and
+include the dependency's built `priv` contents. An assembled release does not
+compile the helper at startup. See
+[ArborRPC troubleshooting](https://github.com/trust-arbor/arbor_rpc/blob/main/docs/TROUBLESHOOTING.md).
+
+### A renamed module or option no longer exists
+
+The v2 change includes API retirements as well as namespace changes. The old
+Tools DSL, `HttpPlug.start_link` and mount `handler_call_timeout` are removed.
+Use the [migration guide](guides/MIGRATING_V1_TO_V2.md), a supervised Runtime
+and `request_timeout_ms`; a global `ExMCP` text replacement is insufficient.
+
 ## stdio
 
 ### Unexpected end of JSON input
@@ -205,6 +231,33 @@ defmodule MyServer do
 end
 ```
 
+## Runtime capacity and lifecycle
+
+### Request ID tracking capacity exceeded
+
+BEAM/test and stdio peers retain at most `max_request_ids` distinct request IDs
+(10,000 by default) for duplicate-execution protection. A long-lived connection
+can reach that limit even when each individual request succeeds and finishes.
+Choose an appropriate finite bound and plan connection rotation. For BEAM/test,
+stop the old Client and start a new Client against the retained server. Calling
+`Client.connect/2` does not reconnect an existing Client PID. HTTP sessions have
+separate request-ID retention and expiration.
+
+### Increasing concurrency fails validation
+
+Stateful callbacks are serialized. More than one callback worker requires
+`execution: :stateless`, and those callbacks must return unchanged initialized
+state. Queue capacity and input/output byte limits are independent of concurrency.
+See the [runtime guide](RUNTIME_GUIDE.md).
+
+### Stopping a client does not stop its server
+
+An existing BEAM server, Phoenix listener or borrowed service belongs to its
+original owner. Stop the Runtime when its whole endpoint should end. Under a
+parent supervisor, terminate that child through the parent if it should remain
+stopped. Check cleanup results: process death does not by itself establish
+native child reaping or remote request cancellation.
+
 ## Debugging
 
 Enable debug logging for non-stdio transports:
@@ -213,11 +266,16 @@ Enable debug logging for non-stdio transports:
 Logger.configure(level: :debug)
 ```
 
-Inspect local server state when using BEAM-local tests:
+Inspect formatted OTP status when diagnosing a Runtime:
 
 ```elixir
-:sys.get_state(server)
+:sys.get_status(server)
 ```
+
+The returned server PID is a supervisor, not the handler-state GenServer.
+Normal library diagnostics omit request/handler payloads. Raw state inspection
+and explicitly enabled debug buffers may expose sensitive data; see
+[runtime diagnostics](V2_RUNTIME_DIAGNOSTICS.md).
 
 Run focused tests:
 

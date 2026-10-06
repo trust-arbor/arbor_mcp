@@ -17,7 +17,7 @@ defmodule Arbor.MCP.Server.HTTPListenerTest do
   test "listener packages remain optional in the published dependency declaration" do
     dependencies = Mix.Project.config()[:deps]
 
-    for app <- [:plug_cowboy, :cowlib, :bandit] do
+    for app <- [:plug_cowboy, :cowlib, :bandit, :thousand_island, :ranch] do
       dependency = List.keyfind(dependencies, app, 0)
       assert Keyword.fetch!(elem(dependency, 2), :optional)
     end
@@ -26,6 +26,28 @@ defmodule Arbor.MCP.Server.HTTPListenerTest do
     assert Version.match?("1.12.5", requirement)
     refute Version.match?("1.12.4", requirement)
     assert Version.compare(Mix.Dep.Lock.read()[:bandit] |> elem(2), "1.12.5") in [:eq, :gt]
+  end
+
+  test "published requirements allow host graphs beyond the owned constructor versions" do
+    dependencies = Mix.Project.config()[:deps]
+    bandit = dependencies |> List.keyfind(:bandit, 0) |> elem(1)
+    thousand_island = dependencies |> List.keyfind(:thousand_island, 0) |> elem(1)
+    ranch = dependencies |> List.keyfind(:ranch, 0) |> elem(1)
+
+    assert Version.match?("1.12.6", bandit)
+    assert Version.match?("1.13.0", bandit)
+    refute Version.match?("1.12.4", bandit)
+    refute Version.match?("2.0.0", bandit)
+
+    assert Version.match?("1.4.3", thousand_island)
+    assert Version.match?("1.5.1", thousand_island)
+    refute Version.match?("2.0.0", thousand_island)
+
+    assert Version.match?("1.8.1", ranch)
+    assert Version.match?("2.2.0", ranch)
+    assert Version.match?("2.3.0", ranch)
+    refute Version.match?("1.8.0", ranch)
+    refute Version.match?("3.0.0", ranch)
   end
 
   test "unsupported adapters and invalid listener options fail explicitly" do

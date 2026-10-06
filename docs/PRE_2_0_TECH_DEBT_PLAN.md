@@ -1,13 +1,31 @@
 # Pre-modern-protocol Technical Debt Plan — target `1.0.0-rc.5`
 
 **Status:** Implemented; release gates passed
-**Target release:** ArborMCP `1.0.0-rc.5` (completed prerequisite for additional 1.0 RCs)
+**Target release:** ExMCP `1.0.0-rc.5` (completed prerequisite for additional 1.0 RCs)
 **Protocol:** unchanged — MCP `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
 **Companion doc:** [`MCP_2026_07_28_MIGRATION_PLAN.md`](./MCP_2026_07_28_MIGRATION_PLAN.md) — the 1.0 modern-protocol work this unblocks
 **Last updated:** 2026-08-04
 
 > **Historical plan:** This document records completed rc.5 work. The current
 > major-version plan is [`V2_ROADMAP.md`](./V2_ROADMAP.md).
+
+## Current interpretation — October 6, 2026
+
+This completed rc.5 debt plan remains ExMCP 1.x release history. Its checked
+tracks and then-deferred items do not describe the current v2 backlog. The
+accepted ArborMCP/ArborACP roadmap implementation is complete; the
+[current roadmap](V2_ROADMAP.md#current-scope-and-release-status--october-6-2026)
+and [release plan](V2_RELEASE_PLAN.md#current-release-status--october-6-2026)
+separate implemented scope from audit fixes and outstanding qualification.
+
+ExMCP 1.x is maintained on `codex/maintenance-1.x` from `3914a927`; preserve
+its contracts and qualify compatible fixes independently under the
+[maintenance policy](MAINTENANCE_POLICY.md). No v2 API removal or Runtime redesign
+is implied for that branch. RC1 remains unpublished and no continuous soak is
+active. Current HTTP-range and Claude `max_bytes` fixes and MCP/ACP performance
+investigation including MCP BEAM paths remain pending; historical passed gates
+do not qualify them. The refreshed Hex account check succeeds; registry
+installation and publication remain pending.
 
 ---
 

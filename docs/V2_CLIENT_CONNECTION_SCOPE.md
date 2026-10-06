@@ -1,5 +1,11 @@
 # Client connection brackets
 
+> **Implementation history.** This page records the connection-bracket implementation checkpoint. The later
+> [ordinary client lifetime work](V2_ORDINARY_CLIENT_LIFETIME.md) covers ordinary
+> client shutdown; the final paragraph below describes the earlier checkpoint,
+> not an outstanding implementation task. Start with the
+> [current migration guide](guides/MIGRATING_V1_TO_V2.md) for application changes.
+
 `Arbor.MCP.Client.with_connection(spec, opts, callback)` constructs one new client,
 runs the callback in the original caller, and performs bounded cleanup before
 returning. The two-argument form uses default options. Existing client PIDs are

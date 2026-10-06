@@ -1,8 +1,13 @@
-# ArborMCP 1.x Store Adapter
+# ExMCP 1.x Store Adapter (historical design)
 
-- **Status:** Accepted — unpublished `Arbor.MCP.Internal.SessionStore` seam
+This document records the pre-split 1.x design. Its global owners and planned
+follow-ups do not describe v2 startup. For current configuration, use the
+[runtime guide](RUNTIME_GUIDE.md), [configuration guide](CONFIGURATION.md) and
+[v1-to-v2 migration guide](guides/MIGRATING_V1_TO_V2.md).
+
+- **Status:** Accepted — unpublished `ExMCP.Internal.SessionStore` seam
   with default ETS and opt-in DETS
-- **Baseline:** ArborMCP 1.x after `b62eca2` (the `storage_backend:
+- **Baseline:** ExMCP 1.x after `b62eca2` (the `storage_backend:
   :persistent_term` warning and wall-clock TTL notes)
 - **Scope:** lock the 1.x event-store contract and introduce one opt-in
   durable backend without changing default ETS behavior
@@ -13,7 +18,7 @@
 
 This is a repository design record, not user-facing Hex documentation.
 SessionManager remains the public facade. The behaviour lives under
-`Arbor.MCP.Internal` so `filter_modules` keeps it out of the Hex sidebar.
+`ExMCP.Internal` so `filter_modules` keeps it out of the Hex sidebar.
 
 ## 1. Purpose
 
@@ -25,7 +30,7 @@ lists the event-store bullets this record pins.
 
 This ADR:
 
-- records what `Arbor.MCP.SessionManager` actually does today;
+- records what `ExMCP.SessionManager` actually does today;
 - locks the 1.x decisions that a later seam must not break;
 - proposes a future behaviour surface without adding it to the public
   API; and
@@ -40,7 +45,7 @@ Postgres, and clustered adapters remain out of scope.
 ## 2. Current 1.x owner
 
 Legacy Streamable HTTP and HTTP+SSE session state live in
-`Arbor.MCP.SessionManager`, which the application supervisor starts as a
+`ExMCP.SessionManager`, which the application supervisor starts as a
 singleton. MCP 2026-07-28 HTTP is stateless and does not use this
 manager, `Mcp-Session-Id`, `Last-Event-ID`, GET streams, or DELETE
 termination.
@@ -58,7 +63,7 @@ option is a no-op for durability. That warning landed in `b62eca2`.
 There is no `persistent_term` write path.
 
 `terminate/2` deletes the three tables. Restarting the GenServer starts
-empty. Transports (`Arbor.MCP.HttpPlug`, `HttpPlug.SSEHandler`) call the
+empty. Transports (`ExMCP.HttpPlug`, `HttpPlug.SSEHandler`) call the
 SessionManager public functions (`append_event/3`, `store_event/2`,
 `replay_events_after/2`, create/ensure/terminate). They do not select
 tables, backends, or cursors beyond the opaque event ID they already
@@ -77,10 +82,10 @@ the meaning of the public timestamps and of `:session_ttl_seconds`.
 | Decision | Lock |
 |---|---|
 | Default store | ETS remains the default. Current ETS results, clocks, and restart-empties stay unchanged. |
-| Public API | Current `Arbor.MCP.SessionManager` function names, arities, return shapes, and error atoms stay unchanged. |
+| Public API | Current `ExMCP.SessionManager` function names, arities, return shapes, and error atoms stay unchanged. |
 | Wire / SSE replay | Persist-before-delivery, `Last-Event-ID` exact-cursor replay, gap retention across disconnect, and opaque event IDs stay unchanged. |
 | `storage_backend: :persistent_term` | Remains accepted. Still uses ETS (no-op durability) and still warns. Do not give it real durability. Option removal is 2.0-only. |
-| Seam | Unpublished `Arbor.MCP.Internal.SessionStore`. SessionManager remains the public facade. Do not Hex-group or extras-link Internal modules. |
+| Seam | Unpublished `ExMCP.Internal.SessionStore`. SessionManager remains the public facade. Do not Hex-group or extras-link Internal modules. |
 | Transport isolation | Transports must not learn backend details. They keep calling SessionManager. No table names, adapter modules, or cursor encodings leak into Plug/SSE. |
 | Session TTL | Wall-clock idle expiry stays. Do not "fix" it to `System.monotonic_time/1` in 1.x. |
 | Public behaviour | Not published. Internal for this cut; a later 1.x minor may promote a public module if needed. |
@@ -238,21 +243,21 @@ event count, and ETS memory words. It does not return payloads.
 
 ## 5. 1.x behaviour (unpublished Internal)
 
-The 1.x seam is `Arbor.MCP.Internal.SessionStore`. It is not Hex-grouped
-and must not be linked from extras. Working name `Arbor.MCP.SessionStore`
+The 1.x seam is `ExMCP.Internal.SessionStore`. It is not Hex-grouped
+and must not be linked from extras. Working name `ExMCP.SessionStore`
 stays reserved if a later cut publishes the facade.
 
 One behaviour covers the state SessionManager's three tables already
 own — sessions, replay events, and claimed request IDs. Do not split
 session / event / request-id / subscription behaviours until another
 backend exists and the split removes real duplication. Subscriptions
-stay on `Arbor.MCP.SubscriptionRegistry`.
+stay on `ExMCP.SubscriptionRegistry`.
 
 Implementations:
 
-- `Arbor.MCP.Internal.SessionStore.ETS` — default; unnamed process-owned
+- `ExMCP.Internal.SessionStore.ETS` — default; unnamed process-owned
   tables; `close/1` deletes them; restart starts empty.
-- `Arbor.MCP.Internal.SessionStore.DETS` — opt-in; directory of DETS
+- `ExMCP.Internal.SessionStore.DETS` — opt-in; directory of DETS
   files; `close/1` closes without deleting; restart reopens.
 
 Initialization claims, identity binding, and protocol-version
@@ -314,7 +319,7 @@ in 2.0 if per-server runtimes need independently owned stores.
 | Durable second backend | Opt-in DETS. `:persistent_term` still ETS + warning. | Further adapters (Mnesia/Postgres/cluster) remain later; option removal is 2.0-only. |
 | Adapter ownership independent of SessionManager | Default ETS still process-owned and restart-empty. DETS owns a directory. | Changing default ETS restart semantics is 2.0 unless an opt-in adapter is used. |
 | Per-server store isolation | One application-wide SessionManager. | 2.0 runtime ownership (`V2_ROADMAP.md` §8.2). |
-| Public behaviour module | `Arbor.MCP.Internal.SessionStore` only. | Publish only if a later 1.x cut needs a Hex-documented seam. |
+| Public behaviour module | `ExMCP.Internal.SessionStore` only. | Publish only if a later 1.x cut needs a Hex-documented seam. |
 
 ## 7. Out of scope
 
@@ -322,7 +327,7 @@ This change does not:
 
 - give `:persistent_term` durability;
 - change default ETS clocks, table types, or restart-empty semantics;
-- publish `Arbor.MCP.SessionStore` or any Hex-documented behaviour;
+- publish `ExMCP.SessionStore` or any Hex-documented behaviour;
 - alter SSE wire/replay behavior or transport modules;
 - move session policy (identity, initialization) into a store;
 - "fix" wall-clock TTL to monotonic time;
@@ -334,7 +339,7 @@ This change does not:
 The ADR-and-ETS-suite cut is accepted in-tree. This follow-up is
 accepted when:
 
-1. `Arbor.MCP.Internal.SessionStore` exists and is not Hex-grouped;
+1. `ExMCP.Internal.SessionStore` exists and is not Hex-grouped;
 2. ETS remains the default and the contract suite still pins ETS
    restart-empties and `:persistent_term` no-op durability;
 3. opt-in DETS passes the same Phase 4 bullets except restart
