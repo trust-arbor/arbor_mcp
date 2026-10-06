@@ -413,11 +413,14 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthorityTest do
     output = device(true)
     name = :arbor_mcp_stdio_poison_fixture
     Process.register(output, name)
-    {:ok, root} = StdioServer.start_link(opts(ref, input, name))
+    server_opts = opts(ref, input, name)
+    {:ok, root} = StdioServer.start_link(server_opts)
     Process.unlink(root)
     assert_receive {:initialized, _}
+    entry_deadline = Deadline.after_ms(Keyword.fetch!(server_opts, :request_timeout_ms))
     invoke(input, 1)
-    assert_receive {:invoked, 1}
+    assert_receive {:invoked, 1}, Deadline.remaining(entry_deadline)
+    assert Deadline.now() < entry_deadline
     assert_receive {:retained, ^output, sender, _}
     monitor = Process.monitor(root)
     Process.exit(sender, :kill)

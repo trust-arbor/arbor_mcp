@@ -4,6 +4,7 @@ defmodule Arbor.MCP.Client.ConnectionScopeTest do
   alias Arbor.MCP.Client
   alias Arbor.MCP.Client.ConnectionScope
   alias Arbor.MCP.Client.ConnectionScope.Ref
+  alias Arbor.MCP.Client.Deadline
   alias Arbor.MCP.Client.RequestHandler
   alias Arbor.MCP.Server.{HandlerServer, Runtime}
   alias Arbor.MCP.Testing.MockServer
@@ -18,6 +19,10 @@ defmodule Arbor.MCP.Client.ConnectionScopeTest do
       test = Keyword.fetch!(opts, :test)
       scope = ConnectionScope.current()
       send(test, {:opening, self(), Ref.observer(scope)})
+
+      if opts[:report_deadline] do
+        send(test, {:opening_deadline, self(), Ref.deadline(scope)})
+      end
 
       if opts[:block_connect] do
         receive do
@@ -422,12 +427,13 @@ defmodule Arbor.MCP.Client.ConnectionScopeTest do
 
   test "observer death during blocked native construction cannot orphan its parent or child" do
     test = self()
+    entry_deadline = Deadline.after_ms(10_000)
 
     owner =
       spawn(fn ->
         result =
           Client.with_connection(
-            {Transport, test: test, block_connect: true},
+            {Transport, test: test, block_connect: true, report_deadline: true},
             [establish_timeout: 10_000, cleanup_timeout: 80],
             fn _client -> send(test, :callback_ran) end
           )
@@ -435,7 +441,14 @@ defmodule Arbor.MCP.Client.ConnectionScopeTest do
         send(test, {:observer_start_result, result})
       end)
 
-    assert_receive {:opening, client, observer}
+    assert_receive {:opening, client, observer}, Deadline.remaining(entry_deadline)
+
+    assert_receive {:opening_deadline, ^client, scope_deadline},
+                   Deadline.remaining(entry_deadline)
+
+    assert is_integer(scope_deadline)
+    refute Deadline.expired?(entry_deadline)
+    refute Deadline.expired?(scope_deadline)
     Process.exit(observer, :kill)
     wait_down(client)
     assert_receive {:observer_start_result, {:error, _reason}}, 1000

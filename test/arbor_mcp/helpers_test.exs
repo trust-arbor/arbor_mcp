@@ -1,5 +1,5 @@
 defmodule Arbor.MCP.HelpersTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   import Arbor.MCP.Helpers
   alias Arbor.MCP.{ClientError, ConnectionError, PromptError, ResourceError, ToolError}

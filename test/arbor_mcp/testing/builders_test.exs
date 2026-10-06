@@ -446,17 +446,28 @@ defmodule Arbor.MCP.Testing.BuildersTest do
       assert byte_size(bytes) == 20
     end
 
-    test "random generators produce different results" do
-      text1 = Builders.random_text(20)
-      text2 = Builders.random_text(20)
+    test "random generators advance the process PRNG and reproduce seeded results" do
+      seed = {101, 202, 303}
+      :rand.seed(:exsss, seed)
+      before_text = :rand.export_seed()
+      text = Builders.random_text(20)
 
-      # Should be very unlikely to be the same
-      assert text1 != text2
+      assert :rand.export_seed() != before_text
+      assert is_binary(text)
+      assert String.length(text) > 0 and String.length(text) <= 20
+      :rand.seed(:exsss, seed)
+      assert Builders.random_text(20) == text
 
-      string1 = Builders.random_string(10)
-      string2 = Builders.random_string(10)
+      :rand.seed(:exsss, seed)
+      before_string = :rand.export_seed()
+      string = Builders.random_string(10)
 
-      assert string1 != string2
+      assert :rand.export_seed() != before_string
+      assert is_binary(string)
+      assert String.length(string) == 10
+      assert Regex.match?(~r/^[a-z0-9]+$/, string)
+      :rand.seed(:exsss, seed)
+      assert Builders.random_string(10) == string
     end
   end
 
