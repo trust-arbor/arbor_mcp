@@ -192,6 +192,52 @@ defmodule Arbor.MCP.Server.Runtime.HTTPSubscriptionGatewayTest do
     assert Process.alive?(socket)
   end
 
+  test "public close cannot reopen a retired listener row or refund its entered IO" do
+    runtime = runtime()
+    socket = socket()
+    {binding, listener, pid, _registration} = listen(runtime, socket)
+    monitor = Process.monitor(pid)
+    ack(socket, binding, listener, pid, :acknowledged)
+    assert {:ok, listener_proof} = HTTPListenerBinding.validate(listener, runtime)
+    wire = ":\r\n\r\n"
+
+    {:ok, effect} = call(socket, fn -> HTTPWriterRegistry.prepare(binding, wire) end)
+    assert :ok = call(socket, fn -> HTTPWriterRegistry.publish(effect) end)
+    assert {:ok, ^effect, ^wire} = call(socket, fn -> HTTPWriterRegistry.checkout(binding) end)
+
+    assert %{frames: 1, in_flight: 1, bindings: 1, bytes: charged_bytes} =
+             HTTPWriterRegistry.stats(domain(binding))
+
+    assert charged_bytes >= byte_size(wire)
+    assert :ok = call(socket, fn -> HTTPWriterRegistry.retire(binding) end)
+    assert {:error, :http_listener_closed} = HTTPListenerBinding.validate(listener, runtime)
+    assert {:error, :http_invocation_closed} = HTTPWriterBinding.validate(binding, runtime)
+    assert Process.alive?(pid) and Process.alive?(socket)
+    assert Deadline.now() < listener_proof.deadline
+
+    # The actual entered claim keeps the retired row present. This owned Listener
+    # processes public close while all its original parties and cutoff are live.
+    assert :ok = call(socket, fn -> SubscriptionListener.close(pid) end)
+    assert_receive {:DOWN, ^monitor, :process, ^pid, :subscription_delivery_expired}, 1_000
+    refute_receive {:subscription_ready, ^socket, ^pid, _id, _cutoff}, 20
+
+    assert %{frames: 1, in_flight: 1, bindings: 1, bytes: ^charged_bytes} =
+             HTTPWriterRegistry.stats(domain(binding))
+
+    # Only the genuine borrowed writer's return settles its existing receipt.
+    assert {:error, :http_write_uncertain} =
+             call(socket, fn -> HTTPWriterRegistry.complete(effect, :ok) end)
+
+    eventually(fn ->
+      match?(
+        %{frames: 0, bytes: 0, in_flight: 0, bindings: 0},
+        HTTPWriterRegistry.stats(domain(binding))
+      )
+    end)
+
+    assert Process.alive?(socket)
+  end
+
   test "captured completion tail expires without restoring publication or write authority" do
     runtime =
       runtime(

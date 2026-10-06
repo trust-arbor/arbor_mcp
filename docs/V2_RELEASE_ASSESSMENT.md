@@ -844,6 +844,50 @@ Final RC metadata, changed-source static/full CI and API/package/consumer
 association, final performance qualification, publication ownership and Hex remain
 open. No RC or stable release is qualified by these selected-source receipts.
 
+## October 6 CI and short-rehearsal checkpoint
+
+This checkpoint supersedes earlier active status without combining their test
+counts. The `0cd7044` CI run `37415384744` completes 13 successful and three
+failed jobs. The failures are the legacy header fixture's pinned modern probe,
+the minimum Ledger lifetime monitor's termination observation, and the newest
+HTTP listener completion observation. The raw failures remain preserved.
+Working corrections isolate each fixture endpoint, install the Ledger monitor
+before its existing actor acknowledgement, serialize the listener-expiry module,
+and recheck the exact live listener binding at the final completion CAS. The
+first selection passes 60 cases on current/minimum and 59 of 60 on newest;
+its Ledger result-observation failure remains preserved. The revised 52-case
+Ledger/Gateway selection, forced warnings-as-errors compilation and formatting
+pass all three toolchains. The final exact-stop Gateway followup separately
+passes 12 cases and formatting on all three, with production hashes unchanged.
+These are separate selections, not an aggregate release count. Normal-hook
+commit, push and renewed complete CI remain pending; the local controls do not
+prove the historical scheduling cause.
+
+ALL11 current10 rehearses historical API5 archives at MCP `18727b66` and
+ACP/RPC/adapters `47c9e8a`; it does not associate the newer MCP source or final
+RC artifacts. All seven normal build/capture phases complete, and its corrected
+failure controls pass 18 cases with source and generated-artifact guards unchanged. The installed SHORT rehearsal then fails after 5.96 seconds
+during adapter-bundle startup. The report records confirmed typed native RPC
+and stdio child reaping and targeted-group absence, while adapter-bundle cleanup
+remains unconfirmed. The outer VM is reaped and its recorded process group is
+absent; that is not wider descendant cleanup proof. Two journal records are
+retained. The Phoenix HTTP 500 is an expected post-`Runtime.stop` authority check,
+not the startup failure. No ALL11 SHORT or sustained-soak pass follows.
+
+The selected codec-plus-nil Ledger source remains unchanged. Both bounded
+Test/BEAM ping attribution runs complete three operations plus settlement with
+unchanged source/graph guards, actual client/server DOWN and stopped profilers.
+They do not establish a new latency improvement; no further performance change
+is selected. The unmodified published stable server suite's 39/0 passes on both
+supported toolchains remain associated with `367e151`, not these working changes.
+
+RC metadata remains private preparation and is not applied. Fresh changed-source
+API/package/consumer association, full CI, final performance and conformance
+qualification, a successful installed/release SHORT rehearsal, publication
+ownership and Hex authentication remain gates. The final qualified RC must still
+complete 48 continuous hours; no RC or stable release is qualified by this
+checkpoint.
+
 ## Full-roadmap work still outstanding
 
 | Phase | Remaining release work |

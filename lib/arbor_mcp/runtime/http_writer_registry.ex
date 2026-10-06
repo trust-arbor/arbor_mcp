@@ -375,9 +375,15 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistry do
          true <- pid == self(),
          :ok <-
            update(domain, terminal.deadline, fn gate ->
-             info = gate.bindings[token]
-
-             with %{state: 1} = terminal <- info.authority.listener.terminal,
+             with %{
+                    mode: mode,
+                    authority: %{
+                      phase: :listener,
+                      listener: %{registration: ^nonce, pid: ^pid, terminal: ^terminal}
+                    }
+                  } = info <- gate.bindings[token],
+                  true <- not gate.sealed and mode in [:open, :listener_tail],
+                  %{state: 1} <- terminal,
                   true <- listener_domain_current?(domain, info),
                   true <- terminal.deadline > Deadline.now() do
                proof = %{info.authority.listener | terminal: %{terminal | state: 2}}

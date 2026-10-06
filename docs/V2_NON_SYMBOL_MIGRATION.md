@@ -58,6 +58,32 @@ its installed SHORT fails before Bootstrap on configuration atom parsing, with
 confirmed cleanup. SHORT and the continuous 48-hour final-RC run remain
 unqualified. See [current release status](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_PLAN.md).
 
+The October 6 checkpoint supersedes that earlier active status. CI at `0cd7044`
+(`37415384744`) finishes 13 successful and three failed jobs: a legacy fixture
+modern-pin probe, the minimum Ledger monitor observation and the newest HTTP
+listener completion observation. Fixture isolation/ordering and final listener
+binding checks have selected qualification: 52 Ledger/Gateway cases, forced
+warnings-as-errors compilation and formatting pass all three toolchains; the
+final exact-stop Gateway followup separately passes 12 cases and formatting on
+all three with unchanged production hashes. The initial newest 59/60 failure is
+preserved. No aggregate count, new commit, push or renewed full-CI pass is claimed.
+The original published stable 39/0 passes on both supported toolchains remain
+tied to `367e151`.
+
+ALL11 current10 uses historical API5 archives at MCP `18727b66` and
+ACP/RPC/adapters `47c9e8a`, not the newer MCP source or final RC artifacts. Seven
+normal build/capture phases and 18 corrected failure controls pass with unchanged
+source/artifact guards. Its installed SHORT
+rehearsal fails after 5.96 seconds during adapter-bundle startup. Native RPC and
+stdio have typed confirmed child reaping and group absence; adapter-bundle cleanup
+is unconfirmed. The outer VM/group are gone and two journal records are retained.
+An expected Phoenix refusal after `Runtime.stop` is not the startup failure.
+Neither SHORT nor 48-hour final-RC qualification is complete. The codec-plus-nil
+selection remains unchanged after successful bounded three-operation Test/BEAM
+attribution checks; those checks claim no latency gain. RC metadata, fresh
+changed-source compiled/package/consumer evidence, full CI and publication
+remain gated.
+
 The historical census is retained under
 `tmp/v2-semantic-census-69b0a39/{SEMANTIC_CENSUS.md,semantic-inventory.json,REVIEW_NOTES.md}`.
 The Client and runtime privacy freezes are retained under

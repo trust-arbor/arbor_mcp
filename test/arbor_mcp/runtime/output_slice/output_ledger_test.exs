@@ -207,6 +207,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedgerTest do
       {_, {:error, reason}} ->
         assert reason in [
                  :output_unknown_scope,
+                 :output_released,
                  :output_expired,
                  :output_full,
                  :output_call_expired
@@ -808,11 +809,11 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedgerTest do
       end)
 
     pid = start_supervised!({Ledger, owner: owner})
+    monitor = Process.monitor(pid)
     assert {:ok, ref} = Ledger.ref(pid)
     send(owner, {:open, ref})
     assert_receive {:opened, :ok}
     assert {:ok, _} = prepare(ref, %{"owned" => true}, owner: parent)
-    monitor = Process.monitor(pid)
     Process.exit(owner, :kill)
     assert_receive {:DOWN, ^monitor, :process, ^pid, :normal}, 500
     assert :ets.info(ref.table) == :undefined
