@@ -5,8 +5,8 @@ defmodule Arbor.MCP.Testing.CaseTest do
   Every `Process.sleep/1` in this file is **intentional** (audit M25): these
   tests exercise timing primitives — `measure_time/1`, `with_timeout/2` and
   `wait_for_condition/2` — so the sleep *is* the workload being measured or
-  timed out. `run_parallel/2` uses an explicit worker barrier instead of wall
-  time so scheduler load cannot make the assertion flaky.
+  timed out. The concurrency tests use explicit worker barriers instead of
+  elapsed wall time to prove that every worker enters before any is released.
   """
   use ExUnit.Case, async: true
 
@@ -104,34 +104,34 @@ defmodule Arbor.MCP.Testing.CaseTest do
 
   describe "concurrent_test macro" do
     test "runs operations concurrently" do
-      start_time = System.monotonic_time(:millisecond)
+      test_pid = self()
+      readiness_deadline = System.monotonic_time(:millisecond) + 1000
 
-      # This would be defined in a real test module
-      # concurrent_test "parallel sleep", count: 3 do |index|
-      #   Process.sleep(50)
-      #   index
-      # end
-
-      # Instead we'll test the underlying mechanism
+      # Exercise the underlying Tasks with the same worker barrier as run_parallel/2.
       tasks =
-        1..3
-        |> Enum.map(fn index ->
+        Enum.map(1..3, fn index ->
           Task.async(fn ->
-            Process.sleep(50)
-            index
+            send(test_pid, {:concurrent_worker_started, self(), index})
+
+            receive do
+              :release_concurrent_worker -> index
+            end
           end)
         end)
 
+      for {task, index} <- Enum.with_index(tasks, 1) do
+        remaining = max(readiness_deadline - System.monotonic_time(:millisecond), 0)
+        assert_receive {:concurrent_worker_started, worker_pid, ^index}, remaining
+        assert worker_pid == task.pid
+      end
+
+      assert System.monotonic_time(:millisecond) <= readiness_deadline
+
+      # All three workers have entered before any worker may finish.
+      Enum.each(tasks, &send(&1.pid, :release_concurrent_worker))
       results = Task.await_many(tasks, 1000)
-      end_time = System.monotonic_time(:millisecond)
 
       assert results == [1, 2, 3]
-
-      # Concurrent execution should land near one sleep (~50ms) rather than the
-      # sum of all three (~150ms). The bound is generous because scheduler
-      # latency on a loaded CI machine can add tens of milliseconds to a
-      # 50ms sleep; anything at or above the sequential total is a real failure.
-      assert end_time - start_time < 150
     end
   end
 
