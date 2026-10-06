@@ -106,7 +106,7 @@ def main():
             selection = json.loads(selected_path.read_text())
             if selection["version"] != args.expected_version:
                 raise ValueError("Source selection version does not match expected version")
-            for owner in ("arbor_mcp", "arbor_acp"):
+            for owner in ("arbor_mcp", "arbor_rpc"):
                 if not re.fullmatch(r"[0-9a-f]{40}", selection["source_commits"][owner]):
                     raise ValueError(f"Invalid source commit in selection: {owner}")
             evidence["source_selection"] = {"path": str(selected_path), "sha256": digest(selected_path),

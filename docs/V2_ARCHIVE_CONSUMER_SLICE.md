@@ -2,9 +2,12 @@
 
 The CI workflow now builds the publishable source archives for `arbor_mcp`,
 `arbor_rpc`, `arbor_acp` and `arbor_acp_adapters`, then installs all four into one
-fresh application. ACP source is pinned to
-`0e4cfd1efdb7437eb6cf4c944ed6fa04553da7bb`; the MCP archive comes from the
-workflow's checked-out commit. Packaging runs without unpublished dependency
+fresh application. Current CI checks out the RPC repository independently from
+ACP; its Mix project is at the root of `trust-arbor/arbor_rpc`. The workflow pins
+both external repositories, and the MCP archive comes from its checked-out commit.
+The historical ACP-hosted checkpoint described below used
+`0e4cfd1efdb7437eb6cf4c944ed6fa04553da7bb` for core, adapters and RPC.
+Packaging runs without unpublished dependency
 overrides. The consumer explicitly overrides only the four unpublished Arbor
 packages with their extracted source archives. CI resolves external dependencies
 through Hex.

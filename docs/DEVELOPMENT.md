@@ -5,7 +5,8 @@ Version 2 is under development; use the
 [v2 roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md)
 for release scope and qualification status.
 
-`ARBOR_RPC_PATH` selects a local shared RPC checkout. `ARBOR_V2_DEPS` can reuse an
+`ARBOR_RPC_PATH` selects the repository root of a local
+[ArborRPC checkout](https://github.com/trust-arbor/arbor_rpc). `ARBOR_V2_DEPS` can reuse an
 existing source cache during split QA, while `ARBOR_V2_BUILD` and `ARBOR_V2_LOCK`
 select isolated build and lock paths. Package consumer checks must also run with
 these overrides unset and use the built release artifacts.
@@ -35,6 +36,7 @@ git clone https://github.com/trust-arbor/arbor_mcp.git
 cd arbor_mcp
 
 # Until arbor_rpc is published, select its checkout explicitly.
+git clone https://github.com/trust-arbor/arbor_rpc.git ../arbor_rpc
 export ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc
 
 # Install dependencies

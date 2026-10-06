@@ -57,6 +57,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mcp-source", type=Path, required=True)
     parser.add_argument("--acp-source", type=Path, required=True)
+    parser.add_argument("--rpc-source", type=Path, required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -65,7 +66,8 @@ def main():
     # Prerelease inclusion is explicit. Stable keeps normal major compatibility.
     requirement = f"~> {args.version}" if "-" in args.version else "~> 2.0"
     output = args.output.resolve()
-    sources = {"arbor_mcp": args.mcp_source.resolve(), "arbor_acp": args.acp_source.resolve()}
+    sources = {"arbor_mcp": args.mcp_source.resolve(), "arbor_acp": args.acp_source.resolve(),
+               "arbor_rpc": args.rpc_source.resolve()}
     for source in sources.values():
         if output == source or source in output.parents or output in source.parents:
             parser.error("Output and input trees must not overlap")
@@ -73,12 +75,13 @@ def main():
     copied = {name: copy_source(source, output / name) for name, source in sources.items()}
     projects = {
         "arbor_mcp": output / "arbor_mcp",
+        "arbor_rpc": output / "arbor_rpc",
         **{app: output / "arbor_acp/packages" / app
-           for app in ("arbor_rpc", "arbor_acp", "arbor_acp_adapters")},
+           for app in ("arbor_acp", "arbor_acp_adapters")},
     }
     for project in projects.values():
         rewrite(project, args.version, requirement)
-    tags = {app: (f"v{args.version}" if app == "arbor_mcp" else f"{app}-v{args.version}")
+    tags = {app: (f"v{args.version}" if app in ("arbor_mcp", "arbor_rpc") else f"{app}-v{args.version}")
             for app in projects}
     manifest = {
         "version": args.version,

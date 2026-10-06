@@ -15,7 +15,7 @@ permissions:
 
 env:
   MIX_ENV: test
-  ARBOR_RPC_PATH: ${{ github.workspace }}/.arbor-v2/acp/packages/arbor_rpc
+  ARBOR_RPC_PATH: ${{ github.workspace }}/.arbor-v2/rpc
 
 jobs:
   test:
@@ -39,9 +39,9 @@ jobs:
     - name: Check out unpublished shared RPC
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        repository: trust-arbor/arbor_acp
-        ref: 958d6b8aae52856c5b9309a68bcf5676967fbb82
-        path: .arbor-v2/acp
+        repository: trust-arbor/arbor_rpc
+        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        path: .arbor-v2/rpc
         persist-credentials: false
     - id: beam
       uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
@@ -114,6 +114,6 @@ jobs:
           beam-*.txt
           beam-toolchain.json
           mix.lock
-          .arbor-v2/acp/packages/arbor_rpc/mix.lock
+          .arbor-v2/rpc/mix.lock
         include-hidden-files: true
         retention-days: 14

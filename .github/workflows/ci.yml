@@ -30,7 +30,7 @@ env:
   MIX_ENV: test
   CI_OTP_VERSION: '27.0'
   CI_ELIXIR_VERSION: '1.17.3'
-  ARBOR_RPC_PATH: ${{ github.workspace }}/.arbor-v2/acp/packages/arbor_rpc
+  ARBOR_RPC_PATH: ${{ github.workspace }}/.arbor-v2/rpc
 
 jobs:
   archive_consumer:
@@ -56,8 +56,15 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 958d6b8aae52856c5b9309a68bcf5676967fbb82
+        ref: a395888e7fc36ff58f9aa2d3205457f8bc823ee1
         path: .arbor-v2/acp
+        persist-credentials: false
+    - name: Check out unpublished shared RPC
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        repository: trust-arbor/arbor_rpc
+        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        path: .arbor-v2/rpc
         persist-credentials: false
     - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
       with:
@@ -68,7 +75,7 @@ jobs:
       run: |
         python3 -B - <<'PYVERSION'
         import os, pathlib, re
-        paths = [pathlib.Path("mix.exs"), pathlib.Path(".arbor-v2/acp/packages/arbor_rpc/mix.exs"), pathlib.Path(".arbor-v2/acp/packages/arbor_acp/mix.exs"), pathlib.Path(".arbor-v2/acp/packages/arbor_acp_adapters/mix.exs")]
+        paths = [pathlib.Path("mix.exs"), pathlib.Path(".arbor-v2/rpc/mix.exs"), pathlib.Path(".arbor-v2/acp/packages/arbor_acp/mix.exs"), pathlib.Path(".arbor-v2/acp/packages/arbor_acp_adapters/mix.exs")]
         versions = [re.findall(r'@version "([^"]+)"', path.read_text()) for path in paths]
         if any(len(version) != 1 for version in versions) or len({version[0] for version in versions}) != 1:
             raise SystemExit("Package source versions must match")
@@ -86,11 +93,16 @@ jobs:
         mkdir -p archive-consumer-input
         mix deps.get --only prod
         env -u ARBOR_RPC_PATH mix hex.build --output "archive-consumer-input/arbor_mcp-$ARCHIVE_EXPECTED_VERSION.tar"
-        for package in arbor_rpc arbor_acp arbor_acp_adapters; do
+        (
+          cd .arbor-v2/rpc
+          mix deps.get --only prod
+          mix hex.build --output "$GITHUB_WORKSPACE/archive-consumer-input/arbor_rpc-$ARCHIVE_EXPECTED_VERSION.tar"
+        )
+        for package in arbor_acp arbor_acp_adapters; do
           (
             cd ".arbor-v2/acp/packages/$package"
             ARBOR_V2_LOCAL=1 mix deps.get --only prod
-            ARBOR_V2_LOCAL=0 mix hex.build --output "$GITHUB_WORKSPACE/archive-consumer-input/$package-$ARCHIVE_EXPECTED_VERSION.tar"
+            env -u ARBOR_RPC_PATH ARBOR_V2_LOCAL=0 mix hex.build --output "$GITHUB_WORKSPACE/archive-consumer-input/$package-$ARCHIVE_EXPECTED_VERSION.tar"
           )
         done
     - name: Install archives and probe a compiler-free release
@@ -124,9 +136,9 @@ jobs:
     - name: Check out unpublished shared RPC
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        repository: trust-arbor/arbor_acp
-        ref: 958d6b8aae52856c5b9309a68bcf5676967fbb82
-        path: .arbor-v2/acp
+        repository: trust-arbor/arbor_rpc
+        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        path: .arbor-v2/rpc
         persist-credentials: false
     - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
       with:
@@ -137,7 +149,7 @@ jobs:
       run: |
         python3 -B - <<'PYVERSION'
         import os, pathlib, re
-        paths = [pathlib.Path("mix.exs"), pathlib.Path(".arbor-v2/acp/packages/arbor_rpc/mix.exs"), pathlib.Path(".arbor-v2/acp/packages/arbor_acp/mix.exs"), pathlib.Path(".arbor-v2/acp/packages/arbor_acp_adapters/mix.exs")]
+        paths = [pathlib.Path("mix.exs"), pathlib.Path(".arbor-v2/rpc/mix.exs")]
         versions = [re.findall(r'@version "([^"]+)"', path.read_text()) for path in paths]
         if any(len(version) != 1 for version in versions) or len({version[0] for version in versions}) != 1:
             raise SystemExit("Package source versions must match")
@@ -156,7 +168,7 @@ jobs:
         mix deps.get --only prod
         env -u ARBOR_RPC_PATH mix hex.build --output "listener-archive-input/arbor_mcp-$ARCHIVE_EXPECTED_VERSION.tar"
         (
-          cd .arbor-v2/acp/packages/arbor_rpc
+          cd .arbor-v2/rpc
           mix deps.get --only prod
           mix hex.build --output "$GITHUB_WORKSPACE/listener-archive-input/arbor_rpc-$ARCHIVE_EXPECTED_VERSION.tar"
         )
@@ -164,7 +176,7 @@ jobs:
       run: >
         python3 -B scripts/check_archive_source_selection.py
         --archives listener-archive-input
-        --mcp-source . --acp-source .arbor-v2/acp
+        --mcp-source . --rpc-source .arbor-v2/rpc
         --version "$ARCHIVE_EXPECTED_VERSION" --output listener-archive-input/source-selection.json
     - name: Resolve the selected HTTP backend and probe installed and compiler-free applications
       run: >
@@ -216,9 +228,9 @@ jobs:
     - name: Check out unpublished shared RPC
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        repository: trust-arbor/arbor_acp
-        ref: 958d6b8aae52856c5b9309a68bcf5676967fbb82
-        path: .arbor-v2/acp
+        repository: trust-arbor/arbor_rpc
+        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        path: .arbor-v2/rpc
         persist-credentials: false
 
     - name: Set up Elixir
@@ -301,9 +313,9 @@ jobs:
     - name: Check out unpublished shared RPC
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        repository: trust-arbor/arbor_acp
-        ref: 958d6b8aae52856c5b9309a68bcf5676967fbb82
-        path: .arbor-v2/acp
+        repository: trust-arbor/arbor_rpc
+        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        path: .arbor-v2/rpc
         persist-credentials: false
 
     - name: Set up Elixir
@@ -356,9 +368,9 @@ jobs:
     - name: Check out unpublished shared RPC
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        repository: trust-arbor/arbor_acp
-        ref: 958d6b8aae52856c5b9309a68bcf5676967fbb82
-        path: .arbor-v2/acp
+        repository: trust-arbor/arbor_rpc
+        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        path: .arbor-v2/rpc
         persist-credentials: false
 
     - name: Set up Elixir
@@ -402,9 +414,9 @@ jobs:
     - name: Check out unpublished shared RPC
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        repository: trust-arbor/arbor_acp
-        ref: 958d6b8aae52856c5b9309a68bcf5676967fbb82
-        path: .arbor-v2/acp
+        repository: trust-arbor/arbor_rpc
+        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        path: .arbor-v2/rpc
         persist-credentials: false
 
     - name: Set up Elixir
@@ -481,9 +493,9 @@ jobs:
     - name: Check out unpublished shared RPC
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        repository: trust-arbor/arbor_acp
-        ref: 958d6b8aae52856c5b9309a68bcf5676967fbb82
-        path: .arbor-v2/acp
+        repository: trust-arbor/arbor_rpc
+        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        path: .arbor-v2/rpc
         persist-credentials: false
 
     - name: Set up Elixir
@@ -541,9 +553,9 @@ jobs:
     - name: Check out unpublished shared RPC
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        repository: trust-arbor/arbor_acp
-        ref: 958d6b8aae52856c5b9309a68bcf5676967fbb82
-        path: .arbor-v2/acp
+        repository: trust-arbor/arbor_rpc
+        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        path: .arbor-v2/rpc
         persist-credentials: false
 
     - name: Set up Elixir
@@ -596,9 +608,9 @@ jobs:
     - name: Check out unpublished shared RPC
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        repository: trust-arbor/arbor_acp
-        ref: 958d6b8aae52856c5b9309a68bcf5676967fbb82
-        path: .arbor-v2/acp
+        repository: trust-arbor/arbor_rpc
+        ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+        path: .arbor-v2/rpc
         persist-credentials: false
 
     - name: Set up Elixir

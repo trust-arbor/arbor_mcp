@@ -22,7 +22,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archives", type=Path, required=True)
     parser.add_argument("--mcp-source", type=Path, required=True)
-    parser.add_argument("--acp-source", type=Path, required=True)
+    parser.add_argument("--rpc-source", type=Path, required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -30,7 +30,7 @@ def main():
         parser.error("Preserve an existing source selection instead of replacing it")
     archives = args.archives.resolve(strict=True)
     repos = {"arbor_mcp": args.mcp_source.resolve(strict=True),
-             "arbor_acp": args.acp_source.resolve(strict=True)}
+             "arbor_rpc": args.rpc_source.resolve(strict=True)}
     commits = {name: git(repo, "rev-parse", "HEAD").decode().strip()
                for name, repo in repos.items()}
     if any(not re.fullmatch(r"[0-9a-f]{40}", commit) for commit in commits.values()):
@@ -44,7 +44,7 @@ def main():
                 "checker_sha256": digest_bytes(checker_path.read_bytes())}
     with tempfile.TemporaryDirectory(prefix="arbor-source-selection-") as temporary:
         for package, owner, prefix in (("arbor_mcp", "arbor_mcp", ""),
-                                       ("arbor_rpc", "arbor_acp", "packages/arbor_rpc/")):
+                                       ("arbor_rpc", "arbor_rpc", "")):
             candidates = sorted(archives.rglob(f"{package}-*.tar"))
             if len(candidates) != 1:
                 raise ValueError(f"Expected one archive for {package}")

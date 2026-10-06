@@ -22,11 +22,13 @@ versions: declare the qualified Ranch 1.8.1 or Bandit 1.12.5/Thousand Island 1.5
 host dependencies in [HTTP listeners](./HTTP_LISTENERS.md).
 
 Publish `arbor_rpc` first, then `arbor_acp`, then `arbor_mcp`, then the optional
-`arbor_acp_adapters` bundle. The MCP source tag is `v<version>`. The ACP monorepo
-uses `arbor_rpc-v<version>`, `arbor_acp-v<version>` and
-`arbor_acp_adapters-v<version>` at the same coordinated source commit. ExDoc source
-links include the corresponding tag and `packages/<app>/` path. Until the tags
-exist, local development documentation has prospective source links.
+`arbor_acp_adapters` bundle. MCP and RPC each use `v<version>` tags in their own
+repositories, `trust-arbor/arbor_mcp` and `trust-arbor/arbor_rpc`; both Mix projects
+live at their repository roots. The ACP workspace uses `arbor_acp-v<version>`
+and `arbor_acp_adapters-v<version>` at its coordinated source commit. ExDoc source
+links use the owning repository and tag, with a `packages/<app>/` prefix only
+for the two ACP projects. Until the tags exist, local development documentation
+has prospective source links.
 
 Versions must be literals in the shipped `mix.exs`. A release environment override
 alone is insufficient: installed source must retain the same version after that
@@ -36,6 +38,7 @@ environment disappears. Prepare separate reviewable source copies:
 python3 scripts/prepare_release.py \
   --mcp-source /path/to/arbor_mcp \
   --acp-source /path/to/arbor_acp \
+  --rpc-source /path/to/arbor_rpc \
   --version 2.0.0-rc.1 \
   --output /path/to/new-release-preparation
 ```
@@ -50,17 +53,20 @@ agree before publication.
 
 ## Standalone documentation and source archives
 
-Each ACP package has its own dev-only, non-runtime ExDoc dependency. From the
-monorepo root, generate docs for a package independently:
+Each package has its own dev-only, non-runtime ExDoc dependency. From the ACP
+workspace root, generate docs for a package independently, selecting the separate
+RPC checkout while the dependency remains unpublished:
 
 ```sh
 cd packages/arbor_acp
-ARBOR_V2_LOCAL=1 MIX_ENV=dev mix deps.get
-ARBOR_V2_LOCAL=1 MIX_ENV=dev mix docs --warnings-as-errors
+ARBOR_RPC_PATH=/path/to/arbor_rpc ARBOR_V2_LOCAL=1 MIX_ENV=dev mix deps.get
+ARBOR_RPC_PATH=/path/to/arbor_rpc ARBOR_V2_LOCAL=1 MIX_ENV=dev mix docs --warnings-as-errors
 ```
 
-Use `packages/arbor_rpc` or `packages/arbor_acp_adapters` for the other projects.
-The local override is for unpublished workspace dependencies. Build each Hex
+Use `packages/arbor_acp_adapters` for the optional bundle. Generate ArborRPC
+documentation from the root of its separate checkout with
+`MIX_ENV=dev mix deps.get` and `MIX_ENV=dev mix docs --warnings-as-errors`.
+The local overrides are for unpublished workspace dependencies. Build each Hex
 source archive with `ARBOR_V2_LOCAL`, `ARBOR_V2_DEPS`, `ARBOR_RPC_PATH` and release
 version overrides unset. These overrides must never appear in published package
 requirements. ExDoc is excluded from consumer runtime dependencies.
@@ -94,6 +100,17 @@ compiler-free assembled release. `--metadata-only` performs just the first phase
 `--expected-version` validates; it never selects a package version. Offline local
 qualification may explicitly set `ARCHIVE_CONSUMER_EXTERNAL_DEPS` to independent
 external source copies; CI must also qualify normal Hex resolution.
+
+CI checks out RPC independently from ACP and builds its archive at the RPC
+repository root. The HTTP consumer's source-selection receipt records separate
+MCP and RPC commits. To associate those two archives with their exact sources:
+
+```sh
+python3 scripts/check_archive_source_selection.py \
+  --archives /path/to/mcp-and-rpc-archives \
+  --mcp-source /path/to/arbor_mcp --rpc-source /path/to/arbor_rpc \
+  --version 2.0.0-rc.1 --output /path/to/source-selection.json
+```
 
 RC publication enables downstream migration testing before stable qualification
 finishes. Publish the coordinated RC only after source/API checks, supported

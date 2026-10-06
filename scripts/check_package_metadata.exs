@@ -49,12 +49,15 @@ projects =
       false = doc_options[:runtime]
       false = Keyword.has_key?(doc_options, :path)
 
-      ref = if app == :arbor_mcp, do: "v#{version}", else: "#{app}-v#{version}"
+      ref = if app in [:arbor_mcp, :arbor_rpc], do: "v#{version}", else: "#{app}-v#{version}"
       true = config[:docs][:source_ref] == ref
 
       if app != :arbor_mcp do
         expected =
-          "https://github.com/trust-arbor/arbor_acp/blob/#{ref}/packages/#{app}/%{path}#L%{line}"
+          if app == :arbor_rpc,
+            do: "https://github.com/trust-arbor/arbor_rpc/blob/#{ref}/%{path}#L%{line}",
+            else:
+              "https://github.com/trust-arbor/arbor_acp/blob/#{ref}/packages/#{app}/%{path}#L%{line}"
 
         true = config[:docs][:source_url_pattern] == expected
       end

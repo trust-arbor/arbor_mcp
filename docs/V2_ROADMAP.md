@@ -85,8 +85,10 @@ and consumer migration wait for qualified artifacts. Package ownership and
 shared mechanics are specified in [V2_PACKAGE_CONTRACT.md](./V2_PACKAGE_CONTRACT.md).
 
 The ACP repository now exists at
-[`trust-arbor/arbor_acp`](https://github.com/trust-arbor/arbor_acp). Its three
-standalone projects have independent minimum/current toolchain checks. MCP v2
+[`trust-arbor/arbor_acp`](https://github.com/trust-arbor/arbor_acp). Its core and
+adapter projects have independent toolchain checks. Shared mechanics live in the
+separate [ArborRPC repository](https://github.com/trust-arbor/arbor_rpc), with its
+Mix project at the repository root. MCP v2
 is developed in [draft PR #76](https://github.com/trust-arbor/arbor_mcp/pull/76),
 and shared child-process convergence in
 [ACP draft PR #1](https://github.com/trust-arbor/arbor_acp/pull/1). Supported
@@ -592,8 +594,9 @@ The package-topology design compared these options:
 | Independent `ex_mcp` and `ex_acp` with copied helpers | Two simple dependency graphs and independent releases | Security, framing, environment, and JSON-RPC fixes can drift. Copying those implementations is not acceptable. |
 | `ex_mcp` and `ex_acp` depend on a small shared package | No duplicated security-sensitive code; independent protocol packages and dependency sets | Adds a third public app, versioning policy, release order, compatibility matrix, and another release/maintenance coordination surface. |
 
-The accepted topology uses two repositories: MCP in `trust-arbor/arbor_mcp`,
-and RPC, ACP core and the optional adapter bundle in `trust-arbor/arbor_acp`.
+The accepted topology uses three repositories: MCP in `trust-arbor/arbor_mcp`,
+RPC in `trust-arbor/arbor_rpc`, and ACP core with the optional adapter bundle
+in `trust-arbor/arbor_acp`.
 The implemented shared candidate factors JSON-RPC, bounded framing, child
 PATH/environment, Port ownership and finite cleanup into `arbor_rpc` with
 protocol-specific wrappers. ACP-only helpers remain ACP-owned. Remeasure

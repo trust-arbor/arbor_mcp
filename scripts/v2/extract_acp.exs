@@ -1,3 +1,6 @@
+# Historical one-way extraction used before ACP/RPC became canonical repositories.
+# Its original three-package layout is retained as reconciliation evidence; do
+# not regenerate over the current ACP workspace or standalone ArborRPC checkout.
 defmodule ArborV2.ExtractACP do
   @shared ~w(JSONRPC LineBuffer StdioFraming PortEnvironment LogSummary)
   @internal_files ~w(jsonrpc line_buffer stdio_framing port_environment log_summary)

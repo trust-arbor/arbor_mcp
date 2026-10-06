@@ -32,7 +32,12 @@ gate. These jobs do not publish packages, update branches or merge changes.
 After a newer pair passes, update all three matrices in `workflows/ci.yml`, the
 comparison pins in `workflows/beam-latest.yml`, and this table. Preserve the
 minimum 1.17.3/27.0 lane; its OTP difference from the floating 1.17 lane is
-expected. Keep the matching ACP workspace matrix in sync.
+expected. Keep the matching ACP workspace and standalone RPC matrices in sync.
+
+Every MCP lane checks out `trust-arbor/arbor_rpc` independently at `.arbor-v2/rpc`
+and sets `ARBOR_RPC_PATH` to that repository root until the dependency is published.
+The four-package archive consumer additionally checks out the ACP workspace for
+its core and adapter archives; the HTTP archive consumer needs only MCP and RPC.
 
 GitHub schedules activate only once the workflow reaches the default branch.
 Before merge, the workflow-edit PR trigger exercises the floating lanes.

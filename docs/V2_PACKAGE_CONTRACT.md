@@ -31,16 +31,17 @@ paths remain independent of the Elixir namespace.
 | `trust-arbor/arbor_mcp` | repository root | `arbor_mcp` | MCP clients, servers, HTTP, authorization, runtime and scheduler |
 | `trust-arbor/arbor_acp` | `packages/arbor_acp` | `arbor_acp` | ACP client/native agent, protocol and generic adapter extension runtime |
 | `trust-arbor/arbor_acp` | `packages/arbor_acp_adapters` | `arbor_acp_adapters` | Optional Claude, Codex, Pi and ZCode implementations |
-| `trust-arbor/arbor_acp` | `packages/arbor_rpc` | `arbor_rpc` | Neutral JSON-RPC, framing and child-process mechanics shared by both protocols |
+| `trust-arbor/arbor_rpc` | repository root | `arbor_rpc` | Neutral JSON-RPC, framing and child-process mechanics shared by both protocols |
 
 Each package is a standalone Mix project with its own package metadata, source
 files, tests, documentation and release tag. Vendor modules remain under
 `Arbor.ACP.Adapters.*` even though their files ship in the optional bundle; no
 second adapter namespace is needed. The ACP repository can have workspace
 scripts for coordinated checks; its root must not become an extra published
-application merely to hold those scripts. Use package-qualified release tags such
-as `arbor_acp-v2.0.0` and `arbor_rpc-v1.0.0` when more than one package shares a
-repository. The exact initial package versions remain a release decision.
+application merely to hold those scripts. The ACP workspace uses package-qualified
+release tags such as `arbor_acp-v2.0.0` and `arbor_acp_adapters-v2.0.0`.
+MCP and RPC each use `v<version>` in their separate repositories. The exact initial
+package versions remain a release decision.
 
 Dependencies are one-way:
 
@@ -78,6 +79,11 @@ Supported 1.x remains canonical on MCP `master`. V2 ACP is now canonical in
 scripts are retained for reconciliation evidence; do not regenerate over the
 canonical ACP projects. The dirty `spike/acp-cutover` worktree and original
 sibling are preserved migration evidence.
+
+ArborRPC is canonical in `trust-arbor/arbor_rpc`, with its package at the
+repository root. Its extracted Git history preserves the earlier ACP-hosted
+implementation; historical ACP commit links below remain evidence for those
+checkpoints. ACP now contains only its core and optional adapter packages.
 
 At the initial review, the older sibling required refresh because it lacked
 `Adapters.ClaudeSDK.MCPConfig`, current Claude launch-option validation and
@@ -174,7 +180,7 @@ ACKs its token after bounded processing. Closure carries its reason and original
 unfinished bytes. Opening ownership is independent of readers, and known cleanup
 failures propagate. The generic ACP bridge and Pi use this interface; native ACP
 and MCP child-stdio integration candidates are being qualified. The canonical
-[RPC source documentation](https://github.com/trust-arbor/arbor_acp/tree/codex/shared-subprocess/packages/arbor_rpc)
+[RPC source documentation](https://github.com/trust-arbor/arbor_rpc)
 records exact signatures and remaining Port-pressure/platform limits. This is
 an implemented candidate, not the final release ABI/default freeze.
 

@@ -1439,14 +1439,14 @@
       "match": "ExMCP.Internal.JSONRPC, StdioFraming, PortEnvironment, LogSummary",
       "package": "arbor_rpc",
       "target": "Arbor.RPC.JSONRPC, StdioFraming, PortEnvironment, LogSummary",
-      "evidence": "tmp/arbor-acp-v2/packages/arbor_rpc/lib/arbor_rpc"
+      "evidence": "tmp/arbor-rpc-v2/lib/arbor_rpc"
     },
     {
       "match": "ExMCP.Internal.LineBuffer",
       "package": "arbor_rpc",
       "target": "Arbor.RPC.Internal.LineBuffer",
       "internal": true,
-      "evidence": "tmp/arbor-acp-v2/packages/arbor_rpc/lib/arbor_rpc/internal/line_buffer.ex"
+      "evidence": "tmp/arbor-rpc-v2/lib/arbor_rpc/internal/line_buffer.ex"
     },
     {
       "match": "ExMCP.Internal.NameValue, WorkspacePath",
