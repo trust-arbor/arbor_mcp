@@ -56,7 +56,8 @@ For a normal Hex consumer, unset development overrides such as
 settings into the application. Then resolve dependencies, review the lockfile
 changes and compile your application normally.
 
-The Elixir floor is 1.17. On qualified macOS/Darwin and Linux platforms, source
+ArborMCP requires Elixir 1.17 and Erlang/OTP 27 or newer; protocol output uses
+OTP's JSON encoder. On qualified macOS/Darwin and Linux platforms, source
 installation requires a **C17 compiler**, including HTTP-only or BEAM-only
 applications, because the transitive RPC package builds its helper. `CC`
 selects one compiler executable. Source archives contain C source, not a

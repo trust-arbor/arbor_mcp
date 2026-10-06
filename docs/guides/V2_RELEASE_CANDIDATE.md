@@ -10,6 +10,9 @@ the packages appear on Hex. Start with the [v1-to-v2 migration guide](MIGRATING_
 
 ## Install the packages your application uses
 
+ArborMCP requires Elixir 1.17 and Erlang/OTP 27 or newer. The OTP minimum is
+needed for protocol output encoding and is independent of the Elixir version.
+
 For an MCP application, replace `ex_mcp` with:
 
 ```elixir
@@ -34,9 +37,11 @@ installed/assembled-release mixed-load rehearsals, and six additional public
 negative controls. Those receipts retain their original source identities.
 The October 6 documentation, dependency-range and Claude file-limit fixes pass
 updated source-archive and supported CI qualification. RPC's macOS native lane
-and all four credential-free CLI lifecycle checks pass. Later ZCode settings
-fixes and a flaky assertion-helper test in the separate latest-BEAM lane still
-require updated evidence. Lifecycle checks do not qualify model turns. See the
+and all four credential-free CLI lifecycle checks pass. ZCode settings fixes
+at ACP `7e299f8` pass package and latest-BEAM CI. MCP `e4cb5f6` passes its
+22 supported jobs and five latest-BEAM jobs, including the assertion-helper fix.
+The subsequent output-accounting and OTP JSON optimizations require their own
+final-source qualification. Lifecycle checks do not qualify model turns. See the
 [current release assessment](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/V2_RELEASE_ASSESSMENT.md) for active gates.
 Earlier checks do not qualify these changes or establish a completed soak.
 
@@ -48,6 +53,11 @@ The stable 48-hour qualification remains open.
 
 ## Limits to exercise in downstream tests
 
+- **JSON object member order:** object keys in protocol replies have no promised
+  order. The OTP encoder can serialize an object in a different order without
+  changing its values; compare decoded objects in downstream tests. Output
+  validation and exact frame sizing still happen before handler state commits,
+  and prepared output remains binary for existing transport and batch delivery.
 - **Long-lived peers:** `Arbor.MCP.Server.HandlerServer` retains distinct request
   IDs for a peer connection, with `max_request_ids: 10_000` by default. New IDs
   fail with `request_id_capacity_exceeded` once full; duplicates remain rejected.
@@ -62,6 +72,13 @@ The stable 48-hour qualification remains open.
   Investigation of repeated memory accounting, JSON preparation and real
   application workloads remains open; completing the measurement does not
   accept those costs for stable release.
+- **Output optimization:** a separate four-pair comparison of the same v2 source
+  with the accounting and OTP JSON changes reduced median BEAM ping from
+  359.5 to 304 µs and 256 KiB echo from 930 to 769 µs. Large echo improved in
+  all four pairs; ping improved in three. These results measure both changes
+  together, preserve the same output limits and do not establish v1 parity or
+  real-application performance. BEAM delivery still uses native Erlang terms;
+  JSON preparation validates protocol replies and frame size before state commit.
 - **Native installation:** macOS/Linux source installation requires a C17
   compiler, including when `arbor_rpc` is only a transitive dependency. Assembled
   releases include the built helper and need no runtime compiler. Native

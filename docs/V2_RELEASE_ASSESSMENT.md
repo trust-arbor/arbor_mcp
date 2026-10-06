@@ -24,14 +24,26 @@ All four source archives pass a combined consumer with normal Hex resolution;
 Cowboy-owned, Bandit-owned and host-owned Cowboy consumers also pass installed
 and assembled-release checks. These results belong to those source selections.
 
-Later ZCode settings/correlation fixes and a scheduler-sensitive assertion-helper
-unit test found by MCP's separate latest-BEAM workflow require new qualification.
+The later ZCode settings/correlation fixes at ACP `7e299f8` pass package and
+latest-BEAM CI. MCP `e4cb5f6`, including the assertion-helper correction, passes
+22 supported CI jobs and five latest-BEAM jobs. All four refreshed source
+archives pass combined normal-resolution installed and assembled-release checks.
 Credential-free lifecycle smoke passes for Claude 2.1.289, Codex 0.160.1,
 Pi 1.0.2 and ZCode 0.16.9 after correcting the isolated ZCode fixture's built-in
 provider path. Lifecycle smoke does not establish model-turn compatibility.
 Detailed performance investigation includes fresh paired MCP BEAM measurements
 and isolated AVWE/Arbor application integrations. Historical timing results do
 not establish acceptance of those costs or a measurement of subsequent changes.
+
+The next MCP change combines fresh function-free metadata charging with OTP's
+JSON encoder. An isolated four-pair comparison against the same unmodified v2
+source measured median BEAM ping at 359.5 → 304 µs and 256 KiB echo at
+930 → 769 µs. The 52 existing output tests, 22 public smoke scenarios and all
+eight timing VMs pass; separate encoder compatibility checks pass 3,306 cases
+on both OTP 27 and 28. Object key order may differ, while decoded values and
+frame lengths match. Full final-source CI, real-application measurements and
+performance acceptance remain open. This improvement does not establish v1
+performance parity or remove the runtime's ownership and lifetime work.
 
 RC1 is unpublished and no continuous soak is active. The refreshed Hex account
 check succeeds; registry installation and publication are still pending. Final

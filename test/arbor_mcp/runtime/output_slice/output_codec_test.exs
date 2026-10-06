@@ -117,6 +117,67 @@ defmodule Arbor.MCP.Server.Runtime.OutputCodecTest do
     refute_receive {:encoder_effect, ^marker}, 0
   end
 
+  test "recursive nil values stay null while protocol atoms remain strings" do
+    plain = %{"nested" => [nil, %{nil => [nil, true, false]}]}
+    expected = %{"nested" => [nil, %{"nil" => [nil, true, false]}]}
+
+    for codec <- [:json, :protocol] do
+      assert {:ok, prepared} = OutputCodec.prepare(plain, codec: codec)
+      assert prepared.term === plain
+      assert Jason.decode!(prepared.wire) === expected
+    end
+
+    protocol = %{"nested" => [nil, %{nil => [nil, :null, :text]}]}
+    assert {:error, :invalid_output} = OutputCodec.prepare(protocol, codec: :json)
+    assert {:ok, prepared} = OutputCodec.prepare(protocol, codec: :protocol)
+    assert prepared.term === protocol
+
+    assert Jason.decode!(prepared.wire) ===
+             %{"nested" => [nil, %{"nil" => [nil, "null", "text"]}]}
+  end
+
+  test "escapes and UTF8 around eight-byte boundaries preserve finite frame limits" do
+    for codec <- [:json, :protocol],
+        length <- [7, 8, 15, 16],
+        suffix <- ["\"", "\\", <<0>>, "é", "€", "😀"] do
+      value = String.duplicate("a", length) <> suffix <> "tail"
+      term = %{value => [value, nil]}
+      frame_bytes = byte_size(Jason.encode!(term, maps: :strict)) + 1
+      opts = [codec: codec, max_term_bytes: 1_048_576, max_frame_bytes: frame_bytes]
+
+      assert {:ok, prepared} = OutputCodec.prepare(term, opts)
+      assert prepared.term === term
+      assert Jason.decode!(prepared.wire) === term
+      assert prepared.wire_bytes == frame_bytes
+      assert byte_size(prepared.wire) + 1 == frame_bytes
+
+      assert {:error, :output_frame_too_large} =
+               OutputCodec.prepare(term, Keyword.put(opts, :max_frame_bytes, frame_bytes - 1))
+    end
+  end
+
+  test "invalid UTF8 after complete ASCII chunks is rejected in values and keys" do
+    for codec <- [:json, :protocol],
+        length <- [7, 8, 15, 16],
+        suffix <- [<<0x80>>, <<0xC2>>, <<0xE2, 0x82>>, <<0xF0, 0x9F, 0x98>>, <<0xED, 0xA0, 0x80>>] do
+      value = String.duplicate("a", length) <> suffix
+
+      for term <- [value, %{value => "value"}] do
+        assert {:error, :invalid_output} = OutputCodec.prepare(term, codec: codec)
+      end
+    end
+  end
+
+  test "objects larger than 32 entries preserve values without requiring member order" do
+    term = Map.new(1..64, fn index -> {"entry-#{index}", [index, nil, true, false]} end)
+
+    for codec <- [:json, :protocol] do
+      assert {:ok, prepared} = OutputCodec.prepare(term, codec: codec)
+      assert prepared.term === term
+      assert Jason.decode!(prepared.wire) === term
+    end
+  end
+
   test "original deadline rejection and native term policy remain unchanged" do
     expired = System.monotonic_time(:millisecond) - 1
 

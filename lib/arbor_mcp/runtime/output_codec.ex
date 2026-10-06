@@ -201,10 +201,17 @@ defmodule Arbor.MCP.Server.Runtime.OutputCodec do
 
   defp json_key(_), do: {:error, :invalid_output}
 
+  # json_value/1 above retains the existing plain-value/key/collision policy.
+  # OTP's default atom encoder treats nil as a string, so override nil recursively.
   defp encode(term) do
-    case Jason.encode(term, maps: :strict) do
-      {:ok, wire} -> {:ok, wire}
-      {:error, _} -> {:error, :invalid_output}
-    end
+    {:ok, term |> :json.encode(&encode_value/2) |> IO.iodata_to_binary()}
+  catch
+    :error, :unexpected_end -> {:error, :invalid_output}
+    :error, {:invalid_byte, _byte} -> {:error, :invalid_output}
+    :error, {:unsupported_type, _value} -> {:error, :invalid_output}
+    :error, {:duplicate_key, _key} -> {:error, :invalid_output}
   end
+
+  defp encode_value(nil, _encoder), do: "null"
+  defp encode_value(value, encoder), do: :json.encode_value(value, encoder)
 end

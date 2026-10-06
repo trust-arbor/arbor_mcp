@@ -40,7 +40,7 @@ mix test
 
 `ARBOR_RPC_PATH` is a local development override. Without it, the package declares a normal Hex dependency with an explicit development/RC prerelease floor; stable releases retain the `~> 2.0` major-compatible range. See the [package release guide](docs/V2_PACKAGE_RELEASE.md). For isolated split QA, `ARBOR_V2_DEPS` can point to an existing directory of dependency sources; `ARBOR_V2_BUILD` and `ARBOR_V2_LOCK` select separate build and lock paths. Release checks must also run without those overrides using the packaged artifacts.
 
-The supported Elixir floor is 1.17. The CI matrix checks multiple Elixir/OTP versions; passing CI and the release gates are required before publishing 2.0.
+The supported minimum is Elixir 1.17 with Erlang/OTP 27. Protocol output uses OTP's JSON encoder. The CI matrix checks multiple Elixir/OTP versions; passing CI and the release gates are required before publishing 2.0.
 
 On macOS/Darwin and Linux, installing the transitive `arbor_rpc` source package
 requires a C17 compiler (`cc`, or the executable selected by `CC`), including for

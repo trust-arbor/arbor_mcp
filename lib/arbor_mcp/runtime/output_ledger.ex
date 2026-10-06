@@ -1152,7 +1152,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
         max(largest, control_reserve(scope))
       end)
 
-    RetainedTerm.bytes(scopes) + max(RetainedTerm.bytes(gate.pending), reserve)
+    scope_metadata_bytes(scopes) + max(pending_metadata_bytes(gate.pending), reserve)
   end
 
   defp control_reserve(scope) do
@@ -1165,13 +1165,93 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
       }
     }
 
-    # The nil control contains only maps, tuples, atoms, integers, a PID and a
-    # reference. Non-nil scope keys may retain function environments.
+    # Known primitive/work scopes keep this control function-free. Arbitrary
+    # scopes may retain function environments and require the original scan.
     bytes =
-      if is_nil(scope), do: :erlang.external_size(pending), else: RetainedTerm.bytes(pending)
+      if closed_metadata_scope?(scope),
+        do: :erlang.external_size(pending),
+        else: RetainedTerm.bytes(pending)
 
     bytes + 64
   end
+
+  # This proof is fresh for the actual term about to be charged. It never
+  # caches a charge or a distribution identity. Normalization above fixes all
+  # five values; an extra field or an arbitrary scope retains the full scan.
+  defp scope_metadata_bytes(scopes) do
+    if Enum.all?(scopes, fn {scope, info} ->
+         map_size(info) == 5 and closed_metadata_scope?(scope)
+       end),
+       do: :erlang.external_size(scopes),
+       else: RetainedTerm.bytes(scopes)
+  end
+
+  defp pending_metadata_bytes(pending) do
+    if Enum.all?(pending, &closed_pending_metadata?/1),
+      do: :erlang.external_size(pending),
+      else: RetainedTerm.bytes(pending)
+  end
+
+  defp closed_pending_metadata?(
+         {key, %{id: id, producer: producer, deadline: deadline, request: request} = item}
+       )
+       when map_size(item) == 4 and is_reference(id) and is_pid(producer) and
+              is_integer(deadline),
+       do: closed_metadata_key?(key) and closed_metadata_request?(request)
+
+  defp closed_pending_metadata?(_), do: false
+
+  defp closed_metadata_key?(:generation), do: true
+  defp closed_metadata_key?({:ticket, token}) when is_reference(token), do: true
+  defp closed_metadata_key?({:scope, scope}), do: closed_metadata_scope?(scope)
+  defp closed_metadata_key?(_), do: false
+
+  defp closed_metadata_request?({operation, token})
+       when operation in [
+              :confirm,
+              :publish,
+              :handoff,
+              :hold,
+              :value,
+              :payload,
+              :prepared_wire,
+              :release,
+              :ack
+            ] and is_reference(token),
+       do: true
+
+  defp closed_metadata_request?({operation, scope})
+       when operation in [:discard_hidden, :finish_group, :checkout, :seal],
+       do: closed_metadata_scope?(scope)
+
+  defp closed_metadata_request?({:open_scope, scope, deadline})
+       when is_nil(deadline) or is_integer(deadline),
+       do: closed_metadata_scope?(scope)
+
+  defp closed_metadata_request?({:subscribe, scope, consumer}) when is_pid(consumer),
+    do: closed_metadata_scope?(scope)
+
+  defp closed_metadata_request?({:begin_drain, scope, deadline}) when is_integer(deadline),
+    do: closed_metadata_scope?(scope)
+
+  defp closed_metadata_request?({:retire, scope, reason}) when is_atom(reason),
+    do: closed_metadata_scope?(scope)
+
+  defp closed_metadata_request?({:reset, generation}) when is_reference(generation), do: true
+  defp closed_metadata_request?(_), do: false
+
+  # A function is the only way closure_bytes can enter captured mode. Primitive
+  # scopes and this exact native work scope contain none, including map keys.
+  defp closed_metadata_scope?(value)
+       when is_atom(value) or is_number(value) or is_bitstring(value) or is_pid(value) or
+              is_reference(value) or is_port(value),
+       do: true
+
+  defp closed_metadata_scope?({:work, generation, token})
+       when is_reference(generation) and is_reference(token),
+       do: true
+
+  defp closed_metadata_scope?(_), do: false
 
   defp ticket(ref, token, scope),
     do: OutputTicket.new(ref.pid, ref.table, ref.generation, token, scope)

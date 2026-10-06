@@ -21,10 +21,10 @@ changes must establish their own result and source/archive association.
 
 The remaining work is to:
 
-1. Finish qualification of the ZCode settings/correlation correction and the
-   latest-BEAM assertion-helper test fix. The preceding HTTP optional-range,
-   owned-listener and Claude `max_bytes` changes pass their source-archive and
-   supported CI checks, as recorded in the current release assessment.
+1. Qualify the output-accounting and OTP JSON optimizations on the final source.
+   The ZCode settings/correlation correction and latest-BEAM assertion-helper fix
+   now pass updated CI and four-package archive checks, as recorded in the
+   current release assessment. Earlier passing selections remain separate evidence.
 2. Complete the requested performance investigation for MCP and ACP, including
    MCP BEAM paths, and record the workload budgets or accepted costs.
 3. Close applicable final-source conformance, pinned SDK/credential-free CLI,

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Version 2 release candidate
 
+- Use OTP's JSON encoder for prepared protocol output, preserving plain-value
+  and UTF-8 validation, exact frame limits, retained-memory charges and binary
+  output/batch interfaces. JSON object member order is unspecified; consumers
+  should compare decoded objects rather than serialized key order.
+- Avoid repeated closure traversal for freshly checked, function-free output
+  metadata. Arbitrary scopes and metadata retain full accounting; charges are
+  recomputed for the current term rather than cached.
 - Preserve the ExMCP 1.x maintenance branch with backport and compatible
   minor-release policy; document cold restart, cutover and rollback for v2 consumers.
 - Allow compatible optional Bandit, Thousand Island and Ranch updates in host
