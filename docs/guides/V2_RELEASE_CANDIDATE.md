@@ -35,7 +35,7 @@ negative controls. Those receipts retain their original source identities.
 The October 6 documentation, dependency-range and Claude file-limit fixes
 require updated package and CI qualification; the new macOS cleanup lane and
 current ZCode lifecycle smoke have open failures under investigation. See the
-[current release assessment](../V2_RELEASE_ASSESSMENT.md) for active gates.
+[current release assessment](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/V2_RELEASE_ASSESSMENT.md) for active gates.
 Earlier checks do not qualify these changes or establish a completed soak.
 
 The latest continuous attempt stopped after about 50 minutes when the test
