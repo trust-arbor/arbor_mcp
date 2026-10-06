@@ -94,7 +94,9 @@ def main():
         )
         steps = [] if args.metadata_only else [
             ("Resolve external dependencies", ["mix", "deps.get"], 180),
-            ("Compile source archives", ["mix", "compile", "--warnings-as-errors"], 180),
+            # As in the package CI lane, isolate third-party OTP deprecations.
+            ("Compile dependencies", ["mix", "deps.compile"], 180),
+            ("Compile source archives", ["mix", "compile", "--warnings-as-errors", "--no-deps-check"], 180),
             ("Probe installed application", ["mix", "run", "--no-compile", "-e", "CombinedArchiveConsumer.probe()"], 30),
             ("Build release", ["mix", "release", "--overwrite"], 180),
             ("Probe compiler-free release", [str(consumer / "_build/prod/rel/combined_archive_consumer/bin/combined_archive_consumer"), "eval", "CombinedArchiveConsumer.probe()"], 30),

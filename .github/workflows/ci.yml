@@ -34,7 +34,7 @@ env:
 
 jobs:
   archive_consumer:
-    name: Four-package archive consumer / Elixir ${{ matrix.toolchain.elixir }}
+    name: Four-package archive consumer / Elixir ${{ matrix.toolchain.elixir }} / OTP ${{ matrix.toolchain.otp }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -43,8 +43,11 @@ jobs:
       fail-fast: false
       matrix:
         toolchain:
+          # Keep the minimum pair; refresh the other pins after BEAM latest passes.
           - {elixir: '1.17.3', otp: '27.0'}
-          - {elixir: '1.19.5', otp: '28.3.1'}
+          - {elixir: '1.18.5', otp: '27.3.4.18'}
+          - {elixir: '1.19.6', otp: '28.5.0.7'}
+          - {elixir: '1.20.4', otp: '29.1.1'}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
@@ -53,13 +56,14 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: ad97ce433b1ed3b09a16ce7b2d362579cd476425
+        ref: 0f8ff717837aba8c0b73eb117510225b40e5f98c
         path: .arbor-v2/acp
         persist-credentials: false
     - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
       with:
         otp-version: ${{ matrix.toolchain.otp }}
         elixir-version: ${{ matrix.toolchain.elixir }}
+        version-type: strict
     - name: Read the coordinated source version
       run: |
         python3 -B - <<'PYVERSION'
@@ -75,6 +79,7 @@ jobs:
             output.write("ARCHIVE_EXPECTED_VERSION=" + version + "\n")
         PYVERSION
     - name: Check consumer formatting
+      if: matrix.toolchain.elixir == '1.17.3'
       run: mix format --check-formatted fixtures/archive_consumer/mix.exs fixtures/archive_consumer/lib/combined_archive_consumer.ex
     - name: Build publishable source archives
       run: |
@@ -97,7 +102,7 @@ jobs:
         path: archive-consumer-input/*.tar
 
   listener_archive_consumer:
-    name: HTTP archive consumer / ${{ matrix.adapter }} / Elixir ${{ matrix.toolchain.elixir }}
+    name: HTTP archive consumer / ${{ matrix.adapter }} / Elixir ${{ matrix.toolchain.elixir }} / OTP ${{ matrix.toolchain.otp }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -107,8 +112,11 @@ jobs:
       matrix:
         adapter: [cowboy, bandit]
         toolchain:
+          # Keep the minimum pair; refresh the other pins after BEAM latest passes.
           - {elixir: '1.17.3', otp: '27.0'}
-          - {elixir: '1.19.5', otp: '28.3.1'}
+          - {elixir: '1.18.5', otp: '27.3.4.18'}
+          - {elixir: '1.19.6', otp: '28.5.0.7'}
+          - {elixir: '1.20.4', otp: '29.1.1'}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
@@ -117,13 +125,14 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: ad97ce433b1ed3b09a16ce7b2d362579cd476425
+        ref: 0f8ff717837aba8c0b73eb117510225b40e5f98c
         path: .arbor-v2/acp
         persist-credentials: false
     - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
       with:
         otp-version: ${{ matrix.toolchain.otp }}
         elixir-version: ${{ matrix.toolchain.elixir }}
+        version-type: strict
     - name: Read the coordinated source version
       run: |
         python3 -B - <<'PYVERSION'
@@ -139,6 +148,7 @@ jobs:
             output.write("ARCHIVE_EXPECTED_VERSION=" + version + "\n")
         PYVERSION
     - name: Check HTTP consumer formatting
+      if: matrix.toolchain.elixir == '1.17.3'
       run: mix format --check-formatted fixtures/listener_archive_consumer/mix.exs fixtures/listener_archive_consumer/lib/listener_archive_consumer.ex
     - name: Build source archives
       run: |
@@ -187,14 +197,14 @@ jobs:
           - otp: '27.0'
             elixir: '1.17.3'
             quality: true
-          - otp: '27.0'
-            elixir: '1.18.4'
+          - otp: '27.3.4.18'
+            elixir: '1.18.5'
             quality: false
-          - otp: '28.1'
-            elixir: '1.19.5'
+          - otp: '28.5.0.7'
+            elixir: '1.19.6'
             quality: false
-          - otp: '29.0'
-            elixir: '1.20.0'
+          - otp: '29.1.1'
+            elixir: '1.20.4'
             quality: false
 
     steps:
@@ -207,7 +217,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: ad97ce433b1ed3b09a16ce7b2d362579cd476425
+        ref: 0f8ff717837aba8c0b73eb117510225b40e5f98c
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -216,6 +226,7 @@ jobs:
       with:
         otp-version: ${{matrix.otp}}
         elixir-version: ${{matrix.elixir}}
+        version-type: strict
 
     - name: Restore deps/_build cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -291,7 +302,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: ad97ce433b1ed3b09a16ce7b2d362579cd476425
+        ref: 0f8ff717837aba8c0b73eb117510225b40e5f98c
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -300,6 +311,7 @@ jobs:
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+        version-type: strict
 
     - name: Restore deps/_build cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -345,7 +357,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: ad97ce433b1ed3b09a16ce7b2d362579cd476425
+        ref: 0f8ff717837aba8c0b73eb117510225b40e5f98c
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -354,6 +366,7 @@ jobs:
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+        version-type: strict
 
     - name: Restore deps/_build cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -390,7 +403,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: ad97ce433b1ed3b09a16ce7b2d362579cd476425
+        ref: 0f8ff717837aba8c0b73eb117510225b40e5f98c
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -399,6 +412,7 @@ jobs:
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+        version-type: strict
 
     - name: Set up Node.js
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -468,7 +482,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: ad97ce433b1ed3b09a16ce7b2d362579cd476425
+        ref: 0f8ff717837aba8c0b73eb117510225b40e5f98c
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -477,6 +491,7 @@ jobs:
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+        version-type: strict
 
     - name: Set up Node.js
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -527,7 +542,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: ad97ce433b1ed3b09a16ce7b2d362579cd476425
+        ref: 0f8ff717837aba8c0b73eb117510225b40e5f98c
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -536,6 +551,7 @@ jobs:
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+        version-type: strict
 
     - name: Restore deps/_build cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -581,7 +597,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: ad97ce433b1ed3b09a16ce7b2d362579cd476425
+        ref: 0f8ff717837aba8c0b73eb117510225b40e5f98c
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -590,6 +606,7 @@ jobs:
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+        version-type: strict
 
     - name: Restore deps/_build cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
