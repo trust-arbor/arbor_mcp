@@ -182,6 +182,32 @@ defmodule Arbor.MCP.Internal.SessionStoreDetsLifecycleTest do
   end
 
   test "SessionManager deliberately returns the storage failure before fail-stop", %{path: path} do
+    # Persist setup with its own finite default I/O budget. The separate manager
+    # below retains the original 60 ms budget for the deliberately blocked read.
+    setup_id = {SessionManager, :persisted_setup}
+
+    setup_spec =
+      Supervisor.child_spec(
+        {SessionManager, [name: nil, storage_backend: :dets, storage_path: path]},
+        id: setup_id,
+        restart: :temporary
+      )
+
+    setup_manager = start_supervised!(setup_spec)
+    setup_store = :sys.get_state(setup_manager).store
+
+    session_id =
+      GenServer.call(setup_manager, {:create_session, %{client_info: %{sentinel: "retained"}}})
+
+    assert is_binary(session_id)
+    assert :ok == stop_supervised(setup_id)
+    refute Process.alive?(setup_manager)
+    assert_eventually(fn -> not Process.alive?(setup_store.owner) end)
+
+    assert_eventually(fn ->
+      Enum.all?(setup_store.names, &(:dets.info(&1, :owner) == :undefined))
+    end)
+
     spec =
       Supervisor.child_spec(
         {SessionManager,
@@ -190,10 +216,6 @@ defmodule Arbor.MCP.Internal.SessionStoreDetsLifecycleTest do
       )
 
     manager = start_supervised!(spec)
-
-    session_id =
-      GenServer.call(manager, {:create_session, %{client_info: %{sentinel: "retained"}}})
-
     state = :sys.get_state(manager)
     worker = :dets.info(state.store.sessions, :owner)
     monitor = Process.monitor(manager)

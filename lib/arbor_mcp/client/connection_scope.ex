@@ -206,6 +206,14 @@ defmodule Arbor.MCP.Client.ConnectionScope do
   end
 
   @doc false
+  def spawn_monitor(fun, deadline) do
+    case current() do
+      nil -> Lifetime.spawn_monitor(fun, deadline)
+      scope -> start_owned_worker(scope, fun, false, deadline)
+    end
+  end
+
+  @doc false
   def spawn_link(fun) do
     case current() do
       nil ->
@@ -277,31 +285,34 @@ defmodule Arbor.MCP.Client.ConnectionScope do
     end)
   end
 
-  defp start_owned_worker(scope, fun, linked \\ false) do
+  defp start_owned_worker(scope, fun, linked \\ false, deadline \\ nil) do
     owner = self()
     nonce = make_ref()
 
     {pid, monitor} =
-      Lifetime.spawn_monitor(fn ->
-        Process.put(@key, scope)
-        watch_owned(self(), owner, Ref.observer(scope))
-        owner_monitor = Process.monitor(owner)
+      Lifetime.spawn_monitor(
+        fn ->
+          Process.put(@key, scope)
+          watch_owned(self(), owner, Ref.observer(scope))
+          owner_monitor = Process.monitor(owner)
 
-        receive do
-          {^nonce, :run} ->
-            Process.demonitor(owner_monitor, [:flush])
-            fun.()
+          receive do
+            {^nonce, :run} ->
+              Process.demonitor(owner_monitor, [:flush])
+              fun.()
 
-          {:DOWN, ^owner_monitor, :process, ^owner, _reason} ->
-            :ok
-        after
-          1_000 -> :ok
-        end
-      end)
+            {:DOWN, ^owner_monitor, :process, ^owner, _reason} ->
+              :ok
+          after
+            Deadline.cap(1_000, deadline) -> :ok
+          end
+        end,
+        deadline
+      )
 
     if linked, do: Process.link(pid)
 
-    case call(scope, {:worker, pid}, Deadline.after_ms(1_000)) do
+    case call(scope, {:worker, pid}, deadline || Deadline.after_ms(1_000)) do
       :ok -> send(pid, {nonce, :run})
       _error -> Process.exit(pid, :kill)
     end

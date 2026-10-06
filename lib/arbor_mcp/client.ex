@@ -53,6 +53,7 @@ defmodule Arbor.MCP.Client do
   }
 
   alias Arbor.MCP.Client.NotificationListener.Worker
+  alias Arbor.MCP.Transport.HTTP.LegacySSE
 
   alias Arbor.MCP.Client.Operations.{Prompts, Resources, Tasks, Tools}
 
@@ -520,7 +521,8 @@ defmodule Arbor.MCP.Client do
   @spec batch_request(t(), [{String.t(), map()}], timeout()) ::
           {:ok, [any()]} | {:error, any()}
   def batch_request(client, requests, timeout \\ 30_000) do
-    GenServer.call(client, {:batch_request, requests}, timeout)
+    meta = %{deadline: Deadline.after_ms(timeout), timeout: timeout}
+    GenServer.call(client, {:batch_request, requests, meta}, timeout)
   end
 
   @doc """
@@ -1476,6 +1478,10 @@ defmodule Arbor.MCP.Client do
     {:reply, Keyword.get(state.transport_opts, :conformance_mode, false), state}
   end
 
+  def handle_call({:batch_request, requests, meta}, from, state) when is_map(meta) do
+    RequestHandler.handle_batch_request({requests, meta}, from, state)
+  end
+
   def handle_call({:batch_request, requests}, from, state) do
     RequestHandler.handle_batch_request(requests, from, state)
   end
@@ -1562,7 +1568,7 @@ defmodule Arbor.MCP.Client do
         ordered_responses = Enum.map(ordered_ids, &Map.get(all_responses, &1))
         GenServer.reply(from, {:ok, ordered_responses})
 
-      {_id, batch_id} when is_binary(batch_id) ->
+      {_id, batch_id} when is_binary(batch_id) or is_integer(batch_id) ->
         # This is a request that's part of a batch
         :ok
     end)
@@ -1661,6 +1667,14 @@ defmodule Arbor.MCP.Client do
         %{transport_mod: HTTP, transport_state: %HTTP{protocol_era: :modern}} ->
           RequestHandler.close_request_stream(request_id, updated_state)
 
+        %{transport_mod: LegacySSE} ->
+          retired_state = RequestHandler.close_request_stream(request_id, updated_state)
+
+          {:noreply, notified_state} =
+            RequestHandler.handle_cast_notification(method, params, retired_state)
+
+          notified_state
+
         _other ->
           {:noreply, notified_state} =
             RequestHandler.handle_cast_notification(method, params, updated_state)
@@ -1678,13 +1692,13 @@ defmodule Arbor.MCP.Client do
         # Reply with cancelled error and remove from pending
         GenServer.reply(from, {:error, :cancelled})
         new_pending = Map.delete(state.pending_requests, request_id)
-        {:reply, :ok, %{updated_state | pending_requests: new_pending}}
+        {:reply, :ok, prune_legacy_posts(%{updated_state | pending_requests: new_pending})}
 
       {from, :single} ->
         # Reply with cancelled error and remove from pending
         GenServer.reply(from, {:error, :cancelled})
         new_pending = Map.delete(state.pending_requests, request_id)
-        {:reply, :ok, %{updated_state | pending_requests: new_pending}}
+        {:reply, :ok, prune_legacy_posts(%{updated_state | pending_requests: new_pending})}
 
       _ ->
         # Other types of requests (batch, etc.) - just track as cancelled
@@ -1857,6 +1871,29 @@ defmodule Arbor.MCP.Client do
     if Lifetime.event?(epoch), do: handle_info(message, state), else: {:noreply, state}
   end
 
+  # A LegacySSE result settles once but keeps its charged worker until actual
+  # DOWN. Unlike old transport metadata, its nonce and original deadline were
+  # recorded synchronously before the worker was released to perform IO.
+  def handle_info({:async_post_result, result, %{kind: :legacy_post} = meta}, state) do
+    case current_legacy_post(state, meta) do
+      {ref, %{completed?: false} = entry} ->
+        entry = %{entry | completed?: true}
+        state = %{state | async_post_tasks: Map.put(state.async_post_tasks, ref, entry)}
+
+        if Deadline.expired?(entry.deadline) do
+          {:noreply, fail_legacy_post_request(state, entry.request_id, :timeout)}
+        else
+          handle_legacy_post_result(result, entry.request_id, state)
+        end
+
+      _other ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:async_post_result, _result, _meta}, %{transport_mod: LegacySSE} = state),
+    do: {:noreply, state}
+
   def handle_info({:async_post_result, result, meta}, state) when is_map(meta) do
     if current_async_post?(state, meta) do
       state = merge_async_transport_state(state, meta)
@@ -1876,6 +1913,15 @@ defmodule Arbor.MCP.Client do
 
   # Async POST task registration: maps the task's monitor ref to the request
   # id it serves so a crashed task can fail that request.
+  def handle_info(
+        {:async_post_task, _ref, _pid, _request_id},
+        %{transport_mod: LegacySSE} = state
+      ),
+      do: {:noreply, state}
+
+  def handle_info({:async_post_task, _ref, _request_id}, %{transport_mod: LegacySSE} = state),
+    do: {:noreply, state}
+
   def handle_info({:async_post_task, ref, pid, request_id}, state)
       when is_reference(ref) and is_pid(pid) do
     tasks = Map.put(state.async_post_tasks || %{}, ref, {pid, request_id})
@@ -1963,9 +2009,40 @@ defmodule Arbor.MCP.Client do
      }}
   end
 
-  # Async POST task exited. A :normal exit just clears the bookkeeping (its
-  # result was delivered separately); an abnormal exit fails the pending
-  # request the task was serving instead of leaving it to hang until timeout.
+  # Legacy POST credit covers both actual IO worker and logical SSE outcome.
+  # Physical DOWN alone cannot discard the original cutoff while an outcome
+  # is still pending. Other async transports retain their existing bookkeeping.
+  def handle_info({:DOWN, ref, :process, pid, reason}, %{async_post_tasks: tasks} = state)
+      when is_map(tasks) and is_map_key(tasks, ref) and
+             is_map(:erlang.map_get(ref, tasks)) do
+    case Map.get(tasks, ref) do
+      %{kind: :legacy_post, task_pid: ^pid} = entry ->
+        if Process.alive?(pid) do
+          # A caller-authored DOWN is not a physical outcome or a refund.
+          {:noreply, state}
+        else
+          Process.demonitor(ref, [:flush])
+          entry = %{entry | actual_down?: true}
+          state = %{state | async_post_tasks: Map.put(tasks, ref, entry)}
+
+          cond do
+            Deadline.expired?(entry.deadline) ->
+              {:noreply, fail_legacy_post_request(state, entry.request_id, :timeout)}
+
+            entry.completed? ->
+              {:noreply, prune_legacy_posts(state)}
+
+            true ->
+              {:noreply,
+               fail_legacy_post_request(state, entry.request_id, {:transport_error, reason})}
+          end
+        end
+
+      _other ->
+        {:noreply, state}
+    end
+  end
+
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{async_post_tasks: tasks} = state)
       when is_map(tasks) and is_map_key(tasks, ref) do
     {entry, remaining} = Map.pop(tasks, ref)
@@ -2055,13 +2132,27 @@ defmodule Arbor.MCP.Client do
         GenServer.reply(from, {:error, :timeout})
 
         state = RequestHandler.close_request_stream(request_id, state)
-        {:noreply, %{state | pending_requests: Map.delete(state.pending_requests, request_id)}}
+
+        {:noreply,
+         prune_legacy_posts(%{
+           state
+           | pending_requests: Map.delete(state.pending_requests, request_id)
+         })}
 
       {from, :single} ->
         GenServer.reply(from, {:error, :timeout})
 
         state = RequestHandler.close_request_stream(request_id, state)
-        {:noreply, %{state | pending_requests: Map.delete(state.pending_requests, request_id)}}
+
+        {:noreply,
+         prune_legacy_posts(%{
+           state
+           | pending_requests: Map.delete(state.pending_requests, request_id)
+         })}
+
+      {_from, :batch, _ids, _received} when state.transport_mod == LegacySSE ->
+        state = RequestHandler.close_request_stream(request_id, state)
+        {:noreply, fail_legacy_post_request(state, request_id, :timeout)}
 
       _ ->
         {:noreply, state}
@@ -2187,6 +2278,74 @@ defmodule Arbor.MCP.Client do
        do: transport
 
   defp stdio_transport(_state), do: nil
+
+  defp current_legacy_post(state, meta) do
+    if Map.get(meta, :generation) == Lifetime.current() do
+      Enum.find(state.async_post_tasks, fn
+        {_ref, %{kind: :legacy_post} = entry} ->
+          Map.take(entry, [:kind, :task_pid, :request_id, :nonce, :generation, :deadline]) == meta
+
+        _other ->
+          false
+      end)
+    end
+  end
+
+  defp handle_legacy_post_result({:ok, _transport}, _id, state), do: {:noreply, state}
+
+  defp handle_legacy_post_result({:error, :deadline_expired}, id, state),
+    do: {:noreply, fail_legacy_post_request(state, id, :timeout)}
+
+  defp handle_legacy_post_result({:error, reason}, id, state),
+    do: {:noreply, fail_legacy_post_request(state, id, {:transport_error, reason})}
+
+  defp fail_legacy_post_request(state, id, error) do
+    updated =
+      case Map.get(state.pending_requests, id) do
+        {from, :single, _method} ->
+          GenServer.reply(from, {:error, error})
+          %{state | pending_requests: Map.delete(state.pending_requests, id)}
+
+        {from, :single} ->
+          GenServer.reply(from, {:error, error})
+          %{state | pending_requests: Map.delete(state.pending_requests, id)}
+
+        {from, :batch, ordered_ids, received} when is_map(received) ->
+          # Preserve responses already delivered for this exact envelope. Its
+          # authenticated POST failure cannot settle a sibling pending batch.
+          if map_size(received) == 0 do
+            GenServer.reply(from, {:error, error})
+          else
+            outcomes = Enum.map(ordered_ids, &Map.get(received, &1, {:error, error}))
+            GenServer.reply(from, {:ok, outcomes})
+          end
+
+          pending =
+            Enum.reduce(ordered_ids, state.pending_requests, fn member, acc ->
+              if Map.get(acc, member) == id, do: Map.delete(acc, member), else: acc
+            end)
+
+          %{state | pending_requests: Map.delete(pending, id)}
+
+        _other ->
+          state
+      end
+
+    prune_legacy_posts(updated)
+  end
+
+  defp prune_legacy_posts(state) do
+    tasks =
+      Map.reject(state.async_post_tasks, fn
+        {_ref, %{kind: :legacy_post, actual_down?: true, request_id: id}} ->
+          not Map.has_key?(state.pending_requests, id)
+
+        _other ->
+          false
+      end)
+
+    %{state | async_post_tasks: tasks}
+  end
 
   defp handle_async_post_result({:ok, _new_ts, response_data}, _request_id, state) do
     # POST response contains data — parse it as a transport message
@@ -2528,7 +2687,7 @@ defmodule Arbor.MCP.Client do
         ordered_responses = Enum.map(ordered_ids, &Map.get(all_responses, &1))
         GenServer.reply(from, {:ok, ordered_responses})
 
-      {_id, batch_id} when is_binary(batch_id) ->
+      {_id, batch_id} when is_binary(batch_id) or is_integer(batch_id) ->
         # This is a request that's part of a batch
         :ok
     end)

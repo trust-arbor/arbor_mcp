@@ -15,6 +15,7 @@ defmodule Arbor.MCP.Client.RequestHandler do
   alias Arbor.MCP.Protocol.{ErrorCodes, ResponseBuilder, ResultEnvelope}
   alias Arbor.MCP.Tasks.Extension, as: TasksExtension
   alias Arbor.MCP.Transport.HTTP
+  alias Arbor.MCP.Transport.HTTP.LegacySSE
   alias Arbor.MCP.Transport.HTTP.ToolHeaders
 
   # Extra time allowed past a caller-enforced timeout before the client
@@ -230,33 +231,21 @@ defmodule Arbor.MCP.Client.RequestHandler do
   end
 
   defp send_request(request, method, id, from, state, meta) do
-    deadline = request_deadline(meta)
+    {deadline, meta} = request_send_context(from, state, meta)
 
-    case send_by_deadline(request, state, deadline) do
+    result =
+      case state do
+        %{transport_mod: LegacySSE, transport_state: %LegacySSE{}} ->
+          send_legacy_request(request, from, state, deadline, request["id"])
+
+        _other ->
+          send_by_deadline(request, state, deadline)
+      end
+
+    case result do
       {:ok, updated_state, response_data} ->
         # Non-SSE HTTP returns response immediately
-        case Protocol.parse_message(response_data) do
-          {:result, result, _id} ->
-            :telemetry.execute(
-              [:arbor_mcp, :client, :request, :completed],
-              %{},
-              %{method: method, request_id: id}
-            )
-
-            {:reply, validate_result(result, updated_state, method), updated_state}
-
-          {:error, error_data, _id} ->
-            :telemetry.execute(
-              [:arbor_mcp, :client, :request, :completed],
-              %{},
-              %{method: method, request_id: id}
-            )
-
-            {:reply, {:error, error_data}, updated_state}
-
-          _ ->
-            {:reply, {:error, :invalid_response}, updated_state}
-        end
+        inline_request_response(response_data, method, id, updated_state)
 
       {:ok, updated_state} ->
         # SSE and streaming transports - track pending request
@@ -272,6 +261,9 @@ defmodule Arbor.MCP.Client.RequestHandler do
         # Refused before anything was sent (see BoundedClient).
         {:reply, {:error, not_sent_error(:deadline_expired, state)}, state}
 
+      {:error, :caller_gone} ->
+        {:reply, {:error, not_sent_error(:caller_gone, state)}, state}
+
       {:error, reason} ->
         if Deadline.expired?(deadline) do
           # The caller's own timeout: it may already have reported one.
@@ -280,6 +272,165 @@ defmodule Arbor.MCP.Client.RequestHandler do
           {:reply, {:error, send_failure(reason, state)}, state}
         end
     end
+  end
+
+  defp request_send_context(from, state, meta) do
+    deadline = request_deadline(meta)
+
+    case state do
+      %{transport_mod: LegacySSE, transport_state: %LegacySSE{}} ->
+        deadline = legacy_request_cutoff(meta, from, state)
+        {deadline, Map.put(meta, :deadline, deadline)}
+
+      _other ->
+        {deadline, meta}
+    end
+  end
+
+  defp inline_request_response(response_data, method, id, updated_state) do
+    case Protocol.parse_message(response_data) do
+      {:result, result, _id} ->
+        :telemetry.execute(
+          [:arbor_mcp, :client, :request, :completed],
+          %{},
+          %{method: method, request_id: id}
+        )
+
+        {:reply, validate_result(result, updated_state, method), updated_state}
+
+      {:error, error_data, _id} ->
+        :telemetry.execute(
+          [:arbor_mcp, :client, :request, :completed],
+          %{},
+          %{method: method, request_id: id}
+        )
+
+        {:reply, {:error, error_data}, updated_state}
+
+      _ ->
+        {:reply, {:error, :invalid_response}, updated_state}
+    end
+  end
+
+  defp legacy_request_cutoff(meta, from, state) do
+    transport = state.transport_state
+
+    # Remote monotonic clocks are not cutoff authority. Preserve the actual
+    # relative option with a locally captured budget, capped by the transport.
+    deadline =
+      if node(elem(from, 0)) == node(),
+        do: request_deadline(meta),
+        else: remote_relative_deadline(meta)
+
+    deadline =
+      if is_nil(deadline) and meta[:timeout] == nil,
+        do: Deadline.after_ms(state.default_timeout || 5_000),
+        else: deadline
+
+    deadline
+    |> Deadline.earliest(transport.deadline)
+    |> Deadline.earliest(Deadline.after_ms(transport.timeouts.request))
+  end
+
+  defp remote_relative_deadline(%{timeout: ms}) when is_integer(ms) and ms >= 0,
+    do: Deadline.after_ms(ms)
+
+  defp remote_relative_deadline(_meta), do: nil
+
+  # A retained legacy POST acknowledges only after its final durable SSE event.
+  # Keep the native Client loop available to process the reverse GET request
+  # needed to produce that final event. Direct transport calls and connection
+  # establishment continue to use the synchronous transport API.
+  defp send_legacy_request(request, {caller, _tag}, state, deadline, id) do
+    transport = state.transport_state
+    cutoff = deadline
+    control = Deadline.earliest(cutoff, Deadline.after_ms(1_000))
+    limit = Keyword.get(state.transport_opts, :max_client_workers, 256)
+
+    with :ok <- legacy_post_admission(state, caller, cutoff, limit),
+         {:ok, encoded} <- encode_for_transport(LegacySSE, request),
+         :ok <- legacy_post_frame(encoded, transport.max_request_bytes) do
+      parent = self()
+      nonce = make_ref()
+      body = :binary.copy(encoded)
+      transport = %{transport | deadline: cutoff}
+      generation = Lifetime.current()
+
+      metadata = %{
+        kind: :legacy_post,
+        request_id: id,
+        nonce: nonce,
+        generation: generation,
+        deadline: cutoff
+      }
+
+      {pid, monitor} =
+        ConnectionScope.spawn_monitor(
+          fn ->
+            receive do
+              {^nonce, :run} -> :ok
+            after
+              Deadline.remaining(control) -> exit(:client_generation_retired)
+            end
+
+            result =
+              with :ok <- Lifetime.watch_caller(caller, cutoff) do
+                cond do
+                  Deadline.expired?(cutoff) -> {:error, :deadline_expired}
+                  not legacy_caller_alive?(caller) -> {:error, :caller_gone}
+                  true -> LegacySSE.send_message(body, transport)
+                end
+              end
+
+            Lifetime.deliver(
+              parent,
+              {:async_post_result, result, Map.put(metadata, :task_pid, self())}
+            )
+          end,
+          control
+        )
+
+      entry =
+        metadata
+        |> Map.put(:task_pid, pid)
+        |> Map.put(:completed?, false)
+        |> Map.put(:actual_down?, false)
+
+      updated = %{state | async_post_tasks: Map.put(state.async_post_tasks, monitor, entry)}
+      send(pid, {nonce, :run})
+      {:ok, updated}
+    else
+      error -> error
+    end
+  end
+
+  defp legacy_post_admission(state, caller, cutoff, limit) do
+    cond do
+      Process.get({Arbor.MCP.Client, :client}) != true ->
+        {:error, :client_lifetime_unavailable}
+
+      not is_pid(caller) or not legacy_caller_alive?(caller) ->
+        {:error, :caller_gone}
+
+      not is_integer(cutoff) or Deadline.remaining(cutoff) > 4_294_967_295 ->
+        {:error, :invalid_request_timeout}
+
+      Deadline.expired?(cutoff) ->
+        {:error, :deadline_expired}
+
+      map_size(state.async_post_tasks) >= limit ->
+        {:error, :client_worker_limit}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp legacy_caller_alive?(caller) when node(caller) == node(), do: Process.alive?(caller)
+  defp legacy_caller_alive?(_remote), do: true
+
+  defp legacy_post_frame(encoded, limit) do
+    if byte_size(encoded) <= limit, do: :ok, else: {:error, :request_too_large}
   end
 
   # The transport's reason is kept as a term, so a caller can tell a request
@@ -357,6 +508,12 @@ defmodule Arbor.MCP.Client.RequestHandler do
   # enforces its configured default (resolved from its own state — no extra
   # GenServer round-trips). Stale timers for completed requests are ignored
   # by the {:request_timeout, id} handler.
+  defp maybe_schedule_request_timeout(id, %{deadline: deadline}, %{transport_mod: LegacySSE})
+       when is_integer(deadline) do
+    Process.send_after(self(), {:request_timeout, id}, Deadline.remaining(deadline))
+    :ok
+  end
+
   defp maybe_schedule_request_timeout(id, %{timeout: nil}, state) do
     timeout = state.default_timeout || 5_000
     Process.send_after(self(), {:request_timeout, id}, timeout)
@@ -381,7 +538,15 @@ defmodule Arbor.MCP.Client.RequestHandler do
 
   Processes multiple MCP requests in a single batch operation.
   """
-  def handle_batch_request(requests, from, state) do
+  def handle_batch_request({requests, meta}, from, state)
+      when is_list(requests) and is_map(meta) do
+    handle_batch_with_deadline(requests, from, state, meta)
+  end
+
+  def handle_batch_request(requests, from, state),
+    do: handle_batch_with_deadline(requests, from, state, %{timeout: :caller_enforced})
+
+  defp handle_batch_with_deadline(requests, from, state, meta) do
     if VersionRegistry.modern?(state.protocol_version) do
       {:reply,
        {:error,
@@ -390,11 +555,11 @@ defmodule Arbor.MCP.Client.RequestHandler do
           message: "Batch requests are not available in MCP #{state.protocol_version}"
         }}, state}
     else
-      do_handle_batch_request(requests, from, state)
+      do_handle_batch_request(requests, from, state, meta)
     end
   end
 
-  defp do_handle_batch_request(requests, from, state) do
+  defp do_handle_batch_request(requests, from, state, meta) do
     requests_with_ids =
       Enum.map(requests, fn request ->
         case request do
@@ -425,9 +590,14 @@ defmodule Arbor.MCP.Client.RequestHandler do
     ordered_ids = Enum.map(requests_with_ids, &elem(&1, 0))
     protocol_requests = Enum.map(requests_with_ids, &elem(&1, 1))
 
-    case send_message(protocol_requests, state) do
+    batch_id = Protocol.generate_id()
+    {result, cutoff} = send_batch(protocol_requests, batch_id, from, state, meta)
+
+    case result do
       {:ok, updated_state} ->
-        batch_id = Protocol.generate_id()
+        if is_integer(cutoff),
+          do: maybe_schedule_request_timeout(batch_id, %{deadline: cutoff}, updated_state)
+
         batch_info = {from, :batch, ordered_ids, %{}}
 
         new_pending_requests =
@@ -450,6 +620,14 @@ defmodule Arbor.MCP.Client.RequestHandler do
         {:reply, response, state}
     end
   end
+
+  defp send_batch(requests, batch_id, from, %{transport_mod: LegacySSE} = state, meta) do
+    cutoff = legacy_request_cutoff(meta, from, state)
+    {send_legacy_request(requests, from, state, cutoff, batch_id), cutoff}
+  end
+
+  defp send_batch(requests, _batch_id, _from, state, _meta),
+    do: {send_message(requests, state), nil}
 
   @doc """
   Sends the era-appropriate liveness request for the client's idle health
@@ -603,6 +781,21 @@ defmodule Arbor.MCP.Client.RequestHandler do
     %{state | transport_state: HTTP.close_stream(transport_state, request_id)}
   end
 
+  def close_request_stream(request_id, %{transport_mod: LegacySSE} = state) do
+    Enum.each(state.async_post_tasks, fn
+      {_monitor, %{kind: :legacy_post, task_pid: pid, request_id: ^request_id} = entry} ->
+        if entry.generation == Lifetime.current() do
+          Lifetime.stop_owned(pid, Deadline.earliest(entry.deadline, Deadline.after_ms(1_000)))
+        end
+
+      _other ->
+        :ok
+    end)
+
+    # Keep the actual worker's monitor/credit until native DOWN.
+    state
+  end
+
   def close_request_stream(_request_id, state), do: state
 
   defp request_stream_error(reason) do
@@ -646,20 +839,79 @@ defmodule Arbor.MCP.Client.RequestHandler do
   @doc """
   Handles a single response from the transport.
   """
-  def handle_single_response({:result, result, response_id}, state) do
+  def handle_single_response(response, state) do
+    {:noreply, updated} = do_handle_single_response(response, state)
+    {:noreply, prune_legacy_posts(updated)}
+  end
+
+  defp do_handle_single_response({:result, result, response_id}, state) do
     method = pending_request_method(state.pending_requests, response_id)
     handle_response_by_id(response_id, validate_result(result, state, method), state)
   end
 
-  def handle_single_response({:error, error, response_id}, state) do
+  defp do_handle_single_response({:error, error, response_id}, state) do
     # Keep raw error data - let format handling in make_request decide how to format it
     handle_response_by_id(response_id, {:error, error}, state)
   end
 
-  def handle_single_response(other, state) do
+  defp do_handle_single_response(other, state) do
     Logger.warning("Received unexpected response format: #{LogSummary.describe(other)}")
 
     {:noreply, state}
+  end
+
+  defp legacy_response_cutoff({_kind, _data, response_id}, %{transport_mod: LegacySSE} = state) do
+    request_id = legacy_pending_identity(state.pending_requests, response_id)
+
+    case Enum.find(state.async_post_tasks, fn
+           {_ref, %{kind: :legacy_post, request_id: id}} -> id == request_id
+           _other -> false
+         end) do
+      {_ref, entry} ->
+        if entry.generation == Lifetime.current() and not Deadline.expired?(entry.deadline),
+          do: :current,
+          else: {:expired, request_id}
+
+      nil ->
+        :current
+    end
+  end
+
+  defp legacy_response_cutoff(_response, _state), do: :current
+
+  defp legacy_pending_identity(pending_requests, response_id) do
+    case Map.get(pending_requests, response_id) do
+      {_from, :single, _method} ->
+        response_id
+
+      {_from, :single} ->
+        response_id
+
+      batch_id when is_integer(batch_id) or is_binary(batch_id) ->
+        batch_id
+
+      _other when is_nil(response_id) ->
+        case find_pending_batch_request(pending_requests) do
+          {batch_id, _batch} -> batch_id
+          nil -> nil
+        end
+
+      _other ->
+        nil
+    end
+  end
+
+  defp prune_legacy_posts(state) do
+    tasks =
+      Map.reject(state.async_post_tasks, fn
+        {_ref, %{kind: :legacy_post, actual_down?: true, request_id: id}} ->
+          not Map.has_key?(state.pending_requests, id)
+
+        _other ->
+          false
+      end)
+
+    %{state | async_post_tasks: tasks}
   end
 
   # Reply to the client's own health-check ping. Any answer — result or
@@ -671,6 +923,18 @@ defmodule Arbor.MCP.Client.RequestHandler do
   end
 
   defp handle_response_by_id(response_id, response_data, state) do
+    case legacy_response_cutoff({:settlement, response_data, response_id}, state) do
+      {:expired, request_id} ->
+        # Check after result validation, immediately before pending mutation.
+        # A queued SSE final cannot renew its admitted POST cutoff.
+        Arbor.MCP.Client.handle_info({:request_timeout, request_id}, state)
+
+      :current ->
+        do_handle_response_by_id(response_id, response_data, state)
+    end
+  end
+
+  defp do_handle_response_by_id(response_id, response_data, state) do
     if is_nil(response_id) do
       # Check if this is a batch validation error - if we have any pending batch requests,
       # route the error to the first one (batch errors apply to the entire batch)

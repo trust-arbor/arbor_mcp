@@ -136,6 +136,17 @@ defmodule Arbor.MCP.Client.Lifetime do
   end
 
   def spawn_monitor(fun), do: start_worker(fun, :monitor)
+
+  def spawn_monitor(fun, deadline), do: start_worker(fun, :monitor, :ordinary, deadline)
+
+  def watch_caller(caller, deadline)
+      when is_pid(caller) and is_integer(deadline) do
+    case current() do
+      nil -> {:error, :client_lifetime_unavailable}
+      context -> call(context, {:watch_caller, caller, deadline}, deadline)
+    end
+  end
+
   def spawn_link(fun), do: start_worker(fun, :link)
   def async(fun), do: start_worker(fun, :task)
 
@@ -272,11 +283,11 @@ defmodule Arbor.MCP.Client.Lifetime do
   defp native_start(module, opts, :unlinked, timeout),
     do: GenServer.start(module, Diagnostics.argument(module, opts), timeout: timeout)
 
-  defp start_worker(fun, mode, kind \\ :ordinary) do
+  defp start_worker(fun, mode, kind \\ :ordinary, deadline \\ nil) do
     context = current()
     owner = self()
 
-    case reserve(context, :worker, kind) do
+    case reserve(context, :worker, kind, deadline || Deadline.after_ms(@registration_ms)) do
       {:ok, nil} ->
         spawn_native(mode, fun)
 
@@ -286,7 +297,11 @@ defmodule Arbor.MCP.Client.Lifetime do
           Process.put(@marker, {context, nonce})
           owner_monitor = Process.monitor(owner)
 
-          case call(context, {:register, nonce, self()}) do
+          case call(
+                 context,
+                 {:register, nonce, self()},
+                 deadline || Deadline.after_ms(@registration_ms)
+               ) do
             :ok ->
               Process.demonitor(owner_monitor, [:flush])
               fun.()
@@ -408,6 +423,27 @@ defmodule Arbor.MCP.Client.Lifetime do
     end
   end
 
+  defp operation({:watch_caller, caller, deadline}, worker_pid, state) do
+    with %{caller_monitor: nil} = worker <- Map.get(state.workers, worker_pid),
+         true <- state.phase == :active and not Deadline.expired?(deadline),
+         true <- Deadline.remaining(deadline) <= @max_timer,
+         true <- is_pid(caller) and (node(caller) != node() or Process.alive?(caller)) do
+      monitor = Process.monitor(caller)
+
+      timer =
+        Process.send_after(
+          self(),
+          {:request_cutoff, state.epoch, worker_pid, monitor},
+          Deadline.remaining(deadline)
+        )
+
+      worker = %{worker | caller_monitor: monitor, caller_timer: timer}
+      {:reply, :ok, %{state | workers: Map.put(state.workers, worker_pid, worker)}}
+    else
+      _other -> {:reply, {:error, :caller_gone_or_expired}, state}
+    end
+  end
+
   defp operation({:register, nonce, pid}, caller, state) when caller == pid do
     case Map.pop(state.reservations, nonce) do
       {nil, _entries} ->
@@ -427,7 +463,9 @@ defmodule Arbor.MCP.Client.Lifetime do
             watchdog: watchdog,
             guard_monitor: guard_monitor,
             persistent?: false,
-            lifetime: lifetime
+            lifetime: lifetime,
+            caller_monitor: nil,
+            caller_timer: nil
           }
 
           {:reply, :ok, %{state | workers: Map.put(state.workers, pid, worker)}}
@@ -659,7 +697,9 @@ defmodule Arbor.MCP.Client.Lifetime do
           remove_worker(pid, state)
 
         _other ->
-          case Enum.find(state.workers, fn {_pid, worker} -> worker.guard_monitor == monitor end) do
+          case Enum.find(state.workers, fn {_pid, worker} ->
+                 worker.guard_monitor == monitor or worker.caller_monitor == monitor
+               end) do
             {worker_pid, _entry} ->
               Process.exit(worker_pid, :kill)
               state
@@ -668,6 +708,15 @@ defmodule Arbor.MCP.Client.Lifetime do
               state
           end
       end
+
+    {:noreply, state}
+  end
+
+  def handle_info({:request_cutoff, epoch, pid, monitor}, %{epoch: epoch} = state) do
+    case Map.get(state.workers, pid) do
+      %{caller_monitor: ^monitor} -> Process.exit(pid, :kill)
+      _other -> :ok
+    end
 
     {:noreply, state}
   end
@@ -720,6 +769,8 @@ defmodule Arbor.MCP.Client.Lifetime do
     {worker, workers} = Map.pop(state.workers, pid)
     Process.demonitor(worker.monitor, [:flush])
     Process.demonitor(worker.guard_monitor, [:flush])
+    if worker.caller_monitor, do: Process.demonitor(worker.caller_monitor, [:flush])
+    if worker.caller_timer, do: Process.cancel_timer(worker.caller_timer)
     %{state | workers: workers}
   end
 end

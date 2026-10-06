@@ -84,6 +84,47 @@ That logical actor survives transport loss to resubscribe, while opening and
 replacement workers are retired. Explicit disconnect, stop and owner death stop
 both. Reconnection does not adopt arbitrary externally supplied subscription PIDs.
 
+## Established legacy SSE requests
+
+After establishment, ordinary requests and retained legacy batches use a bounded
+owned POST worker. Client can continue reading the persistent GET stream and
+answer a reverse request while the POST waits for its durable final acknowledgment.
+Direct transport calls and establishment keep their existing synchronous APIs.
+The server still publishes a batch as one durable aggregate with ordered members
+before returning its final HTTP 202 acknowledgment.
+
+The configured worker cap also bounds admitted LegacySSE exchanges. Each admitted
+body is detached and bounded by `max_request_bytes`; one constant authenticated
+row preserves the request or batch identity, generation and original cutoff.
+During an active connection, this credit remains charged until both the POST
+worker is actually DOWN and the pending SSE outcome has settled. A successful
+POST worker exit with no final SSE response keeps its logical credit and cutoff
+until the original timeout. Caller death and explicit cancellation retire only
+authenticated owned workers; physical credit requires actual worker DOWN.
+Native network buffers have separate limits.
+
+Final SSE settlement checks the original cutoff, including a response queued
+before cutoff but processed afterward, and a response arriving after its POST
+worker exited. A timely response can still succeed after worker DOWN. Canceling
+one batch member sends its protocol cancellation and preserves the whole POST,
+sibling members and charged batch row until whole-envelope settlement or timeout.
+An authenticated POST failure preserves already received ordered member outcomes
+and retires only its exact batch.
+
+Local public ordinary and batch calls capture their finite cutoff before queuing
+for Client. Remote GenServer callers remain supported through actual PID monitors.
+Their relative timeout begins locally when Client handles the call and is capped
+by the configured transport timeout; a remote monotonic timestamp is not a local
+deadline. A remote caller that times out but remains alive can therefore still be
+admitted after queue delay. Cross-node API-entry queue time is not part of this
+local cutoff guarantee.
+
+At the integration checkpoint, the eighteen native controls and three actual
+OAuth/Cowboy wire cases for this followup pass on both supported toolchains,
+with forced compilation treating warnings as errors. The historical slice
+qualification below remains unchanged. Fresh combined API and release
+qualification remain required for the integrated source.
+
 ## Test/BEAM event-context overlay
 
 Native Test/BEAM connections pass a private optional event context once through
