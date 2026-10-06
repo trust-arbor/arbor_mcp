@@ -10,12 +10,15 @@
 
 **A complete Elixir implementation of the Model Context Protocol (MCP) and Agent Client Protocol (ACP)**
 
-[Getting Started](https://github.com/trust-arbor/arbor_mcp/tree/master/docs/getting-started) | [User Guide](docs/guides/USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [Examples](https://github.com/trust-arbor/arbor_mcp/tree/master/examples) | [2.0 Roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md) | [Changelog](CHANGELOG.md)
+[Getting Started](https://github.com/trust-arbor/arbor_mcp/tree/codex/maintenance-1.x/docs/getting-started) | [User Guide](docs/guides/USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [Examples](https://github.com/trust-arbor/arbor_mcp/tree/codex/maintenance-1.x/examples) | [2.0 Roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md) | [Changelog](CHANGELOG.md)
 
 </div>
 
 The repository has moved to [trust-arbor/arbor_mcp](https://github.com/trust-arbor/arbor_mcp).
-The supported 1.x package remains `ex_mcp`. Version 2 is being prepared as
+The supported 1.x package remains `ex_mcp`. This is the `codex/maintenance-1.x`
+branch: fixes and compatible minor releases continue here, so migration is
+optional. See the [maintenance policy](docs/MAINTENANCE_POLICY.md).
+Version 2 is being prepared as
 `arbor_mcp` (`Arbor.MCP.*`) and `arbor_acp` (`Arbor.ACP.*`), with vendor adapters
 in the optional `arbor_acp_adapters` package. The target is October 9, 2026,
 subject to the [release gates](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_PLAN.md). GitHub redirects
@@ -90,7 +93,7 @@ config :ex_mcp, protocol_mode: :legacy_only
 | `ExMCP.HttpPlug`, `Authorization`, ACP adapters | ACP `session/fork` (unstable upstream) | MCP HTTP+SSE, Roots, Sampling, and protocol Logging |
 | `ExMCP.Content` builders (`text`/`image`/`audio`) | — | — |
 
-Runnable examples live in the GitHub repo under [`examples/`](https://github.com/trust-arbor/arbor_mcp/tree/master/examples) (not shipped in the Hex package).
+Runnable examples live in the GitHub repo under [`examples/`](https://github.com/trust-arbor/arbor_mcp/tree/codex/maintenance-1.x/examples) (not shipped in the Hex package).
 
 The [ExMCP 2.0 roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md) records planned runtime and API
 changes, deprecated-surface removals, and the policy for safely backporting
@@ -204,7 +207,7 @@ defmodule MyServer do
 end
 ```
 
-See the [DSL Guide](docs/DSL_GUIDE.md) and [examples](https://github.com/trust-arbor/arbor_mcp/tree/master/examples) for more patterns.
+See the [DSL Guide](docs/DSL_GUIDE.md) and [examples](https://github.com/trust-arbor/arbor_mcp/tree/codex/maintenance-1.x/examples) for more patterns.
 Elicitation, sampling, roots, ping, progress, and cancellation are in the
 [Protocol Guide](docs/PROTOCOL_GUIDE.md).
 
@@ -345,7 +348,7 @@ See the [ACP Guide](docs/ACP_GUIDE.md) for full details.
 - **[MCP 2026-07-28 Migration Plan](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_2026_07_28_MIGRATION_PLAN.md)** -- Implementation record and remaining release gates
 - **[MCP Coverage Matrix](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md)** -- Local and official conformance evidence
 - **[rc.5 to 1.0 API Diff](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/API_DIFF_RC5_TO_1_0.md)** -- Public compatibility audit
-- **[Examples](https://github.com/trust-arbor/arbor_mcp/tree/master/examples)** -- Real-world patterns
+- **[Examples](https://github.com/trust-arbor/arbor_mcp/tree/codex/maintenance-1.x/examples)** -- Real-world patterns
 
 ## Contributing
 
