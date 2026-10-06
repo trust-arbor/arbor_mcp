@@ -13,9 +13,10 @@
   [release assessment](V2_RELEASE_ASSESSMENT.md),
   [ACP wire v2 tracking](ACP_V2_TRACKING.md).
 
-`Arbor.MCP` and `Arbor.ACP` are the confirmed public namespaces. `Arbor.RPC` remains
-the implementation name for the shared mechanics package. ACP wire protocol
-versions remain independent of the library's major release.
+ArborMCP, ArborACP and ArborRPC are the library display names. Their Elixir
+module namespaces remain `Arbor.MCP.*`, `Arbor.ACP.*` and `Arbor.RPC.*`; Hex
+package and OTP application names use underscores. ACP wire protocol versions
+remain independent of the library's major release.
 
 The dotted public module spelling was accepted on 2026-10-03 for the wider
 Arbor library family, matching `Arbor.Trust` and `Arbor.Historian`. Sharing the

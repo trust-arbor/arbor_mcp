@@ -128,12 +128,12 @@ These are wire or security changes rather than public Elixir symbol removals:
   envelopes, MRTR, and `subscriptions/listen`;
 - legacy revisions and deprecated HTTP+SSE remain selectable throughout 1.x;
 - Tasks are advertised only when the extension is configured and supported;
-- result cache metadata is validated, but Arbor.MCP 1.0 does not store or reuse
+- result cache metadata is validated, but ArborMCP 1.0 does not store or reuse
   responses;
-- OAuth state is generated and consumed by Arbor.MCP as described above.
+- OAuth state is generated and consumed by ArborMCP as described above.
 
 The wire migration is intentionally landing before stable 1.0. These changes
-would have required an Arbor.MCP 2.0 release if 1.0 had already been published;
+would have required an ArborMCP 2.0 release if 1.0 had already been published;
 the retained rc.5 public surface lets existing Elixir applications migrate
 without a simultaneous package-API rewrite.
 

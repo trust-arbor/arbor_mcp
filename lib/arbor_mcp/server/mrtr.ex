@@ -17,7 +17,7 @@ defmodule Arbor.MCP.Server.MRTR do
 
     Build this struct with `Arbor.MCP.Server.DSL.Result.input_required/2` or return
     the equivalent `{:input_required, input_requests, state}` handler tuple.
-    Arbor.MCP validates the requested input capabilities and seals application
+    ArborMCP validates the requested input capabilities and seals application
     state into the modern `requestState` continuation envelope.
     """
     @enforce_keys [:input_requests]

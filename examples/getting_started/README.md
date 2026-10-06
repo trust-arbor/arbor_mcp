@@ -1,6 +1,6 @@
 # Getting Started Examples
 
-These examples show the supported Arbor.MCP transports with the current
+These examples show the supported ArborMCP transports with the current
 `Arbor.MCP.Server.Handler` + `Arbor.MCP.Server.DSL` server API.
 
 ## Files

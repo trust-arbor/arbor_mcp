@@ -1,6 +1,6 @@
-# Arbor.MCP 1.0.0
+# ArborMCP 1.0.0
 
-Arbor.MCP 1.0 is the first stable release of the dual-era MCP and ACP library. It
+ArborMCP 1.0 is the first stable release of the dual-era MCP and ACP library. It
 preserves the public API, wire behavior, security posture, lifecycle semantics,
 and `:prefer_modern` default of `1.0.0-rc.8`.
 
@@ -58,7 +58,7 @@ pinned to `2.0.0`; legacy conformance remains pinned independently to `0.1.16`.
 
 The 2026-08-22 dependency audit also identified medium-severity
 `EEF-CVE-2026-43971` in Cowlib's `cow_link:link/1` encoder. Cowlib 2.19.0 is
-the latest Hex release and does not yet contain the upstream fix. Arbor.MCP and
+the latest Hex release and does not yet contain the upstream fix. ArborMCP and
 its Plug/Cowboy server stack do not call the affected encoder; a BEAM-import
 regression test locks that assumption. The exact advisory exception shares the
 existing 2026-09-12 Cowlib review deadline and must be removed as soon as a

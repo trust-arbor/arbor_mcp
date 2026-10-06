@@ -32,7 +32,7 @@ defmodule Arbor.MCP.Server.CancellationTracker do
     @moduledoc """
     Default cancellation tracker.
 
-    Supports the two conventions Arbor.MCP handlers use to observe cancellation:
+    Supports the two conventions ArborMCP handlers use to observe cancellation:
 
     * a `:cancelled_requests` `MapSet` in the handler state, which stores
       `{scope, request_id}` for runtime callbacks, and

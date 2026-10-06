@@ -3,7 +3,7 @@
 - **Status:** Stable 1.0 packaging and the focused contract cleanup are
   complete; the Codex characterization gate is met; adapter modularization
   and functional-core extraction remain proposed and tracked
-- **Baseline:** Arbor.MCP `1.0.0`
+- **Baseline:** ArborMCP `1.0.0`
 - **Scope:** behavior-preserving modularization, functional-core extraction,
   dependency cleanup, and Hex source-package cleanup
 - **Last updated:** 2026-09-22
@@ -236,7 +236,7 @@ the ids of a `session/load` and a `session/resume` ascend and are distinct.
 
 The ids are opaque correlation tokens: nothing parses them, they are only map
 and set keys, and Pi echoes back whatever it was sent, so the numbering is
-Arbor.MCP's to choose. A scenario that starts the adapter twice now sees both
+ArborMCP's to choose. A scenario that starts the adapter twice now sees both
 connections number from one, which is why two fixtures changed with the switch.
 
 ### Proposed boundaries
@@ -583,11 +583,11 @@ downstream consumer (Jido Harness) and is classified in
     fix": Cowlib encoders expect RFC-valid input, and Cowboy 2.16+ and Gun
     2.4+ reject CR/LF at their own layer. The advisory metadata is accurate,
     so there is nothing to report to EEF. The exceptions have no review date;
-    they stay for as long as Arbor.MCP requires Cowboy, and
+    they stay for as long as ArborMCP requires Cowboy, and
     `dependency_advisory_mitigation_test.exs` keeps locking the assumptions
     behind them.
   - Consequence: the only way to stop carrying audit exceptions for code
-    Arbor.MCP never calls is to stop requiring Cowboy. Bandit depends on
+    ArborMCP never calls is to stop requiring Cowboy. Bandit depends on
     `thousand_island`, `hpax`, `plug`, `websock`, and `telemetry` only, with
     no Cowlib in its tree. Making the HTTP server dependency optional (Cowboy
     optional, Bandit supported) was reserved for 2.0 because it is a breaking
@@ -710,7 +710,7 @@ only where locale enters:
 ### Out of scope, tracked separately
 
 - Boot-time logger output reaching stdout before `StdioLoggerConfig` runs.
-  Resolved for Arbor.MCP's own logs: `SessionManager` was the only boot-path
+  Resolved for ArborMCP's own logs: `SessionManager` was the only boot-path
   module logging at `info` and now logs at `debug`, and a subprocess test
   boots the application's supervision tree under the default logger and
   asserts stdout stays empty. Other applications in the same VM remain the
@@ -878,7 +878,7 @@ inputs:
 - membership of the public ACP agents page;
 - IDs and versions from the machine-readable ACP Registry; and
 - exact upstream revisions for `claude-agent-acp`, `codex-acp`, `pi-acp`, and
-  `ZCode`, whose behavior informed Arbor.MCP's Claude, Codex, Pi, and ZCode
+  `ZCode`, whose behavior informed ArborMCP's Claude, Codex, Pi, and ZCode
   adapters.
 
 `mix acp.compat.check` reports additions, removals, registry releases, and
@@ -892,7 +892,7 @@ requirements are characterized.
 When reference-adapter drift appears, review the compare link for protocol
 mapping, capability, event-ordering, security, and lifecycle changes before
 advancing the pinned commit. Port relevant behavior behind characterization
-tests; a pin update alone is not evidence that Arbor.MCP remains behaviorally
+tests; a pin update alone is not evidence that ArborMCP remains behaviorally
 aligned.
 
 ### 2026-08-22 reference sync
@@ -924,7 +924,7 @@ Codex ACP development moved from `zed-industries/codex-acp` to
 `agentclientprotocol/codex-acp`; the manifest now follows the canonical
 repository while retaining the last behaviorally reviewed commit. Do not
 advance the Claude or Codex reference pins until the following post-baseline
-changes have focused Arbor.MCP parity decisions and tests:
+changes have focused ArborMCP parity decisions and tests:
 
 - Codex `8ff9e67f79335345ce53b3157b3d690c191ea027` adds permission presentation,
   provider decision preservation, and permission lifecycle isolation;
@@ -968,7 +968,7 @@ resolved.
 `d421f56a6c43cde16d9a7531d08a750a5ef2f04a` (0.79.0, 39 commits past the pin)
 and Codex ACP at `d7b07c1b44a28890cdf3d5450f8974a812db5ae2` (1.12.0, 29
 commits), plus two new registry agents and 23 registry version moves. Both
-references still build on ACP SDK 1.4.0, the version Arbor.MCP pins and the
+references still build on ACP SDK 1.4.0, the version ArborMCP pins and the
 newest on npm, so none of the new capabilities are schema changes; they are
 extensions negotiated through `_meta`.
 
@@ -988,11 +988,11 @@ mechanisms (#991, #1134, #515), which fold into the existing compaction
 decision above.
 
 Not applicable: codex-acp#471 (standalone MCP elicitation finalization),
-because Arbor.MCP forwards MCP elicitations without a synthetic tool call, so
+because ArborMCP forwards MCP elicitations without a synthetic tool call, so
 nothing dangles. Upstream-internal: CI, dependency and Codex CLI version
 bumps, fork-loading performance, TaskList parsing, model display-name
-cosmetics. Kept as Arbor.MCP's own surface: the Claude main-thread agent config
-option, removed upstream in #1112; Arbor.MCP retains it through 1.x.
+cosmetics. Kept as ArborMCP's own surface: the Claude main-thread agent config
+option, removed upstream in #1112; ArborMCP retains it through 1.x.
 
 Still open from the 2026-09-01 list, deferred to a later minor: the Claude
 stable mode catalog with `_meta.kind` and the Auto-mode fallback, per-model
@@ -1061,7 +1061,7 @@ for yet. `isAutoUnavailable` treats a model the agent never described as
 capable, so only a known model without `supportsAutoMode` triggers the
 fallback.
 
-Arbor.MCP matches all of that: the catalog, the kinds on both the mode list and
+ArborMCP matches all of that: the catalog, the kinds on both the mode list and
 the config option, the fallback mode, the notice text, the once-per-session
 guard, the held notice, and the unknown-model rule. The fallback is applied
 at every entry point the reference applies it: `session/new`
@@ -1075,7 +1075,7 @@ at every entry point the reference applies it: `session/new`
 are matched), and a permission decision carrying `{type: "setMode", mode:
 "auto"}` (mirroring `applyPermissionFallback`, which rewrites the update and
 publishes only the warning, leaving the mode state to the SDK's own status
-event). Arbor.MCP's `session/set_mode` returns
+event). ArborMCP's `session/set_mode` returns
 `{:messages_and_reply_and_write, ...}` in the fallback case; the Mapper's
 `client_response/2` gained a `{:ok, messages, iodata, state}` return for the
 permission path.
@@ -1118,7 +1118,7 @@ spend by subtracting the previous reading, treats a reading that fell below
 the previous one as a restart (the reading itself becomes the increment), and
 drops models with nothing to report.
 
-Decision: Arbor.MCP adopts `_meta.quota` as the reference specifies it, and keeps
+Decision: ArborMCP adopts `_meta.quota` as the reference specifies it, and keeps
 `_meta.ex_mcp.claude_sdk.modelUsage` exactly as it is. The adapter now tracks
 `last_model_usage` (the previous reading) and `turn_model_usage` (the
 increments accumulated for the turn), reset when the turn settles or a new
@@ -1141,7 +1141,7 @@ unprocessed numbers, including the fields `_meta.quota` does not carry.
 
 Not ported here: a cancelled turn that never received a Claude `result` still
 answers with a bare `{"stopReason": "cancelled"}`. Upstream's cancellation
-lanes carry `usage` and therefore `quota`; Arbor.MCP's have never carried `usage`
+lanes carry `usage` and therefore `quota`; ArborMCP's have never carried `usage`
 either, so adding `quota` alone would be arbitrary. Giving those responses a
 usage figure is its own change with its own fixtures.
 
@@ -1197,7 +1197,7 @@ at a specific message. What the reference actually specifies:
 - an id that resolves to nothing is `RequestError.invalidParams` naming the
   `messageId`, never a silent full copy.
 
-Arbor.MCP matches all of that. `Arbor.MCP.ACP.Adapters.ClaudeSDK.fork_session/2`
+ArborMCP matches all of that. `Arbor.MCP.ACP.Adapters.ClaudeSDK.fork_session/2`
 extracts the versioned fork point and passes it to
 `SessionStore.fork_session/2` as `:fork_message_id`;
 `SessionStore.message_grouping_id/1` is `messageIdForGrouping`,
@@ -1211,7 +1211,7 @@ Three deliberate deviations, none of them guesses:
 - *No live message-id table.* Upstream consults an in-memory
   `messageIdToUuid` first to avoid a disk read, then `getSessionMessages`
   (the active parentUuid chain), then a full import that also carries
-  inactive branches. Arbor.MCP's fork has always read the persisted JSONL file
+  inactive branches. ArborMCP's fork has always read the persisted JSONL file
   directly, which is a superset of the last two: it contains the active chain
   *and* the inactive branches in one pass. The adapter's existing
   `:message_ids` map is keyed uuid-first and would resolve assistant ids by a
@@ -1224,7 +1224,7 @@ Three deliberate deviations, none of them guesses:
   1-based `messageOccurrence` counted along the branch. That path is reachable
   only when the id lookup fails in both the active chain and the inactive
   branches, it only indexes assistant entries, and it depends on AIR computing
-  and sending those two extra fields. Arbor.MCP's single full-file lookup already
+  and sending those two extra fields. ArborMCP's single full-file lookup already
   covers what that path exists to reach; the fields are ignored rather than
   half-implemented.
 - *Error code.* The not-found error is wire-visible and now answers -32602
@@ -1238,14 +1238,14 @@ Three deliberate deviations, none of them guesses:
 
 The `_meta.jetbrains.air.fork` spelling is kept exactly as the reference reads
 it, deliberately: a client that can fork against claude-agent-acp forks
-against Arbor.MCP unchanged, and inventing a second vendor-neutral alias would be
+against ArborMCP unchanged, and inventing a second vendor-neutral alias would be
 inventing protocol. §8.1 condition 4 guards session identity, and the guard
 holds: a fork with no fork point produces the same bytes it always did, which
 is what the unchanged fixtures for the five pre-existing fork scenarios show.
 
 **Deferred steering while user input is pending** (claude-agent-acp
 `8710ce1c`, #1045): **not applicable**, for the same class of reason as
-codex-acp#471 above - the failure mode needs a mechanism Arbor.MCP does not have.
+codex-acp#471 above - the failure mode needs a mechanism ArborMCP does not have.
 Upstream's ACP steering extension injects a follow-up user message into a
 *running* SDK turn at `SDKUserMessage.priority` `"now"`, which is interrupting
 delivery: the SDK aborts the cycle currently blocked in a user-input callback
@@ -1254,7 +1254,7 @@ client's card disappears before it can be answered. Their fix counts pending
 user-input requests per session and downgrades the injected message to
 `"later"` while the count is non-zero.
 
-Arbor.MCP never steers, so there is no message to downgrade. The functions that
+ArborMCP never steers, so there is no message to downgrade. The functions that
 establish it:
 
 - `Arbor.MCP.ACP.Adapters.ClaudeSDK.Protocol.user_message/2` is the only producer
@@ -1266,7 +1266,7 @@ establish it:
 - `Mapper.start_next_queued_prompt/1` is the sole place a queued message is
   written, and its sole call site is the turn-settle path that runs on
   Claude's `result` event, after the prompt response is built; and
-- no Arbor.MCP code writes a `priority` field on any Claude SDK line.
+- no ArborMCP code writes a `priority` field on any Claude SDK line.
 
 A second prompt therefore cannot pre-empt an outstanding
 `session/request_permission` or `elicitation/create`. Two golden scenarios pin
@@ -1280,7 +1280,7 @@ user message reaches Claude only on the first `result`. The recorded mutation
 check makes the queued branch write immediately - upstream's `now` delivery -
 and both scenarios fail.
 
-If Arbor.MCP ever gains real mid-turn steering, this decision is void: that change
+If ArborMCP ever gains real mid-turn steering, this decision is void: that change
 must port the pending-user-input counter with it.
 
 Still open from the 2026-09-01 list after this: Codex session titles with a
@@ -1290,7 +1290,7 @@ the next scheduled review.
 ### 2026-09-22 Claude chunk message ids
 
 The fork port above closed the *receiving* half of message-specific forks:
-Arbor.MCP resolves a `messageId` a host sends. It left the *sending* half open.
+ArborMCP resolves a `messageId` a host sends. It left the *sending* half open.
 The Claude adapter never stamped `messageId` on any session update, so a host
 had no way to learn a fork point from us and had to read Claude's JSONL
 transcript itself to find one. This subsection records closing that gap, read
@@ -1317,7 +1317,7 @@ than changing what resolves. No change was needed.
 
 **What is stamped.** `applyMessageId` upstream is a no-op unless the update is
 one of `agent_message_chunk`, `user_message_chunk` or `agent_thought_chunk`,
-and a no-op when the id is absent. Arbor.MCP matches that: `tool_call`,
+and a no-op when the id is absent. ArborMCP matches that: `tool_call`,
 `tool_call_update`, `plan`, `session_info_update`, `current_mode_update`,
 `config_option_update`, `available_commands_update` and the usage updates never
 carry one. The three coverage paths upstream threads the id through are all
@@ -1338,11 +1338,11 @@ covered:
   `reduce_message/2` for assistant entries, and `replay_user_content/2` stamps
   the replayed `user_message_chunk` with the entry's grouping id.
 
-**What is deliberately not stamped**, both cases being chunks Arbor.MCP
+**What is deliberately not stamped**, both cases being chunks ArborMCP
 synthesizes rather than chunks Claude sent:
 
 - the Auto-mode fallback notice (`@auto_mode_fallback_notice` in `Mapper`) is
-  Arbor.MCP's own prose about a mode decision. No transcript entry backs it, so any
+  ArborMCP's own prose about a mode decision. No transcript entry backs it, so any
   id we invented for it would be unresolvable and `fork_session/2` would answer
   -32602. A host forking "at the notice" wants the message before or after it,
   neither of which the notice identifies; and
@@ -1355,7 +1355,7 @@ Subagent and sidechain chunks *are* stamped. Upstream's `applyMessageId` runs
 on the `parentToolUseId` path too, and our own `fork_point_index/2` matches a
 sidechain assistant entry like any other, so an id we stamp there still
 resolves. Upstream excludes sidechains only from `assistantGroups`, the
-fingerprint-recovery path Arbor.MCP does not implement.
+fingerprint-recovery path ArborMCP does not implement.
 
 **The round trip is asserted, not assumed.** A stamped id our own fork rejects
 would be worse than no id, so three golden scenarios in `lifecycle_golden_test.exs`
@@ -1396,13 +1396,13 @@ omits the key entirely, and a `tool_call` never gains it.
 
 The July 2026 stable ACP v1 additions are represented in the runtime and
 adapter tests. Boolean session config options require an explicit v1 client
-capability, so Arbor.MCP provides `Capabilities.put/3` with
+capability, so ArborMCP provides `Capabilities.put/3` with
 `:boolean_config_options` and exercises the opt-in in both directions against
 the official TypeScript SDK. Do not auto-advertise this capability merely
 because a generic event handler can decode the update; the integrating client
 must be able to present and change the value correctly.
 
-ACP protocol v2 is Draft and is not part of Arbor.MCP's advertised production
+ACP protocol v2 is Draft and is not part of ArborMCP's advertised production
 surface. The pinned interop lane validates the reviewed v1 and v2 schemas,
 while the scheduled ACP ecosystem workflow installs the newest SDK to detect
 release or schema drift. Version downgrade and SDK dual-router tests protect

@@ -1,4 +1,4 @@
-# Arbor.MCP 1.0.0-rc.8
+# ArborMCP 1.0.0-rc.8
 
 `1.0.0-rc.8` is a narrow, behavior-preserving follow-up to the published
 `1.0.0-rc.7` candidate. It keeps rc.7's MCP and ACP wire behavior,

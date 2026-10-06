@@ -1,6 +1,6 @@
-# Arbor.MCP Server DSL Guide
+# ArborMCP Server DSL Guide
 
-Arbor.MCP's server DSL defines MCP tools, resources, resource templates, and prompts
+ArborMCP's server DSL defines MCP tools, resources, resource templates, and prompts
 next to the functions that handle them. Use it with `Arbor.MCP.Server.Handler`:
 
 ```elixir
@@ -24,7 +24,7 @@ dispatching declared capabilities. The generated `start_link/1` supports
 `:beam`, `:test`, `:stdio`, and `:http` transports. Modern HTTP SSE streams are
 owned by the POST request and require no server transport flag. The deprecated
 2024-11-05 two-endpoint transport remains available with
-`legacy_http_sse: true` throughout Arbor.MCP 1.x.
+`legacy_http_sse: true` throughout ArborMCP 1.x.
 
 ## Shared declarations
 

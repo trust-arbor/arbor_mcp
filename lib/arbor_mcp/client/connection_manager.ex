@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Client.ConnectionManager do
   @moduledoc """
-  Connection lifecycle management for Arbor.MCP client.
+  Connection lifecycle management for ArborMCP client.
 
   This module handles all aspects of connection establishment, transport management,
   health checks, and message receiving for MCP clients.

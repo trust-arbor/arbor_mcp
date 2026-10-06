@@ -139,7 +139,7 @@ defmodule Arbor.MCP.Server.Result do
   @doc """
   Suspends a modern tool, resource, or prompt result for MRTR input.
 
-  The optional application state must be JSON encodable. Arbor.MCP seals it into
+  The optional application state must be JSON encodable. ArborMCP seals it into
   an opaque `requestState`; handlers can read it on the retry through
   `Arbor.MCP.Server.Context.request_state/0`.
   """

@@ -3,7 +3,7 @@
 `arbor_mcp` keeps its HTTP client and `Arbor.MCP.HttpPlug` in core. Cowboy and
 Bandit remain optional host dependencies. Mounting the Plug in Phoenix does not
 create, adopt or stop the host listener. Unix source installation still builds
-the transitive Arbor.RPC native helper and requires a C17 compiler; an installed
+the transitive ArborRPC native helper and requires a C17 compiler; an installed
 release does not require a compiler at runtime.
 
 ## A runtime that owns its listener
@@ -47,8 +47,8 @@ port = :ranch.get_port(ref)
 
 Cowboy owned endpoints use distinct opaque Ranch references by default, so
 sibling roots can bind different ports. An explicit `:ranch_ref` keeps its
-identity. Arbor's owned constructor and lower Cowboy adapter/helper share an
-atomic reference claim before listener effects; a competing Arbor constructor
+identity. ArborMCP's owned constructor and lower Cowboy adapter/helper share an
+atomic reference claim before listener effects; a competing ArborMCP constructor
 returns `:http_listener_reference_in_use`. Default references stay independent.
 Raw third-party Ranch mutation is outside this exclusion contract. Backend startup
 can fail after handler initialization (for example, an occupied port); runtime
@@ -59,7 +59,7 @@ in the host dependency list as above. Optional transitive requirements validate
 the selected graph but do not automatically constrain the root Hex resolution;
 omitting the host constraint can select an incompatible Ranch version and fail
 Mix dependency validation. Startup also checks the version, required exports and
-child-spec shape before handler/listener effects. Arbor uses its own real native callback
+child-spec shape before handler/listener effects. ArborMCP uses its own real native callback
 modules for listener, connection and acceptor roles; it delegates the qualified
 Ranch `init` functions while preserving their actual OTP parent links and startup
 acknowledgments. The owned listener's initial call identifies
@@ -67,10 +67,10 @@ Arbor.MCP.Server.HTTP.Cowboy.Owned, rather than `:ranch_listener_sup`. Future
 Ranch versions need constructor qualification before widening this requirement.
 Owned Bandit setup qualifies **Bandit 1.12.5** and **Thousand Island 1.5.0** only,
 with optional exact package requirements and pre-effect version/export checks.
-Arbor's real native supervisor, worker and acceptor callbacks register each
+ArborMCP's real native supervisor, worker and acceptor callbacks register each
 startup role before delegated Thousand Island initialization or socket work.
 The owned listener's initial call identifies
-Arbor.MCP.Server.HTTP.Bandit.Owned; its nested listener uses Arbor's worker
+Arbor.MCP.Server.HTTP.Bandit.Owned; its nested listener uses ArborMCP's worker
 callback. Original native parent links and child IDs remain real, so
 `ThousandIsland.listener_info/1` keeps its meaning. The HTTP option transformation
 is adapted from the pinned Bandit implementation under its MIT license and
@@ -91,7 +91,7 @@ Connections use one finite original constructor timeout from
 maximum **4,294,967,295**); `:infinity` is rejected for owned constructors.
 Native `num_connections` still has its upstream meaning, including `:infinity`,
 subject to this independent runtime cap. Each future connection registers before
-upstream handler initialization/accepted socket work. These limits bound Arbor's
+upstream handler initialization/accepted socket work. These limits bound ArborMCP's
 PID/control obligations; native socket buffers and other host/library data are
 separate. Borrowed Bandit constructors retain upstream options and lifetimes.
 
@@ -107,7 +107,7 @@ then deletes only unchanged exact owned setup objects. Partial, untagged or
 externally replaced metadata quarantines that reference's bounded claim until
 VM restart; it cannot authorize deletion of a host replacement's objects.
 Timed-out borrowed constructors also retain exclusion until actual constructor
-and Ranch-server receipts, and Arbor never deletes their host-owned metadata.
+and Ranch-server receipts, and ArborMCP never deletes their host-owned metadata.
 These are bounded retained obligations, not proof that a stalled host settles
 within the API deadline. Capacity exhaustion returns an explicit error.
 

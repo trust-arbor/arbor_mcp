@@ -60,7 +60,7 @@ defmodule Arbor.MCP.Authorization.CredentialStore do
   @moduledoc """
   Pluggable persistence boundary for issuer-bound OAuth credentials.
 
-  Arbor.MCP deliberately does not ship a file-backed secret store. Applications
+  ArborMCP deliberately does not ship a file-backed secret store. Applications
   can provide an OS keychain, encrypted database, or other appropriate adapter
   as either `AdapterModule` or `{AdapterModule, adapter_state}`.
 
@@ -77,13 +77,13 @@ defmodule Arbor.MCP.Authorization.CredentialStore do
   Legacy records without an issuer are rejected with
   `{:credential_migration_required, kind}`. Call `bind_legacy_registration/2`
   or `bind_legacy_token/2` only after independently establishing the issuer;
-  Arbor.MCP never attaches an unkeyed record to the currently discovered issuer.
+  ArborMCP never attaches an unkeyed record to the currently discovered issuer.
 
   ## Adapter contract
 
   An adapter implements this behaviour. `context` must be a stable,
   non-secret local identifier. A registration fetch returns the exact storage
-  key with the record so Arbor.MCP can reject a corrupt or cross-issuer index.
+  key with the record so ArborMCP can reject a corrupt or cross-issuer index.
   """
 
   alias Arbor.MCP.Authorization.CredentialStore.{Registration, Token}

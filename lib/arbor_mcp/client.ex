@@ -580,7 +580,7 @@ defmodule Arbor.MCP.Client do
   available root URIs.
 
   MCP Roots is deprecated as of 2026-07-28 and available in
-  Arbor.MCP 2.x for pinned legacy protocol revisions.
+  ArborMCP 2.x for pinned legacy protocol revisions.
   New implementations should pass directories or files via tool parameters,
   resource URIs, or server configuration.
   """
@@ -1099,7 +1099,7 @@ defmodule Arbor.MCP.Client do
   Takes the error a request function returned (`{:error, reason}` or the
   bare `reason`) and returns:
 
-    * `:not_sent` - Arbor.MCP knows the request never left the client: the client
+    * `:not_sent` - ArborMCP knows the request never left the client: the client
       was not connected, the request failed validation, the caller's deadline
       passed or the caller exited before it went out, or the transport
       refused it before writing anything (the connection could not be opened,
@@ -3826,7 +3826,7 @@ defmodule Arbor.MCP.Client do
   This is part of the MCP specification for controlling server logging behavior.
 
   MCP protocol Logging is deprecated as of 2026-07-28 and available in
-  Arbor.MCP 2.x for pinned legacy protocol revisions. This legacy RPC remains available for compatible peers. Prefer
+  ArborMCP 2.x for pinned legacy protocol revisions. This legacy RPC remains available for compatible peers. Prefer
   stderr for stdio or OpenTelemetry for new observability integrations.
 
   ## Parameters
@@ -3862,7 +3862,7 @@ defmodule Arbor.MCP.Client do
   following the MCP specification.
 
   MCP protocol Logging is deprecated as of 2026-07-28 and available in
-  Arbor.MCP 2.x for pinned legacy protocol revisions. Prefer stderr for stdio or OpenTelemetry for new observability
+  ArborMCP 2.x for pinned legacy protocol revisions. Prefer stderr for stdio or OpenTelemetry for new observability
   integrations.
 
   ## Parameters
@@ -3894,7 +3894,7 @@ defmodule Arbor.MCP.Client do
   (fire-and-forget) following the MCP specification.
 
   MCP protocol Logging is deprecated as of 2026-07-28 and available in
-  Arbor.MCP 2.x for pinned legacy protocol revisions. Prefer stderr for stdio or OpenTelemetry for new observability
+  ArborMCP 2.x for pinned legacy protocol revisions. Prefer stderr for stdio or OpenTelemetry for new observability
   integrations.
 
   ## Parameters

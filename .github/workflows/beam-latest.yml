@@ -40,7 +40,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 0f8ff717837aba8c0b73eb117510225b40e5f98c
+        ref: 958d6b8aae52856c5b9309a68bcf5676967fbb82
         path: .arbor-v2/acp
         persist-credentials: false
     - id: beam

@@ -1,4 +1,4 @@
-# Getting Started With Arbor.MCP
+# Getting Started With ArborMCP
 
 Start with:
 
@@ -6,7 +6,7 @@ Start with:
 - [MIGRATION.md](MIGRATION.md) for breaking changes between versions
 - [USER_GUIDE.md](../guides/USER_GUIDE.md) for the full MCP API
 
-Arbor.MCP supports MCP clients and servers over stdio, Streamable HTTP, and BEAM-local
+ArborMCP supports MCP clients and servers over stdio, Streamable HTTP, and BEAM-local
 transports. ACP controllers, agents and optional vendor adapters live in
 [ArborACP](https://github.com/trust-arbor/arbor_acp).
 

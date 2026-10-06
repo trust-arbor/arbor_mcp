@@ -65,7 +65,7 @@ source archive with `ARBOR_V2_LOCAL`, `ARBOR_V2_DEPS`, `ARBOR_RPC_PATH` and rele
 version overrides unset. These overrides must never appear in published package
 requirements. ExDoc is excluded from consumer runtime dependencies.
 
-Arbor.RPC ships reviewed `c_src/subprocess_helper.c` and its Mix compiler. It
+ArborRPC ships reviewed `c_src/subprocess_helper.c` and its Mix compiler. It
 excludes host-generated `priv/native` binaries; no prebuilt helper is promised.
 Source installation on macOS/Darwin and Linux requires a C17 compiler, including
 transitive installation through MCP or ACP for HTTP-only or BEAM-only use. `CC`

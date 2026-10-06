@@ -6,7 +6,7 @@ defmodule Arbor.MCP.Tasks.Store do
   ownership checks to every operation. Implementations should make lifecycle
   operations atomic across every node that can serve the same task ID.
 
-  Arbor.MCP ships `Arbor.MCP.Tasks.Store.ETS` as a bounded, node-local reference
+  ArborMCP ships `Arbor.MCP.Tasks.Store.ETS` as a bounded, node-local reference
   implementation. Deployments that require task survival across server or
   node restarts should configure a database-backed implementation.
   """

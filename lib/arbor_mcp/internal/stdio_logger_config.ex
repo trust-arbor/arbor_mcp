@@ -7,7 +7,7 @@ defmodule Arbor.MCP.Internal.StdioLoggerConfig do
   OTP primary logger level to `:emergency`. It does not route logs to stderr.
   Unrelated applications in the same BEAM VM also lose normal logging.
 
-  Arbor.MCP 2.0 never calls this utility during application startup or
+  ArborMCP 2.0 never calls this utility during application startup or
   transport connection. The exported function remains for callers that
   explicitly choose the legacy suppression policy. Prefer host-owned stderr
   handlers configured before application startup, preserving normal log levels.

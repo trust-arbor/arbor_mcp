@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Helpers do
   @moduledoc """
-  Helper macros and functions for common MCP patterns in Arbor.MCP.
+  Helper macros and functions for common MCP patterns in ArborMCP.
 
   This module provides convenient macros and utilities to reduce boilerplate
   and improve developer experience when working with MCP clients and servers.

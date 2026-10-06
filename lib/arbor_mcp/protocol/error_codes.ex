@@ -24,7 +24,7 @@ defmodule Arbor.MCP.Protocol.ErrorCodes do
   - `-32022` - Unsupported protocol version
   - `-32000` - Generic server error: Catch-all for server-side errors
 
-  ## Arbor.MCP-local Error Codes
+  ## ArborMCP-local Error Codes
 
   - `-31002` - Consent required
   - `-31003` - Prompt processing error
@@ -33,7 +33,7 @@ defmodule Arbor.MCP.Protocol.ErrorCodes do
   >
   > `-32002` and `-32042` are historical MCP codes. Legacy peers remain
   > decodable, but modern emitters use `-32602` for a missing resource and must
-  > not emit `-32042`. Arbor.MCP-local consent and prompt errors live outside the
+  > not emit `-32042`. ArborMCP-local consent and prompt errors live outside the
   > JSON-RPC reserved range so they cannot be confused with peer protocol
   > errors.
 
@@ -98,7 +98,7 @@ defmodule Arbor.MCP.Protocol.ErrorCodes do
   @doc """
   Consent required: User consent is required for the operation.
 
-  This is an Arbor.MCP-local application error, not an MCP protocol error.
+  This is an ArborMCP-local application error, not an MCP protocol error.
   """
   def consent_required, do: @consent_required
 
@@ -153,7 +153,7 @@ defmodule Arbor.MCP.Protocol.ErrorCodes do
     end
   end
 
-  @doc "Arbor.MCP-local prompt processing error"
+  @doc "ArborMCP-local prompt processing error"
   def prompt_error, do: @prompt_error
 
   @doc "Header mismatch between negotiated protocol state and the request"
@@ -281,7 +281,7 @@ defmodule Arbor.MCP.Protocol.ErrorCodes do
       (code >= @server_error_start and code <= @server_error_end)
   end
 
-  @doc "Checks if the code is an Arbor.MCP-local application error."
+  @doc "Checks if the code is an ArborMCP-local application error."
   @spec application_error?(integer()) :: boolean()
   def application_error?(code), do: code in [@consent_required, @prompt_error]
 

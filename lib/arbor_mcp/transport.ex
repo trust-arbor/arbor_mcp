@@ -3,12 +3,12 @@ defmodule Arbor.MCP.Transport do
   Behaviour definition for MCP transport implementations.
 
   A transport is responsible for sending and receiving MCP protocol messages
-  over a specific communication channel. Arbor.MCP includes implementations for
+  over a specific communication channel. ArborMCP includes implementations for
   the standard MCP transports and provides this behaviour for custom implementations.
 
   ## Built-in Transports
 
-  Arbor.MCP provides these standard transports:
+  ArborMCP provides these standard transports:
 
   - **`:stdio`** - Standard I/O communication (MCP specification)
   - **`:http`** - HTTP with optional SSE streaming (MCP specification)

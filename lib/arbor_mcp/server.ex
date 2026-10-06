@@ -41,8 +41,8 @@ defmodule Arbor.MCP.Server do
 
   > #### Protocol-deprecated features {: .warning}
   >
-  > MCP 2026-07-28 deprecated Roots, Sampling, and protocol Logging. Arbor.MCP
-  > retains their public APIs in Arbor.MCP 2.x for pinned legacy protocol
+  > MCP 2026-07-28 deprecated Roots, Sampling, and protocol Logging. ArborMCP
+  > retains their public APIs in ArborMCP 2.x for pinned legacy protocol
   > revisions and 2026-07-28 compatibility. New implementations should pass directories through tool
   > parameters, resource URIs, or server configuration; call LLM provider APIs
   > directly; and use stderr or OpenTelemetry for operational logs.
@@ -57,7 +57,7 @@ defmodule Arbor.MCP.Server do
   Sends a log message through the server.
 
   MCP protocol Logging is deprecated as of 2026-07-28. This API remains
-  available in Arbor.MCP 2.x for pinned legacy protocol revisions. Prefer stderr on stdio or
+  available in ArborMCP 2.x for pinned legacy protocol revisions. Prefer stderr on stdio or
   OpenTelemetry for new observability integrations.
   """
   @spec send_log_message(server(), atom() | String.t(), String.t(), map()) ::
@@ -78,7 +78,7 @@ defmodule Arbor.MCP.Server do
   Lists roots available from the connected client.
 
   MCP Roots is deprecated as of 2026-07-28. This API remains available
-  in Arbor.MCP 2.x for pinned legacy protocol revisions. New implementations should pass
+  in ArborMCP 2.x for pinned legacy protocol revisions. New implementations should pass
   directories or files via tool parameters, resource URIs, or server
   configuration.
   """
@@ -90,7 +90,7 @@ defmodule Arbor.MCP.Server do
   @doc """
   Notifies the client that the server's roots have changed.
 
-  MCP Roots is deprecated as of 2026-07-28 and retained in Arbor.MCP 2.x for pinned legacy protocol revisions.
+  MCP Roots is deprecated as of 2026-07-28 and retained in ArborMCP 2.x for pinned legacy protocol revisions.
   Prefer explicit tool parameters, resource URIs, or server configuration for
   new implementations.
   """
@@ -186,7 +186,7 @@ defmodule Arbor.MCP.Server do
   Sends a `sampling/createMessage` request to the connected client.
 
   MCP Sampling is deprecated as of 2026-07-28. This API remains available
-  in Arbor.MCP 2.x for pinned legacy protocol revisions. New implementations should integrate
+  in ArborMCP 2.x for pinned legacy protocol revisions. New implementations should integrate
   directly with an LLM provider API.
   """
   @spec create_message(server(), map()) :: {:ok, map()} | {:error, term()}

@@ -5,7 +5,7 @@ defmodule Arbor.MCP.Server.Subscriptions.PubSub do
   The adapter keeps registrations in a configurable storage adapter on the
   node that owns each listener and distributes untargeted publications over a
   Phoenix.PubSub-compatible module. No Phoenix dependency is required by
-  Arbor.MCP; applications that select this adapter must provide a module exporting
+  ArborMCP; applications that select this adapter must provide a module exporting
   `subscribe/2` and `broadcast_from/4`.
 
   Publications constrained to a `transport_ref` remain node-local because a

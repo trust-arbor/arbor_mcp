@@ -1,7 +1,7 @@
 # ExMCP 2.0 Roadmap
 
 - **Status:** Full v2 scope accepted; independent package projects and runtime foundation implemented; transport integration and release qualification underway
-- **Target:** Arbor package v2 release, Friday 2026-10-09, after qualification and RC soak
+- **Target:** ArborMCP and ArborACP v2 release, Friday 2026-10-09, after qualification and RC soak
 - **Last updated:** 2026-10-04
 - **Related release work:** [`RELEASE_1_0_0.md`](./RELEASE_1_0_0.md),
   [`API_DIFF_RC5_TO_1_0.md`](./API_DIFF_RC5_TO_1_0.md),

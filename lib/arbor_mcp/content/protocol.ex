@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Content.Protocol do
   @moduledoc """
-  Content protocol for Arbor.MCP - type-safe content handling system.
+  Content protocol for ArborMCP - type-safe content handling system.
 
   This module defines the core protocol and types for handling different
   content types in MCP messages, providing a unified interface for text,

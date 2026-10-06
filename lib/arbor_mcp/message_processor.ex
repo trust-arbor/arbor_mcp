@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.MessageProcessor do
   @moduledoc """
-  Core message processing abstraction for Arbor.MCP.
+  Core message processing abstraction for ArborMCP.
 
   The MessageProcessor provides a simple, composable interface for processing MCP messages.
   It follows the Plug specification pattern used throughout the Elixir ecosystem.

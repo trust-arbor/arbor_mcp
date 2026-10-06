@@ -48,7 +48,7 @@ defmodule Arbor.MCP.Content.SchemaValidator do
     end
   end
 
-  @doc "Preflights and resolves a JSON Schema under Arbor.MCP's resource policy."
+  @doc "Preflights and resolves a JSON Schema under ArborMCP's resource policy."
   @spec compile_schema(map() | boolean(), keyword()) :: SchemaPolicy.compile_result()
   def compile_schema(schema, opts \\ []), do: SchemaPolicy.compile(schema, opts)
 

@@ -1,6 +1,6 @@
-# Arbor.MCP Transport Guide
+# ArborMCP Transport Guide
 
-Arbor.MCP supports stdio, Streamable HTTP, BEAM-local, and test transports. The
+ArborMCP supports stdio, Streamable HTTP, BEAM-local, and test transports. The
 deprecated MCP 2024-11-05 HTTP+SSE transport is an explicit compatibility
 option, not a new-server default.
 
@@ -36,7 +36,7 @@ Supported options:
 - `:env` - environment variables as `{"KEY", "VALUE"}` tuples.
 - `:timeout` - client operation timeout.
 
-Stdio servers must write only JSON-RPC to stdout. Arbor.MCP 2.0 preserves
+Stdio servers must write only JSON-RPC to stdout. ArborMCP 2.0 preserves
 VM-global Logger and Application settings. The host configures diagnostics to
 stderr or another non-protocol sink before application startup. See
 [Configuration — Logging](CONFIGURATION.md#logging) for release configuration
@@ -91,7 +91,7 @@ choice between separate `:http` transport modules.
 | Resume/termination | `Last-Event-ID`; DELETE session | Not resumable; close the owning response stream |
 
 The client's `use_sse` option controls the standalone GET stream used by
-legacy Streamable HTTP. Arbor.MCP disables it, clears any session ID, and stops
+legacy Streamable HTTP. ArborMCP disables it, clears any session ID, and stops
 sending `Last-Event-ID` after a connection settles modern. Modern request and
 subscription streams use SSE on the owning POST response automatically and do
 not require `use_sse: true`.
@@ -145,7 +145,7 @@ Supported client options include:
 HTTP requests use finite absolute deadlines, identity encoding, redirect-free
 clients, and incremental response limits. A delimiter-free SSE slow drip cannot
 extend the idle deadline indefinitely; the peer must complete a frame within
-the configured timeout and buffer limit. Before every connection Arbor.MCP validates
+the configured timeout and buffer limit. Before every connection ArborMCP validates
 the complete DNS answer and pins the socket to an approved address while keeping
 the original hostname for HTTP Host, TLS SNI, and certificate validation. Mixed
 public/private answers, link-local addresses, and reserved ranges fail closed.
@@ -171,7 +171,7 @@ auth: %{
 `client_metadata_url` when the authorization server advertises CIMD, then
 deprecated DCR only when `registration_endpoint` is advertised. DCR requires
 an explicit `application_type: :native | :web` and a stable `redirect_port`;
-Arbor.MCP never invents a CIMD URL or guesses the application type. A missing
+ArborMCP never invents a CIMD URL or guesses the application type. A missing
 strategy returns an actionable registration error.
 
 Modern pre-registered credentials must include `credential_issuer`, which is
@@ -197,7 +197,7 @@ Mcp-Name: weather
 {"jsonrpc":"2.0","id":42,"method":"tools/call","params":{...}}
 ```
 
-Arbor.MCP derives the routing headers from the validated body. It strips custom
+ArborMCP derives the routing headers from the validated body. It strips custom
 values for reserved MCP headers before sending a modern request, so callers
 cannot create a header/body disagreement.
 
@@ -223,7 +223,7 @@ A modern result always has `resultType: "complete"` or
 `resultType: "input_required"`. For `input_required`, the client satisfies the
 embedded elicitation, sampling, or roots requests and sends the original
 operation again as a new POST with `inputResponses` and the opaque
-`requestState`. Arbor.MCP never turns those inputs into independent server-to-client
+`requestState`. ArborMCP never turns those inputs into independent server-to-client
 JSON-RPC requests on the HTTP stream.
 
 Long-lived notifications use a `subscriptions/listen` request. Its POST
@@ -241,7 +241,7 @@ wire shape.
 
 ### Safe era fallback
 
-With `:prefer_modern`, Arbor.MCP sends a bounded `server/discover` probe first. It
+With `:prefer_modern`, ArborMCP sends a bounded `server/discover` probe first. It
 falls back to `initialize` only when the response is recognized as evidence of
 a legacy peer and the transport is still usable. A recognized modern error,
 unsupported modern revision, timeout, authentication failure, or broken
@@ -284,7 +284,7 @@ request signing, rate limiting, CORS/origin decisions, and DNS rebinding checks.
 ### Deprecated MCP 2024-11-05 HTTP+SSE
 
 The pinned MCP 2024-11-05 two-endpoint transport remains available in
-Arbor.MCP 2.x by explicitly opting in:
+ArborMCP 2.x by explicitly opting in:
 
 ```elixir
 # In Application.start/2, before the borrowed Phoenix endpoint:
@@ -307,7 +307,7 @@ forward "/mcp", Arbor.MCP.HttpPlug,
 
 The GET endpoint defaults to `/sse`; its first event is `endpoint`, containing
 the POST URI (default `/message`) and session ID. Configure those paths with
-`:legacy_http_sse_path` and `:legacy_http_sse_post_path`. Arbor.MCP 2.x rejects
+`:legacy_http_sse_path` and `:legacy_http_sse_post_path`. ArborMCP 2.x rejects
 the former server constructor aliases `:sse_enabled` and `:use_sse`; use
 `:legacy_http_sse` for this transport. The HTTP client option `:use_sse` remains
 available for legacy Streamable HTTP GET streams. New servers should use

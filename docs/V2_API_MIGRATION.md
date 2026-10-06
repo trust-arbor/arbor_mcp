@@ -308,14 +308,14 @@ forward "/mcp", Arbor.MCP.HttpPlug, runtime: MyApp.MCPRuntime
 ```
 
 Owned Cowboy construction pins and checks Ranch 1.8.1's private constructor ABI.
-It uses real Arbor native callback modules, with actual parent links and one
+It uses real ArborMCP native callback modules, with actual parent links and one
 startup cutoff. Its bounded VM-lifetime reference authority also fences the
 retained stock lower Cowboy adapter/helper, preserves uncertain startup claims,
 and never deletes borrowed backend metadata. See [HTTP listeners](./HTTP_LISTENERS.md)
 for capacity, lifecycle and dependency migration details.
 
 Owned Bandit construction likewise pins Bandit 1.12.5 and Thousand Island 1.5.0;
-Arbor's real native callback roles register before delegated initialization,
+ArborMCP's real native callback roles register before delegated initialization,
 retain the original cutoff and native parent, and preserve admitted HTTP option
 defaults. Borrowed listeners keep stock backend constructors. See
 `HTTP_LISTENERS.md` for dependency constraints and lifetime distinctions.

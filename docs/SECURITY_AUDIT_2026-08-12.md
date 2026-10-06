@@ -2,7 +2,7 @@
 
 ## Scope and baseline
 
-This audit reviewed Arbor.MCP at baseline `eeb8583`, including both client and
+This audit reviewed ArborMCP at baseline `eeb8583`, including both client and
 server roles, every bundled transport, OAuth authorization, session/replay
 state, the native ACP implementation, and the Codex ACP adapter. Conformance
 was checked against the official [MCP specifications](https://modelcontextprotocol.io/specification)
@@ -87,9 +87,9 @@ keep application-specific authorization in handlers.
 ## Known upstream dependency advisories
 
 Cowlib `2.19.0` is the newest release as of the audit date and retains one
-medium response-header and one low cookie-encoder advisory. Arbor.MCP's Plug path
+medium response-header and one low cookie-encoder advisory. ArborMCP's Plug path
 rejects CR, LF, and NUL response-header bytes before Cowlib serialization, and
-no Arbor.MCP module imports the affected `cow_cookie:cookie/1`. Regression tests
+no ArborMCP module imports the affected `cow_cookie:cookie/1`. Regression tests
 lock both assumptions. The two exact Hex exceptions are owned by project
 maintainers, expire for review on 2026-09-12, and must be removed immediately
 when a patched Cowlib is available; every other advisory still fails CI.

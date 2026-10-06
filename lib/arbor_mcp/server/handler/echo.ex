@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Server.Handler.Echo do
   @moduledoc """
-  This module provides Arbor.MCP extensions beyond the standard MCP specification.
+  This module provides ArborMCP extensions beyond the standard MCP specification.
 
   Simple echo handler for testing purposes.
 

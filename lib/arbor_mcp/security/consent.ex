@@ -9,7 +9,7 @@ defmodule Arbor.MCP.Security.Consent do
 
   Consent handlers may express a grant's lifetime in any of the forms listed in
   `t:Arbor.MCP.ConsentHandler.expiry/0`. All of them are normalized here into the
-  monotonic-seconds value stored by Arbor.MCP's internal consent cache.
+  monotonic-seconds value stored by ArborMCP's internal consent cache.
 
   Every decision path fails closed: an expiry that cannot be interpreted, is
   already in the past, or is implausibly far in the future (the classic

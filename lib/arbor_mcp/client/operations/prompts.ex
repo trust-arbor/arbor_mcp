@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Client.Operations.Prompts do
   @moduledoc """
-  Prompt operations for Arbor.MCP client.
+  Prompt operations for ArborMCP client.
 
   This module handles all prompt-related operations including listing available
   prompts and retrieving specific prompts with their arguments.

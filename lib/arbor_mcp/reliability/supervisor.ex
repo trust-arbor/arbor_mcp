@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Reliability.Supervisor do
   @moduledoc """
-  Supervisor for reliability components in Arbor.MCP.
+  Supervisor for reliability components in ArborMCP.
 
   Manages circuit breakers, health checks, and provides
   integrated reliability features for MCP clients and servers.

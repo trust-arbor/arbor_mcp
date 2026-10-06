@@ -1,4 +1,4 @@
-# Arbor.MCP Quick Start Guide
+# ArborMCP Quick Start Guide
 
 This guide shows the MCP server, client and BEAM-local patterns in the v2
 development checkout. Runtime integration and package qualification are still

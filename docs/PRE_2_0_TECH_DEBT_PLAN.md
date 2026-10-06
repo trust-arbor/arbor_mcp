@@ -1,7 +1,7 @@
 # Pre-modern-protocol Technical Debt Plan — target `1.0.0-rc.5`
 
 **Status:** Implemented; release gates passed
-**Target release:** Arbor.MCP `1.0.0-rc.5` (completed prerequisite for additional 1.0 RCs)
+**Target release:** ArborMCP `1.0.0-rc.5` (completed prerequisite for additional 1.0 RCs)
 **Protocol:** unchanged — MCP `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
 **Companion doc:** [`MCP_2026_07_28_MIGRATION_PLAN.md`](./MCP_2026_07_28_MIGRATION_PLAN.md) — the 1.0 modern-protocol work this unblocks
 **Last updated:** 2026-08-04
@@ -362,7 +362,7 @@ deprecated shim over the canonical registry vocabulary.
 ### 5.2 Resolving the `-32002` collision — **defer to the modern migration**
 
 **Resolved in the 2026-07-28 migration Phase 0:** emission is era-aware, legacy decoding is
-preserved, and Arbor.MCP-local consent/prompt errors moved outside the JSON-RPC reserved range.
+preserved, and ArborMCP-local consent/prompt errors moved outside the JSON-RPC reserved range.
 
 Wire-visible three ways, and 386 numeric-code assertions across 77 test files sit downstream.
 2026-07-28 renumbers resource-not-found to `-32602` anyway, so the fix belongs with the version
@@ -408,7 +408,7 @@ Promoted out of Deferred. See **Track G** (§4.7).
 
 Nothing in `lib/` uses it, but removal is by definition breaking. The existing `CLAUDE.md` and
 `README.md` promise of removal in 1.1.0 would violate SemVer after stable 1.0. Keep it for all
-1.x releases, change the notices to 2.0.0 before 1.0 ships, and remove it only in Arbor.MCP 2.0.
+1.x releases, change the notices to 2.0.0 before 1.0 ships, and remove it only in ArborMCP 2.0.
 
 ### 5.8 Consolidating the five `initialize` implementations — **defer, sequence before modern support**
 

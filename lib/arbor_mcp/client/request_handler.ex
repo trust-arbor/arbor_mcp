@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Client.RequestHandler do
   @moduledoc """
-  Request/response processing for Arbor.MCP client.
+  Request/response processing for ArborMCP client.
 
   This module handles all request processing, batch operations, message parsing,
   and response handling for MCP clients.
@@ -70,7 +70,7 @@ defmodule Arbor.MCP.Client.RequestHandler do
   defp request_deadline(_meta), do: nil
 
   @doc """
-  The error for a request Arbor.MCP did not send: `cause` is `:deadline_expired`
+  The error for a request ArborMCP did not send: `cause` is `:deadline_expired`
   (the caller's deadline passed before it could go out) or `:caller_gone`.
   `Arbor.MCP.Client.delivery_outcome/1` reads it as `:not_sent`.
   """

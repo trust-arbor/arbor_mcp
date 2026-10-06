@@ -3,7 +3,7 @@ defmodule Arbor.MCP.Internal.SecurityConfig do
   Centralized security configuration management with validation.
 
   This module provides secure defaults and configuration validation
-  for the Arbor.MCP security system.
+  for the ArborMCP security system.
 
   ## Defaults are fail-closed
 

@@ -3,7 +3,7 @@ defmodule Arbor.MCP.Server.RequestState do
   Seals and verifies opaque MCP multi-round-trip request state.
 
   State is encoded as bounded JSON and authenticated with AES-256-GCM. The
-  key ring is runtime configuration; Arbor.MCP never provides or persists a
+  key ring is runtime configuration; ArborMCP never provides or persists a
   fallback secret.
   """
 

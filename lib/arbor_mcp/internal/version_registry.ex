@@ -40,7 +40,7 @@ defmodule Arbor.MCP.Internal.VersionRegistry do
   end
 
   @doc """
-  Get every protocol version implemented by Arbor.MCP, including opt-in modern revisions.
+  Get every protocol version implemented by ArborMCP, including opt-in modern revisions.
 
   Callers performing era-aware negotiation or advertising support must use
   `supported_versions/1` with the selected protocol mode.
@@ -50,7 +50,7 @@ defmodule Arbor.MCP.Internal.VersionRegistry do
     Enum.map(@modern_revisions ++ @versions, fn {version, _desc} -> version end)
   end
 
-  @doc "Returns whether Arbor.MCP recognizes a version, regardless of enablement status."
+  @doc "Returns whether ArborMCP recognizes a version, regardless of enablement status."
   @spec known?(version()) :: boolean()
   def known?(version), do: version in known_versions()
 

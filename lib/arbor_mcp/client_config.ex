@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.ClientConfig do
   @moduledoc """
-  Configuration builder for Arbor.MCP clients.
+  Configuration builder for ArborMCP clients.
 
   This module provides a fluent interface for building client configurations,
   ensuring type safety and validation at compile time.
@@ -105,7 +105,7 @@ defmodule Arbor.MCP.ClientConfig do
         }
 
   @doc """
-  Timeout configuration for Arbor.MCP operations.
+  Timeout configuration for ArborMCP operations.
 
   - `total`: Maximum time for an entire logical operation, including all retries (ms)
   - `connect`: Time to establish initial TCP/TLS connection (ms)

@@ -1,8 +1,20 @@
-# Migrating from ExMCP 1.x to Arbor 2.x
+# Migrating from ExMCP 1.x to ArborMCP and ArborACP 2.x
 
-Arbor 2 splits ExMCP into independently installable MCP, ACP and shared RPC
-packages. This guide covers the coordinated `2.0.0-rc.1` APIs at MCP
+ExMCP 1.x splits into **ArborMCP** for MCP and **ArborACP** for ACP, with
+independently installable ArborRPC and optional ArborACP adapter packages.
+This guide covers the coordinated `2.0.0-rc.1` APIs at MCP
 `eac1ddfa` and ACP/RPC/adapters `03cd82a9`.
+
+| Library name | Hex package / OTP application | Elixir module namespace |
+| --- | --- | --- |
+| ArborMCP | `arbor_mcp` / `:arbor_mcp` | `Arbor.MCP.*` |
+| ArborACP | `arbor_acp` / `:arbor_acp` | `Arbor.ACP.*` |
+| ArborACP adapters | `arbor_acp_adapters` / `:arbor_acp_adapters` | `Arbor.ACP.Adapters.*` |
+| ArborRPC | `arbor_rpc` / `:arbor_rpc` | `Arbor.RPC.*` |
+
+Library names in prose use ArborMCP, ArborACP and ArborRPC. Code uses the dotted module
+namespaces above; dependency and application configuration uses the lowercase
+package names.
 
 **RC status:** publication is pending. The dependency examples below apply once
 RC1 is published. Continuous 48-hour qualification is still incomplete: the

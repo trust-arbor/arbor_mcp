@@ -58,7 +58,7 @@ defmodule Arbor.MCP.Server.ResultNormalizer do
 
   Custom handlers that paginate tools must call this function before slicing
   a page or calculating an opaque cursor. It stringifies protocol keys,
-  excludes invalid `x-mcp-header` definitions, removes Arbor.MCP-only execution
+  excludes invalid `x-mcp-header` definitions, removes ArborMCP-only execution
   metadata, and applies the deterministic modern ordering.
 
   The normal result path applies the same operation defensively, but at that

@@ -1,6 +1,6 @@
-# Arbor.MCP Test Tagging Strategy
+# ArborMCP Test Tagging Strategy
 
-This document describes the test tagging strategy for Arbor.MCP, which enables running specific test suites and managing test execution efficiently.
+This document describes the test tagging strategy for ArborMCP, which enables running specific test suites and managing test execution efficiently.
 
 ## Overview
 

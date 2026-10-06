@@ -13,7 +13,7 @@ defmodule Arbor.MCP.Transport.HTTP do
   | Streaming | Optional standalone GET stream plus request-owned SSE | Request- and subscription-owned POST responses |
   | Resumption | `Last-Event-ID` and session DELETE | Close/reissue the owning POST; no session cursor |
 
-  Modern requests always use a fresh POST. Arbor.MCP derives
+  Modern requests always use a fresh POST. ArborMCP derives
   `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, and annotated
   `Mcp-Param-*` routing headers from the JSON-RPC body. Modern SSE is selected
   by the response to the owning POST and does not depend on `:use_sse`.
@@ -53,7 +53,7 @@ defmodule Arbor.MCP.Transport.HTTP do
         }
       )
 
-  With `:prefer_modern`, Arbor.MCP probes with `server/discover` and falls back only
+  With `:prefer_modern`, ArborMCP probes with `server/discover` and falls back only
   when a live peer provides positive legacy compatibility evidence. Use
   `:modern_only` when fallback is not allowed.
 

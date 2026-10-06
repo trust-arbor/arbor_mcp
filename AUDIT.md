@@ -1,4 +1,4 @@
-# Arbor.MCP Audit — Recommended Improvements
+# ArborMCP Audit — Recommended Improvements
 
 **Date:** 2026-07-21 · **Version audited:** 1.0.0-rc.4 (commit `3540470`) · **Scope:** architecture, code quality, security, tests, docs, tooling
 

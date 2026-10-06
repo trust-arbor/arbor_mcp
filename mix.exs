@@ -8,6 +8,7 @@ defmodule Arbor.MCP.MixProject do
   def project do
     [
       app: :arbor_mcp,
+      name: "ArborMCP",
       version: @version,
       elixir: "~> 1.17",
       build_path: System.get_env("ARBOR_V2_BUILD") || "_build",
@@ -220,7 +221,6 @@ defmodule Arbor.MCP.MixProject do
   defp docs do
     [
       main: "readme",
-      name: "Arbor.MCP",
       canonical: "https://hexdocs.pm/arbor_mcp",
       warnings_as_errors: true,
       skip_undefined_reference_warnings_on: ["CHANGELOG.md"],

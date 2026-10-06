@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Client.Middleware do
   @moduledoc """
-  Middleware pipeline for cross-cutting concerns in the Arbor.MCP client.
+  Middleware pipeline for cross-cutting concerns in the ArborMCP client.
 
   This module will provide a composable middleware system for:
   - Telemetry and metrics

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Arbor.MCP is an Elixir implementation of the Model Context Protocol (MCP), enabling AI models to communicate with external tools and resources through a standardized protocol.
+ArborMCP is an Elixir implementation of the Model Context Protocol (MCP), enabling AI models to communicate with external tools and resources through a standardized protocol.
 
 ## Version Management
 
@@ -104,7 +104,7 @@ documented test kit.
 
 ## MCP Protocol Eras
 
-Arbor.MCP 1.0 supports the legacy MCP revisions (`2024-11-05` through
+ArborMCP 1.0 supports the legacy MCP revisions (`2024-11-05` through
 `2025-11-25`) and the wire-incompatible latest stable revision (`2026-07-28`). Treat
 the era as a first-class connection property; do not scatter date comparisons
 or infer modern behavior from one method in feature code.

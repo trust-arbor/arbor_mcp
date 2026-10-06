@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Client.Operations.Resources do
   @moduledoc """
-  Resource operations for Arbor.MCP client.
+  Resource operations for ArborMCP client.
 
   This module handles all resource-related operations including listing available
   resources, reading resource content, and managing resource subscriptions.

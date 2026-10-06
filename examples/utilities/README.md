@@ -1,6 +1,6 @@
-# Arbor.MCP Utility Examples
+# ArborMCP Utility Examples
 
-This directory contains utility examples that demonstrate focused Arbor.MCP features in isolation.
+This directory contains utility examples that demonstrate focused ArborMCP features in isolation.
 
 ## Examples
 

@@ -77,7 +77,7 @@ defmodule Arbor.MCP.Protocol.Meta do
   @doc """
   Builds the metadata required on a modern request.
 
-  Caller metadata is preserved after key validation. Arbor.MCP always overwrites
+  Caller metadata is preserved after key validation. ArborMCP always overwrites
   `protocolVersion`, `clientCapabilities`, and `clientInfo` with the connection
   values supplied here. Optional W3C trace-context fields may be supplied via
   `:trace_context`.

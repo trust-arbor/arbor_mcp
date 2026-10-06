@@ -1,6 +1,6 @@
 # MCP Specification Test Coverage Matrix
 
-This document maps Arbor.MCP's local and external conformance coverage to the MCP
+This document maps ArborMCP's local and external conformance coverage to the MCP
 protocol revisions it implements. Status is current as of 2026-08-22.
 
 ## Protocol Status
@@ -49,7 +49,7 @@ TypeScript SDK v2 packages at `@modelcontextprotocol/client@2.0.0`,
 `@modelcontextprotocol/node@2.0.0`. The following CI lanes negotiate exactly
 `2026-07-28`:
 
-| Arbor.MCP role | Official SDK v2 role | Transport | CI tag |
+| ArborMCP role | Official SDK v2 role | Transport | CI tag |
 |---|---|---|---|
 | Server | Client | stdio | `interop_modern_ts_client` |
 | Client | Server | stdio | `interop_modern_ex_mcp_client` |
@@ -109,7 +109,7 @@ Test paths in this table are relative to `test/arbor_mcp/`.
 | `io.modelcontextprotocol/tasks` capability, server store, and wire shape | ✅ | `tasks/extension_test.exs`, `tasks/server_test.exs`, `tasks/store_test.exs`, `tasks/task_test.exs` |
 | Trace context and telemetry redaction/cardinality | ✅ | `protocol/trace_context_test.exs`, `operational_telemetry_test.exs` |
 | 2026 type surface and synced schema mapping | ✅ | `types/v20260728_test.exs`, `spec_sync/file_mapper_test.exs` |
-| Optional response-cache storage and reuse | ⚠️ | Required `ttlMs`/`cacheScope` validation is covered; Arbor.MCP 1.0 deliberately does not store or reuse responses |
+| Optional response-cache storage and reuse | ⚠️ | Required `ttlMs`/`cacheScope` validation is covered; ArborMCP 1.0 deliberately does not store or reuse responses |
 
 ## Legacy Feature Coverage
 
@@ -132,7 +132,7 @@ accidentally expose it on the modern wire path.
 
 ## Stable Release Qualification
 
-The implementation, test coverage, and final-candidate soak for stable Arbor.MCP
+The implementation, test coverage, and final-candidate soak for stable ArborMCP
 1.0 are complete. Ongoing qualification policy is:
 
 1. Replace the prerelease modern conformance runner with a stable 2026-aware

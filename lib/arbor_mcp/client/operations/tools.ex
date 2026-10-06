@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Client.Operations.Tools do
   @moduledoc """
-  Tool operations for Arbor.MCP client.
+  Tool operations for ArborMCP client.
 
   This module handles all tool-related operations including listing available tools,
   calling specific tools, and finding tools by name or pattern.

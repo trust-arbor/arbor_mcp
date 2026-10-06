@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Registry do
   @moduledoc """
-  Registry for managing tools, resources, and prompts in Arbor.MCP.
+  Registry for managing tools, resources, and prompts in ArborMCP.
 
   The Registry provides a centralized way to register and lookup MCP capabilities.
   It supports dynamic registration and efficient lookup operations.

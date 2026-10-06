@@ -1,4 +1,4 @@
-# Arbor.MCP Examples
+# ArborMCP Examples
 
 This directory contains MCP examples being migrated for version 2. Runtime and HTTP listener integration must pass the release checks before these examples are qualified for 2.0.
 

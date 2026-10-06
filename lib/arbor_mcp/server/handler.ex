@@ -9,10 +9,10 @@ defmodule Arbor.MCP.Server.Handler do
 
   > #### Protocol-deprecated callbacks {: .warning}
   >
-  > MCP 2026-07-28 deprecated Roots, Sampling, and protocol Logging. Arbor.MCP
+  > MCP 2026-07-28 deprecated Roots, Sampling, and protocol Logging. ArborMCP
   > retains `handle_list_roots/1`, `handle_create_message/2`, and
   > `handle_set_log_level/2` in
-  > Arbor.MCP 2.x for pinned legacy protocol revisions. For new implementations, pass
+  > ArborMCP 2.x for pinned legacy protocol revisions. For new implementations, pass
   > directories explicitly, call LLM provider APIs directly, and use stderr or
   > OpenTelemetry for logging.
 
@@ -47,7 +47,7 @@ defmodule Arbor.MCP.Server.Handler do
        Arbor.MCP.Error.missing_required_client_capability(%{"sampling" => %{}}),
        state}
 
-  Arbor.MCP preserves that protocol error, including its
+  ArborMCP preserves that protocol error, including its
   `data.requiredCapabilities` field, across every server transport.
 
   ## Basic Example
@@ -450,7 +450,7 @@ defmodule Arbor.MCP.Server.Handler do
   Handles a sampling create message request.
 
   MCP Sampling is deprecated as of 2026-07-28 and available in
-  Arbor.MCP 2.x for pinned legacy protocol revisions. New implementations should integrate directly with an LLM provider API.
+  ArborMCP 2.x for pinned legacy protocol revisions. New implementations should integrate directly with an LLM provider API.
   """
   @callback handle_create_message(params :: Arbor.MCP.Types.create_message_params(), state()) ::
               {:ok, Arbor.MCP.Types.create_message_result(), state()} | {:error, any(), state()}
@@ -459,7 +459,7 @@ defmodule Arbor.MCP.Server.Handler do
   Handles listing available roots.
 
   MCP Roots is deprecated as of 2026-07-28 and available in
-  Arbor.MCP 2.x for pinned legacy protocol revisions.
+  ArborMCP 2.x for pinned legacy protocol revisions.
   Prefer tool parameters, resource URIs, or server configuration for new
   implementations.
   """
@@ -475,8 +475,8 @@ defmodule Arbor.MCP.Server.Handler do
   @doc """
   Handles resource unsubscription.
 
-  > #### Arbor.MCP Extension {: .info}
-  > This callback handles the resources/unsubscribe method which is an Arbor.MCP extension.
+  > #### ArborMCP Extension {: .info}
+  > This callback handles the resources/unsubscribe method which is an ArborMCP extension.
   > The MCP specification does not define this method.
   """
   @callback handle_unsubscribe_resource(uri :: String.t(), state()) ::
@@ -508,7 +508,7 @@ defmodule Arbor.MCP.Server.Handler do
   > #### Protocol-deprecated feature {: .warning}
   >
   > MCP protocol Logging is deprecated as of 2026-07-28 and retained
-  > in Arbor.MCP 2.x for pinned legacy protocol revisions. `logging/setLevel` remains applicable to legacy
+  > in ArborMCP 2.x for pinned legacy protocol revisions. `logging/setLevel` remains applicable to legacy
   > connections. Prefer stderr for stdio or OpenTelemetry for new
   > observability integrations.
 

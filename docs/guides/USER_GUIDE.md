@@ -1,6 +1,6 @@
-# Arbor.MCP User Guide
+# ArborMCP User Guide
 
-A practical guide to building MCP clients and servers with Arbor.MCP. Version 2
+A practical guide to building MCP clients and servers with ArborMCP. Version 2
 is under development; these examples are being qualified with the new runtime.
 
 ## Table Of Contents
@@ -221,7 +221,7 @@ and cancellation are in the [Protocol Guide](../PROTOCOL_GUIDE.md).
 
 MCP `2026-07-28` is the latest stable revision. It is wire-incompatible with
 the legacy `2024-11-05`, `2025-03-26`, `2025-06-18`, and `2025-11-25`
-revisions, so Arbor.MCP selects an era with `protocol_mode`:
+revisions, so ArborMCP selects an era with `protocol_mode`:
 
 ```elixir
 config :arbor_mcp, protocol_mode: :prefer_modern
@@ -243,7 +243,7 @@ for negotiation, fallback, and per-connection overrides.
 ## Protocol-Deprecated Features
 
 MCP 2026-07-28 deprecates Roots, Sampling, and protocol Logging, but keeps them
-in the specification for at least twelve months. Arbor.MCP retains their callbacks,
+in the specification for at least twelve months. ArborMCP retains their callbacks,
 functions, capability declarations, legacy methods, and modern MRTR handling
 throughout the 1.x line. Existing integrations can continue to use them while
 migrating; new integrations should use these replacements:

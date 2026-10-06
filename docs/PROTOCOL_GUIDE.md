@@ -1,11 +1,11 @@
-# Arbor.MCP Protocol Guide
+# ArborMCP Protocol Guide
 
 How-tos for MCP protocol features that sit beside tools, resources, and
 prompts: elicitation, sampling, roots, ping, progress, and cancellation.
 Each section shows the handler and the client call. This is not a spec
 reprint.
 
-MCP 2026-07-28 deprecated Roots and Sampling. Arbor.MCP keeps both throughout
+MCP 2026-07-28 deprecated Roots and Sampling. ArborMCP keeps both throughout
 1.x. New work should pass directories through tool parameters or resource
 URIs, and call an LLM provider API directly.
 
@@ -213,7 +213,7 @@ end
 ## Sampling
 
 Sampling lets a server ask the **client** to call a model. MCP 2026-07-28
-deprecated it; Arbor.MCP retains `Arbor.MCP.Server.create_message/2` and
+deprecated it; ArborMCP retains `Arbor.MCP.Server.create_message/2` and
 `c:Arbor.MCP.Client.Handler.handle_create_message/2` throughout 1.x. New code
 should call the LLM provider directly.
 
@@ -270,7 +270,7 @@ The client must declare `%{"sampling" => %{}}`. The same
 ## Roots
 
 Roots are informational directory hints, not an authorization boundary.
-MCP 2026-07-28 deprecated them; Arbor.MCP retains the callbacks throughout 1.x.
+MCP 2026-07-28 deprecated them; ArborMCP retains the callbacks throughout 1.x.
 
 ```elixir
 # Client exposes roots the server may ask for
@@ -382,7 +382,7 @@ This is request cancellation, not the experimental Tasks extension
 (`Arbor.MCP.Client.cancel_task/3`).
 
 A long-running handler can check the current request between steps. The
-server MAY stop; Arbor.MCP does not automatically abort the JSON-RPC request.
+server MAY stop; ArborMCP does not automatically abort the JSON-RPC request.
 
 ```elixir
 @impl true

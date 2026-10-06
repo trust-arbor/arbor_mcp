@@ -1,4 +1,4 @@
-# Arbor.MCP Troubleshooting Guide
+# ArborMCP Troubleshooting Guide
 
 Version 2 is under development. Local `Mix.install/2` examples require
 `ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc` until the shared dependency is published.
@@ -47,7 +47,7 @@ Arbor.MCP.Client.start_link(transport: :stdio, command: ["node", "server.js"])
 
 ### Connection refused
 
-Check the URL and endpoint path. If the path is included in `url`, Arbor.MCP uses
+Check the URL and endpoint path. If the path is included in `url`, ArborMCP uses
 that as the default endpoint:
 
 ```elixir
@@ -129,7 +129,7 @@ Every MCP 2026-07-28 request must include a `_meta` object with:
 ```
 
 `io.modelcontextprotocol/clientInfo` is optional, but when present it must
-contain non-empty `name` and `version` strings. Arbor.MCP adds these fields for its
+contain non-empty `name` and `version` strings. ArborMCP adds these fields for its
 own clients; this error usually indicates a custom peer, manually constructed
 JSON-RPC message, or middleware that rewrote `params._meta`.
 
@@ -140,8 +140,8 @@ Modern HTTP requests must carry exactly one `MCP-Protocol-Version` and
 `resources/read`, and `prompts/get` also require a matching `Mcp-Name`.
 Annotated tool arguments may require `Mcp-Param-*` headers.
 
-Arbor.MCP derives and replaces these headers automatically. If the error occurs
-with an Arbor.MCP client, inspect reverse-proxy behavior: duplicate headers must
+ArborMCP derives and replaces these headers automatically. If the error occurs
+with an ArborMCP client, inspect reverse-proxy behavior: duplicate headers must
 not be collapsed by choosing one value, and routing headers must not be
 cached, normalized to a different value, or injected by middleware.
 
@@ -153,13 +153,13 @@ a non-negative integer `ttlMs` and `cacheScope` equal to `"public"` or
 `"private"`. Non-complete results must not contain cache hints. Legacy result
 maps do not gain these fields merely because the transport is HTTP.
 
-When the server uses Arbor.MCP's normal Handler or DSL dispatch, return the usual
+When the server uses ArborMCP's normal Handler or DSL dispatch, return the usual
 `{:ok, result, state}` / `ToolResult.*` shape and let
 `Arbor.MCP.Server.ResultNormalizer` add `resultType` plus conservative cache
 defaults (`ttlMs: 0`, `cacheScope: "private"`). Suspend an operation with
 `Arbor.MCP.Server.DSL.Result.input_required/2` or the documented
 `{:input_required, ...}` handler tuple. If a custom peer constructs raw wire
-results or bypasses Arbor.MCP dispatch, it must add and validate the modern fields
+results or bypasses ArborMCP dispatch, it must add and validate the modern fields
 itself. See [Modern result cache hints](CONFIGURATION.md#modern-result-cache-hints).
 
 ### GET or DELETE returns 405

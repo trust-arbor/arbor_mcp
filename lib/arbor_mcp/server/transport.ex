@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Server.Transport do
   @moduledoc """
-  Transport configuration and lifecycle management for Arbor.MCP servers.
+  Transport configuration and lifecycle management for ArborMCP servers.
 
   This module provides unified transport startup and configuration for MCP servers,
   supporting stdio, HTTP, BEAM-local, and test transports.

@@ -1,28 +1,28 @@
 # Migration Guide
 
-This guide helps you upgrade your Arbor.MCP applications between versions. Each section covers breaking changes and provides migration examples.
+This guide helps you upgrade your ArborMCP applications between versions. Each section covers breaking changes and provides migration examples.
 
 ## Table of Contents
 
 - [Upgrading from rc.5 / legacy MCP to the 1.0 dual-era release](#upgrading-from-rc5--legacy-mcp-to-the-10-dual-era-release)
 - [Deprecations toward 2.0.0](#deprecations-toward-200)
-- [Planning for Arbor.MCP 2.0](#planning-for-exmcp-20)
+- [Planning for ArborMCP 2.0](#planning-for-exmcp-20)
 - [Upgrading to v0.6.0 from v0.5.x](#upgrading-to-v060-from-v05x)
 - [Upgrading to v0.5.0 from v0.4.x](#upgrading-to-v050-from-v04x)
 - [General Migration Tips](#general-migration-tips)
 
 ## Upgrading from rc.5 / legacy MCP to the 1.0 dual-era release
 
-Arbor.MCP 1.0 includes MCP 2026-07-28 support. This is the latest stable protocol
+ArborMCP 1.0 includes MCP 2026-07-28 support. This is the latest stable protocol
 revision and is wire incompatible with the pre-2026 revisions supported by
-rc.5, but Arbor.MCP itself has not yet published a stable 1.0 API. Landing the
+rc.5, but ArborMCP itself has not yet published a stable 1.0 API. Landing the
 protocol transition in the remaining release candidates gives 1.0 one coherent
-compatibility baseline; waiting for Arbor.MCP 2.0 would make the first stable
+compatibility baseline; waiting for ArborMCP 2.0 would make the first stable
 release immediately obsolete.
 
-This does **not** waive Arbor.MCP API compatibility. Existing 1.x functions,
+This does **not** waive ArborMCP API compatibility. Existing 1.x functions,
 callbacks, struct fields, and legacy protocol behavior remain available. The
-deprecated public APIs identified below are retained until Arbor.MCP 2.0.
+deprecated public APIs identified below are retained until ArborMCP 2.0.
 
 ### What changes on the wire
 
@@ -36,7 +36,7 @@ deprecated public APIs identified below are retained until Arbor.MCP 2.0.
 | Streamable HTTP | Session IDs, optional GET SSE stream, DELETE termination | Stateless POST; request and subscription SSE stay on their owning POST response; MCP endpoint GET/DELETE return 405 |
 | HTTP routing metadata | Primarily JSON body and session headers | Body-derived `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, and annotated `Mcp-Param-*` headers |
 
-Arbor.MCP normalizes these differences behind its existing Client and Handler APIs
+ArborMCP normalizes these differences behind its existing Client and Handler APIs
 where possible. Code that constructs raw JSON-RPC, inspects wire maps, mounts
 custom HTTP middleware, or implements transport adapters must handle both
 shapes explicitly.
@@ -90,7 +90,7 @@ transition.
 ### Recommended rollout
 
 1. Upgrade both sides with `:legacy_only` and run the existing rc.5 tests. This
-   isolates Arbor.MCP API regressions from protocol-era differences.
+   isolates ArborMCP API regressions from protocol-era differences.
 2. Make servers dual-era with `:prefer_legacy`. Legacy clients keep working;
    modern canaries can now establish with `server/discover`.
 3. Move a small client cohort to `:prefer_modern`. Watch the
@@ -112,7 +112,7 @@ application operation.
 ### HTTP migration notes
 
 `use_sse: true` on an HTTP **client** controls the standalone GET stream used by
-pre-2026 Streamable HTTP. Arbor.MCP turns it off after a connection settles on the
+pre-2026 Streamable HTTP. ArborMCP turns it off after a connection settles on the
 modern era; modern request and subscription SSE responses need no flag.
 
 The older MCP 2024-11-05 two-endpoint HTTP+SSE transport (`GET /sse` plus its
@@ -175,9 +175,9 @@ Notes:
 - DSL modules get `start_link/1` and can declare resources and prompts too.
 - See [DSL_GUIDE.md](../DSL_GUIDE.md) for param types, results, and compile-time checks.
 
-## Planning for Arbor.MCP 2.0
+## Planning for ArborMCP 2.0
 
-The [Arbor.MCP 2.0 roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md) is the canonical plan for public API
+The [ArborMCP 2.0 roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md) is the canonical plan for public API
 removals, per-server runtime ownership, bounded handler scheduling, replaceable
 state/replay stores, and API consolidation. It also records which ideas are
 eligible for behavior-preserving 1.x backports.
@@ -245,7 +245,7 @@ config :arbor_mcp, :oauth2_server_config,
 
 ### 4. MCP 2025-06-18 Protocol Support
 
-v0.6.0 added support for the MCP 2025-06-18 protocol version. Current Arbor.MCP
+v0.6.0 added support for the MCP 2025-06-18 protocol version. Current ArborMCP
 versions retain MCP 2025-11-25 as the newest legacy revision and add modern
 MCP 2026-07-28 behind the protocol modes described above.
 
@@ -299,11 +299,11 @@ MyServer.start_link(transport: :http, ...)
 ```
 
 **Rationale:** The `:sse` transport identifier was renamed to `:http` before the
-1.0 release candidates. In current Arbor.MCP versions, use `transport: :http`.
+1.0 release candidates. In current ArborMCP versions, use `transport: :http`.
 Modern SSE streams are owned by their POST requests and require no server flag;
 `use_sse: true` retains the client GET stream for pre-2026 Streamable HTTP.
 The separate MCP 2024-11-05 HTTP+SSE transport remains disabled on new
-servers. Arbor.MCP 2.x retains it for pinned legacy protocol revisions with
+servers. ArborMCP 2.x retains it for pinned legacy protocol revisions with
 `legacy_http_sse: true`; the former server aliases `sse_enabled` and `use_sse`
 are rejected. The HTTP client option `use_sse: true` remains available for
 legacy Streamable HTTP GET streams.
@@ -333,7 +333,7 @@ Enhanced MCP logging protocol support:
 :ok = Arbor.MCP.Server.send_log_message(server, "info", "Operation completed", %{result: "success"})
 ```
 
-MCP 2026-07-28 deprecates the protocol Logging feature. Arbor.MCP retains the
+MCP 2026-07-28 deprecates the protocol Logging feature. ArborMCP retains the
 existing logging APIs and legacy methods throughout 1.x, but new integrations
 should write stdio diagnostics to stderr and use OpenTelemetry for structured
 observability.
@@ -341,7 +341,7 @@ observability.
 ### MCP 2026-07-28 feature deprecations
 
 Roots and Sampling are also protocol-deprecated in MCP 2026-07-28. They remain
-available in Arbor.MCP 1.x for peers that negotiate a revision containing them and
+available in ArborMCP 1.x for peers that negotiate a revision containing them and
 for modern MRTR compatibility. Migrate Roots to explicit tool parameters,
 resource URIs, or server configuration. Migrate Sampling to direct LLM provider
 API calls. These notices do not remove or change the existing 1.x public
@@ -414,4 +414,4 @@ If you encounter issues during migration:
   re-synced periodically with upstream agent releases.
 - Refresh local MCP reference docs with `mix mcp.sync_spec --version 2026-07-28`.
 
-Keep your Arbor.MCP version up to date to benefit from the latest MCP protocol features and security improvements.
+Keep your ArborMCP version up to date to benefit from the latest MCP protocol features and security improvements.

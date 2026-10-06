@@ -188,8 +188,8 @@ defmodule Arbor.MCP.Internal.Protocol do
   @doc """
   Encodes a resource unsubscribe request.
 
-  > #### Arbor.MCP Extension {: .info}
-  > This encodes the resources/unsubscribe method which is an Arbor.MCP extension.
+  > #### ArborMCP Extension {: .info}
+  > This encodes the resources/unsubscribe method which is an ArborMCP extension.
   > The MCP specification does not define this method.
   """
   @spec encode_unsubscribe_resource(String.t()) :: map()

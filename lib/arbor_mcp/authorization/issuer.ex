@@ -3,7 +3,7 @@ defmodule Arbor.MCP.Authorization.Issuer do
   Exact authorization-server issuer comparison.
 
   OAuth issuer identifiers are compared as identifiers, not as URLs to be
-  normalized. In particular, Arbor.MCP does not add or remove trailing slashes,
+  normalized. In particular, ArborMCP does not add or remove trailing slashes,
   rewrite paths, fold case, or otherwise canonicalize issuer values before
   comparing them.
   """

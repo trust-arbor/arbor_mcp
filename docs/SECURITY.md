@@ -1,4 +1,4 @@
-# Arbor.MCP Security Guide
+# ArborMCP Security Guide
 
 Security is handled at the protocol edge: HTTP clients and Plug/Phoenix servers
 use authentication, TLS, origin checks, and CORS; stdio relies on subprocess
@@ -134,7 +134,7 @@ reserved, and metadata-service addresses remain denied.
 ### OAuth credential isolation
 
 Modern pre-registered clients bind their credentials to an exact
-authorization-server issuer through `credential_issuer`. Arbor.MCP rejects
+authorization-server issuer through `credential_issuer`. ArborMCP rejects
 mismatches without normalizing trailing slashes or paths, validates discovered
 AS metadata against the issuer that led to it, and never resolves the client
 secret before that check succeeds. CIMD client IDs are the deliberate portable
@@ -151,7 +151,7 @@ independently verified.
 
 ### OAuth metadata SSRF protection
 
-Treat every URL learned during OAuth discovery as attacker-controlled. Arbor.MCP
+Treat every URL learned during OAuth discovery as attacker-controlled. ArborMCP
 routes CIMD, Protected Resource Metadata, OIDC/RFC 8414 authorization-server
 metadata, and JWKS requests through `Arbor.MCP.Authorization.MetadataFetcher`.
 The boundary requires HTTPS; forbids URI userinfo and fragments; bounds DNS,
@@ -192,7 +192,7 @@ in the configuration guide.
 `tls: %{verify: :verify_none}` is
 accepted for local development against self-signed certificates, but it makes
 the connection unauthenticated — encrypted, yet open to an active
-man-in-the-middle — and Arbor.MCP logs a warning whenever it is configured.
+man-in-the-middle — and ArborMCP logs a warning whenever it is configured.
 
 ## HTTP Server Security
 
@@ -249,7 +249,7 @@ that deliberately disables these bindings.
 
 ### MRTR request state
 
-Modern multi-round requests use an Arbor.MCP-owned, versioned AES-256-GCM envelope.
+Modern multi-round requests use an ArborMCP-owned, versioned AES-256-GCM envelope.
 The authenticated payload binds the immutable request digest, expected input
 IDs, round, protocol version, endpoint, capability fingerprint, principal, and
 tenant. It contains only bounded JSON application state—never bearer tokens or
@@ -341,7 +341,7 @@ authorization context, tenant identity, or modern request correlation.
 ## JSON Schema References and Resource Limits
 
 JSON Schema is executable input: resolving a reference can cause network I/O,
-and adversarial composition can consume excessive CPU or memory. Arbor.MCP applies
+and adversarial composition can consume excessive CPU or memory. ArborMCP applies
 the same policy to content helpers, tool argument validation, DSL output
 schemas, the deprecated tools API, and the dynamic tool registry.
 
@@ -374,7 +374,7 @@ embedding definitions in the local schema whenever practical.
 ## Trace Context and Baggage
 
 Treat `traceparent`, `tracestate`, and `baggage` in MCP `_meta` as untrusted
-wire input. Arbor.MCP validates these fields before exposing them to handlers or
+wire input. ArborMCP validates these fields before exposing them to handlers or
 putting them on outbound modern requests. Malformed values reject request
 metadata instead of being silently forwarded, and the sanitized `_meta` no
 longer contains baggage members removed by policy.
@@ -386,7 +386,7 @@ Keep the allowlist short and limited to non-secret, low-cardinality identifiers;
 baggage can cross process and service trust boundaries and may be recorded by
 observability infrastructure.
 
-Arbor.MCP only transports the validated strings. It does not install an
+ArborMCP only transports the validated strings. It does not install an
 OpenTelemetry SDK, create spans, or attach remote context to global/process
 state. Applications that choose to continue a trace must do so explicitly from
 `Arbor.MCP.Server.RequestContext.trace_context` using their own trusted telemetry
@@ -411,7 +411,7 @@ or client restart. Enforce TTL cleanup without reassigning identifiers, and use
 atomic or concurrency-controlled transitions so late updates cannot overwrite
 a terminal state.
 
-`Arbor.MCP.Tasks.Store.ETS` provides this guarantee only while its owning Arbor.MCP
+`Arbor.MCP.Tasks.Store.ETS` provides this guarantee only while its owning ArborMCP
 application remains running. It deliberately returns the same error for a
 missing task and an ownership mismatch. Use a shared, restart-persistent
 `Arbor.MCP.Tasks.Store` implementation when multiple nodes can serve task requests
@@ -503,7 +503,7 @@ supply them when validating tokens from an identity provider.
 
 ### Authorization callback issuer validation
 
-Arbor.MCP registers every library-started authorization-code transaction before
+ArborMCP registers every library-started authorization-code transaction before
 returning its authorization URL. It generates random 256-bit `state` and PKCE
 values, stores only SHA-256 digests of state and authorization codes, and
 atomically moves the transaction through pending, code-ready, and redeemed
@@ -539,7 +539,7 @@ replay protection. Always carry the transaction returned by
 
 Treat every `Mcp-Param-*` value as sensitive. These values mirror selected
 tool arguments and may contain tenant, region, account, or routing data.
-Arbor.MCP does not include them in its HTTP debug logs or telemetry, but reverse
+ArborMCP does not include them in its HTTP debug logs or telemetry, but reverse
 proxies, load balancers, APM agents, and access-log middleware may record
 request headers independently. Configure those systems to redact
 `Mcp-Param-*` with the same policy used for `Authorization` and cookies.

@@ -44,7 +44,7 @@ effects, or reports uncertain transport cleanup if a new transport cannot be rec
 These limits describe the helper's owned metadata and workers, not a hard bound on
 arbitrary user messages or callback-created work.
 
-A stdio child requires its retained typed Arbor.RPC cleanup receipt. Client/actor
+A stdio child requires its retained typed ArborRPC cleanup receipt. Client/actor
 PID death alone does not prove child reaping. Direct-child and targeted-group
 outcomes retain the RPC receipt's exact scope; arbitrary descendant trees are not
 claimed contained. A receipt that cannot be collected before the original cleanup

@@ -1,8 +1,8 @@
-# Arbor.MCP 1.x Store Adapter
+# ArborMCP 1.x Store Adapter
 
 - **Status:** Accepted — unpublished `Arbor.MCP.Internal.SessionStore` seam
   with default ETS and opt-in DETS
-- **Baseline:** Arbor.MCP 1.x after `b62eca2` (the `storage_backend:
+- **Baseline:** ArborMCP 1.x after `b62eca2` (the `storage_backend:
   :persistent_term` warning and wall-clock TTL notes)
 - **Scope:** lock the 1.x event-store contract and introduce one opt-in
   durable backend without changing default ETS behavior

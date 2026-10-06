@@ -1,6 +1,6 @@
-# Arbor.MCP 1.0.0-rc.6
+# ArborMCP 1.0.0-rc.6
 
-`1.0.0-rc.6` is the first published dual-era Arbor.MCP release candidate and the
+`1.0.0-rc.6` is the first published dual-era ArborMCP release candidate and the
 modern-preferred soak candidate for stable 1.0. It implements MCP 2026-07-28
 while retaining every legacy revision and the complete rc.5 public API.
 
@@ -53,7 +53,7 @@ Cowlib 2.19.0, the newest compatible release, retains two upstream advisories:
 - `EEF-CVE-2026-43966` (medium) is mitigated because Plug rejects CR/LF/NUL in
   response-header values and Cowboy independently terminates invalid response
   headers before serialization.
-- `EEF-CVE-2026-43969` (low) affects `cow_cookie:cookie/1`, which Arbor.MCP and its
+- `EEF-CVE-2026-43969` (low) affects `cow_cookie:cookie/1`, which ArborMCP and its
   Plug/Cowboy response path do not call.
 
 These acknowledgements are exact IDs in the Hex audit configuration. CI still

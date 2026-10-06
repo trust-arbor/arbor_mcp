@@ -1,6 +1,6 @@
-# Arbor.MCP Architecture Guide
+# ArborMCP Architecture Guide
 
-Arbor.MCP is organized around protocol boundaries: clients, servers, transports,
+ArborMCP is organized around protocol boundaries: clients, servers, transports,
 HTTP Plug integration, authorization, and internal protocol helpers. Public
 APIs stay small; cross-cutting work is kept at transport or Plug boundaries.
 
@@ -8,7 +8,7 @@ This guide describes the MCP architecture carried forward from 1.x into the
 version 2 development split. The accepted direction for
 per-server runtime ownership, bounded handler scheduling, and replaceable
 state stores is tracked separately in the
-[Arbor.MCP 2.0 roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md).
+[ArborMCP 2.0 roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md).
 
 ## Public Layers
 
@@ -111,7 +111,7 @@ semantics remain in this package.
 
 ## Protocol Era Model
 
-Arbor.MCP treats MCP 2025-11-25 and earlier as the **legacy era** and MCP
+ArborMCP treats MCP 2025-11-25 and earlier as the **legacy era** and MCP
 2026-07-28 as the **modern era**. This is an architectural boundary, not just a
 version comparison: handshake, metadata, result envelopes, notifications, and
 HTTP state all change together. A connection is established in one era and is
@@ -192,7 +192,7 @@ requests, Plug connections, filesystem-backed session stores, and telemetry.
 
 ## Resilience And Pipelines
 
-Arbor.MCP currently has three pipeline-style boundaries:
+ArborMCP currently has three pipeline-style boundaries:
 
 - HTTP server requests: normal Plug/Phoenix pipelines around `Arbor.MCP.HttpPlug`.
 - Server message processing: `Arbor.MCP.MessageProcessor.run/2` for internal
@@ -200,7 +200,7 @@ Arbor.MCP currently has three pipeline-style boundaries:
 - Transport reliability: `Arbor.MCP.Transport.ReliabilityWrapper`, client
   `retry_policy`, and `Arbor.MCP.Reliability.*` components.
 
-HTTP client connection handling is transport-owned today. If Arbor.MCP later adds a
+HTTP client connection handling is transport-owned today. If ArborMCP later adds a
 public client middleware API, it should wrap request construction and transport
 send/receive at the `Arbor.MCP.Client` boundary rather than inside HTTP-specific
 code, so stdio, HTTP, and BEAM-local can share the same cross-cutting behavior.

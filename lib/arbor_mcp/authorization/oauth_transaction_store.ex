@@ -8,7 +8,7 @@ defmodule Arbor.MCP.Authorization.OAuthTransactionStore do
   crash reports.
 
   The built-in store is intentionally node-local because the loopback callback
-  flow is owned by one Arbor.MCP client process. Applications implementing a
+  flow is owned by one ArborMCP client process. Applications implementing a
   distributed browser callback should terminate that callback on the same node
   or provide their own end-to-end authorization provider.
   """

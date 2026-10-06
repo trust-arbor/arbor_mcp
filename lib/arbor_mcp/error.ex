@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Error do
   @moduledoc """
-  Error types and utilities for Arbor.MCP.
+  Error types and utilities for ArborMCP.
 
   This module provides structured error handling with proper error types
   that can be pattern matched and provide useful debugging information.
@@ -125,7 +125,7 @@ defmodule Arbor.MCP.Error do
   Creates the MCP 2026-07-28 error returned when a server operation requires
   client capabilities that were not declared on the request.
 
-  Handlers may return this value as their normal error reason; every Arbor.MCP
+  Handlers may return this value as their normal error reason; every ArborMCP
   server dispatcher preserves its code and `requiredCapabilities` data.
   """
   @spec missing_required_client_capability(map()) :: ProtocolError.t()

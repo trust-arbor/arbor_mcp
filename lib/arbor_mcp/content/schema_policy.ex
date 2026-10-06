@@ -5,7 +5,7 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   Cross-document references are disabled by default before either validator
   sees a schema, even if the host application configured ExJsonSchema's global
   remote resolver. Local fragment references remain supported. Network
-  references can be enabled only through Arbor.MCP's allowlisted, IP-pinned resolver.
+  references can be enabled only through ArborMCP's allowlisted, IP-pinned resolver.
 
   Omitted or explicit draft 2020-12 declarations use JSV. Explicit drafts 4,
   6 and 7 use ExJsonSchema. Unknown dialects reject. Modern compiled artifacts

@@ -1,14 +1,14 @@
 defmodule Arbor.MCP do
   @moduledoc """
-  Arbor.MCP - Complete Elixir implementation of the Model Context Protocol.
+  ArborMCP - Complete Elixir implementation of the Model Context Protocol.
 
-  Arbor.MCP enables AI models to securely interact with local and remote resources through
+  ArborMCP enables AI models to securely interact with local and remote resources through
   a standardized protocol. It provides both client and server implementations with
   multiple transport options.
 
   ## Public API
 
-  Arbor.MCP provides a clean, focused public API. Only use these modules in your applications:
+  ArborMCP provides a clean, focused public API. Only use these modules in your applications:
 
   ### Core Modules
   - `Arbor.MCP` - This module (convenience functions and metadata)
@@ -93,7 +93,7 @@ defmodule Arbor.MCP do
 
   ## Protocol Versions
 
-  Arbor.MCP supports two wire-incompatible MCP eras:
+  ArborMCP supports two wire-incompatible MCP eras:
   - **2026-07-28** - Latest stable revision; stateless discovery, per-request
     context, result envelopes, MRTR, and `subscriptions/listen`
   - **2025-11-25** - Newest legacy revision; tasks, icons, and URL elicitation
@@ -117,9 +117,9 @@ defmodule Arbor.MCP do
   - **Resources** - List and read data from various sources
   - **Prompts** - Manage reusable prompt templates
   - **Sampling** - Protocol-deprecated in MCP 2026-07-28; retained throughout
-    Arbor.MCP 1.x for compatibility. Prefer direct LLM provider APIs for new code
+    ArborMCP 1.x for compatibility. Prefer direct LLM provider APIs for new code
   - **Roots** - Protocol-deprecated in MCP 2026-07-28; retained throughout
-    Arbor.MCP 1.x. Prefer tool parameters, resource URIs, or server configuration
+    ArborMCP 1.x. Prefer tool parameters, resource URIs, or server configuration
   - **Subscriptions** - Monitor resources for changes
   - **Progress** - Track long-running operations
   - **Notifications** - Real-time updates for changes
@@ -129,7 +129,7 @@ defmodule Arbor.MCP do
 
   - **stdio** - Process communication (standard MCP)
   - **Streamable HTTP** - Web-friendly transport (standard MCP)
-  - **BEAM-local MCP** - Direct Erlang process communication (Arbor.MCP extension)
+  - **BEAM-local MCP** - Direct Erlang process communication (ArborMCP extension)
 
   ## Examples
 
@@ -290,7 +290,7 @@ defmodule Arbor.MCP do
   end
 
   @doc """
-  Returns the version of the Arbor.MCP library.
+  Returns the version of the ArborMCP library.
   """
   @spec version() :: String.t()
   def version do

@@ -6,7 +6,7 @@ defmodule Arbor.MCP.Internal.VersionInfo do
   # drift from mix.exs.
 
   @doc """
-  Returns the Arbor.MCP library version string.
+  Returns the ArborMCP library version string.
   """
   @spec version() :: String.t()
   def version do

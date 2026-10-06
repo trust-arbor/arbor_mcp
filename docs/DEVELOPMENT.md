@@ -1,4 +1,4 @@
-# Arbor.MCP Development Guide
+# ArborMCP Development Guide
 
 This guide covers developing, testing, and contributing to the MCP package.
 Version 2 is under development; use the
@@ -101,7 +101,7 @@ mix test --only interop_modern_ex_mcp_http_client
 
 ## Code Quality Tools
 
-Arbor.MCP uses a comprehensive set of code quality tools to ensure maintainable, reliable code:
+ArborMCP uses a comprehensive set of code quality tools to ensure maintainable, reliable code:
 
 ### Formatter
 - **Tool**: Elixir's built-in code formatter
@@ -145,7 +145,7 @@ Arbor.MCP uses a comprehensive set of code quality tools to ensure maintainable,
 
 ## Testing Strategy
 
-Arbor.MCP uses a sophisticated test tagging strategy for efficient test execution across different scenarios.
+ArborMCP uses a sophisticated test tagging strategy for efficient test execution across different scenarios.
 
 ### Test Categories
 
@@ -298,7 +298,7 @@ end
 
 ## Test Process Cleanup
 
-Tests that start servers can sometimes leave processes running if they crash. Arbor.MCP provides several tools to clean up these stray processes:
+Tests that start servers can sometimes leave processes running if they crash. ArborMCP provides several tools to clean up these stray processes:
 
 ### Automatic Cleanup
 
@@ -435,7 +435,7 @@ replace the v2 gates. A target date never waives a failing release gate.
 
 ### Version Management
 
-Arbor.MCP follows [Semantic Versioning](https://semver.org/):
+ArborMCP follows [Semantic Versioning](https://semver.org/):
 
 - **Patch** (`0.6.1`): Bug fixes, documentation updates
 - **Minor** (`0.7.0`): New features, non-breaking changes
@@ -504,8 +504,8 @@ For critical bugs in production releases:
 
 ### Community
 - **Elixir Forum**: For general Elixir questions
-- **Arbor.MCP Community**: Growing community of contributors and users
+- **ArborMCP Community**: Growing community of contributors and users
 
 ---
 
-Thank you for contributing to Arbor.MCP! Your contributions help make MCP implementation in Elixir more robust and accessible to the community.
+Thank you for contributing to ArborMCP! Your contributions help make MCP implementation in Elixir more robust and accessible to the community.

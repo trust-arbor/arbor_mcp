@@ -12,7 +12,7 @@ defmodule Arbor.MCP.Plugs.ProtocolVersion do
   - If an unsupported version is provided, returns 400 Bad Request
   - Adds the validated version to conn.assigns[:mcp_version]
 
-  The supported list and default come from Arbor.MCP's canonical internal version
+  The supported list and default come from ArborMCP's canonical internal version
   registry, so clients, server transports, and this plug cannot drift.
 
   ## Usage

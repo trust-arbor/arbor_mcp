@@ -598,7 +598,7 @@ existing mounted Phoenix host.
 
 Owned Cowboy delegates only the qualified Ranch **1.8.1** constructor ABI,
 with an exact optional dependency requirement and a pre-effect version/export/
-child-shape check. Real Arbor listener/connection/acceptor callback identities
+child-shape check. Real ArborMCP listener/connection/acceptor callback identities
 replace the stock initial-call names while preserving actual OTP parents and
 acknowledgments. Managed owned and lower borrowed Cowboy constructors share a
 bounded atomic reference authority; raw third-party Ranch mutations do not.
@@ -613,7 +613,7 @@ clears uncertain obligations; VM restart is the host recovery boundary.
 
 Owned Bandit delegates only **Bandit 1.12.5 / Thousand Island 1.5.0** startup,
 with exact optional requirements and pre-effect version/export checks. Actual
-Arbor native supervisors, workers and acceptors register before delegated
+ArborMCP native supervisors, workers and acceptors register before delegated
 initialization under the same cutoff; stock child IDs and admitted HTTP option
 defaults remain, subject to the owned-only 1..128 acceptor and 1024 runtime
 connection-construction limits. Connection registrations use one finite original

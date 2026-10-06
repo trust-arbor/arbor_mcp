@@ -1,4 +1,4 @@
-# Arbor.MCP 1.0.0-rc.5
+# ArborMCP 1.0.0-rc.5
 
 > **Historical release note:** This document describes rc.5 as it shipped.
 > MCP 2026-07-28 was released afterward, so rc.5 became the final

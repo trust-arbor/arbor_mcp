@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Content.Validation do
   @moduledoc """
-  Content validation and transformation utilities for Arbor.MCP.
+  Content validation and transformation utilities for ArborMCP.
 
   > #### Experimental {: .warning}
   >

@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Protocol.Methods do
   @moduledoc """
-  Canonical registry of MCP methods understood by Arbor.MCP.
+  Canonical registry of MCP methods understood by ArborMCP.
 
   Every row records the method name, its inclusive version bounds, whether it
   is a request or notification, and the consumer-specific handler functions.

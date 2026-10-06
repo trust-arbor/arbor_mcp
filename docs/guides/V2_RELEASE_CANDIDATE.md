@@ -1,7 +1,8 @@
-# Testing the v2 release candidate
+# Testing the ArborMCP and ArborACP v2 release candidate
 
-`2.0.0-rc.1` is the coordinated candidate for `arbor_mcp`, `arbor_acp`,
-`arbor_acp_adapters` and `arbor_rpc`. It is intended for downstream migration and
+`2.0.0-rc.1` is the coordinated candidate for ArborMCP (`arbor_mcp`), ArborACP (`arbor_acp`),
+ArborACP adapters (`arbor_acp_adapters`) and ArborRPC (`arbor_rpc`). It is intended
+for downstream migration and
 compatibility testing. Stable `2.0.0` qualification remains in progress.
 
 Publication is being prepared; the dependency examples below become usable once
@@ -19,7 +20,7 @@ ACP applications use `{:arbor_acp, "== 2.0.0-rc.1"}`. Add
 `{:arbor_acp_adapters, "== 2.0.0-rc.1"}` when using the bundled vendor adapters.
 `arbor_rpc` is transitive; declare it directly if your code calls `Arbor.RPC.*`.
 Exact versions make a downstream RC report reproducible. Commit the resulting
-lockfile, and use normal Hex resolution without the local Arbor path overrides.
+lockfile, and use normal Hex resolution without the local package path overrides.
 
 ## Candidate scope and validation
 
@@ -64,7 +65,7 @@ The stable 48-hour qualification remains open.
 
 ## What to report
 
-Include the four Arbor versions from your lockfile, Elixir/OTP and OS versions,
+Include all four package versions from your lockfile, Elixir/OTP and OS versions,
 transport and listener choice, and a minimal reproduction. Exercise normal
 startup/shutdown, cancellation, timeouts, sustained request volume, supervision
 restarts, and application-specific tools/resources/prompts. For adapter failures,

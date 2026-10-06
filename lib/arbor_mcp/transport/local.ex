@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Transport.Local do
   @moduledoc """
-  Local BEAM transport for Arbor.MCP.
+  Local BEAM transport for ArborMCP.
 
   This module provides a high-performance transport for BEAM-based communication.
   It carries MCP-shaped JSON-RPC messages as Elixir terms between local

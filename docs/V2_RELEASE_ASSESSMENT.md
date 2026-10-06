@@ -1,4 +1,4 @@
-# Arbor MCP v2 Release Assessment
+# ArborMCP v2 Release Assessment
 
 - **Reviewed:** 2026-10-05; historical checkpoint evidence below is preserved
 - **Released baseline:** `v1.5.0`

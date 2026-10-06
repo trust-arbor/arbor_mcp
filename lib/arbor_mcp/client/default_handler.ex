@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Client.DefaultHandler do
   @moduledoc """
-  This module provides Arbor.MCP extensions beyond the standard MCP specification.
+  This module provides ArborMCP extensions beyond the standard MCP specification.
 
   Default implementation of the Arbor.MCP.Client.Handler behaviour.
 

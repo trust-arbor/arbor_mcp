@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Testing.Builders do
   @moduledoc """
-  Test data builders and generators for Arbor.MCP.
+  Test data builders and generators for ArborMCP.
 
   This module provides factories and builders for creating test data that
   conforms to MCP protocol specifications. It includes builders for all

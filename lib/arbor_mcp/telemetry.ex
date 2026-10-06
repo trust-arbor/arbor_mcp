@@ -1,8 +1,8 @@
 defmodule Arbor.MCP.Telemetry do
   @moduledoc """
-  Telemetry integration for Arbor.MCP.
+  Telemetry integration for ArborMCP.
 
-  This module defines telemetry events emitted by Arbor.MCP components and provides
+  This module defines telemetry events emitted by ArborMCP components and provides
   convenience functions for attaching handlers.
 
   ## Events
@@ -147,7 +147,7 @@ defmodule Arbor.MCP.Telemetry do
   alias Arbor.RPC.LogSummary
 
   @doc """
-  Attaches a default logger that logs all Arbor.MCP events.
+  Attaches a default logger that logs all ArborMCP events.
 
   This is useful for debugging and development.
   """

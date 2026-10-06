@@ -19,11 +19,11 @@ v2 runtime mounting contract.
 ```
 
 Use your host application's HTTP adapter. A mounted plug does not require an
-Arbor-owned Cowboy or Bandit listener. The consumer qualification fixture pins
-Phoenix 1.8.15, whose package declares Elixir `~> 1.15`; that includes Arbor.MCP's
+ArborMCP-owned Cowboy or Bandit listener. The consumer qualification fixture pins
+Phoenix 1.8.15, whose package declares Elixir `~> 1.15`; that includes ArborMCP's
 Elixir 1.17 minimum. Your application's own Phoenix, adapter and dependency
 requirements still apply. This is a qualified consumer version, not a promise
-that every Phoenix release works with every Arbor.MCP toolchain.
+that every Phoenix release works with every ArborMCP toolchain.
 
 ## Handler and runtime
 
@@ -225,7 +225,7 @@ provide their own compiled validation/default policy.
 Progress and logs travel on the originating POST's SSE response when that
 request selects SSE and supplies the required metadata. They are not delivered
 through a separate modern `EventSource` connection. Modern GET and DELETE return
-405. Use the Arbor.MCP client or an SDK that implements the selected protocol
+405. Use the ArborMCP client or an SDK that implements the selected protocol
 era for full request/response-stream handling.
 
 Anonymous cancellation sent from another POST is advisory and cannot authorize

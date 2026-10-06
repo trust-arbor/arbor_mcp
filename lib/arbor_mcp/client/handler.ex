@@ -6,16 +6,16 @@ defmodule Arbor.MCP.Client.Handler do
 
   Legacy MCP revisions support independent server-to-client JSON-RPC requests.
   MCP 2026-07-28 replaces that wire pattern with multi-round-trip result
-  envelopes (MRTR) and request-owned stream notifications. Arbor.MCP reuses the
+  envelopes (MRTR) and request-owned stream notifications. ArborMCP reuses the
   specific input callbacks when satisfying compatible MRTR input requests,
   while progress and log callbacks receive modern POST-stream events. The
   generic `handle_server_request/3` callback belongs to the legacy wire path.
 
   > #### Protocol-deprecated callbacks {: .warning}
   >
-  > MCP 2026-07-28 deprecated Roots and Sampling. Arbor.MCP retains
+  > MCP 2026-07-28 deprecated Roots and Sampling. ArborMCP retains
   > `handle_list_roots/1` and `handle_create_message/2` in
-  > Arbor.MCP 2.x for pinned legacy protocol revisions. New clients should pass directories or files explicitly and
+  > ArborMCP 2.x for pinned legacy protocol revisions. New clients should pass directories or files explicitly and
   > integrate with LLM provider APIs directly.
 
   ## Example
@@ -83,7 +83,7 @@ defmodule Arbor.MCP.Client.Handler do
   locations the client has access to.
 
   MCP Roots is deprecated as of 2026-07-28 and available in
-  Arbor.MCP 2.x for pinned legacy protocol revisions.
+  ArborMCP 2.x for pinned legacy protocol revisions.
   Prefer passing directories or files via tool parameters, resource URIs, or
   server configuration in new implementations.
 
@@ -114,7 +114,7 @@ defmodule Arbor.MCP.Client.Handler do
   inform the user before beginning sampling (human in the loop).
 
   MCP Sampling is deprecated as of 2026-07-28 and available in
-  Arbor.MCP 2.x for pinned legacy protocol revisions. New implementations should integrate directly with an LLM provider API.
+  ArborMCP 2.x for pinned legacy protocol revisions. New implementations should integrate directly with an LLM provider API.
 
   ## Parameters
 
@@ -227,7 +227,7 @@ defmodule Arbor.MCP.Client.Handler do
   callback is. For compatibility, handlers that only implement
   `handle_elicitation_create/3` continue to receive URL-mode requests through
   that callback; its second argument is then a map containing `"mode"`,
-  `"url"`, and `"elicitationId"`, and Arbor.MCP logs a once-per-handler warning.
+  `"url"`, and `"elicitationId"`, and ArborMCP logs a once-per-handler warning.
 
   ## Parameters
 

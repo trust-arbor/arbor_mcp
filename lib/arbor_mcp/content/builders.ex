@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.Content.Builders do
   @moduledoc """
-  Smart constructors and builder patterns for Arbor.MCP content creation.
+  Smart constructors and builder patterns for ArborMCP content creation.
 
   This module provides an intuitive, chainable API for building complex content
   structures with validation, type safety, and helpful defaults.

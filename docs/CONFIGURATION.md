@@ -1,4 +1,4 @@
-# Arbor.MCP Configuration Guide
+# ArborMCP Configuration Guide
 
 This guide covers MCP configuration in the v2 development checkout. Runtime
 integration and package qualification are still in progress.
@@ -126,7 +126,7 @@ Client mode options:
   automatic retry strategy.
 - `:era_cache_key` supplies a stable identity for a custom transport that
   cannot be identified from its connected state. Never include raw secrets;
-  Arbor.MCP hashes the configured identity.
+  ArborMCP hashes the configured identity.
 
 Fallback is deliberately narrow. A modern timeout, transport failure,
 recognized modern error, authentication error, or cached-modern probe failure
@@ -145,7 +145,7 @@ For legacy Streamable HTTP, `initialize` negotiates the version from
 `params.protocolVersion`; it does not require an `MCP-Protocol-Version` HTTP
 header. When `protocol_version_required: true`, every subsequent request must
 carry exactly one header matching the version stored for that server-issued
-session. Arbor.MCP always rejects an explicit malformed, unsupported, duplicate, or
+session. ArborMCP always rejects an explicit malformed, unsupported, duplicate, or
 session-mismatched header, even when missing-header enforcement is disabled.
 Modern requests always carry matching HTTP and `_meta` protocol versions.
 
@@ -210,12 +210,12 @@ document at that URL must repeat the same `client_id` byte-for-byte and include
 non-empty `client_name` and `redirect_uris`. Use
 `Arbor.MCP.Authorization.ClientIdMetadata.build_metadata/1` and `validate/2` before
 publishing it. For `private_key_jwt`, publish `jwks_uri` or inline `jwks` and
-configure the matching private key locally; Arbor.MCP will not downgrade to a
+configure the matching private key locally; ArborMCP will not downgrade to a
 weaker token authentication method if assertion construction fails.
 
 DCR requires an explicit `application_type: :native | :web` and stable local
 `redirect_port`. Registration rejections retain the authorization server's
-error response so redirect-policy failures are actionable. Arbor.MCP does not
+error response so redirect-policy failures are actionable. ArborMCP does not
 silently change the application type or redirect URI.
 
 ### OAuth metadata network policy
@@ -270,7 +270,7 @@ provider redirect.
 ### Issuer-bound credential persistence
 
 For MCP `2026-07-28`, pre-registered credentials require
-`credential_issuer`. Arbor.MCP compares this value byte-for-byte with the issuer in
+`credential_issuer`. ArborMCP compares this value byte-for-byte with the issuer in
 the discovered authorization-server metadata before resolving or using the
 secret. A trailing slash, path change, or any other textual difference is a
 mismatch; issuer identifiers are not URL-normalized. During 1.x, only the
@@ -295,13 +295,13 @@ auth: %{
 `credential_context` is a stable, non-secret local index (the resource URL is
 the default). The adapter still stores each registration under the exact
 versioned issuer + client-ID key supplied to it. On an authorization-server
-change, the new issuer partition misses and Arbor.MCP performs registration again;
+change, the new issuer partition misses and ArborMCP performs registration again;
 an adapter returning a credential from another issuer is rejected.
 
 Tokens are partitioned by issuer, client ID, resource and/or audience,
 subject or client identity, and normalized granted scopes. Access and refresh
 tokens never appear in a storage key, and the credential structs redact secret
-fields from `Inspect`. Arbor.MCP intentionally provides no plaintext file adapter.
+fields from `Inspect`. ArborMCP intentionally provides no plaintext file adapter.
 
 Old records without an issuer fail with
 `{:credential_migration_required, :registration | :token}`. After verifying
@@ -312,7 +312,7 @@ issuer as an implicit migration value.
 
 ### OAuth transaction retention
 
-Every authorization-code flow started by Arbor.MCP uses a random 256-bit `state`
+Every authorization-code flow started by ArborMCP uses a random 256-bit `state`
 and PKCE verifier. The returned transaction is registered in a supervised,
 node-local single-use store before the authorization URL is returned. Callback
 validation consumes state atomically, and code exchange atomically binds the
@@ -353,7 +353,7 @@ Arbor.MCP.Authorization.exchange_code_for_token(%{
 })
 ```
 
-Arbor.MCP does not accept caller-supplied state or reserved OAuth fields in
+ArborMCP does not accept caller-supplied state or reserved OAuth fields in
 `additional_params`. If a token request has an ambiguous outcome, its code
 remains redeemed; restart authorization instead of retrying the code.
 
@@ -364,7 +364,7 @@ and elicitation `requestedSchema` use the **JSON Schema 2020-12** dialect
 (`https://json-schema.org/draft/2020-12/schema`). `$schema` draft identifiers
 are metadata; bundled 2020-12 meta-schemas do not require a network request.
 
-Every JSON Schema compiled or validated by Arbor.MCP passes through one bounded,
+Every JSON Schema compiled or validated by ArborMCP passes through one bounded,
 fail-closed policy. By default, only local fragment references (`#` and
 `#/...`) are accepted. HTTP(S), file, and relative cross-document `$ref` values
 are rejected before ExJsonSchema can resolve them, even if the host application
@@ -434,7 +434,7 @@ containing even one loopback, link-local, private, reserved, or documentation
 address is rejected. URI userinfo, compressed responses, and proxies are
 rejected. No cookies, authorization headers, or other credentials are sent.
 
-Fetched documents exist only inside one compilation; Arbor.MCP does not persist or
+Fetched documents exist only inside one compilation; ArborMCP does not persist or
 globally share a remote-schema cache. This is stronger than partitioning a
 persistent cache and prevents one tenant or principal from warming another's
 schema state. `trust_partition` is hashed in audit logs and establishes the
@@ -447,7 +447,7 @@ the boundary safe.
 
 ## OpenTelemetry Metadata Policy
 
-Arbor.MCP can carry W3C trace-context values in the MCP `_meta` object without
+ArborMCP can carry W3C trace-context values in the MCP `_meta` object without
 taking a dependency on an OpenTelemetry SDK or mutating process-global tracing
 state. `traceparent` and `tracestate` are validated at every client and server
 metadata boundary. Baggage is validated and bounded before filtering, then only
@@ -465,7 +465,7 @@ config :arbor_mcp, :otel_meta,
 The fixed `tracestate` limits are 512 bytes and 32 unique members. Configured
 byte limits cannot exceed 65,536 bytes, and baggage member/allowlist counts
 cannot exceed 64. Invalid configuration or malformed metadata fails closed.
-Arbor.MCP currently accepts the W3C version `00` `traceparent` wire format; values
+ArborMCP currently accepts the W3C version `00` `traceparent` wire format; values
 must use lowercase hexadecimal and non-zero trace and parent identifiers.
 
 Attach a connection-level context to all modern client requests:
@@ -517,7 +517,7 @@ task handle before returning it to application code.
 
 A server must advertise the same extension from `server/discover` only when it
 has configured an appropriate task store. The bundled node-local store is
-enabled in a Handler with `tasks: :store`; Arbor.MCP then adds the extension to
+enabled in a Handler with `tasks: :store`; ArborMCP then adds the extension to
 discovery automatically:
 
 ```elixir
@@ -763,7 +763,7 @@ Internal destinations require an exact `:allowed_private_hosts` entry;
 link-local, reserved, and mixed public/private answers remain forbidden.
 
 `use_sse` controls the legacy standalone GET stream. It may remain `true` on a
-dual-era client: once `server/discover` succeeds, Arbor.MCP disables that stream,
+dual-era client: once `server/discover` succeeds, ArborMCP disables that stream,
 clears legacy session state, and uses JSON or POST-owned SSE for each modern
 request. `subscriptions/listen` opens its own POST response stream.
 
@@ -775,8 +775,8 @@ yourself, so CAs installed on the host, such as a private or corporate CA,
 are trusted automatically.
 
 Loading that store can stall: on macOS it runs `/usr/bin/security`, which can
-hang on the keychain, for example while the session is locked. Arbor.MCP loads it
-with a deadline. If the load stalls, fails, or finds no certificates, Arbor.MCP
+hang on the keychain, for example while the session is locked. ArborMCP loads it
+with a deadline. If the load stalls, fails, or finds no certificates, ArborMCP
 **fails closed** by default: HTTPS requests return
 `{:error, {:trust_store_unavailable, reason}}` (OAuth requests return their
 usual request error), an error is logged, and a
@@ -1039,7 +1039,7 @@ Input callbacks run sequentially in deterministic request-ID order by default.
 A stateless client handler can explicitly opt into bounded parallel dispatch by
 implementing `mrtr_input_concurrency/0` and returning an integer from 2 through
 16. Every parallel callback receives the same handler state and must return it
-unchanged; Arbor.MCP rejects a parallel callback that attempts to update the state.
+unchanged; ArborMCP rejects a parallel callback that attempts to update the state.
 
 For resumptions that may cause side effects, enable atomic single-use
 enforcement:
@@ -1153,7 +1153,7 @@ end
 :ok = Arbor.MCP.Server.notify_tools_changed(server)
 ```
 
-After reconnect, subscriptions are opened with fresh JSON-RPC IDs. Arbor.MCP
+After reconnect, subscriptions are opened with fresh JSON-RPC IDs. ArborMCP
 refetches each affected list, resource, and task, then emits
 `{:ex_mcp_subscription_resync, subscription, {:complete, snapshot}}` for a
 generic subscription or `{:ex_mcp_resource_resync, subscription, snapshot}`
@@ -1363,7 +1363,7 @@ or unsupported annotations cause the server to omit that tool from a modern
 list response. On a `-32020` header mismatch the client refreshes `tools/list`
 and retries the tool call exactly once inside the original timeout.
 
-The Arbor.MCP DSL returns its complete tool set and therefore needs no cursor
+The ArborMCP DSL returns its complete tool set and therefore needs no cursor
 coordination. A raw handler that paginates a dynamic tool set must filter and
 sort the full source collection before it slices the requested page:
 
@@ -1387,11 +1387,11 @@ tool dispatch. Custom raw `Mcp-Method`, `Mcp-Name`, `Mcp-Session-Id`,
 `:headers` option are removed and replaced by protocol-derived values on
 modern requests.
 
-Treat all `Mcp-Param-*` values as sensitive routing data. Arbor.MCP does not attach
+Treat all `Mcp-Param-*` values as sensitive routing data. ArborMCP does not attach
 raw request headers to its Plug/client debug logs or telemetry. Configure
 reverse proxies, load balancers, APM agents, and access-log middleware to
 redact `Mcp-Param-*` just as they redact `Authorization` and cookies; those
-systems observe headers before Arbor.MCP can sanitize their logs.
+systems observe headers before ArborMCP can sanitize their logs.
 
 At a reverse proxy or load balancer, preserve individual request-header field
 instances through the upstream hop or reject duplicates at the edge. Do not
@@ -1413,7 +1413,7 @@ Envoy, ingress, or managed load-balancer configuration used in production.
 
 MCP 2026-07-28 requires `ttlMs` and `cacheScope` on complete results from
 `server/discover`, `tools/list`, `prompts/list`, `resources/list`,
-`resources/templates/list`, and `resources/read`. Arbor.MCP supplies conservative
+`resources/templates/list`, and `resources/read`. ArborMCP supplies conservative
 defaults when a handler omits them:
 
 ```elixir
@@ -1429,11 +1429,11 @@ wire keys `ttlMs` / `cacheScope` to override those defaults. TTL must be a
 non-negative integer and scope must be `:public`, `:private`, `"public"`, or
 `"private"`. Only use `public` when the result is safe to share across users,
 including on authenticated endpoints. Each paginated response page carries
-its own hints, and Arbor.MCP removes cache hints from `input_required` results.
+its own hints, and ArborMCP removes cache hints from `input_required` results.
 
 Modern clients reject missing or invalid required hints. With the default
 `:struct` response format they are available as `response.ttlMs` and
-`response.cacheScope`; `format: :map` preserves the wire keys. Arbor.MCP currently
+`response.cacheScope`; `format: :map` preserves the wire keys. ArborMCP currently
 parses and validates these hints but does not store or reuse responses. This
 is the deliberate 1.0 scope: a client cache would add authorization
 partitioning, invalidation races, memory bounds, and MRTR exclusion to the
@@ -1526,10 +1526,10 @@ custom telemetry handlers and exporters.
 This section configures application/runtime logging. The MCP wire-level Logging
 feature (`logging/setLevel`, per-request log levels, and
 `notifications/message`) is deprecated as of MCP 2026-07-28 but remains
-available throughout Arbor.MCP 1.x. New observability integrations should use
+available throughout ArborMCP 1.x. New observability integrations should use
 stderr for stdio diagnostics or OpenTelemetry for structured telemetry.
 
-For stdio servers, stdout must contain only JSON-RPC messages. Arbor.MCP 2.0
+For stdio servers, stdout must contain only JSON-RPC messages. ArborMCP 2.0
 preserves the host's Logger levels, handlers, filters and application settings
 during application startup and stdio connection. Configure every host log sink
 before application startup so diagnostics cannot reach the protocol stream.

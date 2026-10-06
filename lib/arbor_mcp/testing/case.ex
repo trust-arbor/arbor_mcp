@@ -1,6 +1,6 @@
 defmodule Arbor.MCP.TestCase do
   @moduledoc """
-  Custom test case for Arbor.MCP with MCP-specific testing utilities.
+  Custom test case for ArborMCP with MCP-specific testing utilities.
 
   This module provides a comprehensive testing framework specifically designed
   for MCP (Model Context Protocol) applications, including:

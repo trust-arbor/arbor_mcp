@@ -1,9 +1,9 @@
-# Arbor.MCP → MCP 2026-07-28 Migration Plan
+# ArborMCP → MCP 2026-07-28 Migration Plan
 
 **Status:** Code migration and all 1.0 release gates complete — Phases 0–10 implemented; the rc.8 final-candidate soak and mixed-version rollback drill completed without a release-blocking regression
-**Target release:** Arbor.MCP `1.0.0`, through additional release candidates after `rc.5`
+**Target release:** ArborMCP `1.0.0`, through additional release candidates after `rc.5`
 **Spec revision:** [2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28), latest stable ([changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog))
-**Current Arbor.MCP:** `1.0.0` release-preparation tree, wire- and API-compatible with rc.8 plus an internal OAuth callback parser fix; defaults to modern-preferred MCP `2026-07-28` with fallback to `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
+**Current ArborMCP:** `1.0.0` release-preparation tree, wire- and API-compatible with rc.8 plus an internal OAuth callback parser fix; defaults to modern-preferred MCP `2026-07-28` with fallback to `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
 **Prerequisite:** [`PRE_2_0_TECH_DEBT_PLAN.md`](./PRE_2_0_TECH_DEBT_PLAN.md) — behavior-preserving cleanup completed in `1.0.0-rc.5` (historical filename retained)
 **Author:** living implementation plan
 **Last updated:** 2026-08-22
@@ -32,19 +32,19 @@ feature addition on top of `2025-11-25`; it is a re-founding of the protocol on 
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Compatibility | **Dual-era.** Keep `2024-11-05` … `2025-11-25` working; add `2026-07-28`. | Arbor.MCP already supports every prior revision and users depend on it. The spec explicitly defines a dual-era model and a compatibility matrix. |
+| Compatibility | **Dual-era.** Keep `2024-11-05` … `2025-11-25` working; add `2026-07-28`. | ArborMCP already supports every prior revision and users depend on it. The spec explicitly defines a dual-era model and a compatibility matrix. |
 | Default version | **Prefer `2026-07-28`, fall back by probe.** | There is no handshake to negotiate in. Clients probe with `server/discover`; servers branch on the shape of the first request. |
 | Scope | **Required modern core, applicable authorization requirements, and the Tasks extension.** Client response storage/reuse is deferred to `1.1`; required cache metadata still ships in 1.0. | The complete Tasks implementation passed qualification without extending the RC train. Response storage remains an optional optimization and no-cache is the safe conforming fallback. |
-| Release | **`1.0.0` after additional RCs.** Do not publish stable `1.0.0` on the legacy-only architecture. | Arbor.MCP has not made a stable 1.x API promise yet. Shipping a legacy-only 1.0 would make the first stable release obsolete on arrival and create an immediate 2.0 migration cliff. |
+| Release | **`1.0.0` after additional RCs.** Do not publish stable `1.0.0` on the legacy-only architecture. | ArborMCP has not made a stable 1.x API promise yet. Shipping a legacy-only 1.0 would make the first stable release obsolete on arrival and create an immediate 2.0 migration cliff. |
 | Public API removals | **None in this migration.** Keep `Arbor.MCP.Server.Tools` and other deprecated public surface throughout 1.x; remove it in 2.0. | The protocol revision does not require unrelated library API removals. The current “removed in 1.1” promise is incompatible with SemVer and must be corrected before 1.0. |
 | Deprecated-but-live features | **Keep legacy support** for Roots / Sampling / Logging / HTTP+SSE. | The spec deprecates them with a ≥12-month window. They remain available on applicable legacy paths; modern uses MRTR/per-request logging and does not restore removed methods. |
 
 ### Why this belongs in 1.0 rather than 2.0
 
-MCP's protocol version and Arbor.MCP's package version are different compatibility boundaries.
-Supporting a new, breaking MCP wire revision does **not** itself require an Arbor.MCP major release
+MCP's protocol version and ArborMCP's package version are different compatibility boundaries.
+Supporting a new, breaking MCP wire revision does **not** itself require an ArborMCP major release
 when the library remains dual-era and preserves its public Elixir API. Conversely, removing a
-public Arbor.MCP module would require a major release even if the MCP wire protocol did not change.
+public ArborMCP module would require a major release even if the MCP wire protocol did not change.
 
 Release candidates exist to find exactly this kind of pre-stable design change. `rc.5` is tagged,
 but no stable `1.0.0` contract exists yet. The least disruptive long-term sequence is therefore:
@@ -55,8 +55,8 @@ but no stable `1.0.0` contract exists yet. The least disruptive long-term sequen
    completed before `rc.6`, so that candidate can start directly as modern-preferred while
    retaining explicit opt-in/rollback modes.
 3. Release `1.0.0` only after modern-preferred + automatic legacy fallback has soaked in an RC.
-4. Preserve all four legacy revisions and deprecated Arbor.MCP public APIs for the entire 1.x line.
-5. Reserve Arbor.MCP `2.0.0` for deliberate public-API removals and any eventual legacy-protocol
+4. Preserve all four legacy revisions and deprecated ArborMCP public APIs for the entire 1.x line.
+5. Reserve ArborMCP `2.0.0` for deliberate public-API removals and any eventual legacy-protocol
    removal, with separate notice and migration guidance.
 
 Use an explicit mode instead of a boolean flag, with per-client/per-server options overriding
@@ -224,7 +224,7 @@ Cancellation via `notifications/cancelled`. Backward-compat probe = `server/disc
 
 ---
 
-## 3. Target architecture for Arbor.MCP
+## 3. Target architecture for ArborMCP
 
 ### 3.1 The "era" concept
 
@@ -295,7 +295,7 @@ Preserve that property.
 
 This is the most valuable observation in this plan. The 2026-07-28 `inputRequests` values are
 *exactly* `ElicitRequest` / `CreateMessageRequest` / `ListRootsRequest` — the same payloads
-Arbor.MCP already handles as server-initiated requests. So:
+ArborMCP already handles as server-initiated requests. So:
 
 - `Arbor.MCP.Client.Handler` keeps its `handle_list_roots/1`, `handle_create_message/2`,
   `handle_elicitation_create/3` callbacks **unchanged**.
@@ -332,7 +332,7 @@ serialises through a safe codec + AEAD-seals into the opaque wire string, and un
 (binding principal/tenant, TTL, expected input IDs/round, and a digest of the canonical immutable
 original request, per the spec's replay guidance). Handlers receive the verified value back via `RequestContext`. Default key source:
 runtime application config. Both return forms require a key ring: when the handler omits
-application `request_state`, Arbor.MCP still emits a minimal sealed envelope containing the expected
+application `request_state`, ArborMCP still emits a minimal sealed envelope containing the expected
 input IDs, round and request binding. Validate a configured ring at boot when MRTR is declared;
 otherwise fail the first `:input_required` return before emitting a response with an actionable
 configuration error.
@@ -430,7 +430,7 @@ that never sees `initialize`. `server/discover` should be implemented **once** i
 
 `lib/arbor_mcp/protocol/error_codes.ex` now distinguishes emission from compatibility decoding.
 Resource-not-found emits `-32002` for legacy and `-32602` for modern, while unknown-era client
-classification accepts either. Arbor.MCP-local consent and prompt errors use `-31002` and `-31003`,
+classification accepts either. ArborMCP-local consent and prompt errors use `-31002` and `-31003`,
 outside `-32768..-32000`. The historical `-32042` constructor is legacy-only and deprecated;
 selecting it for a modern version returns `{:error, :retired_error_code}`.
 
@@ -677,7 +677,7 @@ changes are covered by tests.
       RC soak. A later transport-lifecycle fix may require that soak to restart.
 
 **Exit:** a modern client can call `server/discover` + `tools/list` + `tools/call` against a
-modern Arbor.MCP server over stdio, with no `initialize`.
+modern ArborMCP server over stdio, with no `initialize`.
 
 ---
 
@@ -759,7 +759,7 @@ modern Arbor.MCP server over stdio, with no `initialize`.
       request_state, state}` handler returns, honoured on `tools/call`, `resources/read`,
       `prompts/get` **only** (spec forbids elsewhere).
 - [x] Always generate a sealed library envelope, even when the handler supplies no application
-      state, so a fresh-ID/cross-node retry can validate expected input IDs and round. Arbor.MCP does
+      state, so a fresh-ID/cross-node retry can validate expected input IDs and round. ArborMCP does
       not use the spec's optional no-`requestState` form for server-produced MRTR results.
 - [x] Retry dispatch: parse `inputResponses`, verify/decode `requestState`, validate response IDs,
       and populate `RequestContext.input_responses` / `.request_state` before re-invoking the
@@ -838,7 +838,7 @@ two-node mixed-snapshot rotation test described above.
       stream with telemetry instead of allowing unbounded memory growth.
 - [x] Monitor transport owners and remove registrations on disconnect/cancellation. Generate
       unguessable subscription IDs and re-check authorization when establishing a replacement
-      stream after reconnect. **The wire ID remains the spec-required client request ID; Arbor.MCP
+      stream after reconnect. **The wire ID remains the spec-required client request ID; ArborMCP
       separately generates an unguessable internal registry token.**
 - [x] Define long-lived authorization behavior: bind the listener to the authenticated principal,
       close it on credential revocation/expiry when observable, and set a configurable maximum
@@ -915,13 +915,13 @@ deployment configuration and the per-node quota boundary are documented.
       case variants before dispatch. Add reverse-proxy integration tests so header normalization
       or buffering by common proxies cannot silently change protocol behavior. **Complete:** in
       addition to direct validation, literal HTTP requests now cross a front Cowboy connection,
-      a normalizing/buffering forwarding hop, and the Arbor.MCP Cowboy endpoint. The matrix verifies
+      a normalizing/buffering forwarding hop, and the ArborMCP Cowboy endpoint. The matrix verifies
       valid streaming headers, duplicate/case-conflicting required fields, oversized names and
       values, obsolete folding/injection, and no handler dispatch on rejection. Production-proxy
       preservation/rejection and buffering requirements are documented explicitly.
 - [x] Treat every `Mcp-Param-*` value as potentially sensitive. Redact it from Plug/client debug
       logs, telemetry and proxy examples just like `Authorization`; document that operators must
-      configure upstream access-log redaction too. **Arbor.MCP does not attach raw request headers to
+      configure upstream access-log redaction too. **ArborMCP does not attach raw request headers to
       its HTTP logs or telemetry; server regression coverage pins that invariant, and the security
       and configuration guides call out proxy/load-balancer/APM redaction explicitly.**
 
@@ -1078,7 +1078,7 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       hosted JWKS metadata. Configured CIMD keys produce RFC 7523 client assertions for both auth
       code and client-credentials token requests, with no downgrade when signing fails.**
 - [x] Add explicit client configuration: `{:pre_registered, client_id, secret_ref}`,
-      `{:cimd, https_url}`, or `:auto`, plus `application_type: :native | :web`. Arbor.MCP may provide
+      `{:cimd, https_url}`, or `:auto`, plus `application_type: :native | :web`. ArborMCP may provide
       a Plug/helper to serve a CIMD but must not imply that a CLI can magically host HTTPS.
       **`Arbor.MCP.Authorization.RegistrationPolicy` implements these strategies. Secret references
       may be resolved from an environment variable or zero-arity callback at use time; resolver
@@ -1188,7 +1188,7 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       logging). **All representative `Arbor.MCP.Server`, `Arbor.MCP.Client`, request-context and Handler
       behaviour functions/callbacks remain exported throughout 1.x. Their compiled docs now
       identify the MCP 2026-07-28 protocol deprecation and the feature-specific migration path;
-      they deliberately do not carry Elixir `@deprecated` metadata because Arbor.MCP has not
+      they deliberately do not carry Elixir `@deprecated` metadata because ArborMCP has not
       scheduled these public APIs for removal during 1.x. The README, user guide, configuration
       guide and migration guide distinguish retained wire compatibility from recommended new
       designs. `DeprecationCompatibilityTest` locks the exports, callback surface, migration
@@ -1208,7 +1208,7 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       regression tests lock the reader-critical claims. `mix docs`, the 5-test documentation
       suite, and 107 focused era, request-context, HTTP Plug, request-stream, subscription and
       header tests pass.**
-- [x] `CHANGELOG.md` separates the rc.6 MCP wire changes from Arbor.MCP public-API compatibility
+- [x] `CHANGELOG.md` separates the rc.6 MCP wire changes from ArborMCP public-API compatibility
       and preserves the intended stable 1.0 boundary. The rc.6 package and application default
       started the first modern-preferred soak. The post-rc.6 SSE fix now requires another RC
       and a fresh soak while retaining the same protocol-mode default.
@@ -1305,7 +1305,7 @@ Things downstream users will notice.
 | `Arbor.MCP.Client.subscribe_resource/2` | source-compatible | Re-implemented over `subscriptions/listen` |
 | Server handler return tuples | additive | New `{:input_required, …}` |
 | Server handlers receiving `_meta` in tool args | compatible transition | Introduce context-aware callback variants or an accessor additively; keep existing callback arities and `_meta` merging throughout 1.x |
-| `Arbor.MCP.Server.Tools` | deprecated, still available | Correct removal target to Arbor.MCP 2.0; migration to `Arbor.MCP.Server.DSL` remains recommended |
+| `Arbor.MCP.Server.Tools` | deprecated, still available | Correct removal target to ArborMCP 2.0; migration to `Arbor.MCP.Server.DSL` remains recommended |
 | DSL `execution` instruction | legacy-only in modern mode | Keep the public DSL instruction for 1.x; it affects only the `2025-11-25` wire path |
 | Tasks API (`tasks/list`, `tasks/result`) | legacy-only in modern mode | Keep public helpers for legacy; add `tasks/get`/`update`/`cancel` extension helpers without removing old functions in 1.x |
 | `Arbor.MCP.SessionManager` | modern: unused | Still exported for legacy; document as legacy-only |
@@ -1357,7 +1357,7 @@ Things downstream users will notice.
 | # | Item | Notes |
 |---|---|---|
 | R1 | **Ecosystem timing.** Most servers and clients in the wild are legacy. | Dual-era is the hedge. Ship modern behind the explicit protocol mode first; flip the default only after pinned official-SDK interop passes. |
-| R2 | **Health checks lose `ping`.** Arbor.MCP's 30s idle ping is load-bearing for auto-reconnect. | Use an uncached `server/discover` as the modern liveness operation and preserve `Client.ping/2` as a compatibility wrapper. |
+| R2 | **Health checks lose `ping`.** ArborMCP's 30s idle ping is load-bearing for auto-reconnect. | Use an uncached `server/discover` as the modern liveness operation and preserve `Client.ping/2` as a compatibility wrapper. |
 | R3 | **`requestState` key management.** MRTR security depends on an AEAD key shared by every node that can resume a request. | Version the envelope, support key IDs/rotation, bind principal + request digest + expiry, and fail clearly when a configured MRTR flow cannot decrypt state. |
 | R4 | **HTTP plug complexity.** `do_dispatch/4` already has 14 clauses (L153-262); dual-era adds more. | Consider splitting modern vs legacy into separate plug modules behind a router rather than growing `do_dispatch/4`. |
 | R5 | **Stateless servers break existing user handlers** that relied on per-connection state. | The spec's answer is explicit server-minted handles as tool arguments (§"Stateful Tools"). Needs a documented migration recipe with an example. |
