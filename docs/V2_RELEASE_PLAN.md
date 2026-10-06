@@ -175,6 +175,49 @@ continuous-consumer preparations are source-only. Fresh final builds, physical
 consumer/short-mode proof and the unbroken 48-hour final-RC run remain required.
 Preparation is not execution or release qualification.
 
+## Latest Client and DETS qualification checkpoint — `e16c0da`
+
+This section supersedes the active status of the dated checkpoint above. Its
+historical source selections, counts and failed receipts remain unchanged.
+
+The Client followup keeps the native legacy SSE GET loop available while owned,
+bounded asynchronous senders wait for established request POSTs. Single and
+batch requests retain their original cutoff through sender exit and final SSE
+settlement. Cancellation and actual worker cleanup retain separate obligations.
+The DETS fixture creates persisted setup through a separately owned finite
+setup manager, confirms its cleanup, then tests the original 60 ms storage
+budget and genuine fail-stop behavior.
+
+The selected Client source passes 163 combined cases on both current and
+minimum toolchains. Forced development compilation with warnings as errors,
+strict Credo, normal Dialyzer and documentation with warnings as errors pass
+both. The corrected DETS module passes 16 cases on minimum, current and newest;
+this is a separate selection, not an aggregate release test count. Forced test
+compilation passes both, and the unfiltered warning comparison adds no warnings
+or filters. The full minimum performance/stress command passes 5,573 tests,
+20 doctests and 34 properties with zero failures. Fresh complete CI for this
+checkpoint remains pending. The preceding `be1ae4a` CI passed 15 of 16 jobs, including stress
+and both previously failed minimum unit/archive jobs. Its sole newest failure
+was state inspection after a short-budget setup storage error and deliberate
+manager fail-stop; that failed receipt remains preserved.
+
+Four independently compiled package API captures at MCP `9d18d9b` and ACP
+`47c9e8a` were actual historical passes, not source-only preparation. They do
+not qualify this Client checkpoint, which adds three internal deadline-aware
+spawn/watch arities. Copied compiler metadata later invalidated the current
+live build cache; the original capture verdict remains evidence for its
+original source. Fresh source-only dependency/build domains and a new
+four-package compiled API and semantic comparison are required. Copying or
+restoring old build metadata does not establish a fresh graph.
+
+The selected Client source passes three actual authenticated legacy reverse
+wire cases on both supported toolchains within the 163 cases above. Final sealed-package authenticated
+wire remains required. Published stable server conformance remains 38 passed
+and one failed on both; a prepared private header diagnostic is not an official
+published pass. Final archive/installed/release consumers, paired performance,
+RC metadata and publication, and the accepted continuous 48-hour final-RC run
+remain gates. No RC or stable release is qualified by this checkpoint.
+
 ## Outstanding release blockers
 
 - Complete final combined transport and authenticated wire qualification.
