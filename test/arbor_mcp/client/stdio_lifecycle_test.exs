@@ -84,11 +84,10 @@ defmodule Arbor.MCP.Client.StdioLifecycleTest do
        ~s({"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","value":1}})}
     })
 
+    # This call follows the frame from the same sender, so its reply follows
+    # protocol processing and the failed ACK's transport teardown.
+    assert {:ok, %{connection_status: :disconnected}} = Client.get_status(client)
     assert_receive {^reply, {:ok, %{"resultType" => "complete", "value" => 1}}}
-
-    TestHelpers.wait_until(fn ->
-      match?({:ok, %{connection_status: :disconnected}}, Client.get_status(client))
-    end)
 
     refute Stdio.connected?(transport)
     assert Process.alive?(client)
