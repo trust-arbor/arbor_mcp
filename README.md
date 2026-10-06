@@ -2,7 +2,7 @@
 
 Elixir clients and servers for the [Model Context Protocol](https://modelcontextprotocol.io/), with stdio, Streamable HTTP and BEAM-local transports.
 
-**Version 2 is under development.** This checkout is the MCP part of the library split. The released 1.x package remains [`ex_mcp`](https://hex.pm/packages/ex_mcp); `arbor_mcp` 2.0 has not been released. The supervised Runtime and accepted API cleanup are implemented; final package and release qualification remain in progress. See the [release assessment](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_ASSESSMENT.md) for the qualified source checkpoints and open gates. Historical 1.x test counts and performance results are not v2 qualification evidence.
+**Version 2 release candidate preparation.** This checkout is the MCP part of the library split, prepared as `arbor_mcp` `2.0.0-rc.1`. The released 1.x package remains [`ex_mcp`](https://hex.pm/packages/ex_mcp); `arbor_mcp` 2.0 has not been released. The supervised Runtime and accepted API cleanup are implemented; final package and release qualification remain in progress. See the [release assessment](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_ASSESSMENT.md) for the qualified source checkpoints and open gates. Historical 1.x test counts and performance results are not v2 qualification evidence.
 
 ACP clients, agents and the optional vendor adapter bundle are developed in [Arbor.ACP](https://github.com/trust-arbor/arbor_acp). MCP and ACP depend on the small shared `arbor_rpc` package and can be installed independently.
 

@@ -53,29 +53,43 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 47c9e8a303cb0b3fcbb9c1c748e49edfa53a377b
+        ref: aca4a367d8c4025a4a491f0a8ba2df82c9e1aafd
         path: .arbor-v2/acp
         persist-credentials: false
     - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
       with:
         otp-version: ${{ matrix.toolchain.otp }}
         elixir-version: ${{ matrix.toolchain.elixir }}
+    - name: Read the coordinated source version
+      run: |
+        python3 -B - <<'PYVERSION'
+        import os, pathlib, re
+        paths = [pathlib.Path("mix.exs"), pathlib.Path(".arbor-v2/acp/packages/arbor_rpc/mix.exs"), pathlib.Path(".arbor-v2/acp/packages/arbor_acp/mix.exs"), pathlib.Path(".arbor-v2/acp/packages/arbor_acp_adapters/mix.exs")]
+        versions = [re.findall(r'@version "([^"]+)"', path.read_text()) for path in paths]
+        if any(len(version) != 1 for version in versions) or len({version[0] for version in versions}) != 1:
+            raise SystemExit("Package source versions must match")
+        version = versions[0][0]
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version):
+            raise SystemExit("Invalid package version")
+        with open(os.environ["GITHUB_ENV"], "a") as output:
+            output.write("ARCHIVE_EXPECTED_VERSION=" + version + "\n")
+        PYVERSION
     - name: Check consumer formatting
       run: mix format --check-formatted fixtures/archive_consumer/mix.exs fixtures/archive_consumer/lib/combined_archive_consumer.ex
     - name: Build publishable source archives
       run: |
         mkdir -p archive-consumer-input
         mix deps.get --only prod
-        env -u ARBOR_RPC_PATH mix hex.build --output archive-consumer-input/arbor_mcp-2.0.0-dev.tar
+        env -u ARBOR_RPC_PATH mix hex.build --output "archive-consumer-input/arbor_mcp-$ARCHIVE_EXPECTED_VERSION.tar"
         for package in arbor_rpc arbor_acp arbor_acp_adapters; do
           (
             cd ".arbor-v2/acp/packages/$package"
             ARBOR_V2_LOCAL=1 mix deps.get --only prod
-            ARBOR_V2_LOCAL=0 mix hex.build --output "$GITHUB_WORKSPACE/archive-consumer-input/$package-2.0.0-dev.tar"
+            ARBOR_V2_LOCAL=0 mix hex.build --output "$GITHUB_WORKSPACE/archive-consumer-input/$package-$ARCHIVE_EXPECTED_VERSION.tar"
           )
         done
     - name: Install archives and probe a compiler-free release
-      run: python3 scripts/check_archive_consumer.py archive-consumer-input
+      run: python3 scripts/check_archive_consumer.py archive-consumer-input --expected-version "$ARCHIVE_EXPECTED_VERSION"
     - name: Preserve qualified source archives
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
@@ -103,7 +117,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 47c9e8a303cb0b3fcbb9c1c748e49edfa53a377b
+        ref: aca4a367d8c4025a4a491f0a8ba2df82c9e1aafd
         path: .arbor-v2/acp
         persist-credentials: false
     - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
@@ -193,7 +207,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 47c9e8a303cb0b3fcbb9c1c748e49edfa53a377b
+        ref: aca4a367d8c4025a4a491f0a8ba2df82c9e1aafd
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -277,7 +291,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 47c9e8a303cb0b3fcbb9c1c748e49edfa53a377b
+        ref: aca4a367d8c4025a4a491f0a8ba2df82c9e1aafd
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -331,7 +345,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 47c9e8a303cb0b3fcbb9c1c748e49edfa53a377b
+        ref: aca4a367d8c4025a4a491f0a8ba2df82c9e1aafd
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -376,7 +390,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 47c9e8a303cb0b3fcbb9c1c748e49edfa53a377b
+        ref: aca4a367d8c4025a4a491f0a8ba2df82c9e1aafd
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -454,7 +468,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 47c9e8a303cb0b3fcbb9c1c748e49edfa53a377b
+        ref: aca4a367d8c4025a4a491f0a8ba2df82c9e1aafd
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -513,7 +527,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 47c9e8a303cb0b3fcbb9c1c748e49edfa53a377b
+        ref: aca4a367d8c4025a4a491f0a8ba2df82c9e1aafd
         path: .arbor-v2/acp
         persist-credentials: false
 
@@ -567,7 +581,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 47c9e8a303cb0b3fcbb9c1c748e49edfa53a377b
+        ref: aca4a367d8c4025a4a491f0a8ba2df82c9e1aafd
         path: .arbor-v2/acp
         persist-credentials: false
 
