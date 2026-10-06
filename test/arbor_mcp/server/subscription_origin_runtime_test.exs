@@ -1,8 +1,8 @@
 defmodule Arbor.MCP.Server.SubscriptionOriginRuntimeTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.Server.{Runtime, StdioServer, Subscriptions}
-  alias Arbor.MCP.Server.Runtime.{Admission, OutputController, Ref}
+  alias Arbor.MCP.Server.Runtime.{Admission, Deadline, OutputController, Ref}
   alias Arbor.MCP.Server.Subscriptions.Mailbox
   alias Arbor.MCP.Test.StdioRuntimeFixture.Device
 
@@ -52,9 +52,16 @@ defmodule Arbor.MCP.Server.SubscriptionOriginRuntimeTest do
       result(state)
     end
 
-    def handle_request("notifications/change", _params, state) do
+    def handle_request("notifications/change", params, state) do
+      %{deadline: source_cutoff} = CallbackContext.current()
       :ok = Server.notify_tools_changed(self())
-      send(state.owner, {:source_finished, self()})
+
+      if params["observeCutoff"] do
+        send(state.owner, {:source_finished, self(), source_cutoff})
+      else
+        send(state.owner, {:source_finished, self()})
+      end
+
       {:noreply, %{state | count: state.count + 1}}
     end
 
@@ -120,15 +127,25 @@ defmodule Arbor.MCP.Server.SubscriptionOriginRuntimeTest do
 
   test "a completed source cannot refresh its original cutoff while queued" do
     {_root, runtime, input, output, listener, ack} = pair(request_timeout_ms: 180)
+    observation_cutoff = Deadline.after_ms(180)
 
     input(input, %{
       "jsonrpc" => "2.0",
       "method" => "notifications/change",
-      "params" => %{"_meta" => @meta}
+      "params" => %{"_meta" => @meta, "observeCutoff" => true}
     })
 
-    assert_receive {:source_finished, _}
-    eventually(fn -> queued(listener) == 1 and scheduler_state(runtime).count == 1 end)
+    # Observe completion under the existing operation budget, not ExUnit's
+    # unrelated 100ms default. The callback publishes its authentic cutoff.
+    assert_receive {:source_finished, _worker, source_cutoff},
+                   Deadline.remaining(observation_cutoff)
+
+    eventually(fn ->
+      assert Deadline.remaining(source_cutoff) > 0
+      queued(listener) == 1 and scheduler_state(runtime).count == 1
+    end)
+
+    assert Deadline.remaining(source_cutoff) > 0
     Process.sleep(220)
     release(output, ack)
     refute_receive {:write_attempt, _, _}, 30

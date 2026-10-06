@@ -1,5 +1,5 @@
 defmodule Arbor.MCP.Client.OrdinaryLifetimeTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.Client
   alias Arbor.MCP.Client.{Lifetime, RequestHandler}
@@ -359,9 +359,11 @@ defmodule Arbor.MCP.Client.OrdinaryLifetimeTest do
     assert hd(:proplists.get_value(:"$ancestors", dictionary)) == parent
     assert parent in elem(Process.info(client, :links), 1)
     worker = hold_reverse(client)
+    client_monitor = Process.monitor(client)
+    worker_monitor = Process.monitor(worker)
     Process.exit(parent, :kill)
-    assert_down(client)
-    assert_down(worker)
+    assert_receive {:DOWN, ^client_monitor, :process, ^client, _client_reason}, 150
+    assert_receive {:DOWN, ^worker_monitor, :process, ^worker, _worker_reason}, 150
   end
 
   test "acknowledged internal resource subscription transfers from worker to client lifetime" do
