@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recomputed for the current term rather than cached.
 - Preserve the ExMCP 1.x maintenance branch with backport and compatible
   minor-release policy; document cold restart, cutover and rollback for v2 consumers.
+- Allow warnings-as-errors compilation in host applications using Ranch 2.x.
+  Runtime-owned Cowboy listeners still require Ranch 1.8.1.
 - Allow compatible optional Bandit, Thousand Island and Ranch updates in host
   applications. Standalone owned listeners still enforce their qualified
   constructor versions; mounted host listeners use the host application’s graph.

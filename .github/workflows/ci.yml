@@ -161,7 +161,7 @@ jobs:
         PYVERSION
     - name: Check HTTP consumer formatting
       if: matrix.toolchain.elixir == '1.17.3'
-      run: mix format --check-formatted fixtures/listener_archive_consumer/mix.exs fixtures/listener_archive_consumer/lib/listener_archive_consumer.ex
+      run: mix format --check-formatted fixtures/listener_archive_consumer/mix.exs fixtures/listener_archive_consumer/lib/listener_archive_consumer.ex fixtures/listener_archive_consumer/compile_mcp.exs
     - name: Build source archives
       run: |
         mkdir -p listener-archive-input

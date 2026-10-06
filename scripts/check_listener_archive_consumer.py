@@ -160,6 +160,9 @@ def main():
         evidence["resolved_lock"] = {"sha256": digest(lock), "text": lock.read_text()}
         run("dependency-status", ["mix", "deps"], 30)
         run("compile-dependencies", ["mix", "deps.compile"], 300)
+        if args.ownership == "host":
+            run("compile-packaged-mcp-warnings-as-errors",
+                ["mix", "run", "--no-start", "--no-compile", "compile_mcp.exs"], 180)
         run("compile-consumer", ["mix", "compile", "--warnings-as-errors", "--no-deps-check"], 180)
         installed = workspace / "installed-probe.json"
         run("installed-probe", ["mix", "run", "--no-compile", "-e", "ListenerArchiveConsumer.probe()"], 45,

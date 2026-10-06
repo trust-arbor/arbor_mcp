@@ -146,7 +146,7 @@ defmodule Arbor.MCP.Server.HTTP.Cowboy.Owned do
          true <- acceptor_current?(table, context, deadline) do
       :proc_lib.init_ack(parent, {:ok, self()})
       [socket, transport, logger, connections] = arguments
-      :ranch_acceptor.loop(socket, transport, logger, connections)
+      :erlang.apply(:ranch_acceptor, :loop, [socket, transport, logger, connections])
     else
       _ ->
         :proc_lib.init_fail(
@@ -232,7 +232,7 @@ defmodule Arbor.MCP.Server.HTTP.Cowboy.Owned do
 
     case register(opts) do
       :ok ->
-        :ranch_conns_sup.init(parent, ref, transport, protocol)
+        :erlang.apply(:ranch_conns_sup, :init, [parent, ref, transport, protocol])
 
       _ ->
         :proc_lib.init_fail(
