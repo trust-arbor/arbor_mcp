@@ -1,5 +1,5 @@
 defmodule Arbor.MCP.Client.HTTPStreamRetryTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.Client
   alias Arbor.MCP.Error

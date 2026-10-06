@@ -1,5 +1,5 @@
 defmodule Arbor.MCP.Server.Runtime.OutputLedgerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   alias Arbor.MCP.Server.Runtime.OutputLedger, as: Ledger
 
   defp ledger(opts \\ []) do

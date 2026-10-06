@@ -1,5 +1,5 @@
 defmodule Arbor.MCP.Server.RuntimeNativeStartupExitTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.Server.Runtime.{Deadline, Initialization}
 

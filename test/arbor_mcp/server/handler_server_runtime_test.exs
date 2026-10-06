@@ -1,5 +1,5 @@
 defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.MessageProcessor
   alias Arbor.MCP.Server

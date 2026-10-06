@@ -1,5 +1,5 @@
 defmodule Arbor.MCP.Server.Runtime.HTTPRetainedSessionTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.{HttpPlug, SessionManager}
   alias Arbor.MCP.Server.Runtime

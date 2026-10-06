@@ -9,7 +9,7 @@ defmodule Arbor.MCP.Client.RequestDeadlineCapTest do
   as a failure.
   """
 
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.Client
 

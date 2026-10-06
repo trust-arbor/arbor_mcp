@@ -1,5 +1,5 @@
 defmodule Arbor.MCP.Server.RuntimeTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.Server.Runtime
   alias Arbor.MCP.Server.Runtime.{Admission, ByteBudget, CallbackContext, Ref}

@@ -1,5 +1,5 @@
 defmodule Arbor.MCP.Server.RuntimeInitializationTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.Server.{HandlerServer, Runtime}
   alias Arbor.MCP.Transport.Test
