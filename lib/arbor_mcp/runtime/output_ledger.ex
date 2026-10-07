@@ -261,7 +261,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
 
       :ets.insert(
         table,
-        {:gate,
+        {:gate, make_ref(),
          %{generation: generation, frames: 0, bytes: 0, claims: %{}, scopes: %{}, pending: %{}}}
       )
 
@@ -750,7 +750,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
       # may insert payload into the retired generation after this point.
       :ets.insert(
         ref.table,
-        {:gate,
+        {:gate, make_ref(),
          %{generation: generation, frames: 0, bytes: 0, claims: %{}, scopes: %{}, pending: %{}}}
       )
 
@@ -979,14 +979,17 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
     if deadline <= now() do
       {:error, :output_call_expired}
     else
-      with {:ok, previous} <- read(ref) do
+      with {:ok, revision, previous} <- read_snapshot(ref) do
         case callback.(previous) do
           {:ok, next, reply} ->
             if map_size(next.scopes) <= ref.limits.max_output_frames and
                  metadata_bytes(next) <= ref.limits.max_scope_bytes do
               match =
-                {{:gate, :"$1"}, [{:"=:=", :"$1", {:const, previous}}],
-                 [{{:gate, {:const, next}}}]}
+                {{:gate, :"$1", %{generation: :"$2"}},
+                 [
+                   {:"=:=", :"$1", {:const, revision}},
+                   {:"=:=", :"$2", {:const, ref.generation}}
+                 ], [{{:gate, {:const, make_ref()}, {:const, next}}}]}
 
               cond do
                 deadline <= now() -> {:error, :output_call_expired}
@@ -1007,10 +1010,16 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
     ArgumentError -> {:error, :output_unavailable}
   end
 
-  defp read(ref) do
+  defp read(ref), do: with({:ok, _revision, gate} <- read_snapshot(ref), do: {:ok, gate})
+
+  defp read_snapshot(ref) do
     case :ets.lookup(ref.table, :gate) do
-      [{:gate, %{generation: generation} = gate}] when generation == ref.generation -> {:ok, gate}
-      _ -> {:error, :output_unavailable}
+      [{:gate, revision, %{generation: generation} = gate}]
+      when is_reference(revision) and generation == ref.generation ->
+        {:ok, revision, gate}
+
+      _ ->
+        {:error, :output_unavailable}
     end
   rescue
     ArgumentError -> {:error, :output_unavailable}

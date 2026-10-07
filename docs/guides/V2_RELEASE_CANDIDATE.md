@@ -5,8 +5,8 @@ ArborACP adapters (`arbor_acp_adapters`) and ArborRPC (`arbor_rpc`). It is inten
 for downstream migration and
 compatibility testing. Stable `2.0.0` qualification remains in progress.
 
-Publication is being prepared; the dependency examples below become usable once
-the packages appear on Hex. Start with the [v1-to-v2 migration guide](MIGRATING_V1_TO_V2.md).
+The four RC1 packages are published on Hex. Start with the
+[v1-to-v2 migration guide](MIGRATING_V1_TO_V2.md).
 
 ## Install the packages your application uses
 
@@ -26,6 +26,12 @@ Exact versions make a downstream RC report reproducible. Commit the resulting
 lockfile, and use normal Hex resolution without the local package path overrides.
 
 ## Candidate scope and validation
+
+Development builds after RC1 use revision tokens for atomic output-ledger
+updates. This changes the internal ledger table layout: drain and stop live MCP
+runtimes before loading the new code, then start fresh runtimes. Use the same
+cold-restart procedure when rolling back. This development change still needs
+final-source CI, downstream performance qualification and a new candidate soak.
 
 The package split, `Arbor.MCP.*` / `Arbor.ACP.*` namespaces, optional adapter
 bundle and full server runtime/scheduler redesign are included. The candidate

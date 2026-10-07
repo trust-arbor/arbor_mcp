@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Version 2 release candidate
 
+- Compare output-ledger revision tokens during atomic updates to avoid repeated
+  equality checks over retained reply data. Preserve generation fencing,
+  lifetime and capacity accounting, deadlines and retry limits. Development
+  builds after RC1 require a cold runtime restart when upgrading or rolling back
+  because the internal ledger table layout changes.
 - Use OTP's JSON encoder for prepared protocol output, preserving plain-value
   and UTF-8 validation, exact frame limits, retained-memory charges and binary
   output/batch interfaces. JSON object member order is unspecified; consumers
