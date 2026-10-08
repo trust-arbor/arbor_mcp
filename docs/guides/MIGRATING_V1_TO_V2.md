@@ -75,6 +75,13 @@ behavior. They are not interchangeable with similarly named Client methods:
 | `Arbor.MCP.ping/2` | `Client.probe/2` checks a temporary connection with scoped cleanup; `Client.ping/2` operates on an existing client. |
 | `Arbor.MCP.status/1` | `Client.status/2` returns tagged status or timeout/unavailable errors; `status!/2` raises explicitly. |
 
+`Client.all_tools/2`, `all_resources/2`, `all_resource_templates/2` and
+`all_prompts/2` explicitly collect lists across pages. Their defaults are a
+30-second total timeout, 64 pages, 10,000 items and 8 MiB of cumulative response
+terms. The final options can lower or raise those finite limits, and `:cursor`
+can select a starting page. Cyclic cursors and exceeded limits return errors;
+page metadata is discarded. Keep `list_*` when you need the complete page.
+
 `Arbor.MCP.start_server/1` retains its legacy `:test` default and now routes
 explicit stdio/HTTP correctly. New code should use `Server.start_link/1` with
 an explicit transport. `Server.stop/2` uses Runtime's existing overall shutdown
@@ -429,3 +436,18 @@ continues to receive applicable fixes and compatible minor releases; see the
 - Migrate removed helpers by result/schema/lifecycle semantics.
 - Exercise startup, normal calls, pressure, peer turnover and public shutdown in
   your own application; report RC problems with the lockfile and platform.
+
+### ACP prompt results and temporary connections
+
+`Arbor.ACP.Client.prompt/4` now returns the peer's JSON result unchanged. The
+original published RC synthesized `result["text"]` from streamed updates.
+Migrate that usage to `Client.prompt_text/4`, which returns
+`{:ok, %{result: peer_result, text: text, truncated?: boolean}}`. Check the
+truncation flag; message collection has a finite UTF-8 byte cap and excludes
+thought chunks. A collecting prompt cannot overlap another prompt in its session.
+
+`Client.with_connection/2,3` opens an initialized temporary ACP client, runs its
+callback in the caller, and wraps its value after cleanup. Positive finite
+startup and cleanup budgets cover handler/transport initialization, negotiation
+and shutdown; a guardian also handles abrupt caller death. Continue to supervise
+long-lived clients. See ArborACP's `docs/ACP_GUIDE.md` for complete examples.

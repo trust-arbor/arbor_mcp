@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 2.0.0-rc.2 (unreleased)
 
+- Add explicit `Client.all_tools/2`, `all_resources/2`,
+  `all_resource_templates/2` and `all_prompts/2`. Collection follows opaque
+  cursors within one deadline and finite page/item/byte limits, rejects cycles
+  and malformed pages, and does not report partial lists as complete. Ordinary
+  listing methods retain their single-page Response and metadata.
+- Correct Client protocol-result typespecs to include the default Response
+  struct and explicit map format. Pagination requests retain their original
+  absolute deadline through multi-round request handling.
+- Disable protocol consolidation in test builds so test-only JSON encoders
+  take effect and the full suite can run with warnings treated as errors.
+
 - Support native BEAM descriptor/content keys in Response accessors without JSON
   conversion or atom creation; preserve canonical string-key precedence and nulls.
   Explicit resource extraction also accepts native callback text fields.

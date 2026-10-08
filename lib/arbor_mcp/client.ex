@@ -51,6 +51,7 @@ defmodule Arbor.MCP.Client do
     EraCache,
     Lifetime,
     NotificationListener,
+    Pagination,
     RequestHandler,
     Subscription
   }
@@ -488,7 +489,7 @@ defmodule Arbor.MCP.Client do
   - `:format` - Return format (:map or :struct, default: :struct)
   """
   @spec list_tools(t(), keyword() | timeout()) ::
-          {:ok, %{String.t() => [map()]}} | {:error, any()}
+          {:ok, Arbor.MCP.Response.t() | map()} | {:error, term()}
   def list_tools(client, timeout_or_opts \\ [])
 
   def list_tools(client, timeout) when is_integer(timeout) do
@@ -499,6 +500,43 @@ defmodule Arbor.MCP.Client do
     {params, opts} = RequestParams.take_cursor(opts)
     make_request(client, "tools/list", params, opts, 5_000)
   end
+
+  @doc """
+  Collects tool definitions across every response page, within finite limits.
+
+  Returns `{:ok, definitions}` in page order. Page metadata and cursors are
+  omitted; `list_tools/2` retains a complete single-page Response. Accepts an
+  optional starting `:cursor`, total `:timeout` (30_000 ms), `:max_pages` (64),
+  `:max_items` (10_000) and `:max_bytes` (8 MiB of cumulative response terms).
+  Limits must be positive finite integers. Ordinary request retries are disabled;
+  the existing HTTP stream retry policy remains within the same total deadline.
+  Cyclic cursors, malformed pages and exceeded limits return errors, without
+  reporting a partial list as complete. All list helpers use these same options.
+  """
+  @spec all_tools(t(), keyword()) :: {:ok, [map()]} | {:error, term()}
+  def all_tools(client, opts \\ []),
+    do: Pagination.run(client, "tools/list", :tools, opts)
+
+  @doc "Collects every resource page; options and limits are described in `all_tools/2`."
+  @spec all_resources(t(), keyword()) :: {:ok, [map()]} | {:error, term()}
+  def all_resources(client, opts \\ []),
+    do: Pagination.run(client, "resources/list", :resources, opts)
+
+  @doc "Collects every resource-template page; see `all_tools/2` for finite limits."
+  @spec all_resource_templates(t(), keyword()) :: {:ok, [map()]} | {:error, term()}
+  def all_resource_templates(client, opts \\ []),
+    do:
+      Pagination.run(
+        client,
+        "resources/templates/list",
+        :resourceTemplates,
+        opts
+      )
+
+  @doc "Collects every prompt page; options and limits are described in `all_tools/2`."
+  @spec all_prompts(t(), keyword()) :: {:ok, [map()]} | {:error, term()}
+  def all_prompts(client, opts \\ []),
+    do: Pagination.run(client, "prompts/list", :prompts, opts)
 
   @doc """
   Alias for list_tools/2, retaining the complete response page by default.
@@ -517,7 +555,7 @@ defmodule Arbor.MCP.Client do
   - `:format` - Return format (:map or :struct, default: :struct)
   """
   @spec call_tool(t(), String.t(), map(), keyword() | timeout()) ::
-          {:ok, any()} | {:error, any()}
+          {:ok, Arbor.MCP.Response.t() | map()} | {:error, term()}
   def call_tool(client, tool_name, arguments, timeout_or_opts \\ 30_000)
 
   def call_tool(client, tool_name, arguments, timeout) when is_integer(timeout) do
@@ -601,7 +639,7 @@ defmodule Arbor.MCP.Client do
   Lists available resources.
   """
   @spec list_resources(t(), keyword() | timeout()) ::
-          {:ok, %{String.t() => [map()]}} | {:error, any()}
+          {:ok, Arbor.MCP.Response.t() | map()} | {:error, term()}
   def list_resources(client, timeout_or_opts \\ [])
 
   def list_resources(client, timeout) when is_integer(timeout) do
@@ -625,7 +663,7 @@ defmodule Arbor.MCP.Client do
   resource URIs, or server configuration.
   """
   @spec list_roots(t(), keyword() | timeout()) ::
-          {:ok, %{String.t() => [map()]}} | {:error, any()}
+          {:ok, Arbor.MCP.Response.t() | map()} | {:error, term()}
   def list_roots(client, timeout_or_opts \\ [])
 
   def list_roots(client, timeout) when is_integer(timeout) do
@@ -643,7 +681,7 @@ defmodule Arbor.MCP.Client do
   available resource templates.
   """
   @spec list_resource_templates(t(), keyword() | timeout()) ::
-          {:ok, %{String.t() => [map()]}} | {:error, any()}
+          {:ok, Arbor.MCP.Response.t() | map()} | {:error, term()}
   def list_resource_templates(client, timeout_or_opts \\ [])
 
   def list_resource_templates(client, timeout) when is_integer(timeout) do
@@ -658,7 +696,8 @@ defmodule Arbor.MCP.Client do
   @doc """
   Reads a resource by URI.
   """
-  @spec read_resource(t(), String.t(), keyword() | timeout()) :: {:ok, any()} | {:error, any()}
+  @spec read_resource(t(), String.t(), keyword() | timeout()) ::
+          {:ok, Arbor.MCP.Response.t() | map()} | {:error, term()}
   def read_resource(client, uri, timeout_or_opts \\ [])
 
   def read_resource(client, uri, timeout) when is_integer(timeout) do
@@ -850,7 +889,7 @@ defmodule Arbor.MCP.Client do
   Lists available prompts.
   """
   @spec list_prompts(t(), keyword() | timeout()) ::
-          {:ok, %{String.t() => [map()]}} | {:error, any()}
+          {:ok, Arbor.MCP.Response.t() | map()} | {:error, term()}
   def list_prompts(client, timeout_or_opts \\ [])
 
   def list_prompts(client, timeout) when is_integer(timeout) do
@@ -865,7 +904,7 @@ defmodule Arbor.MCP.Client do
   Gets a prompt with the given arguments.
   """
   @spec get_prompt(t(), String.t(), map(), keyword() | timeout()) ::
-          {:ok, any()} | {:error, any()}
+          {:ok, Arbor.MCP.Response.t() | map()} | {:error, term()}
   def get_prompt(client, prompt_name, arguments \\ %{}, timeout_or_opts \\ [])
 
   def get_prompt(client, prompt_name, arguments, timeout) when is_integer(timeout) do

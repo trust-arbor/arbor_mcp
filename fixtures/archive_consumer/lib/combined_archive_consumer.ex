@@ -19,8 +19,10 @@ defmodule CombinedArchiveConsumer do
     def handle_new_session(_params, _ctx, state),
       do: {:reply, %{"sessionId" => "consumer-session"}, state}
 
-    def handle_prompt(_id, _prompt, _ctx, state),
-      do: {:reply, %{"stopReason" => "end_turn"}, state}
+    def handle_prompt(session_id, _prompt, ctx, state) do
+      :ok = Arbor.ACP.Agent.agent_message(ctx.agent, session_id, "archive message")
+      {:reply, %{"stopReason" => "end_turn"}, state}
+    end
   end
 
   defmodule RoleHandler do
@@ -52,6 +54,7 @@ defmodule CombinedArchiveConsumer do
     verify_installed_helper()
     verify_independent_lifetimes()
     verify_role_entrypoints()
+    verify_scoped_acp()
     record_installation()
 
     IO.puts("Four archive apps, MCP/ACP lifetimes and compiler-free native ownership pass")
@@ -70,6 +73,7 @@ defmodule CombinedArchiveConsumer do
         {:ok, %Response{tools: [_tool]}} = Client.tools(client)
         {:ok, [definition]} = Client.tool_definitions(client)
         "echo" = Response.tool_name(definition)
+        {:ok, [^definition]} = Client.all_tools(client)
         {:ok, %Response{}} = Client.call(client, "echo", %{"message" => "complete"})
         {:ok, "content"} = Client.call_content(client, "echo", %{"message" => "content"})
         {:ok, _status} = Client.status(client)
@@ -109,6 +113,31 @@ defmodule CombinedArchiveConsumer do
 
     for app <- [:cowboy, :cowlib, :ranch, :plug_cowboy, :bandit, :thousand_island, :websock],
         do: nil = Application.spec(app, :vsn)
+  end
+
+  defp verify_scoped_acp do
+    alias Arbor.ACP.Agent.Transport.Memory
+    alias Arbor.ACP.Client
+    {:ok, peer} = Memory.new_pair()
+    {:ok, agent} = Arbor.ACP.Agent.start_link(handler: NativeAgent, transport: {:memory, peer})
+
+    try do
+      {:ok, pids} =
+        Client.with_connection([transport_mod: Memory, peer: peer, role: :client], fn client ->
+          {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp/project")
+
+          {:ok,
+           %{result: %{"stopReason" => "end_turn"}, text: "archive message", truncated?: false}} =
+            Client.prompt_text(client, session_id, "collect text")
+
+          state = :sys.get_state(client)
+          [client, state.handler_pid, state.receiver_pid]
+        end)
+
+      true = Enum.all?(pids, &(not Process.alive?(&1)))
+    after
+      for pid <- [agent, peer], do: :ok = stop_owned_process(pid)
+    end
   end
 
   defp verify_installed_helper do

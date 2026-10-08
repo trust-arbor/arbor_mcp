@@ -33,7 +33,16 @@ defmodule Arbor.MCP.Client.Internal.Request do
   #   failed first attempt, so successful requests never pay for it.
   @spec make_request(Arbor.MCP.Client.t(), String.t(), map(), keyword(), pos_integer()) ::
           {:ok, any()} | {:error, any()}
-  def make_request(client, method, params, opts, default_timeout) do
+  @spec make_request(
+          Arbor.MCP.Client.t(),
+          String.t(),
+          map(),
+          keyword(),
+          pos_integer(),
+          integer() | nil
+        ) ::
+          {:ok, any()} | {:error, any()}
+  def make_request(client, method, params, opts, default_timeout, deadline_cap \\ nil) do
     case Keyword.get(opts, :format, :struct) do
       format when format in [:map, :struct] -> :ok
       _invalid -> raise ArgumentError, "format must be :map or :struct"
@@ -55,7 +64,8 @@ defmodule Arbor.MCP.Client.Internal.Request do
           params,
           opts,
           default_timeout,
-          stream_retry_mode
+          stream_retry_mode,
+          deadline_cap
         )
 
       {:error, _reason} = error ->
@@ -63,7 +73,15 @@ defmodule Arbor.MCP.Client.Internal.Request do
     end
   end
 
-  defp do_make_request(client, method, params, opts, default_timeout, stream_retry_mode) do
+  defp do_make_request(
+         client,
+         method,
+         params,
+         opts,
+         default_timeout,
+         stream_retry_mode,
+         deadline_cap
+       ) do
     started_at = System.monotonic_time(:millisecond)
     explicit_timeout = Keyword.get(opts, :timeout)
     retry_policy = Keyword.get(opts, :retry_policy, :use_default)
@@ -71,7 +89,8 @@ defmodule Arbor.MCP.Client.Internal.Request do
 
     result =
       if explicit_timeout do
-        deadline = started_at + explicit_timeout
+        deadline =
+          min(started_at + explicit_timeout, deadline_cap || started_at + explicit_timeout)
 
         control = %{
           deadline: deadline,
@@ -157,7 +176,7 @@ defmodule Arbor.MCP.Client.Internal.Request do
        ) do
     operation = fn ->
       with {:ok, remaining} <- remaining_timeout(control.deadline) do
-        request_once(client, method, round_params, remaining)
+        request_before(client, method, round_params, remaining, control.deadline)
       end
     end
 
@@ -288,6 +307,16 @@ defmodule Arbor.MCP.Client.Internal.Request do
 
   defp request_once(client, method, params, nil) do
     GenServer.call(client, {:request, method, params, %{timeout: nil}}, :infinity)
+  end
+
+  defp request_before(client, method, params, timeout, deadline) do
+    GenServer.call(
+      client,
+      {:request, method, params, %{timeout: timeout, deadline: deadline}},
+      timeout
+    )
+  catch
+    :exit, {:timeout, _call} -> {:error, :timeout}
   end
 
   defp fulfill_mrtr(client, input_requests, opts, timeout, scope_ref) do

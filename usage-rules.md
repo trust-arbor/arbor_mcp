@@ -48,6 +48,12 @@ are separate.
   or `:struct` for a complete result, especially when paginating.
   `normalize: false` on `call/4` returns a complete Response struct by default.
   A normalized tool failure returns a ToolError retaining the full result.
+- `Client.list_tools/2`, `list_resources/2`, `list_resource_templates/2` and
+  `list_prompts/2` return one complete response page. `Client.all_tools/2`,
+  `all_resources/2`, `all_resource_templates/2` and `all_prompts/2` explicitly
+  collect lists across pages. They discard page metadata and enforce one total
+  timeout plus finite `:max_pages`, `:max_items` and `:max_bytes` limits. Errors
+  never claim a partial list is complete. Use page methods when metadata matters.
 - Resource responses use `contents`. `Client.read_content/3` joins text entries with newlines
   and retains nontext-only results; `parse_json: true` parses extracted text.
   Do not combine an explicit format with `normalize: true` or `parse_json: true`.

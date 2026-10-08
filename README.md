@@ -75,6 +75,11 @@ Canonical Client operations preserve complete responses; `call_content`,
 Root client operations remain compatibility wrappers with their original behavior.
 See the [entrypoint migration table](docs/guides/MIGRATING_V1_TO_V2.md#canonical-role-entrypoints).
 
+Ordinary Client `list_*` methods preserve one response page. Explicit
+`Client.all_tools/2`, `all_resources/2`, `all_resource_templates/2` and
+`all_prompts/2` collect lists across opaque cursors within finite page, item,
+byte and total-time limits. See the [public API migration guide](docs/guides/MIGRATING_V1_TO_V2.md).
+
 ## Servers and transports
 
 Handlers use `Arbor.MCP.Server.Handler` and the declarative `Arbor.MCP.Server.DSL` to define tools, resources and prompts. HTTP, stdio and BEAM use a supervised Runtime per server, bounded handler scheduling and explicit session/subscription storage contracts. Follow the [roadmap](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/V2_ROADMAP.md) for the accepted contract.

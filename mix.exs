@@ -14,6 +14,8 @@ defmodule Arbor.MCP.MixProject do
       build_path: System.get_env("ARBOR_V2_BUILD") || "_build",
       lockfile: System.get_env("ARBOR_V2_LOCK") || "mix.lock",
       elixirc_paths: elixirc_paths(Mix.env()),
+      # Runtime tests define encoders for private/unsafe payload fixtures.
+      consolidate_protocols: Mix.env() != :test,
       test_ignore_filters: [~r"^test/conformance/(client|server)\.exs$"],
       start_permanent: Mix.env() == :prod,
       deps: deps(),

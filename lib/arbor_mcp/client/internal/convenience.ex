@@ -219,7 +219,7 @@ defmodule Arbor.MCP.Client.Internal.Convenience do
     Response.text_content(response)
   end
 
-  defp extract_tool_result_content(result) when is_map(result) do
+  defp extract_tool_result_content(result) do
     # Try to extract text content from the result
     case result do
       %{"content" => [%{"type" => "text", "text" => text} | _]} ->
@@ -238,8 +238,6 @@ defmodule Arbor.MCP.Client.Internal.Convenience do
         result
     end
   end
-
-  defp extract_tool_result_content(result), do: result
 
   def status(client) do
     Client.get_status(client)
