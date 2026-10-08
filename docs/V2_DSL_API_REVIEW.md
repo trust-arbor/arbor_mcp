@@ -16,6 +16,10 @@ Client status uses tagged errors and an explicit bang; a scoped probe differs
 from an existing connection's wire ping. ACP retains Client/Agent roles and
 adds the matching Agent stop reason/options form. The migration guide records
 the canonical entrypoints and legacy semantic differences. Spark stays deferred.
+Installed BEAM testing also identified native descriptor/content accessor gaps.
+Response now handles existing atom keys without JSON conversion, preserves
+string-key precedence and false/null presence, and creates no new atoms.
+Explicit resource extraction accepts native callback text fields as well.
 Validation of this follow-up is recorded separately from earlier checkpoints.
 
 ## Implemented release changes

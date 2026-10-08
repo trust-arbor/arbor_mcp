@@ -279,8 +279,12 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseWireTest do
       assert :ok = :ranch.stop_listener(ref)
       assert_receive {:DOWN, ^monitor, :process, ^listener, _reason}, 1_000
 
-      assert {:error, :econnrefused} =
+      assert {:error, reason} =
                :gen_tcp.connect({127, 0, 0, 1}, port, [:binary, active: false], 1_000)
+
+      # Linux can reset an in-flight loopback handshake after listener DOWN.
+      # Both failures prove this probe obtained no live connection.
+      assert reason in [:econnrefused, :econnreset]
 
       root_monitor = Process.monitor(root)
       if Process.alive?(root), do: assert(Runtime.stop(root) == :ok)

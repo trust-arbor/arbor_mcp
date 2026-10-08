@@ -502,9 +502,21 @@ defmodule Arbor.MCP.Response do
   defp wire_field?(keys, key, _value), do: key in keys
 
   defp content_keys(content) when is_list(content),
-    do: Enum.map(content, fn item -> if is_map(item), do: Map.keys(item), else: [] end)
+    do: Enum.map(content, &content_item_keys/1)
 
   defp content_keys(_content), do: []
+
+  defp content_item_keys(item)
+       when is_map_key(item, :type) or is_map_key(item, :text) or is_map_key(item, :data) or
+              is_map_key(item, :annotations) do
+    Enum.map(Map.keys(item), fn
+      key when key in [:type, :text, :data, :annotations] -> Atom.to_string(key)
+      key -> key
+    end)
+  end
+
+  defp content_item_keys(item) when is_map(item), do: Map.keys(item)
+  defp content_item_keys(_item), do: []
 
   defp raw_content(nil, _keys), do: nil
   defp raw_content(content, nil), do: Enum.map(content, &content_item_to_raw/1)
@@ -620,9 +632,18 @@ defmodule Arbor.MCP.Response do
   defp normalize_content_item(%{"type" => type} = item) do
     Map.merge(Map.drop(item, ["type", "text", "data", "annotations"]), %{
       type: type,
-      text: Map.get(item, "text"),
-      data: Map.get(item, "data"),
-      annotations: Map.get(item, "annotations")
+      text: Map.get(item, "text", Map.get(item, :text)),
+      data: Map.get(item, "data", Map.get(item, :data)),
+      annotations: Map.get(item, "annotations", Map.get(item, :annotations))
+    })
+  end
+
+  defp normalize_content_item(%{type: type} = item) do
+    Map.merge(Map.drop(item, [:type, :text, :data, :annotations]), %{
+      type: type,
+      text: Map.get(item, "text", Map.get(item, :text)),
+      data: Map.get(item, "data", Map.get(item, :data)),
+      annotations: Map.get(item, "annotations", Map.get(item, :annotations))
     })
   end
 
@@ -664,6 +685,9 @@ defmodule Arbor.MCP.Response do
   @doc """
   Gets the tool name from a tool definition.
 
+  Accepts decoded string keys and native BEAM atom keys. String-key presence
+  takes precedence, including explicit null, without creating atoms.
+
   ## Examples
 
       iex> tool = %{"name" => "hello", "description" => "Says hello"}
@@ -671,6 +695,7 @@ defmodule Arbor.MCP.Response do
       "hello"
   """
   def tool_name(%{"name" => name}), do: name
+  def tool_name(%{name: name}), do: name
   def tool_name(_), do: nil
 
   @doc """
@@ -683,6 +708,7 @@ defmodule Arbor.MCP.Response do
       "Says hello"
   """
   def tool_description(%{"description" => desc}), do: desc
+  def tool_description(%{description: desc}), do: desc
   def tool_description(_), do: nil
 
   @doc """
@@ -695,6 +721,7 @@ defmodule Arbor.MCP.Response do
       %{"type" => "object"}
   """
   def tool_input_schema(%{"inputSchema" => schema}), do: schema
+  def tool_input_schema(%{inputSchema: schema}), do: schema
   def tool_input_schema(_), do: nil
 
   @doc """
@@ -707,10 +734,24 @@ defmodule Arbor.MCP.Response do
       %{"type" => "string"}
   """
   def schema_property(%{"properties" => props}, key) when is_map(props) do
-    Map.get(props, key)
+    property_value(props, key)
   end
 
+  def schema_property(%{"properties" => _props}, _key), do: nil
+
+  def schema_property(%{properties: props}, key) when is_map(props),
+    do: property_value(props, key)
+
   def schema_property(_, _), do: nil
+
+  defp property_value(props, key) do
+    case Map.fetch(props, key) do
+      {:ok, value} -> value
+      :error when is_atom(key) -> Map.get(props, Atom.to_string(key))
+      :error when is_binary(key) -> Map.get(props, existing_atom_or_string(key))
+      :error -> nil
+    end
+  end
 
   # Implement Access behavior for dot-notation access to string-keyed maps
   @behaviour Access

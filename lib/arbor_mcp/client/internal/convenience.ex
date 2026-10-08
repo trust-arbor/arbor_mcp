@@ -139,12 +139,25 @@ defmodule Arbor.MCP.Client.Internal.Convenience do
   end
 
   defp extract_resource_content(%{"contents" => contents} = response) when is_list(contents) do
-    texts = for %{"text" => text} <- contents, is_binary(text), do: text
+    texts =
+      for item <- contents,
+          is_map(item),
+          text = Map.get(item, "text", Map.get(item, :text)),
+          is_binary(text),
+          do: text
+
     if texts == [], do: response, else: Enum.join(texts, "\n")
   end
 
   defp extract_resource_content(%{"content" => content} = response) when is_list(content) do
-    texts = for %{"type" => "text", "text" => text} <- content, is_binary(text), do: text
+    texts =
+      for item <- content,
+          is_map(item),
+          Map.get(item, "type", Map.get(item, :type)) == "text",
+          text = Map.get(item, "text", Map.get(item, :text)),
+          is_binary(text),
+          do: text
+
     if texts == [], do: response, else: Enum.join(texts, "\n")
   end
 

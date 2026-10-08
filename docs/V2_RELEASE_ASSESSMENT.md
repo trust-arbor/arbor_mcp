@@ -18,9 +18,11 @@ and scoped connectivity probes have distinct, documented semantics. ACP keeps
 Client/Agent roles and now supports the matching Agent stop reason/options form.
 The usage rules, quickstarts and migration table reflect these entrypoints.
 
-Current-source MCP validation passes 5,434 tests, 20 doctests and 34 properties
+The MCP response checkpoint passes 5,437 tests, 20 doctests and 34 properties
 (208 existing exclusions); 106 focused tests including HTTP pass on minimum and
-current toolchains. Core ACP passes 370 tests (7 existing exclusions) on both.
+current toolchains. Final BEAM response/resource and role regressions also pass
+on both toolchains. Core ACP passes 370 tests (7 existing exclusions) on both;
+Adapters passes 1,479 tests (4 existing exclusions) on the current toolchain.
 Final strict docs, archive/installed-consumer and exact-head CI receipts for this
 follow-up are separate from the earlier source checkpoints below. These API
 checks do not publish the replacement candidates or satisfy the continuous soak,

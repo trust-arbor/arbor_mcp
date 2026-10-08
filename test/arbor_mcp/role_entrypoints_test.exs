@@ -106,6 +106,24 @@ defmodule Arbor.MCP.RoleEntrypointsTest do
     assert_raise RuntimeError, fn -> Client.status!(client) end
   end
 
+  test "BEAM content extraction handles native callback maps" do
+    server = start_supervised!({Server, handler: Handler, transport: :beam})
+
+    client =
+      start_supervised!({Client, transport: :beam, server: server, protocol_mode: :legacy_only})
+
+    assert {:ok, "echo"} = Client.call_content(client, "echo")
+    assert {:ok, %Response{} = response} = Client.call(client, "failure")
+    assert Response.error?(response)
+    assert {:error, %Arbor.MCP.Error.ToolError{}} = Client.call_content(client, "failure")
+    assert {:ok, [tool]} = Client.tool_definitions(client)
+    assert Response.tool_name(tool) == "echo"
+    assert {:ok, "{\"enabled\":true}"} = Client.read_content(client, "memory://config")
+
+    assert {:ok, %{"enabled" => true}} =
+             Client.read_content(client, "memory://config", parse_json: true)
+  end
+
   test "plain and generated handlers have supervisor child specs and shared startup" do
     for {module, opts} <- [
           {Server, [handler: Handler, transport: :beam]},

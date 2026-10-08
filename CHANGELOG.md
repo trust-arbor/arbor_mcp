@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 2.0.0-rc.2 (unreleased)
 
+- Support native BEAM descriptor/content keys in Response accessors without JSON
+  conversion or atom creation; preserve canonical string-key precedence and nulls.
+  Explicit resource extraction also accepts native callback text fields.
 - Consolidate public entrypoints in Client and Server. Add transport-aware Server
   startup/child specs, bounded stop and statistics; route DSL startup through the
   same constructor. Add explicit Client extraction helpers, scoped connectivity
