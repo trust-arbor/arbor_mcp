@@ -55,8 +55,11 @@ family adopts Spark. No Spark dependency or performance benefit is claimed now.
 
 ## DSL issues worth addressing before the freeze
 
-These follow from the parser and builder; they need focused reproductions and
-regression checks before code changes are promoted.
+Compile-only probes confirmed all six examples below currently compile:
+duplicate tool parameters, duplicate prompt arguments, repeated title,
+a stray title, an unknown `use` option and ignored tool `name` metadata.
+The probes did not start the application or change runtime code. Focused
+regression checks are required when these behaviors are corrected.
 
 | Issue | Source evidence | Recommended behavior |
 | --- | --- | --- |
@@ -84,11 +87,25 @@ following implementation bridges remain exported on documented API modules:
 
 | Module | Helpers to move behind an internal module boundary |
 | --- | --- |
-| `Arbor.MCP.Client` | `connection_options/2`, `start_scoped/3` |
+| `Arbor.MCP.Client` | `connection_options/2`, `start_scoped/3`, `parse_connection_spec/1`, `prepare_transport_config/1`, `make_request/5` |
 | `Arbor.MCP.Server.DSL` | `prepare_tool_arguments/3`, `validate_tool_response/2` |
 | `Arbor.MCP.Server.Result` | `normalize_tool/2`, `normalize_tool_result/1`, `normalize_resource/4`, `normalize_prompt/2` |
 | `Arbor.MCP.Server.DSL.Result` | Hidden forwarding signatures for those normalizers |
 | `Arbor.RPC.Subprocess` | Generic actor `call/2,3`, used by FramedStream |
+
+The current compiled MCP census and direct export probes confirm these MCP
+helpers and the RPC generic calls remain callable. The Client parser/config
+exports include helpers explicitly exposed for testing; request dispatch also
+has callers in extracted operations and notification workers. Tests should
+exercise those internal owners or the supported facade after relocation.
+
+Runtime needs a separate boundary decision. `start_configured/3` and the
+reserve/publish/dispatch/discard ingress helpers are transport implementation
+bridges. Low-level `request`, `submit`, `await` and cancellation operations are
+hidden in function docs but described in Runtime's module documentation.
+Do not indiscriminately remove them as leaks: explicitly document the supported
+advanced operations, and move implementation-only startup/ingress hooks behind
+an internal boundary. Required supervisor callbacks remain exported.
 
 Cross-module calls prevent simply changing these definitions to `defp`.
 Relocate them into explicitly internal modules and update framework callers;
@@ -115,6 +132,19 @@ Handler for callbacks and Result for constructors. Keep top-level convenience
 functions' normalization explicit; they should not silently discard structured
 data when applications opt into complete protocol results. Review documented
 options, error/return types and examples alongside the export inventory.
+
+| Package | Public contracts to preserve and make explicit |
+| --- | --- |
+| ArborMCP | Client protocol operations; scoped connections; Server/Runtime host operations; Handler callbacks; Result constructors; explicit raw/structured result formats |
+| ArborRPC | Opaque subprocess handles; finite writes/cleanup receipts; framed pull/acknowledged push; framing and JSON-RPC envelope helpers |
+| ArborACP | Client session lifecycle and prompts; Agent callbacks and client requests; Adapter extension behavior; cancellation and session cleanup semantics |
+| ACP Adapters | Named adapter modules and their declared Adapter callbacks; provider-specific configuration; internal provider translation helpers remain unsupported implementation modules |
+
+No additional broad convenience API family is justified by this review. Before
+freezing, verify documented options and defaults against implementation, make
+error/return contracts consistent with finite cleanup, and regenerate the
+four-package compiled migration diff. The new MCP-only census is evidence for
+this review, not a substitute for that installed four-package release gate.
 
 ## Proposed release disposition
 
