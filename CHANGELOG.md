@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.6.0] - Unreleased
+## [1.6.0] - 2026-10-08
 
 ### Fixed
 
@@ -306,7 +306,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Refresh supported CI patch versions for Elixir 1.18–1.20, preserve the
   Elixir 1.17.3 / OTP 27.0 minimum, and add latest-stable drift checks against
-  the maintenance branch's own dependency graph.
+  the maintenance branch's own dependency graph. The modern stdio test fixture
+  forwards isolated Mix build/dependency paths to its child process.
 - Clarify that ArborMCP 2.x and newly extracted ArborACP, ArborACP adapters and
   ArborRPC 1.x have independent versions. ExMCP remains `ex_mcp` / `ExMCP.*`.
 
