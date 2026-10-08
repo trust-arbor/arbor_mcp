@@ -5,7 +5,7 @@
 /cover/
 
 # The directory Mix downloads your dependencies sources to.
-/deps/
+/deps
 
 # Where third-party dependencies like ExDoc output generated docs.
 /doc/
@@ -27,7 +27,7 @@ erl_crash.dump
 *.ez
 
 # Ignore package tarball (built via "mix hex.build").
-ex_mcp-*.tar
+arbor_mcp-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
@@ -59,3 +59,6 @@ test_output.log
 
 # Node.js dependencies for interop tests
 test/interop/node_modules/
+
+# Temporary sibling source checkout used by prepublication CI.
+/.arbor-v2/

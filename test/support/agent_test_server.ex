@@ -1,4 +1,4 @@
-defmodule ExMCP.Testing.AgentTestServer do
+defmodule Arbor.MCP.Testing.AgentTestServer do
   @moduledoc """
   Comprehensive MCP server for agent simulation tests.
 
@@ -6,8 +6,8 @@ defmodule ExMCP.Testing.AgentTestServer do
   the full range of MCP capabilities in realistic agent workflows.
   """
 
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL, name: "agent-test-server", version: "1.0.0"
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, name: "agent-test-server", version: "1.0.0"
 
   # ── Tools ──────────────────────────────────────────────────────────────
 

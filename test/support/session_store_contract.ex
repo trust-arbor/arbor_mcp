@@ -1,4 +1,4 @@
-defmodule ExMCP.SessionStoreContract do
+defmodule Arbor.MCP.SessionStoreContract do
   @moduledoc false
 
   # Test-only facade over the SessionManager call surface.
@@ -44,11 +44,11 @@ defmodule ExMCP.SessionStoreContract do
       |> Keyword.put(:name, name)
       |> Keyword.put_new(:cleanup_interval_ms, 60_000)
 
-    child_id = child_id || {ExMCP.SessionManager, name}
+    child_id = child_id || {Arbor.MCP.SessionManager, name}
 
     pid =
       ExUnit.Callbacks.start_supervised!(
-        {ExMCP.SessionManager, opts},
+        {Arbor.MCP.SessionManager, opts},
         id: child_id
       )
 

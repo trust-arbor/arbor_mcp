@@ -1,4 +1,4 @@
-// MCP 2026-07-28 TypeScript SDK v2 HTTP server for ExMCP interop tests.
+// MCP 2026-07-28 TypeScript SDK v2 HTTP server for Arbor.MCP interop tests.
 import { createServer as createHttpServer } from "node:http";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import {

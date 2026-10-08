@@ -46,7 +46,7 @@ defmodule Mix.Tasks.Mcp.SyncSpec do
 
   use Mix.Task
 
-  alias ExMCP.SpecSync.{FileMapper, GitHubClient, Metadata}
+  alias Arbor.MCP.SpecSync.{FileMapper, GitHubClient, Metadata}
 
   @shortdoc "Sync MCP specification docs from GitHub"
 

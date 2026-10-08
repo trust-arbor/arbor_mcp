@@ -1,4 +1,10 @@
-# ExMCP Security Guide
+# ArborMCP Security Guide
+
+To report a suspected vulnerability, use the
+[private vulnerability reporting form](https://github.com/trust-arbor/arbor_mcp/security/advisories/new).
+Include the affected version, reproduction steps and potential impact, with
+secrets removed. Use [GitHub issues](https://github.com/trust-arbor/arbor_mcp/issues)
+for other bugs; do not disclose vulnerability details publicly.
 
 Security is handled at the protocol edge: HTTP clients and Plug/Phoenix servers
 use authentication, TLS, origin checks, and CORS; stdio relies on subprocess
@@ -25,7 +31,7 @@ pointing a client at a remote server.
 
 ## Outbound Requests: Trusted Origins and Consent
 
-`ExMCP.Transport.SecurityGuard` runs on every outbound HTTP POST — the
+`Arbor.MCP.Transport.SecurityGuard` runs on every outbound HTTP POST — the
 JSON-RPC channel — and on the URIs of `resources/read` / `resources/list`
 requests sent over stdio. It classifies the target URL against
 `:trusted_origins` (exact origins) and `:trusted_hosts` (an explicitly broad
@@ -40,12 +46,12 @@ compatibility policy). For anything that is **not** trusted it:
 **The defaults are fail-closed and this bites first-time users.**
 `:trusted_origins` is empty, `:trusted_hosts` contains only loopback names, and
 `:consent_handler` is
-`ExMCP.ConsentHandler.Deny`, so a client pointed at a server that is not on
+`Arbor.MCP.ConsentHandler.Deny`, so a client pointed at a server that is not on
 localhost has its `Authorization` header stripped and the request denied with
 `consent_denied`. Declare the servers your application talks to:
 
 ```elixir
-config :ex_mcp, :security,
+config :arbor_mcp, :security,
   trusted_origins: ["https://mcp.example.com"]
 ```
 
@@ -61,7 +67,7 @@ full URL or query string.
 |---------|---------|--------|
 | `:trusted_origins` | `[]` | Exact HTTP(S) origins. Scheme, host, and effective port must match. Userinfo, query strings, fragments, and wildcards are rejected. |
 | `:trusted_hosts` | `["localhost", "127.0.0.1", "::1"]` | Broad host-only compatibility trust across schemes and ports. `"*.example.com"` matches subdomains but not the apex. Avoid for remote production services. |
-| `:consent_handler` | `ExMCP.ConsentHandler.Deny` | Consulted for untrusted origins. `CLI` prompts; `Web` defers to an out-of-band flow. |
+| `:consent_handler` | `Arbor.MCP.ConsentHandler.Deny` | Consulted for untrusted origins. `CLI` prompts; `Web` defers to an out-of-band flow. |
 | `:consent_ttl` | 24 hours (milliseconds) | Lifetime of a cached consent decision. |
 | `:enable_token_passthrough_prevention` | `true` | Set `false` to forward credentials to untrusted origins. |
 | `:enable_user_consent_validation` | `true` | Set `false` to skip the consent handler entirely. |
@@ -72,7 +78,7 @@ block the request.
 
 ### Writing a consent handler
 
-`ExMCP.ConsentHandler` implementations return an expiry. Use one of the
+`Arbor.MCP.ConsentHandler` implementations return an expiry. Use one of the
 explicit forms — `DateTime`, `{:ttl, seconds}`, `{:unix, seconds}`, or
 `{:monotonic, seconds}`:
 
@@ -91,7 +97,7 @@ mistake — it would otherwise grant consent for decades — so implausible valu
 
 ```elixir
 {:ok, client} =
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :http,
     url: "https://api.example.com/mcp",
     headers: [{"Authorization", "Bearer #{token}"}],
@@ -113,7 +119,7 @@ changing the VM-wide policy that every other client shares:
 security: %{trusted_origins: ["https://api.example.com"]}
 ```
 
-Those origins join `config :ex_mcp, :security, trusted_origins: [...]` for
+Those origins join `config :arbor_mcp, :security, trusted_origins: [...]` for
 that connection's own requests only. Entries must be exact HTTP(S) origins
 (scheme, host and optional port, no path); anything else fails at connect.
 
@@ -134,13 +140,13 @@ reserved, and metadata-service addresses remain denied.
 ### OAuth credential isolation
 
 Modern pre-registered clients bind their credentials to an exact
-authorization-server issuer through `credential_issuer`. ExMCP rejects
+authorization-server issuer through `credential_issuer`. ArborMCP rejects
 mismatches without normalizing trailing slashes or paths, validates discovered
 AS metadata against the issuer that led to it, and never resolves the client
 secret before that check succeeds. CIMD client IDs are the deliberate portable
 exception defined by the protocol.
 
-Persistent hosts should implement `ExMCP.Authorization.CredentialStore` using
+Persistent hosts should implement `Arbor.MCP.Authorization.CredentialStore` using
 an encrypted database or platform keychain. Registrations are keyed by issuer
 and client ID; tokens additionally include resource/audience, subject or client
 identity, and granted scopes. Credential values redact secrets from `Inspect`,
@@ -151,9 +157,9 @@ independently verified.
 
 ### OAuth metadata SSRF protection
 
-Treat every URL learned during OAuth discovery as attacker-controlled. ExMCP
+Treat every URL learned during OAuth discovery as attacker-controlled. ArborMCP
 routes CIMD, Protected Resource Metadata, OIDC/RFC 8414 authorization-server
-metadata, and JWKS requests through `ExMCP.Authorization.MetadataFetcher`.
+metadata, and JWKS requests through `Arbor.MCP.Authorization.MetadataFetcher`.
 The boundary requires HTTPS; forbids URI userinfo and fragments; bounds DNS,
 connection and request time; bounds per-response and aggregate redirect bytes;
 rejects compression; and follows only a bounded, cycle-free redirect chain.
@@ -192,15 +198,26 @@ in the configuration guide.
 `tls: %{verify: :verify_none}` is
 accepted for local development against self-signed certificates, but it makes
 the connection unauthenticated — encrypted, yet open to an active
-man-in-the-middle — and ExMCP logs a warning whenever it is configured.
+man-in-the-middle — and ArborMCP logs a warning whenever it is configured.
 
 ## HTTP Server Security
 
 Use Plug/Phoenix pipelines for server-side concerns:
 
 ```elixir
+# In Application.start/2, before the borrowed Phoenix endpoint:
+children = [
+  {Arbor.MCP.Server.Runtime,
+   name: MyApp.MCPRuntime,
+   handler: MyApp.MCPServer,
+   handler_args: [],
+   transport: :mounted_http}
+]
+Supervisor.start_link(children, strategy: :one_for_one)
+
+# In the router:
 pipeline :mcp do
-  plug ExMCP.Plugs.DnsRebinding
+  plug Arbor.MCP.Plugs.DnsRebinding
   plug MyApp.VerifyRequestSignature
   plug MyApp.RequireMCPToken
 end
@@ -208,10 +225,9 @@ end
 scope "/mcp" do
   pipe_through :mcp
 
-  forward "/", ExMCP.HttpPlug,
-    handler: MyApp.MCPServer,
+  forward "/", Arbor.MCP.HttpPlug,
+    runtime: MyApp.MCPRuntime,
     protocol_mode: :prefer_modern,
-    server_info: %{name: "my-app", version: "1.0.0"},
     cors_enabled: true
 end
 ```
@@ -239,7 +255,7 @@ that deliberately disables these bindings.
 
 ### MRTR request state
 
-Modern multi-round requests use an ExMCP-owned, versioned AES-256-GCM envelope.
+Modern multi-round requests use an ArborMCP-owned, versioned AES-256-GCM envelope.
 The authenticated payload binds the immutable request digest, expected input
 IDs, round, protocol version, endpoint, capability fingerprint, principal, and
 tenant. It contains only bounded JSON application state—never bearer tokens or
@@ -267,7 +283,7 @@ closed and callers must restart the operation.
 
 AEAD prevents tampering but not replay. Side-effecting resumptions should set
 `require_replay_protection: true` and configure a shared replay-cache adapter.
-`ExMCP.Server.ReplayCache.ETS` is atomic but node-local and is therefore only
+`Arbor.MCP.Server.ReplayCache.ETS` is atomic but node-local and is therefore only
 appropriate for single-node deployments. Without an adapter, handlers must
 treat `RequestContext.delivery_semantics == :at_least_once` accordingly.
 
@@ -294,16 +310,16 @@ notification parameters.
 ### DNS rebinding protection
 
 Protection is Host-allow-list based and is **on by default for localhost
-servers**, which are the prime rebinding target. `ExMCP.HttpPlug` provides
+servers**, which are the prime rebinding target. `Arbor.MCP.HttpPlug` provides
 three complementary controls:
 
 - **Host allow-list** (`:allowed_hosts`): requests whose `Host` header is not
   listed are rejected with `421` before any routing or handler work. Ports are
   ignored and IPv6 hosts match with or without brackets (`[::1]:8080` matches
-  `"[::1]"` and `"::1"`). Servers started through `ExMCP.Server.Transport`
+  `"[::1]"` and `"::1"`). Servers started through `Arbor.MCP.Server.Transport`
   with a localhost bind get `["localhost", "127.0.0.1", "[::1]", "::1"]`
   automatically; an explicit `:allowed_hosts` always wins. When you mount
-  `ExMCP.HttpPlug` yourself — in a Phoenix `forward`, say — set
+  `Arbor.MCP.HttpPlug` yourself — in a Phoenix `forward`, say — set
   `:allowed_hosts` explicitly to the hostnames the server is reachable under
   rather than relying on the default.
 - **Origin allow-list** (`:validate_origin`, default `true`, plus
@@ -314,7 +330,7 @@ three complementary controls:
   protection, and the Host allow-list is what closes that gap. There is no
   "same origin as the Host header" fallback: under DNS rebinding the Host
   header is attacker-controlled, so such a comparison would always pass.
-- **`ExMCP.Plugs.DnsRebinding`**: a standalone plug for Phoenix/Plug
+- **`Arbor.MCP.Plugs.DnsRebinding`**: a standalone plug for Phoenix/Plug
   pipelines that enforces a Host allow-list (default: loopback names only)
   in front of any downstream plugs.
 
@@ -331,7 +347,7 @@ authorization context, tenant identity, or modern request correlation.
 ## JSON Schema References and Resource Limits
 
 JSON Schema is executable input: resolving a reference can cause network I/O,
-and adversarial composition can consume excessive CPU or memory. ExMCP applies
+and adversarial composition can consume excessive CPU or memory. ArborMCP applies
 the same policy to content helpers, tool argument validation, DSL output
 schemas, the deprecated tools API, and the dynamic tool registry.
 
@@ -364,7 +380,7 @@ embedding definitions in the local schema whenever practical.
 ## Trace Context and Baggage
 
 Treat `traceparent`, `tracestate`, and `baggage` in MCP `_meta` as untrusted
-wire input. ExMCP validates these fields before exposing them to handlers or
+wire input. ArborMCP validates these fields before exposing them to handlers or
 putting them on outbound modern requests. Malformed values reject request
 metadata instead of being silently forwarded, and the sanitized `_meta` no
 longer contains baggage members removed by policy.
@@ -376,10 +392,10 @@ Keep the allowlist short and limited to non-secret, low-cardinality identifiers;
 baggage can cross process and service trust boundaries and may be recorded by
 observability infrastructure.
 
-ExMCP only transports the validated strings. It does not install an
+ArborMCP only transports the validated strings. It does not install an
 OpenTelemetry SDK, create spans, or attach remote context to global/process
 state. Applications that choose to continue a trace must do so explicitly from
-`ExMCP.Server.RequestContext.trace_context` using their own trusted telemetry
+`Arbor.MCP.Server.RequestContext.trace_context` using their own trusted telemetry
 integration. See the
 [configuration guide](CONFIGURATION.md#opentelemetry-metadata-policy) for the
 defaults and client example.
@@ -387,7 +403,7 @@ defaults and client example.
 ## Durable Tasks
 
 Modern task IDs may act as bearer handles to stored execution state. Generate
-them with cryptographic entropy; `ExMCP.Tasks.Task.new/3` does this by default,
+them with cryptographic entropy; `Arbor.MCP.Tasks.Task.new/3` does this by default,
 but an application that supplies `:id` assumes that responsibility. Bind every
 stored task to the authenticated principal, tenant, resource/audience, and
 other authorization context needed by the deployment, and repeat that check on
@@ -401,10 +417,10 @@ or client restart. Enforce TTL cleanup without reassigning identifiers, and use
 atomic or concurrency-controlled transitions so late updates cannot overwrite
 a terminal state.
 
-`ExMCP.Tasks.Store.ETS` provides this guarantee only while its owning ExMCP
+`Arbor.MCP.Tasks.Store.ETS` provides this guarantee only while its owning ArborMCP
 application remains running. It deliberately returns the same error for a
 missing task and an ownership mismatch. Use a shared, restart-persistent
-`ExMCP.Tasks.Store` implementation when multiple nodes can serve task requests
+`Arbor.MCP.Tasks.Store` implementation when multiple nodes can serve task requests
 or server-restart recovery is required.
 
 Treat task `inputRequests` with the same consent and trust policy as the
@@ -446,7 +462,7 @@ filesystem, process, or network sandbox.
 
 ```elixir
 {:ok, server} = MyServer.start_link(transport: :beam)   # requires use of DSL, or use HandlerServer
-{:ok, client} = ExMCP.Client.start_link(transport: :beam, server: server)
+{:ok, client} = Arbor.MCP.Client.start_link(transport: :beam, server: server)
 ```
 
 There is no wire-level authentication inside a single VM. Enforce access with
@@ -462,21 +478,21 @@ appropriate.
 Use public validation helpers where available:
 
 ```elixir
-ExMCP.Security.Validation.validate_config(security_config)
+Arbor.MCP.Security.Validation.validate_config(security_config)
 ```
 
-Use `ExMCP.Content.Validation` and handler-side schema checks for tool/resource
+Use `Arbor.MCP.Content.Validation` and handler-side schema checks for tool/resource
 input validation.
 
 ### Verifying JWTs
 
-`ExMCP.Authorization.JWT.verify/2` checks the **signature only** — an expired
+`Arbor.MCP.Authorization.JWT.verify/2` checks the **signature only** — an expired
 token verifies fine. Use `verify_and_validate/3` (or `validate_claims/2`) for
 anything that makes an authorization decision:
 
 ```elixir
 {:ok, claims} =
-  ExMCP.Authorization.JWT.verify_and_validate(token, jwks,
+  Arbor.MCP.Authorization.JWT.verify_and_validate(token, jwks,
     iss: "https://auth.example.com",
     aud: "https://mcp.example.com"
   )
@@ -493,13 +509,13 @@ supply them when validating tokens from an identity provider.
 
 ### Authorization callback issuer validation
 
-ExMCP registers every library-started authorization-code transaction before
+ArborMCP registers every library-started authorization-code transaction before
 returning its authorization URL. It generates random 256-bit `state` and PKCE
 values, stores only SHA-256 digests of state and authorization codes, and
 atomically moves the transaction through pending, code-ready, and redeemed
 states. Exactly one concurrent callback and one code redemption can succeed.
 
-`ExMCP.Authorization.validate_authorization_response/2` verifies state and,
+`Arbor.MCP.Authorization.validate_authorization_response/2` verifies state and,
 when the callback includes the RFC 9207 `iss` parameter, requires exact
 equality with the issuer recorded when the flow started. Issuer identifiers are
 not normalized: a trailing slash or path difference is a mismatch. A present
@@ -529,7 +545,7 @@ replay protection. Always carry the transaction returned by
 
 Treat every `Mcp-Param-*` value as sensitive. These values mirror selected
 tool arguments and may contain tenant, region, account, or routing data.
-ExMCP does not include them in its HTTP debug logs or telemetry, but reverse
+ArborMCP does not include them in its HTTP debug logs or telemetry, but reverse
 proxies, load balancers, APM agents, and access-log middleware may record
 request headers independently. Configure those systems to redact
 `Mcp-Param-*` with the same policy used for `Authorization` and cookies.
@@ -555,7 +571,7 @@ but `Mcp-Param-*` values are never echoed.
 
 ## Common Issues
 
-**`{:security_violation, %ExMCP.Transport.SecurityError{type: :consent_denied}}`**
+**`{:security_violation, %Arbor.MCP.Transport.SecurityError{type: :consent_denied}}`**
 
 The server's origin is not in `:trusted_origins` or `:trusted_hosts`, and the
 default consent handler denied it. Add the exact origin — see
@@ -571,7 +587,7 @@ request went out.
 
 **CORS failure**
 
-Configure the Phoenix/Plug pipeline or `ExMCP.HttpPlug` CORS options for the
+Configure the Phoenix/Plug pipeline or `Arbor.MCP.HttpPlug` CORS options for the
 browser origin.
 
 **BEAM-local access control**

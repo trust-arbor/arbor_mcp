@@ -1,11 +1,11 @@
 defmodule DebugVersionNegotiationTest do
   use ExUnit.Case, async: true
 
-  alias ExMCP.Client
-  alias ExMCP.Server.HandlerServer
+  alias Arbor.MCP.Client
+  alias Arbor.MCP.Server.HandlerServer
 
   defmodule TestServerV2024 do
-    use ExMCP.Server.Handler
+    use Arbor.MCP.Server.Handler
 
     def start_link(opts \\ []) do
       opts
@@ -36,7 +36,7 @@ defmodule DebugVersionNegotiationTest do
   end
 
   defmodule TestServerV2025 do
-    use ExMCP.Server.Handler
+    use Arbor.MCP.Server.Handler
 
     def start_link(opts \\ []) do
       opts

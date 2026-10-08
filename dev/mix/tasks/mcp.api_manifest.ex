@@ -19,7 +19,7 @@ defmodule Mix.Tasks.Mcp.ApiManifest do
 
   use Mix.Task
 
-  alias ExMCP.APIManifest
+  alias Arbor.MCP.APIManifest
 
   @shortdoc "Snapshot the package API for a major-version migration"
   @switches [output: :string, source_ref: :string, check: :boolean]

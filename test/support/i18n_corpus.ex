@@ -1,8 +1,8 @@
-defmodule ExMCP.Test.I18nCorpus do
+defmodule Arbor.MCP.Test.I18nCorpus do
   @moduledoc """
   Non-ASCII payloads every transport must carry byte-exact.
 
-  One corpus, reused by the stdio, ACP stdio, HTTP, and in-process transport
+  One corpus, reused by the stdio, HTTP, and in-process transport
   tests, so a regression in any one path shows up against the same data.
   """
 

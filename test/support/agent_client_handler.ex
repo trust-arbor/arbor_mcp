@@ -1,14 +1,14 @@
-defmodule ExMCP.Testing.AgentClientHandler do
+defmodule Arbor.MCP.Testing.AgentClientHandler do
   @moduledoc """
   Client handler for agent simulation tests.
 
-  Implements `ExMCP.Client.Handler` to handle server-initiated requests
+  Implements `Arbor.MCP.Client.Handler` to handle server-initiated requests
   like roots listing, sampling (create_message), and elicitation.
 
   Configurable via init args to customize responses per test scenario.
   """
 
-  @behaviour ExMCP.Client.Handler
+  @behaviour Arbor.MCP.Client.Handler
 
   @impl true
   def init(args) do

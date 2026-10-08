@@ -1,19 +1,19 @@
-defmodule ExMCP.ComplianceTestHelpers do
+defmodule Arbor.MCP.ComplianceTestHelpers do
   @moduledoc """
   Helper functions for MCP compliance tests.
   Provides client setup, mock servers, and common test utilities.
   """
 
   import ExUnit.Assertions
-  alias ExMCP.Client
-  alias ExMCP.Server.HandlerServer, as: Server
+  alias Arbor.MCP.Client
+  alias Arbor.MCP.Server.HandlerServer, as: Server
 
   @doc """
   Sets up a test client for the specified MCP version.
   Returns {:ok, client} or {:error, reason}.
   """
   def setup_test_client(version) do
-    unless ExMCP.Internal.VersionRegistry.supported?(version) do
+    unless Arbor.MCP.Internal.VersionRegistry.supported?(version) do
       raise ArgumentError, "unsupported compliance-test version: #{inspect(version)}"
     end
 
@@ -173,10 +173,10 @@ defmodule ExMCP.ComplianceTestHelpers do
 
   defp get_handler_module(version) do
     case version do
-      "2024-11-05" -> ExMCP.Compliance.Handlers.Handler20241105
-      "2025-03-26" -> ExMCP.Compliance.Handlers.Handler20250326
-      "2025-06-18" -> ExMCP.Compliance.Handlers.Handler20250618
-      "2025-11-25" -> ExMCP.Compliance.Handlers.Handler20251125
+      "2024-11-05" -> Arbor.MCP.Compliance.Handlers.Handler20241105
+      "2025-03-26" -> Arbor.MCP.Compliance.Handlers.Handler20250326
+      "2025-06-18" -> Arbor.MCP.Compliance.Handlers.Handler20250618
+      "2025-11-25" -> Arbor.MCP.Compliance.Handlers.Handler20251125
     end
   end
 end

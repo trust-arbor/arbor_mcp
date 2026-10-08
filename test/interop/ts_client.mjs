@@ -28,7 +28,7 @@ const connectOptions = { timeout: 30_000 };
 // the same Hex archive as the parent instead of a stale global one.
 function mixChildEnv() {
   const env = { MIX_ENV: process.env.MIX_ENV ?? "test" };
-  for (const name of ["MIX_HOME", "MIX_ARCHIVES"]) {
+  for (const name of ["MIX_HOME", "MIX_ARCHIVES", "MIX_DEPS_PATH", "ARBOR_RPC_PATH", "ARBOR_V2_DEPS", "ARBOR_V2_BUILD", "ARBOR_V2_LOCK"]) {
     if (process.env[name]) env[name] = process.env[name];
   }
   return env;

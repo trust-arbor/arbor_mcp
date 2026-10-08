@@ -1,16 +1,53 @@
 # Post-1.0 Maintenance Plan
 
-- **Status:** Stable 1.0 packaging and the focused contract cleanup are
-  complete; the Codex characterization gate is met; adapter modularization
-  and functional-core extraction remain proposed and tracked
+- **Status:** Historical 1.x work and deferred tracks preserved; maintained 1.x branch and implemented v2 scope are tracked separately
 - **Baseline:** ExMCP `1.0.0`
 - **Scope:** behavior-preserving modularization, functional-core extraction,
   dependency cleanup, and Hex source-package cleanup
-- **Last updated:** 2026-09-22
+- **Last updated:** 2026-10-07
 
 This is a repository-maintenance document, not user-facing package
 documentation. It records cleanup that is valuable but too invasive to mix
 into the final 1.0 release-candidate cycle.
+
+## Current maintenance disposition — October 7, 2026
+
+ExMCP 1.x remains maintained on `codex/maintenance-1.x`, preserved from
+`3914a927`. Its package/module/configuration identities and compatibility
+contracts remain 1.x. Applicable correctness, security and compatibility fixes
+need regression coverage on that branch; v2 tests are not backport evidence.
+See the [maintenance policy](MAINTENANCE_POLICY.md).
+
+The v2 roadmap's package/runtime/dispatch, store, Result/DSL/composition and
+client-lifecycle work is implemented. Older proposed or deferred labels below
+are dated maintenance history, not evidence that those accepted v2 features are
+missing. Unselected adapter modularization or extraction proposals remain
+follow-up work unless separately accepted. Public middleware, a general dialect
+framework and database/event-sourcing requirements were not added to v2 scope.
+
+All four original `2.0.0-rc.1` packages are published and their archive
+checksums were verified. Current source prepares MCP `2.0.0-rc.2` and RPC,
+ACP and Adapters `1.0.0-rc.1`, with independent 1.x dependency requirements.
+The replacements are not yet published. Preserve existing versions and tags;
+retirement follows verified replacement installation.
+
+The accepted package split and runtime/scheduler scope is implemented. Optional
+HTTP dependency ranges, Claude file limits and ZCode settings fixes passed their
+recorded checks. Supported/latest MCP CI passed at `0812257`; ACP and RPC retain
+their own recorded source selections. Prior receipts do not qualify new metadata.
+
+Further performance investigation is deferred at the user's request. Adopted
+encoder/accounting and revision-token changes remain; mixed experimental changes
+are not promoted. Document measured performance costs for the stable decision.
+DSL/Spark and public API review is now open before the release freeze.
+
+Remaining gates are final metadata/source/archive association, applicable CI,
+conformance/SDK/CLI and dependency-contract checks, real downstream integrations,
+long-lived peer capacity policy, registry installation and the final candidate's
+continuous 48-hour soak. No qualifying soak is active; stable qualification is
+incomplete. See [RC notes](guides/V2_RELEASE_CANDIDATE.md) for consumer limits.
+
+Follow the [current release plan](V2_RELEASE_PLAN.md#current-release-status--october-7-2026); historical execution order below is preserved.
 
 ## Goals and constraints
 
@@ -42,7 +79,7 @@ deferred until after stable 1.0.
 
 ## Codex adapter restructuring
 
-At the rc.7 baseline, `ExMCP.ACP.Adapters.Codex` is approximately 3,470 lines,
+At the rc.7 baseline, `Arbor.MCP.ACP.Adapters.Codex` is approximately 3,470 lines,
 in addition to the existing `Codex.Config` and `Codex.Events` modules. The root
 module currently owns process protocol, ACP lifecycle, request tracking,
 permissions, prompt conversion, session state, and MCP configuration.
@@ -62,8 +99,8 @@ Before moving production code, add golden tests for:
 ### Status as of 2026-09-05 (characterization gate)
 
 The Codex characterization gate above is met on `master` by a golden-transcript
-suite under `test/ex_mcp/acp/adapters/codex/characterization/` driven by
-`ExMCP.Test.CodexGolden` (`test/support/acp/codex_golden.ex`), with one fixture
+suite under `test/arbor_mcp/acp/adapters/codex/characterization/` driven by
+`Arbor.MCP.Test.CodexGolden` (`test/support/acp/codex_golden.ex`), with one fixture
 per scenario under `test/fixtures/acp/codex/<area>/`:
 
 | Gate bullet | File | Scenarios |
@@ -85,7 +122,7 @@ behavior change to `codex.ex`, `config.ex`, `events.ex`, or `sessions.ex` must
 fail at least one scenario); the misses that remained are wire-equivalent
 resets (`accumulated_text`, `accumulated_thinking`) and are recorded in the
 area moduledocs. Client-side timeouts and subprocess exit are owned by
-`ExMCP.ACP.Client` and `AdapterBridge`, not by the adapter, and are covered by
+`Arbor.MCP.ACP.Client` and `AdapterBridge`, not by the adapter, and are covered by
 their own tests rather than by this gate. See `docs/DEVELOPMENT.md` for the
 regeneration workflow.
 
@@ -139,7 +176,7 @@ bar above.
 
 ### Codex completion criteria
 
-- The public `ExMCP.ACP.Adapters.Codex` API and state behavior are unchanged.
+- The public `Arbor.MCP.ACP.Adapters.Codex` API and state behavior are unchanged.
 - The root module primarily coordinates lifecycle, state, and subprocess I/O.
 - Unit, official ACP SDK interop, and real Codex CLI lifecycle tests pass.
 - Golden native-wire fixtures are unchanged.
@@ -147,7 +184,7 @@ bar above.
 
 ## Pi adapter restructuring
 
-At the rc.7 baseline, `ExMCP.ACP.Adapters.Pi` is approximately 2,357 lines.
+At the rc.7 baseline, `Arbor.MCP.ACP.Adapters.Pi` is approximately 2,357 lines.
 `Pi.SessionStore`, `Pi.Settings`, `Pi.SlashCommands`, `Pi.Startup`, `Pi.Tools`,
 and `Pi.Version` already provide useful boundaries, but the root module still
 combines RPC control flow, ACP lifecycle, streaming events, prompt scheduling,
@@ -168,9 +205,9 @@ Before moving production code, add golden tests for:
 ### Status as of 2026-09-20 (characterization gate)
 
 The Pi characterization gate above is met by a golden-transcript suite under
-`test/ex_mcp/acp/adapters/pi/characterization/` driven by
-`ExMCP.Test.PiGolden` (`test/support/acp/pi_golden.ex`, with the shared step
-builders in `ExMCP.Test.PiGolden.Flows`), with one fixture per scenario under
+`test/arbor_mcp/acp/adapters/pi/characterization/` driven by
+`Arbor.MCP.Test.PiGolden` (`test/support/acp/pi_golden.ex`, with the shared step
+builders in `Arbor.MCP.Test.PiGolden.Flows`), with one fixture per scenario under
 `test/fixtures/acp/pi/<area>/`:
 
 | Gate bullet | File | Scenarios |
@@ -214,7 +251,7 @@ reproduces the original crash when the fix is reverted.
 
 ### Correlation ids and what the golden harness can see
 
-`ExMCP.Test.PiGolden` normalizes minted `pi-N` correlation ids by order of
+`Arbor.MCP.Test.PiGolden` normalizes minted `pi-N` correlation ids by order of
 first appearance in the transcript, so two runs that emit the same requests in
 the same order produce identical fixtures even when the ids were minted in a
 different order. That is a real blind spot: the `Pi.Sessions` extraction merged
@@ -236,7 +273,7 @@ the ids of a `session/load` and a `session/resume` ascend and are distinct.
 
 The ids are opaque correlation tokens: nothing parses them, they are only map
 and set keys, and Pi echoes back whatever it was sent, so the numbering is
-ExMCP's to choose. A scenario that starts the adapter twice now sees both
+ArborMCP's to choose. A scenario that starts the adapter twice now sees both
 connections number from one, which is why two fixtures changed with the switch.
 
 ### Proposed boundaries
@@ -258,7 +295,7 @@ not merge modules solely to reduce the file count.
 
 ### Status as of 2026-09-21 (boundary extractions)
 
-All five proposed boundaries are extracted. `ExMCP.ACP.Adapters.Pi` is now
+All five proposed boundaries are extracted. `Arbor.MCP.ACP.Adapters.Pi` is now
 **1,795 lines**, down from 2,586 at the 1.5.0 release commit:
 
 | Module | Lines | What it owns |
@@ -300,7 +337,7 @@ What deliberately stayed in the root:
 
 ### Pi completion criteria
 
-- The public `ExMCP.ACP.Adapters.Pi` API and startup options are unchanged.
+- The public `Arbor.MCP.ACP.Adapters.Pi` API and startup options are unchanged.
 - The root module primarily coordinates state and native process I/O.
 - Pi unit tests and the credential-free real CLI lifecycle test pass.
 - Golden RPC fixtures and ACP event ordering are unchanged.
@@ -308,7 +345,7 @@ What deliberately stayed in the root:
 
 ## Claude adapter characterization gate
 
-At the 1.5.0 baseline, `ExMCP.ACP.Adapters.ClaudeSDK` is approximately 4,390
+At the 1.5.0 baseline, `Arbor.MCP.ACP.Adapters.ClaudeSDK` is approximately 4,390
 lines across `claude_sdk.ex` and `claude_sdk/{mapper,protocol,session_store,
 tool_info}.ex`, the largest of the three ACP adapters and the last one without
 a characterization gate. The four queued Claude parity items (see "2026-09-21
@@ -335,9 +372,9 @@ Before porting those items, add golden tests for:
 ### Status as of 2026-09-21 (characterization gate)
 
 The Claude gate above is met by a golden-transcript suite under
-`test/ex_mcp/acp/adapters/claude_sdk/characterization/` driven by
-`ExMCP.Test.ClaudeGolden` (`test/support/acp/claude_golden.ex`, with the
-shared step builders in `ExMCP.Test.ClaudeGolden.Flows`), with one fixture per
+`test/arbor_mcp/acp/adapters/claude_sdk/characterization/` driven by
+`Arbor.MCP.Test.ClaudeGolden` (`test/support/acp/claude_golden.ex`, with the
+shared step builders in `Arbor.MCP.Test.ClaudeGolden.Flows`), with one fixture per
 scenario under `test/fixtures/acp/claude/<area>/`:
 
 | Gate bullet | File | Scenarios |
@@ -373,7 +410,7 @@ in each area's moduledoc so the check can be repeated.
 
 Two things are deliberately not characterized. Subprocess exit is not
 reachable: the Claude adapter is not adapter-managed, so port exit, port close
-and partial-line buffering belong to `ExMCP.ACP.AdapterBridge` and its own
+and partial-line buffering belong to `Arbor.MCP.ACP.AdapterBridge` and its own
 tests, and there is no adapter callback this gate could drive. The
 remote-login branch of `auth_methods/2` reads `NO_BROWSER`, `SSH_CONNECTION`,
 `SSH_CLIENT`, `SSH_TTY` and `CLAUDE_CODE_REMOTE` straight from the OS
@@ -383,7 +420,7 @@ environment, which an async test may not mutate; the harness fails an
 Building the gate surfaced one latent defect, pinned as it behaves today
 rather than fixed: a Claude `read_file` control request's `max_bytes` never
 reaches the ACP client, because the adapter passes it to
-`ExMCP.ACP.Protocol.encode_file_read_request/3` as `:max_bytes` while that
+`Arbor.MCP.ACP.Protocol.encode_file_read_request/3` as `:max_bytes` while that
 function reads only `:line` and `:limit`. The client therefore sees no cap
 (`faults_golden_test.exs`, `read_file_drops_the_max_bytes_limit`). Fixing it
 is a separate reviewed commit that must update that fixture.
@@ -428,35 +465,35 @@ contracts unless a separate public design explicitly says otherwise.
 
 1. **Client request lifecycle** — extract request planning, correlation,
    timeout/cancellation decisions, and response reduction from
-   `ExMCP.Client` and `ExMCP.Client.RequestHandler`. Keep transport calls,
+   `Arbor.MCP.Client` and `Arbor.MCP.Client.RequestHandler`. Keep transport calls,
    `GenServer.reply/2`, timers, and telemetry in the client process.
 2. **Session lifecycle** — extract identity binding, initialization claims,
    replay ordering, retention, and expiry decisions from
-   `ExMCP.SessionManager`. Keep ETS, monitors, clocks, logging, and subscription
+   `Arbor.MCP.SessionManager`. Keep ETS, monitors, clocks, logging, and subscription
    cleanup in the owner.
 3. **HTTP client state** — extract option normalization plus Mint response/SSE
-   event reduction from `ExMCP.Transport.HTTP`. Keep sockets, OAuth callbacks,
+   event reduction from `Arbor.MCP.Transport.HTTP`. Keep sockets, OAuth callbacks,
    process messages, and telemetry at the edge.
-4. **HTTP server routing** — expand the existing `ExMCP.HttpPlug.Core` pattern
+4. **HTTP server routing** — expand the existing `Arbor.MCP.HttpPlug.Core` pattern
    to cover protocol-era, route, session, and response planning from plain data.
    Keep `Plug.Conn`, request-body reads, stores, and SSE streaming in the Plug.
 5. **OAuth decisions** — extract redirect policy, callback parsing, discovery
    choices, and token-request construction from
-   `ExMCP.Authorization.FullOAuthFlow`. Keep browser, listener socket, HTTP,
+   `Arbor.MCP.Authorization.FullOAuthFlow`. Keep browser, listener socket, HTTP,
    credential-store, and transaction-store operations in the flow shell.
 6. **ACP adapters** — use the Codex and Pi boundaries above as pure protocol,
    content, permission, configuration, event, and prompt-flow cores. The root
    adapters continue to own subprocesses and ACP lifecycle orchestration.
-7. **ACP pending requests** — either promote `ExMCP.ACP.PendingRequests` into a
+7. **ACP pending requests** — either promote `Arbor.MCP.ACP.PendingRequests` into a
    real request-lifecycle core with explicit entry, resolve, cancel, expire, and
    late-response transitions, or remove the shallow map wrapper. Do not retain
    an abstraction that owns neither policy nor invariants.
 
 ### Shared HTTP framing
 
-`ExMCP.Internal.PinnedHTTPClient`,
-`ExMCP.Authorization.PinnedHTTPClient`, and
-`ExMCP.Transport.HTTP.BoundedClient` contain overlapping Mint response
+`Arbor.MCP.Internal.PinnedHTTPClient`,
+`Arbor.MCP.Authorization.PinnedHTTPClient`, and
+`Arbor.MCP.Transport.HTTP.BoundedClient` contain overlapping Mint response
 accumulation and bounded-body decisions. Extract one small pure HTTP event
 reducer and contract suite while keeping DNS, target, TLS, redirect, OAuth, and
 authorization policies in their current owners. Do not merge the policy layers
@@ -464,7 +501,7 @@ merely because all three use Mint.
 
 #### Status as of 2026-09-20
 
-Extracted. `ExMCP.Internal.HTTPResponseReducer` (`@moduledoc false`) owns the
+Extracted. `Arbor.MCP.Internal.HTTPResponseReducer` (`@moduledoc false`) owns the
 pure mechanics only: `reduce(events, request_ref, acc, limits)` returning
 `{:cont, acc} | {:done, acc} | {:error, reason}`, the empty accumulator,
 `body/1`, `remaining_ms/2`, header normalization, the lenient
@@ -479,16 +516,16 @@ ref and unknown event shapes are skipped; the first `:done` ends the batch.
 
 Each owner kept its policy, its socket and clock handling, and its shapes:
 
-- `ExMCP.Internal.PinnedHTTPClient`: GET only, lenient content-length check
+- `Arbor.MCP.Internal.PinnedHTTPClient`: GET only, lenient content-length check
   on each header batch, no compression check, `{:ok, %{status, headers,
   body}}`, and `:fetch_failed` for every transport or Mint failure.
-- `ExMCP.Authorization.PinnedHTTPClient`: httpc-style tuple with the status
+- `Arbor.MCP.Authorization.PinnedHTTPClient`: httpc-style tuple with the status
   reason, `:compressed_response`, strict content-length on each batch,
   `:invalid_response` for a `:done` without a status, `:request_failed` for
   receive failures, Mint connect errors passed through, request-tuple parsing
   with `content-type` defaulting, and the TLS and `send_timeout` socket
   options.
-- `ExMCP.Transport.HTTP.BoundedClient`: httpc-style tuple, `TargetPolicy`
+- `Arbor.MCP.Transport.HTTP.BoundedClient`: httpc-style tuple, `TargetPolicy`
   resolution, the request-size limit, `host` stripping plus forced
   `content-type` and `accept-encoding: identity`, `:compressed_response`,
   `:invalid_response_framing`, strict content-length over the accumulated
@@ -496,11 +533,11 @@ Each owner kept its policy, its socket and clock handling, and its shapes:
   `{:http_receive_failed, _}`, and `{:http_client_error, _}` error shapes.
 
 Characterization suites live in
-`test/ex_mcp/internal/pinned_http_client_test.exs`,
-`test/ex_mcp/authorization/pinned_http_client_test.exs`, and
-`test/ex_mcp/transport/http_bounded_client_test.exs`, driven through
-`ExMCP.Test.RawHTTPServer`; the reducer has its own table-driven suite in
-`test/ex_mcp/internal/http_response_reducer_test.exs`. Request-header
+`test/arbor_mcp/internal/pinned_http_client_test.exs`,
+`test/arbor_mcp/authorization/pinned_http_client_test.exs`, and
+`test/arbor_mcp/transport/http_bounded_client_test.exs`, driven through
+`Arbor.MCP.Test.RawHTTPServer`; the reducer has its own table-driven suite in
+`test/arbor_mcp/internal/http_response_reducer_test.exs`. Request-header
 editing (`put_header/3`, `delete_header/2`, `put_header_if_missing/3`) stayed
 in the owners because the two clients that have it disagree on
 replace-versus-keep semantics.
@@ -512,10 +549,10 @@ chosen explicitly before changing code:
 
 | Area | Current mismatch or risk | Follow-up | Release lane |
 |---|---|---|---|
-| Circuit breaker clocks | `ExMCP.Reliability.CircuitBreaker.Core` calls `System.system_time/1`, despite presenting itself as a pure core. Wall time can also move backwards during duration calculations. | Pass `now_ms` from the process shell and use monotonic time for elapsed durations. Audit session expiry for the same distinction between wall-clock timestamps and elapsed time. | Eligible for 1.x as a characterized correctness fix; preserve timeout and telemetry behavior. |
-| Session storage option | `ExMCP.SessionManager` documents `storage_backend: :persistent_term`, but its runtime always creates ETS state. | Specify the store contract and either implement the backend or deprecate the no-op option while continuing to accept it throughout 1.x. Do not leave a durability setting that silently does nothing. | Contract/backend may be additive in a later 1.x minor; option removal is 2.0-only. |
-| Client fallback | `ExMCP.connect/2` documents a transport list as fallback, while the implementation selects only `List.first/1`. | Specify ordered errors, ownership, and cleanup before implementing fallback. If those semantics are not accepted, correct the docs and deprecate the list form while preserving 1.x acceptance. | A fully characterized spec-correctness fix may qualify for a 1.x minor; otherwise defer behavior change/removal to 2.0. |
-| Stdio logging | `ExMCP.Internal.StdioLoggerConfig.configure/0` mutates VM-global Logger/Application/OTP logger behavior. | Route protocol output through a dedicated IO device and logs to stderr without changing unrelated host-application logging. | Document the hazard in 1.x; replace the global behavior in 2.0 unless compatibility evidence proves a safe 1.x path. |
+| Circuit breaker clocks | `Arbor.MCP.Reliability.CircuitBreaker.Core` calls `System.system_time/1`, despite presenting itself as a pure core. Wall time can also move backwards during duration calculations. | Pass `now_ms` from the process shell and use monotonic time for elapsed durations. Audit session expiry for the same distinction between wall-clock timestamps and elapsed time. | Eligible for 1.x as a characterized correctness fix; preserve timeout and telemetry behavior. |
+| Session storage option | `Arbor.MCP.SessionManager` documents `storage_backend: :persistent_term`, but its runtime always creates ETS state. | Specify the store contract and either implement the backend or deprecate the no-op option while continuing to accept it throughout 1.x. Do not leave a durability setting that silently does nothing. | Contract/backend may be additive in a later 1.x minor; option removal is 2.0-only. |
+| Client fallback | `Arbor.MCP.connect/2` documents a transport list as fallback, while the implementation selects only `List.first/1`. | Specify ordered errors, ownership, and cleanup before implementing fallback. If those semantics are not accepted, correct the docs and deprecate the list form while preserving 1.x acceptance. | A fully characterized spec-correctness fix may qualify for a 1.x minor; otherwise defer behavior change/removal to 2.0. |
+| Stdio logging | `Arbor.MCP.Internal.StdioLoggerConfig.configure/0` mutates VM-global Logger/Application/OTP logger behavior. | Route protocol output through a dedicated IO device and logs to stderr without changing unrelated host-application logging. | Document the hazard in 1.x; replace the global behavior in 2.0 unless compatibility evidence proves a safe 1.x path. |
 | Client capability detection | Resource operations inspect the process dictionary's `$initial_call` to infer a modern client. | Replace the heuristic with an explicit internal connection-info or capability query. | Eligible for 1.x only with identical results for all supported client entry points. |
 | Ambient inputs | Several paths read application/system environment, current directory, time, or generate IDs inside decision code. | Normalize configuration once at startup and pass resolved values into cores. | Internal injection is eligible for 1.x if precedence and generated wire values remain identical; precedence changes are 2.0-only. |
 
@@ -534,7 +571,7 @@ noted:
   available, and `:persistent_term` remains accepted with a warning that it
   uses ETS. ETS is still the default and its restart-empty behavior is
   unchanged.
-- **Client fallback:** resolved as a documentation correction. `ExMCP.connect/2`
+- **Client fallback:** resolved as a documentation correction. `Arbor.MCP.connect/2`
   now documents that only the first spec of a list is used; the list form stays
   accepted throughout 1.x.
 - **Stdio logging:** the VM-global hazard is documented for 1.x. Replacing the
@@ -551,7 +588,7 @@ The 1.3.0 line adds ACP client and adapter work that was driven by a
 downstream consumer (Jido Harness) and is classified in
 [`V2_ROADMAP.md` section 8.2](./V2_ROADMAP.md#82-current-classifications):
 
-- **Handler message context:** `ExMCP.ACP.Client.Handler` gained optional
+- **Handler message context:** `Arbor.MCP.ACP.Client.Handler` gained optional
   `handle_session_update/4` and `handle_permission_request/5` variants that
   receive the decoded JSON-RPC message the client received. Both arities of
   each pair are optional; `HandlerRunner` refuses to start a handler that
@@ -583,11 +620,11 @@ downstream consumer (Jido Harness) and is classified in
     fix": Cowlib encoders expect RFC-valid input, and Cowboy 2.16+ and Gun
     2.4+ reject CR/LF at their own layer. The advisory metadata is accurate,
     so there is nothing to report to EEF. The exceptions have no review date;
-    they stay for as long as ExMCP requires Cowboy, and
+    they stay for as long as ArborMCP requires Cowboy, and
     `dependency_advisory_mitigation_test.exs` keeps locking the assumptions
     behind them.
   - Consequence: the only way to stop carrying audit exceptions for code
-    ExMCP never calls is to stop requiring Cowboy. Bandit depends on
+    ArborMCP never calls is to stop requiring Cowboy. Bandit depends on
     `thousand_island`, `hpax`, `plug`, `websock`, and `telemetry` only, with
     no Cowlib in its tree. Making the HTTP server dependency optional (Cowboy
     optional, Bandit supported) was reserved for 2.0 because it is a breaking
@@ -596,8 +633,8 @@ downstream consumer (Jido Harness) and is classified in
     the rest of the 2.0 scope. PR #21 is the existing draft. GitHub #18 stays
     open until a downstream `mix hex.audit` passes without exceptions.
 
-Related maintenance figures at this baseline: `ExMCP.ACP.Adapters.Codex` is
-about 4,519 lines and `ExMCP.ACP.Adapters.Pi` about 2,553, up from the rc.7
+Related maintenance figures at this baseline: `Arbor.MCP.ACP.Adapters.Codex` is
+about 4,519 lines and `Arbor.MCP.ACP.Adapters.Pi` about 2,553, up from the rc.7
 figures quoted above, so the modularization sections below are more pressing,
 not less. The existing `Codex.Sessions` helper covers session lookup and
 update only; the lifecycle-transition boundary in the Codex plan remains.
@@ -631,8 +668,8 @@ fix has to generalize over.
 
 | Transport | Device mode | Read | Write |
 |---|---|---|---|
-| `ExMCP.Server.StdioServer` (`IO.read`, `IO.puts`) | latin1 (launchd, systemd, minimal MCP hosts) | UTF-8 input is re-encoded byte by byte; `café` reaches the handler as `cafÃ©` (35 bytes for 11) | codepoints above U+00FF become `\x{65E5}` escapes inside the JSON string; the frame is not valid JSON |
-| `ExMCP.ACP.Agent.Transport.Stdio` (`IO.binread(_, 1)`, `IO.puts`) | unicode (any UTF-8 developer shell) | each one-byte read returns the decoded codepoint as a latin1 byte, so `é` arrives as `0xE9` and anything above U+00FF fails with `no_translation` | unaffected |
+| `Arbor.MCP.Server.StdioServer` (`IO.read`, `IO.puts`) | latin1 (launchd, systemd, minimal MCP hosts) | UTF-8 input is re-encoded byte by byte; `café` reaches the handler as `cafÃ©` (35 bytes for 11) | codepoints above U+00FF become `\x{65E5}` escapes inside the JSON string; the frame is not valid JSON |
+| `Arbor.MCP.ACP.Agent.Transport.Stdio` (`IO.binread(_, 1)`, `IO.puts`) | unicode (any UTF-8 developer shell) | each one-byte read returns the decoded codepoint as a latin1 byte, so `é` arrives as `0xE9` and anything above U+00FF fails with `no_translation` | unaffected |
 | same | latin1 | unaffected | same corruption as the MCP server |
 
 An echo tool hides the MCP case completely, because writing the double-encoded
@@ -656,7 +693,7 @@ unchanged, and rejects invalid UTF-8 on both encode and decode.
 
 ### The fix
 
-1. **One owner for the rule.** An internal `ExMCP.Internal.StdioFraming`
+1. **One owner for the rule.** An internal `Arbor.RPC.StdioFraming`
    that asks a device whether it is a character (unicode) or byte (latin1)
    device and reads and writes it the matching way, which is byte-exact for
    valid UTF-8 in both cases, plus BOM stripping. The mode is consulted on
@@ -710,7 +747,7 @@ only where locale enters:
 ### Out of scope, tracked separately
 
 - Boot-time logger output reaching stdout before `StdioLoggerConfig` runs.
-  Resolved for ExMCP's own logs: `SessionManager` was the only boot-path
+  Resolved for ArborMCP's own logs: `SessionManager` was the only boot-path
   module logging at `info` and now logs at `debug`, and a subprocess test
   boots the application's supervision tree under the default logger and
   asserts stdout stays empty. Other applications in the same VM remain the
@@ -734,25 +771,25 @@ interop lanes still green.
 
 At commit `4591af6`, `mix xref graph --format stats` reported eight dependency
 cycles. Under Elixir 1.17.3 / OTP 27 the same command reports 22 cycles at both
-the `v1.2.0` tag and the 1.3.0 baseline, none of them touching `lib/ex_mcp/acp`;
+the `v1.2.0` tag and the 1.3.0 baseline, none of them touching `lib/arbor_mcp/acp`;
 they sit in the transport, client, internal, and content modules. Treat 22 as
 the current baseline and record the toolchain with any future count, since the
 difference from the earlier figure is a measurement change rather than a
 regression. Break the cycles through narrow dependency inversion rather than
 moving code between large modules:
 
-- move concrete `get_transport/1` selection out of the `ExMCP.Transport`
+- move concrete `get_transport/1` selection out of the `Arbor.MCP.Transport`
   behaviour and into a registry or factory;
 - introduce a small revision catalog so version data does not cycle through
   `VersionRegistry`, `Protocol.Methods`, error codes, and generated types;
 - have client operation modules call an internal request-executor contract
-  instead of depending back on the public `ExMCP.Client` facade;
+  instead of depending back on the public `Arbor.MCP.Client` facade;
 - replace the `MessageProcessor`/`MethodHandlers` mutual call with a one-way
   invocation boundary;
 - separate content-validation rules and schema-policy resolution into acyclic
   decision modules; and
-- move TLS option construction out of `ExMCP.Transport.HTTP` into a neutral
-  security module so `ExMCP.Internal.Security` does not depend back on the HTTP
+- move TLS option construction out of `Arbor.MCP.Transport.HTTP` into a neutral
+  security module so `Arbor.MCP.Internal.Security` does not depend back on the HTTP
   transport that consumes it.
 
 Record the cycle count in each cleanup PR and add an xref regression threshold
@@ -782,19 +819,19 @@ semantic change and the full unit suite (4679 tests, 0 failures) plus
 - `Content.SchemaPolicy` <-> `Content.SchemaRemoteResolver`: the resolver
   takes the policy preflight function as an explicit argument
   (`resolve/3`), passed by `SchemaPolicy`, its only caller.
-- `ExMCP` <-> `ClientConfig`: `ClientConfig` reads the library version from
-  the existing `ExMCP.Internal.VersionInfo` instead of the `ExMCP` facade.
+- `Arbor.MCP` <-> `ClientConfig`: `ClientConfig` reads the library version from
+  the existing `Arbor.MCP.Internal.VersionInfo` instead of the `Arbor.MCP` facade.
 - `Server.Subscriptions` <-> `Tasks`: the store-invocation primitive behind
-  `Tasks.get/2` lives in the new `@moduledoc false` `ExMCP.Tasks.StoreCall`;
+  `Tasks.get/2` lives in the new `@moduledoc false` `Arbor.MCP.Tasks.StoreCall`;
   `Tasks` delegates to it and `Subscriptions` authorizes `taskIds` through it
   with the same owner map, so only `Tasks -> Subscriptions` remains.
 - `Internal.SessionStore` <-> `SessionStore.DETS` <-> `SessionStore.ETS`:
   the behaviour's default-selecting `open/1` moved, unchanged, into the new
-  `@moduledoc false` `ExMCP.Internal.SessionStore.Factory`, which
+  `@moduledoc false` `Arbor.MCP.Internal.SessionStore.Factory`, which
   `SessionManager` now calls.
 - `Internal.VersionRegistry` <-> `Protocol.ErrorCodes` <-> `Protocol.Methods`
   (compile) <-> `Types`: the revision catalog suggested above now exists as
-  the pure `@moduledoc false` `ExMCP.Internal.RevisionCatalog`. The registry
+  the pure `@moduledoc false` `Arbor.MCP.Internal.RevisionCatalog`. The registry
   sources its revision attributes from it and delegates `era_for/1`;
   `Methods`, `ErrorCodes`, and `Types` read the catalog instead of the
   registry. `VersionRegistry` remains the canonical registry for enablement,
@@ -803,10 +840,10 @@ semantic change and the full unit suite (4679 tests, 0 failures) plus
 Remaining (deliberately untouched; they are a separate decision because they
 require the request-executor contract and the transport-registry/TLS moves
 described above rather than a narrow inversion): the 13-module client cycle
-through `lib/ex_mcp/client.ex` (its operations modules, connection manager,
+through `lib/arbor_mcp/client.ex` (its operations modules, connection manager,
 era cache, notification listener, request handler, subscription, health
 check, and reliability wrapper) and the 10-module transport cycle through
-`lib/ex_mcp/transport.ex` (the HTTP transport and its header/SSE helpers,
+`lib/arbor_mcp/transport.ex` (the HTTP transport and its header/SSE helpers,
 local, stdio, test, security guard, and `Internal.Security`). No cycle in
 the small set was skipped. Add the xref regression threshold once those two
 are eliminated.
@@ -878,7 +915,7 @@ inputs:
 - membership of the public ACP agents page;
 - IDs and versions from the machine-readable ACP Registry; and
 - exact upstream revisions for `claude-agent-acp`, `codex-acp`, `pi-acp`, and
-  `ZCode`, whose behavior informed ExMCP's Claude, Codex, Pi, and ZCode
+  `ZCode`, whose behavior informed ArborMCP's Claude, Codex, Pi, and ZCode
   adapters.
 
 `mix acp.compat.check` reports additions, removals, registry releases, and
@@ -892,7 +929,7 @@ requirements are characterized.
 When reference-adapter drift appears, review the compare link for protocol
 mapping, capability, event-ordering, security, and lifecycle changes before
 advancing the pinned commit. Port relevant behavior behind characterization
-tests; a pin update alone is not evidence that ExMCP remains behaviorally
+tests; a pin update alone is not evidence that ArborMCP remains behaviorally
 aligned.
 
 ### 2026-08-22 reference sync
@@ -924,7 +961,7 @@ Codex ACP development moved from `zed-industries/codex-acp` to
 `agentclientprotocol/codex-acp`; the manifest now follows the canonical
 repository while retaining the last behaviorally reviewed commit. Do not
 advance the Claude or Codex reference pins until the following post-baseline
-changes have focused ExMCP parity decisions and tests:
+changes have focused ArborMCP parity decisions and tests:
 
 - Codex `8ff9e67f79335345ce53b3157b3d690c191ea027` adds permission presentation,
   provider decision preservation, and permission lifecycle isolation;
@@ -968,7 +1005,7 @@ resolved.
 `d421f56a6c43cde16d9a7531d08a750a5ef2f04a` (0.79.0, 39 commits past the pin)
 and Codex ACP at `d7b07c1b44a28890cdf3d5450f8974a812db5ae2` (1.12.0, 29
 commits), plus two new registry agents and 23 registry version moves. Both
-references still build on ACP SDK 1.4.0, the version ExMCP pins and the
+references still build on ACP SDK 1.4.0, the version ArborMCP pins and the
 newest on npm, so none of the new capabilities are schema changes; they are
 extensions negotiated through `_meta`.
 
@@ -988,11 +1025,11 @@ mechanisms (#991, #1134, #515), which fold into the existing compaction
 decision above.
 
 Not applicable: codex-acp#471 (standalone MCP elicitation finalization),
-because ExMCP forwards MCP elicitations without a synthetic tool call, so
+because ArborMCP forwards MCP elicitations without a synthetic tool call, so
 nothing dangles. Upstream-internal: CI, dependency and Codex CLI version
 bumps, fork-loading performance, TaskList parsing, model display-name
-cosmetics. Kept as ExMCP's own surface: the Claude main-thread agent config
-option, removed upstream in #1112; ExMCP retains it through 1.x.
+cosmetics. Kept as ArborMCP's own surface: the Claude main-thread agent config
+option, removed upstream in #1112; ArborMCP retains it through 1.x.
 
 Still open from the 2026-09-01 list, deferred to a later minor: the Claude
 stable mode catalog with `_meta.kind` and the Auto-mode fallback, per-model
@@ -1010,7 +1047,7 @@ with `_meta.kind` and the Auto-mode fallback, per-model token usage, deferred
 steering while user input is pending, and message-specific session forks) were
 considered for 1.5.0 and deliberately held.
 
-The reason is coverage, not scope. `ExMCP.ACP.Adapters.Claude*` is about 4,390
+The reason is coverage, not scope. `Arbor.MCP.ACP.Adapters.Claude*` is about 4,390
 lines across five modules, the largest of the three adapters, and it is the one
 without a characterization gate: 58 unit tests against 629 golden scenarios for
 Codex and 123 for Pi. Every parity port in this release leaned on that
@@ -1020,7 +1057,7 @@ session identity, against unit tests alone would land changes that no test can
 prove safe. That is the risk §8.1 condition 4 exists to prevent.
 
 The sequence is therefore: build a Claude golden-transcript gate matching
-`ExMCP.Test.CodexGolden` and `ExMCP.Test.PiGolden`, then port the four items
+`Arbor.MCP.Test.CodexGolden` and `Arbor.MCP.Test.PiGolden`, then port the four items
 behind it, both in 1.6.0. Two notes for whoever picks this up. Per-model usage
 is already forwarded as `modelUsage` inside `_meta.ex_mcp.claude_sdk`, so that
 item is a decision about presentation shape rather than new plumbing, and
@@ -1061,7 +1098,7 @@ for yet. `isAutoUnavailable` treats a model the agent never described as
 capable, so only a known model without `supportsAutoMode` triggers the
 fallback.
 
-ExMCP matches all of that: the catalog, the kinds on both the mode list and
+ArborMCP matches all of that: the catalog, the kinds on both the mode list and
 the config option, the fallback mode, the notice text, the once-per-session
 guard, the held notice, and the unknown-model rule. The fallback is applied
 at every entry point the reference applies it: `session/new`
@@ -1075,7 +1112,7 @@ at every entry point the reference applies it: `session/new`
 are matched), and a permission decision carrying `{type: "setMode", mode:
 "auto"}` (mirroring `applyPermissionFallback`, which rewrites the update and
 publishes only the warning, leaving the mode state to the SDK's own status
-event). ExMCP's `session/set_mode` returns
+event). ArborMCP's `session/set_mode` returns
 `{:messages_and_reply_and_write, ...}` in the fallback case; the Mapper's
 `client_response/2` gained a `{:ok, messages, iodata, state}` return for the
 permission path.
@@ -1118,7 +1155,7 @@ spend by subtracting the previous reading, treats a reading that fell below
 the previous one as a restart (the reading itself becomes the increment), and
 drops models with nothing to report.
 
-Decision: ExMCP adopts `_meta.quota` as the reference specifies it, and keeps
+Decision: ArborMCP adopts `_meta.quota` as the reference specifies it, and keeps
 `_meta.ex_mcp.claude_sdk.modelUsage` exactly as it is. The adapter now tracks
 `last_model_usage` (the previous reading) and `turn_model_usage` (the
 increments accumulated for the turn), reset when the turn settles or a new
@@ -1141,7 +1178,7 @@ unprocessed numbers, including the fields `_meta.quota` does not carry.
 
 Not ported here: a cancelled turn that never received a Claude `result` still
 answers with a bare `{"stopReason": "cancelled"}`. Upstream's cancellation
-lanes carry `usage` and therefore `quota`; ExMCP's have never carried `usage`
+lanes carry `usage` and therefore `quota`; ArborMCP's have never carried `usage`
 either, so adding `quota` alone would be arbitrary. Giving those responses a
 usage figure is its own change with its own fixtures.
 
@@ -1197,7 +1234,7 @@ at a specific message. What the reference actually specifies:
 - an id that resolves to nothing is `RequestError.invalidParams` naming the
   `messageId`, never a silent full copy.
 
-ExMCP matches all of that. `ExMCP.ACP.Adapters.ClaudeSDK.fork_session/2`
+ArborMCP matches all of that. `Arbor.MCP.ACP.Adapters.ClaudeSDK.fork_session/2`
 extracts the versioned fork point and passes it to
 `SessionStore.fork_session/2` as `:fork_message_id`;
 `SessionStore.message_grouping_id/1` is `messageIdForGrouping`,
@@ -1211,7 +1248,7 @@ Three deliberate deviations, none of them guesses:
 - *No live message-id table.* Upstream consults an in-memory
   `messageIdToUuid` first to avoid a disk read, then `getSessionMessages`
   (the active parentUuid chain), then a full import that also carries
-  inactive branches. ExMCP's fork has always read the persisted JSONL file
+  inactive branches. ArborMCP's fork has always read the persisted JSONL file
   directly, which is a superset of the last two: it contains the active chain
   *and* the inactive branches in one pass. The adapter's existing
   `:message_ids` map is keyed uuid-first and would resolve assistant ids by a
@@ -1224,7 +1261,7 @@ Three deliberate deviations, none of them guesses:
   1-based `messageOccurrence` counted along the branch. That path is reachable
   only when the id lookup fails in both the active chain and the inactive
   branches, it only indexes assistant entries, and it depends on AIR computing
-  and sending those two extra fields. ExMCP's single full-file lookup already
+  and sending those two extra fields. ArborMCP's single full-file lookup already
   covers what that path exists to reach; the fields are ignored rather than
   half-implemented.
 - *Error code.* The not-found error is wire-visible and now answers -32602
@@ -1238,14 +1275,14 @@ Three deliberate deviations, none of them guesses:
 
 The `_meta.jetbrains.air.fork` spelling is kept exactly as the reference reads
 it, deliberately: a client that can fork against claude-agent-acp forks
-against ExMCP unchanged, and inventing a second vendor-neutral alias would be
+against ArborMCP unchanged, and inventing a second vendor-neutral alias would be
 inventing protocol. §8.1 condition 4 guards session identity, and the guard
 holds: a fork with no fork point produces the same bytes it always did, which
 is what the unchanged fixtures for the five pre-existing fork scenarios show.
 
 **Deferred steering while user input is pending** (claude-agent-acp
 `8710ce1c`, #1045): **not applicable**, for the same class of reason as
-codex-acp#471 above - the failure mode needs a mechanism ExMCP does not have.
+codex-acp#471 above - the failure mode needs a mechanism ArborMCP does not have.
 Upstream's ACP steering extension injects a follow-up user message into a
 *running* SDK turn at `SDKUserMessage.priority` `"now"`, which is interrupting
 delivery: the SDK aborts the cycle currently blocked in a user-input callback
@@ -1254,10 +1291,10 @@ client's card disappears before it can be answered. Their fix counts pending
 user-input requests per session and downgrades the injected message to
 `"later"` while the count is non-zero.
 
-ExMCP never steers, so there is no message to downgrade. The functions that
+ArborMCP never steers, so there is no message to downgrade. The functions that
 establish it:
 
-- `ExMCP.ACP.Adapters.ClaudeSDK.Protocol.user_message/2` is the only producer
+- `Arbor.MCP.ACP.Adapters.ClaudeSDK.Protocol.user_message/2` is the only producer
   of a `"type" => "user"` line, and it has exactly two callers;
 - `handle_request("session/prompt", ...)` in `claude_sdk.ex` branches on
   `pending_prompt_id`. With a turn active it returns `{:ok, :skip, ...}` after
@@ -1266,7 +1303,7 @@ establish it:
 - `Mapper.start_next_queued_prompt/1` is the sole place a queued message is
   written, and its sole call site is the turn-settle path that runs on
   Claude's `result` event, after the prompt response is built; and
-- no ExMCP code writes a `priority` field on any Claude SDK line.
+- no ArborMCP code writes a `priority` field on any Claude SDK line.
 
 A second prompt therefore cannot pre-empt an outstanding
 `session/request_permission` or `elicitation/create`. Two golden scenarios pin
@@ -1280,7 +1317,7 @@ user message reaches Claude only on the first `result`. The recorded mutation
 check makes the queued branch write immediately - upstream's `now` delivery -
 and both scenarios fail.
 
-If ExMCP ever gains real mid-turn steering, this decision is void: that change
+If ArborMCP ever gains real mid-turn steering, this decision is void: that change
 must port the pending-user-input counter with it.
 
 Still open from the 2026-09-01 list after this: Codex session titles with a
@@ -1290,16 +1327,16 @@ the next scheduled review.
 ### 2026-09-22 Claude chunk message ids
 
 The fork port above closed the *receiving* half of message-specific forks:
-ExMCP resolves a `messageId` a host sends. It left the *sending* half open.
+ArborMCP resolves a `messageId` a host sends. It left the *sending* half open.
 The Claude adapter never stamped `messageId` on any session update, so a host
 had no way to learn a fork point from us and had to read Claude's JSONL
 transcript itself to find one. This subsection records closing that gap, read
 from the same reviewed pin `d421f56a6c43cde16d9a7531d08a750a5ef2f04a`.
 
-Only wiring was missing. `ExMCP.ACP.AdapterEvents.agent_message_chunk/3`,
+Only wiring was missing. `Arbor.MCP.ACP.AdapterEvents.agent_message_chunk/3`,
 `agent_thought_chunk/3`, `user_message_chunk/3` and `content_chunk/4` already
 accepted a `:message_id` option and stamped it with `Maps.put_present/3`;
-`ExMCP.ACP.RequestValidation` already accepted
+`Arbor.MCP.ACP.RequestValidation` already accepted
 `optional_nullable_string?(update, "messageId")`; and
 `SessionStore.message_grouping_id/1` already implemented the id rule. No
 adapter passed the option.
@@ -1317,7 +1354,7 @@ than changing what resolves. No change was needed.
 
 **What is stamped.** `applyMessageId` upstream is a no-op unless the update is
 one of `agent_message_chunk`, `user_message_chunk` or `agent_thought_chunk`,
-and a no-op when the id is absent. ExMCP matches that: `tool_call`,
+and a no-op when the id is absent. ArborMCP matches that: `tool_call`,
 `tool_call_update`, `plan`, `session_info_update`, `current_mode_update`,
 `config_option_update`, `available_commands_update` and the usage updates never
 carry one. The three coverage paths upstream threads the id through are all
@@ -1338,11 +1375,11 @@ covered:
   `reduce_message/2` for assistant entries, and `replay_user_content/2` stamps
   the replayed `user_message_chunk` with the entry's grouping id.
 
-**What is deliberately not stamped**, both cases being chunks ExMCP
+**What is deliberately not stamped**, both cases being chunks ArborMCP
 synthesizes rather than chunks Claude sent:
 
 - the Auto-mode fallback notice (`@auto_mode_fallback_notice` in `Mapper`) is
-  ExMCP's own prose about a mode decision. No transcript entry backs it, so any
+  ArborMCP's own prose about a mode decision. No transcript entry backs it, so any
   id we invented for it would be unresolvable and `fork_session/2` would answer
   -32602. A host forking "at the notice" wants the message before or after it,
   neither of which the notice identifies; and
@@ -1355,7 +1392,7 @@ Subagent and sidechain chunks *are* stamped. Upstream's `applyMessageId` runs
 on the `parentToolUseId` path too, and our own `fork_point_index/2` matches a
 sidechain assistant entry like any other, so an id we stamp there still
 resolves. Upstream excludes sidechains only from `assistantGroups`, the
-fingerprint-recovery path ExMCP does not implement.
+fingerprint-recovery path ArborMCP does not implement.
 
 **The round trip is asserted, not assumed.** A stamped id our own fork rejects
 would be worse than no id, so three golden scenarios in `lifecycle_golden_test.exs`
@@ -1386,7 +1423,7 @@ four pre-existing catalog and permissions fixtures that carry it, so that
 judgement call is pinned without a scenario of its own.
 
 The golden gate drives adapters directly, so it never sees
-`ExMCP.ACP.AdapterBridge`. No adapter return shape changed here — only the
+`Arbor.MCP.ACP.AdapterBridge`. No adapter return shape changed here — only the
 content of a message the bridge already forwards — but because the field is
 wire-visible, `adapter_bridge_test.exs` gained one test ("chunk messageId")
 proving a stamped chunk survives the bridge's JSON round trip, an unstamped one
@@ -1396,13 +1433,13 @@ omits the key entirely, and a `tool_call` never gains it.
 
 The July 2026 stable ACP v1 additions are represented in the runtime and
 adapter tests. Boolean session config options require an explicit v1 client
-capability, so ExMCP provides `Capabilities.put/3` with
+capability, so ArborMCP provides `Capabilities.put/3` with
 `:boolean_config_options` and exercises the opt-in in both directions against
 the official TypeScript SDK. Do not auto-advertise this capability merely
 because a generic event handler can decode the update; the integrating client
 must be able to present and change the value correctly.
 
-ACP protocol v2 is Draft and is not part of ExMCP's advertised production
+ACP protocol v2 is Draft and is not part of ArborMCP's advertised production
 surface. The pinned interop lane validates the reviewed v1 and v2 schemas,
 while the scheduled ACP ecosystem workflow installs the newest SDK to detect
 release or schema drift. Version downgrade and SDK dual-router tests protect

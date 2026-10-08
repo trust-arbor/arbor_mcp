@@ -9,6 +9,42 @@
 > **Historical plan:** This document records completed rc.5 work. The current
 > major-version plan is [`V2_ROADMAP.md`](./V2_ROADMAP.md).
 
+## Current interpretation — October 6, 2026
+
+This completed rc.5 debt plan remains ExMCP 1.x release history. Its checked
+tracks and then-deferred items do not describe the current v2 backlog. The
+accepted ArborMCP/ArborACP roadmap implementation is complete; the
+[current roadmap](V2_ROADMAP.md#current-scope-and-release-status--october-7-2026)
+and [release plan](V2_RELEASE_PLAN.md#current-release-status--october-7-2026)
+separate implemented scope from audit fixes and outstanding qualification.
+
+ExMCP 1.x is maintained on `codex/maintenance-1.x` from `3914a927`; preserve
+its contracts and qualify compatible fixes independently under the
+[maintenance policy](MAINTENANCE_POLICY.md). No v2 API removal or Runtime redesign
+is implied for that branch.
+
+All four original `2.0.0-rc.1` packages are published and their archive
+checksums were verified. Current source prepares MCP `2.0.0-rc.2` and RPC,
+ACP and Adapters `1.0.0-rc.1`, with independent 1.x dependency requirements.
+The replacements are not yet published. Preserve existing versions and tags;
+retirement follows verified replacement installation.
+
+The accepted package split and runtime/scheduler scope is implemented. Optional
+HTTP dependency ranges, Claude file limits and ZCode settings fixes passed their
+recorded checks. Supported/latest MCP CI passed at `0812257`; ACP and RPC retain
+their own recorded source selections. Prior receipts do not qualify new metadata.
+
+Further performance investigation is deferred at the user's request. Adopted
+encoder/accounting and revision-token changes remain; mixed experimental changes
+are not promoted. Document measured performance costs for the stable decision.
+DSL/Spark and public API review is now open before the release freeze.
+
+Remaining gates are final metadata/source/archive association, applicable CI,
+conformance/SDK/CLI and dependency-contract checks, real downstream integrations,
+long-lived peer capacity policy, registry installation and the final candidate's
+continuous 48-hour soak. No qualifying soak is active; stable qualification is
+incomplete. See [RC notes](guides/V2_RELEASE_CANDIDATE.md) for consumer limits.
+
 ---
 
 ## 1. Purpose and the hard constraint
@@ -45,7 +81,7 @@ checklist so the exception stays visible rather than setting a precedent.
 
 - No protocol behavior changes.
 - No new protocol versions (2026-07-28 stays unregistered until a follow-on RC).
-- No API removals — `ExMCP.Server.Tools` stays available throughout 1.x and is removed in 2.0.
+- No API removals — `Arbor.MCP.Server.Tools` stays available throughout 1.x and is removed in 2.0.
 - No performance work.
 
 ---
@@ -60,7 +96,7 @@ Write tests that pin *current* behavior, before touching the code they describe.
 pass unchanged at the end of every subsequent track.
 
 - [x] **Capability snapshot test.** For each of the four supported versions, snapshot the exact
-      map returned by `ExMCP.Server.Capabilities.build_capabilities/2` — this is the one that
+      map returned by `Arbor.MCP.Server.Capabilities.build_capabilities/2` — this is the one that
       actually reaches the wire, via `server/handler.ex:300`. Assert deep equality against a
       committed fixture.
 - [x] **Initialize-result golden test.** For each version, snapshot the full `initialize`
@@ -113,16 +149,16 @@ reconciliation.
 
 | Location | Contents | Action |
 |---|---|---|
-| `lib/ex_mcp/internal/version_registry.ex` L14-19, L33 | `@versions` + `latest_version/0` — canonical, 12 lib callers | **Keep as canonical** |
-| `lib/ex_mcp/protocol/version_negotiator.ex` L13-14 | `@supported_versions` / `@latest_version` — byte-identical list, same order | **Delegate to VersionRegistry** |
-| `lib/ex_mcp/types.ex` L27 | `@latest_protocol_version` scalar, exposed as `ExMCP.Types.latest_protocol_version/0`, **zero callers** in `lib/` or `test/` | **Delegate to VersionRegistry** |
+| `lib/arbor_mcp/internal/version_registry.ex` L14-19, L33 | `@versions` + `latest_version/0` — canonical, 12 lib callers | **Keep as canonical** |
+| `lib/arbor_mcp/protocol/version_negotiator.ex` L13-14 | `@supported_versions` / `@latest_version` — byte-identical list, same order | **Delegate to VersionRegistry** |
+| `lib/arbor_mcp/types.ex` L27 | `@latest_protocol_version` scalar, exposed as `Arbor.MCP.Types.latest_protocol_version/0`, **zero callers** in `lib/` or `test/` | **Delegate to VersionRegistry** |
 | `config/config.exs` L8 | `protocol_version: "2025-11-25"`, read by `VersionRegistry.preferred_version/0` and `transport/http.ex:169` | **Leave the value alone**; document only |
 
 - [x] `VersionNegotiator.@supported_versions` / `@latest_version` → delegate to
       `VersionRegistry`. The only lib call site is `transport/http.ex:170`
       (`VersionNegotiator.latest_version/0` as the third fallback for the
       `MCP-Protocol-Version` header) and it returns the same string either way.
-- [x] `ExMCP.Types.latest_protocol_version/0` → delegate to `VersionRegistry.latest_version/0`.
+- [x] `Arbor.MCP.Types.latest_protocol_version/0` → delegate to `VersionRegistry.latest_version/0`.
       Same value; zero callers. Add the missing `@doc`.
 - [x] Add `era_for/1` and `modern?/1` helpers to `VersionRegistry`, returning `:legacy` for all
       four current versions. **Purely additive**, unused in rc.5, consumed heavily by the modern migration.
@@ -151,13 +187,13 @@ means five coordinated edits.
 
 | # | Location | Shape |
 |---|---|---|
-| 1 | `lib/ex_mcp/server/dispatch.ex` L41 | `@methods` + `known_method?/1` |
-| 2 | `lib/ex_mcp/message_processor.ex` L292 | `@method_handlers` + `dispatched_methods/0` |
-| 3 | `lib/ex_mcp/protocol/request_processor.ex` L72-93 | `dispatch_method/3` function heads |
-| 4 | `lib/ex_mcp/internal/protocol.ex` L555-568 | version-gating MapSets |
-| 5 | `lib/ex_mcp/internal/version_registry.ex` L187-265 | `message_format/1` `notification_methods` / `request_methods` |
+| 1 | `lib/arbor_mcp/server/dispatch.ex` L41 | `@methods` + `known_method?/1` |
+| 2 | `lib/arbor_mcp/message_processor.ex` L292 | `@method_handlers` + `dispatched_methods/0` |
+| 3 | `lib/arbor_mcp/protocol/request_processor.ex` L72-93 | `dispatch_method/3` function heads |
+| 4 | `lib/arbor_mcp/internal/protocol.ex` L555-568 | version-gating MapSets |
+| 5 | `lib/arbor_mcp/internal/version_registry.ex` L187-265 | `message_format/1` `notification_methods` / `request_methods` |
 
-- [x] Introduce `ExMCP.Protocol.Methods` — a single table of
+- [x] Introduce `Arbor.MCP.Protocol.Methods` — a single table of
       `{method, min_version, max_version, kind, handler}` rows.
 - [x] **Prove equality before switching.** The Track 0 method-table test asserts the five
       current tables agree; extend it to assert the new table reproduces each of the five
@@ -168,7 +204,7 @@ means five coordinated edits.
       `@versions_v20250326_plus` (L569) unreachable.
 - [x] Decide on the phantom `"draft"` version (`internal/protocol.ex` L565-568, gating
       `"server/discover"` and `"subscriptions/listen"`). No `lib/` caller ever passes `"draft"`,
-      but `test/ex_mcp/version_registry_test.exs` L161-162 asserts it. Either keep it as the
+      but `test/arbor_mcp/version_registry_test.exs` L161-162 asserts it. Either keep it as the
       2026-07-28 staging ground (recommended — it is already the right shape) or delete it and
       those two test lines.
 
@@ -182,7 +218,7 @@ means five coordinated edits.
 The `-32002` collision is a genuine bug but resolving it is wire-visible, so it is deferred
 (§5.2).
 
-- [x] Collapse the three duplicate JSON-RPC code blocks into `ExMCP.Protocol.ErrorCodes`:
+- [x] Collapse the three duplicate JSON-RPC code blocks into `Arbor.MCP.Protocol.ErrorCodes`:
       `internal/protocol.ex` L652-656 (5 codes), `types.ex` L31-35 (same 5),
       `internal/message_validator.ex` L26-29 (4 of them). All identical — pure dedup.
 - [x] Collapse `ErrorCodes`' own two identical atom→code maps: `@atom_to_code` (L114-126) and
@@ -220,7 +256,7 @@ All items verified to have **zero callers** in `lib/` and `test/`.
 
 ### Track E — Compliance test generator (blocks modern support)
 
-**Finding:** `test/ex_mcp/compliance/version_generator.ex` is already stale — it covers **three**
+**Finding:** `test/arbor_mcp/compliance/version_generator.ex` is already stale — it covers **three**
 of the four supported versions. `2025-11-25` was never added and lives as a hand-written
 standalone file instead.
 
@@ -230,13 +266,13 @@ Adding a version currently requires **four** coordinated edits:
 |---|---|
 | L11 | `@versions ["2024-11-05", "2025-03-26", "2025-06-18"]` |
 | L64-69 | the same list hardcoded **again** inside a generated assertion |
-| L52-58 | version→handler `case`, falling through to `ExMCP.Server.Handler` for anything new |
+| L52-58 | version→handler `case`, falling through to `Arbor.MCP.Server.Handler` for anything new |
 | — | a new `Handlers.HandlerYYYYMMDD` module |
 
 - [x] Derive `@versions` from `VersionRegistry.supported_versions()`.
 - [x] Remove the duplicated inline list at L64-69.
 - [x] Replace the version→handler `case` (L52-58) with a map, and make an unmapped version a
-      **loud failure** rather than a silent fallback to `ExMCP.Server.Handler`.
+      **loud failure** rather than a silent fallback to `Arbor.MCP.Server.Handler`.
 - [x] Add `Handlers.Handler20251125` and fold the standalone
       `compliance/version_2025_11_25_test.exs` into the generated path where it duplicates
       generated coverage — keeping genuinely 2025-11-25-specific assertions standalone.
@@ -256,12 +292,12 @@ versions flow through the generator.
 - [x] `config/config.exs` L14-20 declares three of the four feature flags —
       `tasks_enabled` is missing while `FeatureFlags.enabled?(:tasks)` reads it (L40-42). Add
       it with its current effective default (`false`).
-- [x] `ExMCP.FeatureFlags` `@doc` (L14-16) and the `all/0` doctest (L52-56) both omit `:tasks`,
+- [x] `Arbor.MCP.FeatureFlags` `@doc` (L14-16) and the `all/0` doctest (L52-56) both omit `:tasks`,
       though `all/0`'s body includes it (L64). Fix the docs to match the code.
-- [x] Document `ExMCP.Transport.HTTPServer.call_server_method/3` as a **simplified example**,
+- [x] Document `Arbor.MCP.Transport.HTTPServer.call_server_method/3` as a **simplified example**,
       not a production path — it is a public-by-documentation Plug with a canned `initialize`
       response, zero repo callers and zero tests (§5.3).
-- [x] `CLAUDE.md`: note that `ExMCP.Protocol.VersionNegotiator` is a thin shim over
+- [x] `CLAUDE.md`: note that `Arbor.MCP.Protocol.VersionNegotiator` is a thin shim over
       `VersionRegistry` and that `VersionRegistry` is the module to reach for.
 
 ---
@@ -274,7 +310,7 @@ plan treats that honestly rather than filing it under "cleanup".
 
 #### The bug
 
-`ExMCP.Client.Handler` declares `handle_url_elicitation/3` at `client/handler.ex` L213 and lists
+`Arbor.MCP.Client.Handler` declares `handle_url_elicitation/3` at `client/handler.ex` L213 and lists
 it in `@optional_callbacks` at L256. **Nothing ever calls it.**
 `client/request_handler.ex` L429-447 routes `"elicitation/create"` unconditionally to
 `handle_elicitation_create_request/3` (L506-538), which only checks
@@ -313,7 +349,7 @@ L511), and **the `url` — the entire point of the request — is silently disca
 - [x] Stop discarding the payload on the legacy path: pass `url` and `elicitationId` through
       rather than defaulting `requested_schema` to `%{}` and dropping the rest.
 - [x] Add real routing tests for both modes, both handler shapes, and the fallback path.
-- [x] Update `ExMCP.Client.Handler` `@doc` — the current docs give no indication that
+- [x] Update `Arbor.MCP.Client.Handler` `@doc` — the current docs give no indication that
       `handle_url_elicitation/3` is inert.
 
 #### Release notes
@@ -326,7 +362,7 @@ L511), and **the `url` — the entire point of the request — is silently disca
 
 #### Why it belongs here rather than in the modern migration
 
-The MRTR work (Phase 4) fulfils `inputRequests` through these *same* `ExMCP.Client.Handler`
+The MRTR work (Phase 4) fulfils `inputRequests` through these *same* `Arbor.MCP.Client.Handler`
 callbacks. Landing the routing fix first means MRTR inherits a correct dispatcher instead of
 reproducing the bug in a second code path — and it means the modern-protocol diff does not have to explain
 a behavior change buried inside a protocol migration.
@@ -362,7 +398,7 @@ deprecated shim over the canonical registry vocabulary.
 ### 5.2 Resolving the `-32002` collision — **defer to the modern migration**
 
 **Resolved in the 2026-07-28 migration Phase 0:** emission is era-aware, legacy decoding is
-preserved, and ExMCP-local consent/prompt errors moved outside the JSON-RPC reserved range.
+preserved, and ArborMCP-local consent/prompt errors moved outside the JSON-RPC reserved range.
 
 Wire-visible three ways, and 386 numeric-code assertions across 77 test files sit downstream.
 2026-07-28 renumbers resource-not-found to `-32602` anyway, so the fix belongs with the version
@@ -371,10 +407,10 @@ that mandates it. rc.5 adds the new constants additively (Track C) and documents
 ### 5.3 `transport/http_server.ex` L295 hardcoded `"2025-03-26"` — **defer / needs care**
 
 Changing it to `VersionRegistry.latest_version()` breaks **no tests** (nothing in `test/`
-references `ExMCP.Transport.HTTPServer`) — but that is precisely the risk. It is a
+references `Arbor.MCP.Transport.HTTPServer`) — but that is precisely the risk. It is a
 public-by-documentation Plug that users `forward` to, so the change is wire-visible for them
 (2025-03-26 → 2025-11-25) with zero test coverage to catch fallout. **Recommendation:** in rc.5,
-document it as an example (Track F) and point users at `ExMCP.HttpPlug`; change or delete the
+document it as an example (Track F) and point users at `Arbor.MCP.HttpPlug`; change or delete the
 canned response during the modern migration.
 
 ### 5.4 `request_processor.ex` L119 default `"2025-06-18"` — **defer / needs care**
@@ -404,11 +440,11 @@ initialize response**. That is a wire-visible regression for anyone relying on i
 
 Promoted out of Deferred. See **Track G** (§4.7).
 
-### 5.7 `ExMCP.Server.Tools` removal — **move the removal target to 2.0.0**
+### 5.7 `Arbor.MCP.Server.Tools` removal — **move the removal target to 2.0.0**
 
 Nothing in `lib/` uses it, but removal is by definition breaking. The existing `CLAUDE.md` and
 `README.md` promise of removal in 1.1.0 would violate SemVer after stable 1.0. Keep it for all
-1.x releases, change the notices to 2.0.0 before 1.0 ships, and remove it only in ExMCP 2.0.
+1.x releases, change the notices to 2.0.0 before 1.0 ships, and remove it only in ArborMCP 2.0.
 
 ### 5.8 Consolidating the five `initialize` implementations — **defer, sequence before modern support**
 
@@ -428,7 +464,7 @@ modern era has to touch all five anyway.
 | PR | Track | Files touched (approx) | Reviewable? |
 |---|---|---|---|
 | 1 | 0 | `test/` only, + fixtures | yes — pure additions |
-| 2 | E | `test/ex_mcp/compliance/version_generator.ex`, new handler module | yes — test-only |
+| 2 | E | `test/arbor_mcp/compliance/version_generator.ex`, new handler module | yes — test-only |
 | 3 | B (table) | new `protocol/methods.ex` + equality test | yes |
 | 4 | B (rewire) | 5 consumers | **largest** — split per consumer if needed |
 | 5 | A | `version_negotiator.ex`, `types.ex`, `version_registry.ex` | yes |

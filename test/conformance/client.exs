@@ -1,6 +1,6 @@
-# ExMCP Conformance Test Client
+# Arbor.MCP Conformance Test Client
 #
-# Minimal wrapper around ExMCP.Client for the MCP conformance framework.
+# Minimal wrapper around Arbor.MCP.Client for the MCP conformance framework.
 # All protocol logic lives in the library — this script just connects,
 # exercises the API, and disconnects.
 #
@@ -13,16 +13,16 @@
 # MCP_CONFORMANCE_SCENARIO env var indicates which scenario to run.
 # MCP_CONFORMANCE_CONTEXT env var has scenario-specific data (JSON).
 
-unless Code.ensure_loaded?(ExMCP) do
-  Mix.install([{:ex_mcp, path: "."}, {:jason, "~> 1.4"}])
+unless Code.ensure_loaded?(Arbor.MCP) do
+  Mix.install([{:arbor_mcp, path: "."}, {:jason, "~> 1.4"}])
 end
 
-{:ok, _started} = Application.ensure_all_started(:ex_mcp)
+{:ok, _started} = Application.ensure_all_started(:arbor_mcp)
 
 defmodule ConformanceClient do
   require Logger
 
-  alias ExMCP.Conformance.ClientScenarios
+  alias Arbor.MCP.Conformance.ClientScenarios
 
   def run do
     server_url = List.last(System.argv()) || raise "No server URL provided"
@@ -38,7 +38,7 @@ defmodule ConformanceClient do
     Logger.info("Conformance client: scenario=#{scenario} url=#{server_url}")
 
     # Enable elicitation auto-accept for conformance testing
-    Application.put_env(:ex_mcp, :elicitation_auto_accept, true)
+    Application.put_env(:arbor_mcp, :elicitation_auto_accept, true)
 
     # All scenarios follow the same pattern: connect, exercise the API, disconnect.
     # The conformance framework validates protocol behavior by observing the wire traffic.
@@ -49,10 +49,10 @@ defmodule ConformanceClient do
   defp run_scenario(server_url, scenario, context) do
     opts = build_connect_opts(server_url, scenario, context)
 
-    case ExMCP.Client.start_link([url: server_url] ++ opts) do
+    case Arbor.MCP.Client.start_link([url: server_url] ++ opts) do
       {:ok, client} ->
         exercise_api(client, scenario, context)
-        ExMCP.Client.disconnect(client)
+        Arbor.MCP.Client.disconnect(client)
 
       {:error, reason} ->
         Logger.error("Connect failed: #{inspect(reason)}")
@@ -67,7 +67,7 @@ defmodule ConformanceClient do
     # use_sse: true enables this — the transport falls back gracefully when
     # no session ID is provided (stateless servers).
     protocol_version =
-      System.get_env("MCP_CONFORMANCE_PROTOCOL_VERSION", ExMCP.protocol_version())
+      System.get_env("MCP_CONFORMANCE_PROTOCOL_VERSION", Arbor.MCP.protocol_version())
 
     base = [
       transport: :http,
@@ -105,11 +105,11 @@ defmodule ConformanceClient do
     Map.put(auth, :client_metadata_url, "https://conformance-test.local/client-metadata.json")
   end
 
-  # Pre-registered credentials are issuer-bound in ExMCP. The harness supplies
+  # Pre-registered credentials are issuer-bound in Arbor.MCP. The harness supplies
   # the credentials but omits their issuer, so discover that missing fixture
   # value before connecting. FullOAuthFlow repeats and validates discovery.
   defp add_conformance_registration_config(auth, server_url, "auth/pre-registration") do
-    case ExMCP.Authorization.ProtectedResourceMetadata.discover(
+    case Arbor.MCP.Authorization.ProtectedResourceMetadata.discover(
            server_url,
            allow_insecure_loopback: true
          ) do
@@ -186,7 +186,7 @@ defmodule ConformanceClient do
     # Default: list tools and call each one. This covers tools_call, auth,
     # elicitation, and most other scenarios. The conformance framework
     # validates the protocol interactions, not our scenario routing.
-    case ExMCP.Client.list_tools(client, format: :map) do
+    case Arbor.MCP.Client.list_tools(client, format: :map) do
       {:ok, result} ->
         tools = result["tools"] || []
         Logger.info("Listed #{length(tools)} tools")
@@ -197,7 +197,7 @@ defmodule ConformanceClient do
           name = tool["name"]
           Logger.info("Calling tool: #{name}")
 
-          case ExMCP.Client.call_tool(client, name, args, format: :map) do
+          case Arbor.MCP.Client.call_tool(client, name, args, format: :map) do
             {:ok, _} -> Logger.info("Tool #{name}: OK")
             {:error, reason} -> Logger.warning("Tool #{name} failed: #{inspect(reason)}")
           end

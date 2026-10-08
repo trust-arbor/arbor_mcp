@@ -19,7 +19,7 @@
         excluded: [~r"/_build/", ~r"/deps/", ~r"/node_modules/"]
       },
       plugins: [],
-      requires: [],
+      requires: ["dev/arbor_mcp/credo/namespace_alias_usage.ex"],
       strict: true,
       color: true,
       checks: %{
@@ -33,7 +33,10 @@
           {Credo.Check.Consistency.TabsOrSpaces, []},
 
           # Design Checks
-          {Credo.Check.Design.AliasUsage,
+          # Keep the existing depth policy when a package root gains the Arbor
+          # organization segment. The wrapper delegates all other behavior to
+          # Credo.Check.Design.AliasUsage and preserves its issue metadata.
+          {Arbor.MCP.Credo.NamespaceAliasUsage,
            [priority: :low, if_nested_deeper_than: 2, if_called_more_often_than: 1]},
           {Credo.Check.Design.TagFIXME, []},
 
@@ -106,7 +109,7 @@
           {Credo.Check.Design.TagTODO, []},
           # Negated conditions are sometimes clearer
           {Credo.Check.Refactor.NegatedConditionsWithElse, []},
-          
+
           # Checks scheduled for next check update (opt-in for now)
           {Credo.Check.Refactor.UtcNowTruncate, []},
 

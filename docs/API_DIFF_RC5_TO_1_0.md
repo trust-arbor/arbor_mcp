@@ -55,19 +55,19 @@ present in rc.5 was removed.
 Three existing handler callbacks were widened to admit MRTR input-required
 results while preserving every rc.5 return:
 
-- `ExMCP.Server.Handler.handle_call_tool/3`;
-- `ExMCP.Server.Handler.handle_get_prompt/3`;
-- `ExMCP.Server.Handler.handle_read_resource/2`.
+- `Arbor.MCP.Server.Handler.handle_call_tool/3`;
+- `Arbor.MCP.Server.Handler.handle_get_prompt/3`;
+- `Arbor.MCP.Server.Handler.handle_read_resource/2`.
 
 Existing structs only gained fields. The additions on rc.5 structs are:
 
-- `ExMCP.Response`: `resultType`, `ttlMs`, and `cacheScope`;
-- `ExMCP.Client`: MRTR and subscription bookkeeping;
-- `ExMCP.Tasks.Task`: `error` and `input_requests`;
-- `ExMCP.Transport.HTTP`: `protocol_era`, `modern_streams`, and `tool_headers`;
-- `ExMCP.Server.HandlerServer`: protocol-era, request-context, MRTR,
+- `Arbor.MCP.Response`: `resultType`, `ttlMs`, and `cacheScope`;
+- `Arbor.MCP.Client`: MRTR and subscription bookkeeping;
+- `Arbor.MCP.Tasks.Task`: `error` and `input_requests`;
+- `Arbor.MCP.Transport.HTTP`: `protocol_era`, `modern_streams`, and `tool_headers`;
+- `Arbor.MCP.Server.HandlerServer`: protocol-era, request-context, MRTR,
   replay-cache, and subscription state;
-- `ExMCP.Authorization.Provider.OAuth`: authorization-server issuer, rejected-issuer,
+- `Arbor.MCP.Authorization.Provider.OAuth`: authorization-server issuer, rejected-issuer,
   and granted-scope tracking used to bound migration and scope-step-up retries.
 
 The changed typespec definitions are additive or corrective except for the
@@ -96,25 +96,25 @@ generated `state_param` instead.
 The candidate adds 67 modules and 475 exports. The main supported additions
 are grouped here rather than listing internal plumbing:
 
-- era selection and discovery: `ExMCP.Client.EraProbe`,
-  `ExMCP.Client.EraCache`, `ExMCP.Server.Discover`, and
-  `ExMCP.Protocol.Initialize`;
-- modern request context and envelopes: `ExMCP.Server.RequestContext`,
-  `ExMCP.Server.Context`, `ExMCP.Protocol.Meta`,
-  `ExMCP.Protocol.ResultEnvelope`, and `ExMCP.Protocol.CacheableResult`;
-- MRTR: `ExMCP.Client.MRTR`, `ExMCP.Client.InputDispatcher`,
-  `ExMCP.Server.MRTR`, `ExMCP.Server.RequestState`, and replay-cache modules;
-- subscriptions: `ExMCP.Client.Subscription`,
-  `ExMCP.Server.Subscriptions`, the ETS adapter, and the optional PubSub fanout
+- era selection and discovery: `Arbor.MCP.Client.EraProbe`,
+  `Arbor.MCP.Client.EraCache`, `Arbor.MCP.Server.Discover`, and
+  `Arbor.MCP.Protocol.Initialize`;
+- modern request context and envelopes: `Arbor.MCP.Server.RequestContext`,
+  `Arbor.MCP.Server.Context`, `Arbor.MCP.Protocol.Meta`,
+  `Arbor.MCP.Protocol.ResultEnvelope`, and `Arbor.MCP.Protocol.CacheableResult`;
+- MRTR: `Arbor.MCP.Client.MRTR`, `Arbor.MCP.Client.InputDispatcher`,
+  `Arbor.MCP.Server.MRTR`, `Arbor.MCP.Server.RequestState`, and replay-cache modules;
+- subscriptions: `Arbor.MCP.Client.Subscription`,
+  `Arbor.MCP.Server.Subscriptions`, the ETS adapter, and the optional PubSub fanout
   adapter;
-- Tasks extension: `ExMCP.Tasks`, `ExMCP.Tasks.Extension`, task operations,
+- Tasks extension: `Arbor.MCP.Tasks`, `Arbor.MCP.Tasks.Extension`, task operations,
   server dispatch, and store behavior/ETS implementation;
 - HTTP 2026 routing: request/tool header modules and modern request-stream
   clients;
 - OAuth 2026 security: credential stores, issuer checking, metadata fetchers,
   registration policy, and transaction storage.
 
-Existing modules gain additive entry points such as `ExMCP.Client.discover/2`,
+Existing modules gain additive entry points such as `Arbor.MCP.Client.discover/2`,
 `listen/3`, `get_task/3`, `update_task/4`, and `cancel_task/3`, plus schema
 compilation, version-registry, version-aware error, stream-management, MRTR
 result helpers, and option-aware OAuth metadata URL validation.
@@ -128,12 +128,12 @@ These are wire or security changes rather than public Elixir symbol removals:
   envelopes, MRTR, and `subscriptions/listen`;
 - legacy revisions and deprecated HTTP+SSE remain selectable throughout 1.x;
 - Tasks are advertised only when the extension is configured and supported;
-- result cache metadata is validated, but ExMCP 1.0 does not store or reuse
+- result cache metadata is validated, but ArborMCP 1.0 does not store or reuse
   responses;
-- OAuth state is generated and consumed by ExMCP as described above.
+- OAuth state is generated and consumed by ArborMCP as described above.
 
 The wire migration is intentionally landing before stable 1.0. These changes
-would have required an ExMCP 2.0 release if 1.0 had already been published;
+would have required an ArborMCP 2.0 release if 1.0 had already been published;
 the retained rc.5 public surface lets existing Elixir applications migrate
 without a simultaneous package-API rewrite.
 
@@ -154,7 +154,7 @@ migration plan.
 
 ### Additive public API
 
-- `ExMCP.SessionManager.append_event/3` — atomically appends a legacy SSE event
+- `Arbor.MCP.SessionManager.append_event/3` — atomically appends a legacy SSE event
   with a store-owned, monotonically increasing ID. Persist-before-delivery uses
   this entry point so events remain replayable when a write races a disconnect.
   Existing `store_event/2` and `replay_events_after/2,3` remain available.
@@ -194,9 +194,9 @@ size TTL/replay bounds as documented in the migration and configuration guides.
 
 ## Updates for 1.0.0-rc.7 (API census addendum)
 
-- `ExMCP.ACP.Client.HandlerRunner.session_update/3` is retained as a compatibility
+- `Arbor.MCP.ACP.Client.HandlerRunner.session_update/3` is retained as a compatibility
   wrapper over `session_update/5`. The `/3` form applies the same default update
-  queue bounds used by `ExMCP.ACP.Client` (`max_update_queue: 32`,
+  queue bounds used by `Arbor.MCP.ACP.Client` (`max_update_queue: 32`,
   `max_update_queue_bytes: 8_388_608`) but always returns `:ok`, matching the
   rc.6 contract even when bounded `/5` delivery drops.
 - Callers that need explicit bounds and a `:dropped` result should use
@@ -206,15 +206,15 @@ size TTL/replay bounds as documented in the migration and configuration guides.
 
 The conservative census counts every compiled module whose source is under
 `lib/`, including modules hidden from HexDocs. Rc.8 adds the internal
-`ExMCP.Internal.Options`, `ExMCP.Internal.PortEnvironment`, and
-`ExMCP.Internal.WorkspacePath` modules, with seven exports and two named types.
+`Arbor.MCP.Internal.Options`, `Arbor.RPC.PortEnvironment`, and
+`Arbor.MCP.Internal.WorkspacePath` modules, with seven exports and two named types.
 
 Three additional hidden Pi exports are additive compatibility entry points:
 
-- `ExMCP.ACP.Adapters.Pi.Settings.agent_dir/1`; `agent_dir/0` remains available
+- `Arbor.MCP.ACP.Adapters.Pi.Settings.agent_dir/1`; `agent_dir/0` remains available
   through its default argument;
-- `ExMCP.ACP.Adapters.Pi.SlashCommands.load/2`; `load/1` remains available; and
-- `ExMCP.ACP.Adapters.Pi.SlashCommands.normalize_input/1`.
+- `Arbor.MCP.ACP.Adapters.Pi.SlashCommands.load/2`; `load/1` remains available; and
+- `Arbor.MCP.ACP.Adapters.Pi.SlashCommands.normalize_input/1`.
 
 No rc.5 or rc.7 module, exported function/arity, callback, named type, or
 struct field was removed. The shared internal helpers preserve existing

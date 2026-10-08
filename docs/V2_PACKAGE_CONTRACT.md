@@ -13,9 +13,10 @@
   [release assessment](V2_RELEASE_ASSESSMENT.md),
   [ACP wire v2 tracking](ACP_V2_TRACKING.md).
 
-`Arbor.MCP` and `Arbor.ACP` are the confirmed public namespaces. `Arbor.RPC` remains
-the implementation name for the shared mechanics package. ACP wire protocol
-versions remain independent of the library's major release.
+ArborMCP, ArborACP and ArborRPC are the library display names. Their Elixir
+module namespaces remain `Arbor.MCP.*`, `Arbor.ACP.*` and `Arbor.RPC.*`; Hex
+package and OTP application names use underscores. ACP wire protocol versions
+remain independent of the library's major release.
 
 The dotted public module spelling was accepted on 2026-10-03 for the wider
 Arbor library family, matching `Arbor.Trust` and `Arbor.Historian`. Sharing the
@@ -30,16 +31,17 @@ paths remain independent of the Elixir namespace.
 | `trust-arbor/arbor_mcp` | repository root | `arbor_mcp` | MCP clients, servers, HTTP, authorization, runtime and scheduler |
 | `trust-arbor/arbor_acp` | `packages/arbor_acp` | `arbor_acp` | ACP client/native agent, protocol and generic adapter extension runtime |
 | `trust-arbor/arbor_acp` | `packages/arbor_acp_adapters` | `arbor_acp_adapters` | Optional Claude, Codex, Pi and ZCode implementations |
-| `trust-arbor/arbor_acp` | `packages/arbor_rpc` | `arbor_rpc` | Neutral JSON-RPC, framing and child-process mechanics shared by both protocols |
+| `trust-arbor/arbor_rpc` | repository root | `arbor_rpc` | Neutral JSON-RPC, framing and child-process mechanics shared by both protocols |
 
 Each package is a standalone Mix project with its own package metadata, source
 files, tests, documentation and release tag. Vendor modules remain under
 `Arbor.ACP.Adapters.*` even though their files ship in the optional bundle; no
 second adapter namespace is needed. The ACP repository can have workspace
 scripts for coordinated checks; its root must not become an extra published
-application merely to hold those scripts. Use package-qualified release tags such
-as `arbor_acp-v2.0.0` and `arbor_rpc-v1.0.0` when more than one package shares a
-repository. The exact initial package versions remain a release decision.
+application merely to hold those scripts. The ACP workspace uses package-qualified
+release tags such as `arbor_acp-v1.0.0` and `arbor_acp_adapters-v1.0.0`.
+MCP and RPC each use `v<version>` in their separate repositories. The exact initial
+package versions remain a release decision.
 
 Dependencies are one-way:
 
@@ -77,6 +79,11 @@ Supported 1.x remains canonical on MCP `master`. V2 ACP is now canonical in
 scripts are retained for reconciliation evidence; do not regenerate over the
 canonical ACP projects. The dirty `spike/acp-cutover` worktree and original
 sibling are preserved migration evidence.
+
+ArborRPC is canonical in `trust-arbor/arbor_rpc`, with its package at the
+repository root. Its extracted Git history preserves the earlier ACP-hosted
+implementation; historical ACP commit links below remain evidence for those
+checkpoints. ACP now contains only its core and optional adapter packages.
 
 At the initial review, the older sibling required refresh because it lacked
 `Adapters.ClaudeSDK.MCPConfig`, current Claude launch-option validation and
@@ -173,7 +180,7 @@ ACKs its token after bounded processing. Closure carries its reason and original
 unfinished bytes. Opening ownership is independent of readers, and known cleanup
 failures propagate. The generic ACP bridge and Pi use this interface; native ACP
 and MCP child-stdio integration candidates are being qualified. The canonical
-[RPC source documentation](https://github.com/trust-arbor/arbor_acp/tree/codex/shared-subprocess/packages/arbor_rpc)
+[RPC source documentation](https://github.com/trust-arbor/arbor_rpc)
 records exact signatures and remaining Port-pressure/platform limits. This is
 an implemented candidate, not the final release ABI/default freeze.
 
@@ -266,8 +273,15 @@ functions retain the arguments already used by the bridge and Pi:
 open(command :: String.t(), args :: [String.t()], opts :: keyword(), adapter :: module()) ::
   {:ok, handle()} | {:error, term()}
 command(handle(), iodata()) :: :ok | {:error, term()}
-close(handle() | nil) :: :ok
+close(handle() | nil) :: :ok | {:error, term()}
 ```
+
+`close(nil)` returns `:ok`. Closing a handle exposes known cleanup failures and
+unconfirmed or unavailable cleanup rather than treating Actor DOWN as success.
+An available typed RPC cleanup receipt records the actual owned-child reaping
+and, when requested, targeted-group observation; it does not establish containment
+of arbitrary descendants. This is the existing support return contract, not an
+additional ownership guarantee.
 
 The subprocess support wrapper replaces its implementation behind those
 signatures. Its handle must be

@@ -1,9 +1,9 @@
-# ExMCP → MCP 2026-07-28 Migration Plan
+# ArborMCP → MCP 2026-07-28 Migration Plan
 
 **Status:** Code migration and all 1.0 release gates complete — Phases 0–10 implemented; the rc.8 final-candidate soak and mixed-version rollback drill completed without a release-blocking regression
-**Target release:** ExMCP `1.0.0`, through additional release candidates after `rc.5`
+**Target release:** ArborMCP `1.0.0`, through additional release candidates after `rc.5`
 **Spec revision:** [2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28), latest stable ([changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog))
-**Current ExMCP:** `1.0.0` release-preparation tree, wire- and API-compatible with rc.8 plus an internal OAuth callback parser fix; defaults to modern-preferred MCP `2026-07-28` with fallback to `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
+**Current ArborMCP:** `1.0.0` release-preparation tree, wire- and API-compatible with rc.8 plus an internal OAuth callback parser fix; defaults to modern-preferred MCP `2026-07-28` with fallback to `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
 **Prerequisite:** [`PRE_2_0_TECH_DEBT_PLAN.md`](./PRE_2_0_TECH_DEBT_PLAN.md) — behavior-preserving cleanup completed in `1.0.0-rc.5` (historical filename retained)
 **Author:** living implementation plan
 **Last updated:** 2026-08-22
@@ -32,19 +32,19 @@ feature addition on top of `2025-11-25`; it is a re-founding of the protocol on 
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Compatibility | **Dual-era.** Keep `2024-11-05` … `2025-11-25` working; add `2026-07-28`. | ExMCP already supports every prior revision and users depend on it. The spec explicitly defines a dual-era model and a compatibility matrix. |
+| Compatibility | **Dual-era.** Keep `2024-11-05` … `2025-11-25` working; add `2026-07-28`. | ArborMCP already supports every prior revision and users depend on it. The spec explicitly defines a dual-era model and a compatibility matrix. |
 | Default version | **Prefer `2026-07-28`, fall back by probe.** | There is no handshake to negotiate in. Clients probe with `server/discover`; servers branch on the shape of the first request. |
 | Scope | **Required modern core, applicable authorization requirements, and the Tasks extension.** Client response storage/reuse is deferred to `1.1`; required cache metadata still ships in 1.0. | The complete Tasks implementation passed qualification without extending the RC train. Response storage remains an optional optimization and no-cache is the safe conforming fallback. |
-| Release | **`1.0.0` after additional RCs.** Do not publish stable `1.0.0` on the legacy-only architecture. | ExMCP has not made a stable 1.x API promise yet. Shipping a legacy-only 1.0 would make the first stable release obsolete on arrival and create an immediate 2.0 migration cliff. |
-| Public API removals | **None in this migration.** Keep `ExMCP.Server.Tools` and other deprecated public surface throughout 1.x; remove it in 2.0. | The protocol revision does not require unrelated library API removals. The current “removed in 1.1” promise is incompatible with SemVer and must be corrected before 1.0. |
+| Release | **`1.0.0` after additional RCs.** Do not publish stable `1.0.0` on the legacy-only architecture. | ArborMCP has not made a stable 1.x API promise yet. Shipping a legacy-only 1.0 would make the first stable release obsolete on arrival and create an immediate 2.0 migration cliff. |
+| Public API removals | **None in this migration.** Keep `Arbor.MCP.Server.Tools` and other deprecated public surface throughout 1.x; remove it in 2.0. | The protocol revision does not require unrelated library API removals. The current “removed in 1.1” promise is incompatible with SemVer and must be corrected before 1.0. |
 | Deprecated-but-live features | **Keep legacy support** for Roots / Sampling / Logging / HTTP+SSE. | The spec deprecates them with a ≥12-month window. They remain available on applicable legacy paths; modern uses MRTR/per-request logging and does not restore removed methods. |
 
 ### Why this belongs in 1.0 rather than 2.0
 
-MCP's protocol version and ExMCP's package version are different compatibility boundaries.
-Supporting a new, breaking MCP wire revision does **not** itself require an ExMCP major release
+MCP's protocol version and ArborMCP's package version are different compatibility boundaries.
+Supporting a new, breaking MCP wire revision does **not** itself require an ArborMCP major release
 when the library remains dual-era and preserves its public Elixir API. Conversely, removing a
-public ExMCP module would require a major release even if the MCP wire protocol did not change.
+public ArborMCP module would require a major release even if the MCP wire protocol did not change.
 
 Release candidates exist to find exactly this kind of pre-stable design change. `rc.5` is tagged,
 but no stable `1.0.0` contract exists yet. The least disruptive long-term sequence is therefore:
@@ -55,15 +55,15 @@ but no stable `1.0.0` contract exists yet. The least disruptive long-term sequen
    completed before `rc.6`, so that candidate can start directly as modern-preferred while
    retaining explicit opt-in/rollback modes.
 3. Release `1.0.0` only after modern-preferred + automatic legacy fallback has soaked in an RC.
-4. Preserve all four legacy revisions and deprecated ExMCP public APIs for the entire 1.x line.
-5. Reserve ExMCP `2.0.0` for deliberate public-API removals and any eventual legacy-protocol
+4. Preserve all four legacy revisions and deprecated ArborMCP public APIs for the entire 1.x line.
+5. Reserve ArborMCP `2.0.0` for deliberate public-API removals and any eventual legacy-protocol
    removal, with separate notice and migration guidance.
 
 Use an explicit mode instead of a boolean flag, with per-client/per-server options overriding
 the application default:
 
 ```elixir
-config :ex_mcp, protocol_mode: :prefer_modern
+config :arbor_mcp, protocol_mode: :prefer_modern
 # :prefer_modern | :prefer_legacy | :modern_only | :legacy_only
 ```
 
@@ -224,7 +224,7 @@ Cancellation via `notifications/cancelled`. Backward-compat probe = `server/disc
 
 ---
 
-## 3. Target architecture for ExMCP
+## 3. Target architecture for ArborMCP
 
 ### 3.1 The "era" concept
 
@@ -237,7 +237,7 @@ currently threaded:
 # :legacy  => "2025-11-25" and earlier — initialize handshake, sessions
 ```
 
-`ExMCP.Internal.VersionRegistry` becomes the **single** source of truth for
+`Arbor.MCP.Internal.VersionRegistry` becomes the **single** source of truth for
 `supported_versions/0`, `latest_version/0`, `era_for/1`, `modern?/1`, `capabilities_for_version/1`,
 and `negotiate/2`. Today there are two independent supported-version *lists*
 (`VersionRegistry` `@versions`, `VersionNegotiator` `@supported_versions`) plus two more
@@ -247,19 +247,19 @@ Collapsing them is Phase 0 and everything else depends on it.
 ### 3.2 Client shape
 
 ```text
-ExMCP.Client (GenServer)
-├── ExMCP.Client.EraProbe          NEW  — server/discover probe + fallback + cache
-├── ExMCP.Client.ConnectionManager  MOD — branches: modern (no handshake) | legacy (initialize)
-├── ExMCP.Client.RequestHandler     MOD — injects _meta on every outbound request;
+Arbor.MCP.Client (GenServer)
+├── Arbor.MCP.Client.EraProbe          NEW  — server/discover probe + fallback + cache
+├── Arbor.MCP.Client.ConnectionManager  MOD — branches: modern (no handshake) | legacy (initialize)
+├── Arbor.MCP.Client.RequestHandler     MOD — injects _meta on every outbound request;
 │                                          parses resultType; routes input_required
-├── ExMCP.Client.MRTR              NEW  — fulfils inputRequests via ExMCP.Client.Handler
+├── Arbor.MCP.Client.MRTR              NEW  — fulfils inputRequests via Arbor.MCP.Client.Handler
 │                                          callbacks, then retries with a fresh id
-├── ExMCP.Client.Subscription      NEW  — long-lived subscriptions/listen request
-├── ExMCP.Client.Cache             NEW  — optional ttlMs/cacheScope cache, list_changed invalidation
-└── ExMCP.Client.Handler            —   behaviour UNCHANGED (big win, see §3.4)
+├── Arbor.MCP.Client.Subscription      NEW  — long-lived subscriptions/listen request
+├── Arbor.MCP.Client.Cache             NEW  — optional ttlMs/cacheScope cache, list_changed invalidation
+└── Arbor.MCP.Client.Handler            —   behaviour UNCHANGED (big win, see §3.4)
 ```
 
-`ExMCP.Client.start_link/1` stays synchronous. In the modern era `init/1` performs the era
+`Arbor.MCP.Client.start_link/1` stays synchronous. In the modern era `init/1` performs the era
 probe (`server/discover`) instead of the handshake, and populates the existing
 `:server_info`, `:server_capabilities`, `:protocol_version` fields from the `DiscoverResult`.
 **Public accessors `server_info/1`, `server_capabilities/1`, `protocol_version/1` keep working
@@ -268,16 +268,16 @@ unchanged** — this is the main source-compatibility lever for downstream users
 ### 3.3 Server shape
 
 ```text
-ExMCP.Server.Dispatch              MOD — era-aware method table; builds RequestContext
-├── ExMCP.Server.RequestContext   NEW  — %{protocol_version, era, client_info,
+Arbor.MCP.Server.Dispatch              MOD — era-aware method table; builds RequestContext
+├── Arbor.MCP.Server.RequestContext   NEW  — %{protocol_version, era, client_info,
 │                                          client_capabilities, log_level, extensions,
 │                                          progress_token, subscription_id,
 │                                          principal_id, tenant_id, deadline,
 │                                          input_responses, request_state, replay_protection}
-├── ExMCP.Server.Discover         NEW  — server/discover result assembly
-├── ExMCP.Server.RequestState     NEW  — AEAD sign/verify of MRTR requestState
-├── ExMCP.Server.Subscriptions    NEW  — per-listen-request filter registry + fan-out
-└── ExMCP.Server.ResultNormalizer  MOD — stamps resultType, serverInfo, ttlMs/cacheScope
+├── Arbor.MCP.Server.Discover         NEW  — server/discover result assembly
+├── Arbor.MCP.Server.RequestState     NEW  — AEAD sign/verify of MRTR requestState
+├── Arbor.MCP.Server.Subscriptions    NEW  — per-listen-request filter registry + fan-out
+└── Arbor.MCP.Server.ResultNormalizer  MOD — stamps resultType, serverInfo, ttlMs/cacheScope
 ```
 
 `RequestContext` is the direct replacement for connection state. It is derived from `_meta`
@@ -286,21 +286,21 @@ is era-agnostic. Expose it to user code additively through context-aware callbac
 scoped accessor; keep existing callback arities and the documented `_meta` argument merge for
 the entire 1.x line.
 
-`ExMCP.Server.ResultNormalizer` is already the single shared result shaper across all four
+`Arbor.MCP.Server.ResultNormalizer` is already the single shared result shaper across all four
 dispatch paths (this consolidation landed in `1.0.0-rc.5`). That makes stamping
 `resultType`/`_meta.serverInfo`/`ttlMs`/`cacheScope` a **one-file change** rather than four.
 Preserve that property.
 
-### 3.4 MRTR maps onto the existing `ExMCP.Client.Handler` behaviour
+### 3.4 MRTR maps onto the existing `Arbor.MCP.Client.Handler` behaviour
 
 This is the most valuable observation in this plan. The 2026-07-28 `inputRequests` values are
 *exactly* `ElicitRequest` / `CreateMessageRequest` / `ListRootsRequest` — the same payloads
-ExMCP already handles as server-initiated requests. So:
+ArborMCP already handles as server-initiated requests. So:
 
-- `ExMCP.Client.Handler` keeps its `handle_list_roots/1`, `handle_create_message/2`,
+- `Arbor.MCP.Client.Handler` keeps its `handle_list_roots/1`, `handle_create_message/2`,
   `handle_elicitation_create/3` callbacks **unchanged**.
-- `ExMCP.Client.MRTR` iterates the `inputRequests` map, dispatches each entry through the
-  same callbacks `ExMCP.Client.RequestHandler` uses today (`request_handler.ex` L431-441),
+- `Arbor.MCP.Client.MRTR` iterates the `inputRequests` map, dispatches each entry through the
+  same callbacks `Arbor.MCP.Client.RequestHandler` uses today (`request_handler.ex` L431-441),
   collects `inputResponses`, and re-issues the original request with a **new JSON-RPC id**
   plus `inputResponses` and the echoed `requestState`.
 - Existing user handler modules (`DefaultHandler`, `CallbackHandler`, `InteractiveHandler`,
@@ -327,12 +327,12 @@ existing `{:ok, result, state}` / `{:error, reason, state}`:
 {:input_required, input_requests, request_state :: term(), state}
 ```
 
-with `request_state` being a bounded, portable value that `ExMCP.Server.RequestState`
+with `request_state` being a bounded, portable value that `Arbor.MCP.Server.RequestState`
 serialises through a safe codec + AEAD-seals into the opaque wire string, and unseals + verifies on the retry
 (binding principal/tenant, TTL, expected input IDs/round, and a digest of the canonical immutable
 original request, per the spec's replay guidance). Handlers receive the verified value back via `RequestContext`. Default key source:
 runtime application config. Both return forms require a key ring: when the handler omits
-application `request_state`, ExMCP still emits a minimal sealed envelope containing the expected
+application `request_state`, ArborMCP still emits a minimal sealed envelope containing the expected
 input IDs, round and request binding. Validate a configured ring at boot when MRTR is declared;
 otherwise fail the first `:input_required` return before emitting a response with an actionable
 configuration error.
@@ -350,22 +350,22 @@ through an adapter; the DSL exposes `input_responses(context)` and `request_stat
 resumption does not depend on raw `_meta` or process-local state.
 
 The DSL gets a matching affordance inside `run/1` / `handle/1` bodies, e.g. a
-`ExMCP.Server.DSL.Result.input_required/2` builder alongside `text/1`, `error/1`, `structured/2`.
+`Arbor.MCP.Server.DSL.Result.input_required/2` builder alongside `text/1`, `error/1`, `structured/2`.
 
 ### 3.6 Subscriptions
 
 `subscriptions/listen` is a *request whose response is an open stream*. Model it as:
 
-- **Client**: `ExMCP.Client.Subscription` — a supervised process owning a long-lived request id,
+- **Client**: `Arbor.MCP.Client.Subscription` — a supervised process owning a long-lived request id,
   delivering notifications to subscriber pids and maintaining a ref-counted desired filter.
   Because a listen request is immutable, a filter change opens a replacement stream, waits for
   its acknowledgment, then cancels the old stream. During overlap, correlate by subscription ID
   and suppress duplicate/out-of-filter delivery. `subscribe_resource/2` and
   `unsubscribe_resource/2` are sugar over this replacement flow in modern and fall back to
   `resources/subscribe` / `unsubscribe` in legacy.
-- **Server**: `ExMCP.Server.Subscriptions` — adapter-backed registry of
+- **Server**: `Arbor.MCP.Server.Subscriptions` — adapter-backed registry of
   `{subscription_id, transport_ref, honoured_filter, principal_id, tenant_id, expires_at}`
-  (ETS locally, PubSub fan-out in a cluster). Replaces `ExMCP.Server.SSESession`'s
+  (ETS locally, PubSub fan-out in a cluster). Replaces `Arbor.MCP.Server.SSESession`'s
   server→client request correlation (which MRTR makes unnecessary) with pure notification
   fan-out. Existing `Protocol.encode_tools_changed/0` et al. get a `subscriptionId` stamped in
   `_meta` on the way out.
@@ -378,12 +378,12 @@ The DSL gets a matching affordance inside `run/1` / `handle/1` bodies, e.g. a
 
 These stay for the legacy path but must be **bypassed entirely** when `era == :modern`:
 
-- `ExMCP.SessionManager` event buffering / `replay_events_after/2,3`
-- `ExMCP.HttpPlug.SessionRegistry`, `get_or_create_session_id/1`, `validate_session_id_value/1`
-- `ExMCP.HttpPlug.SSEHandler` `Last-Event-ID` extraction + replay (L127/L152/L310)
-- `ExMCP.Transport.HTTP` `:session_id`, `:last_event_id`, `terminate_session/1`,
+- `Arbor.MCP.SessionManager` event buffering / `replay_events_after/2,3`
+- `Arbor.MCP.HttpPlug.SessionRegistry`, `get_or_create_session_id/1`, `validate_session_id_value/1`
+- `Arbor.MCP.HttpPlug.SSEHandler` `Last-Event-ID` extraction + replay (L127/L152/L310)
+- `Arbor.MCP.Transport.HTTP` `:session_id`, `:last_event_id`, `terminate_session/1`,
   `maybe_update_session_id/2`
-- `ExMCP.Server.SSESession` server→client request correlation
+- `Arbor.MCP.Server.SSESession` server→client request correlation
 - `Protocol.encode_ping/0`, `encode_pong/1`, `encode_set_log_level/1`,
   `encode_subscribe_resource/1`, `encode_unsubscribe_resource/1`, `encode_roots_changed/0`,
   `encode_elicitation_complete_notification/1`
@@ -396,14 +396,14 @@ These stay for the legacy path but must be **bypassed entirely** when `era == :m
 
 | Location | Problem |
 |---|---|
-| `lib/ex_mcp/internal/version_registry.ex` | Canonical supported-version list and era helpers landed in rc.5; it still needs known/supported/preferred status for staged modern rollout |
-| `lib/ex_mcp/protocol/version_negotiator.ex` | Version lists delegate to the registry; legacy `build_capabilities/1` is now a deprecated compatibility shim over the same canonical capability vocabulary |
-| `lib/ex_mcp/types.ex` | `latest_protocol_version/0` remains a legacy compatibility accessor; the moduledoc now distinguishes shared legacy types from the MCP 2026-07-28 wire surface |
+| `lib/arbor_mcp/internal/version_registry.ex` | Canonical supported-version list and era helpers landed in rc.5; it still needs known/supported/preferred status for staged modern rollout |
+| `lib/arbor_mcp/protocol/version_negotiator.ex` | Version lists delegate to the registry; legacy `build_capabilities/1` is now a deprecated compatibility shim over the same canonical capability vocabulary |
+| `lib/arbor_mcp/types.ex` | `latest_protocol_version/0` remains a legacy compatibility accessor; the moduledoc now distinguishes shared legacy types from the MCP 2026-07-28 wire surface |
 | `config/config.exs` L8 | Legacy preferred scalar remains `protocol_version: "2025-11-25"`; introduce `protocol_mode` without changing this default prematurely |
-| `lib/ex_mcp/protocol/methods.ex` | Single method table landed in rc.5; modern-only methods are now bounded to the staged `"2026-07-28"` version rather than a phantom `"draft"` |
-| `lib/ex_mcp/transport/http_server.ex` | Canned initialize now uses the shared version-aware result builder |
-| `lib/ex_mcp/protocol/request_processor.ex` | Missing versions now use the validated registry preference |
-| `lib/ex_mcp/plugs/protocol_version.ex` | Gated behind `FeatureFlags.enabled?(:protocol_version_header)`, **off by default** — must be always-on for modern |
+| `lib/arbor_mcp/protocol/methods.ex` | Single method table landed in rc.5; modern-only methods are now bounded to the staged `"2026-07-28"` version rather than a phantom `"draft"` |
+| `lib/arbor_mcp/transport/http_server.ex` | Canned initialize now uses the shared version-aware result builder |
+| `lib/arbor_mcp/protocol/request_processor.ex` | Missing versions now use the validated registry preference |
+| `lib/arbor_mcp/plugs/protocol_version.ex` | Gated behind `FeatureFlags.enabled?(:protocol_version_header)`, **off by default** — must be always-on for modern |
 
 **Action:** build on the rc.5 registry/method table rather than repeating that cleanup. Add
 staged version status and protocol-mode selection, decide whether to deprecate the unused legacy
@@ -413,10 +413,10 @@ capability builder, and replace remaining literal defaults with era-aware policy
 
 | Path | Location |
 |---|---|
-| Handler servers / stdio | `ExMCP.Server.Dispatch.do_dispatch("initialize", …)` L115-117 |
-| DSL servers | `ExMCP.Protocol.RequestProcessor.process_initialize/2` L96-144 |
-| HTTP | `ExMCP.MessageProcessor.MethodHandlers.handle_initialize/5` L21-26 |
-| HTTP transport helper | `ExMCP.Transport.HTTPServer` L292-298 (canned, hardcoded version at L295) |
+| Handler servers / stdio | `Arbor.MCP.Server.Dispatch.do_dispatch("initialize", …)` L115-117 |
+| DSL servers | `Arbor.MCP.Protocol.RequestProcessor.process_initialize/2` L96-144 |
+| HTTP | `Arbor.MCP.MessageProcessor.MethodHandlers.handle_initialize/5` L21-26 |
+| HTTP transport helper | `Arbor.MCP.Transport.HTTPServer` L292-298 (canned, hardcoded version at L295) |
 
 Plus `HandlerServer.process_mcp_request` L640, `StdioServer.handle_request` L174,
 `Testing.MockServer` L344/L448. `notifications/initialized` is handled in `RequestProcessor`
@@ -424,13 +424,13 @@ L363-366 and `MockServer` L448 only; `Dispatch` silently ignores it.
 
 **Action:** all four keep their legacy `initialize` branch, and all four gain a modern branch
 that never sees `initialize`. `server/discover` should be implemented **once** in
-`ExMCP.Server.Discover` and wired into all four tables.
+`Arbor.MCP.Server.Discover` and wired into all four tables.
 
 ### 4.3 Error codes — canonical module landed; one collision remains
 
-`lib/ex_mcp/protocol/error_codes.ex` now distinguishes emission from compatibility decoding.
+`lib/arbor_mcp/protocol/error_codes.ex` now distinguishes emission from compatibility decoding.
 Resource-not-found emits `-32002` for legacy and `-32602` for modern, while unknown-era client
-classification accepts either. ExMCP-local consent and prompt errors use `-31002` and `-31003`,
+classification accepts either. ArborMCP-local consent and prompt errors use `-31002` and `-31003`,
 outside `-32768..-32000`. The historical `-32042` constructor is legacy-only and deprecated;
 selecting it for a modern version returns `{:error, :retired_error_code}`.
 
@@ -439,7 +439,7 @@ selecting it for a modern version returns `{:error, :retired_error_code}`.
 | Concern | Current | Needed |
 |---|---|---|
 | Handshake | `ConnectionManager.do_handshake/3` → `send_initialize_request` → `send_initialized` | Era probe via `server/discover`; no handshake in modern |
-| Outbound `_meta` | `ExMCP.Internal.RequestParams` — `with_meta/2` L38, `with_non_empty_meta/2` L43, `with_opts_meta/2` L50, `with_progress_or_meta/2` L73-79. Only progress + user meta | Must inject protocolVersion + clientCapabilities on **every** request; add clientInfo, logLevel |
+| Outbound `_meta` | `Arbor.MCP.Internal.RequestParams` — `with_meta/2` L38, `with_non_empty_meta/2` L43, `with_opts_meta/2` L50, `with_progress_or_meta/2` L73-79. Only progress + user meta | Must inject protocolVersion + clientCapabilities on **every** request; add clientInfo, logLevel |
 | Result parsing | No `resultType` awareness | Discriminate `complete` / `input_required` / negotiated extension values; absence means complete only on legacy |
 | Server→client requests | `RequestHandler` L431-441 dispatch table (`ping`, `roots/list`, `sampling/createMessage`, `elicitation/create`) | Keep for legacy; add MRTR path for modern |
 | Health check | idle `ping`; interval `health_check_interval: 30_000` default at `client.ex` L743, scheduled L1410/L1459, sent by `RequestHandler.send_ping/1` L180-187 | `ping` is gone — use an uncached `server/discover` liveness request in modern and keep `Client.ping/2` as a wrapper |
@@ -463,7 +463,7 @@ selecting it for a modern version returns `{:error, :retired_error_code}`.
 
 ### 4.6 Streamable HTTP
 
-`lib/ex_mcp/transport/http.ex` (1382 LOC) and `lib/ex_mcp/http_plug.ex` (1081 LOC) are the two
+`lib/arbor_mcp/transport/http.ex` (1382 LOC) and `lib/arbor_mcp/http_plug.ex` (1081 LOC) are the two
 largest single changes.
 
 Client transport removals for modern: `@session_header` L149, `:session_id`, `:last_event_id`,
@@ -484,13 +484,13 @@ at L319, 334, 356, 379, 396, 423, 433, 450). `handle_session_delete/3` L514-567 
 `Mcp-Param-*` validation including the `=?base64?…?=` sentinel decoding, and
 `X-Accel-Buffering: no` on SSE responses.
 
-`ExMCP.Plugs.ProtocolVersion` must become unconditional for modern requests (currently behind
+`Arbor.MCP.Plugs.ProtocolVersion` must become unconditional for modern requests (currently behind
 a default-off feature flag).
 
 ### 4.7 Tasks
 
 Existing: `tasks/get`, `tasks/list`, `tasks/result`, `tasks/cancel`,
-`notifications/tasks/status`, `ExMCP.Tasks.Task` struct (`lib/ex_mcp/tasks/task.ex`), DSL
+`notifications/tasks/status`, `Arbor.MCP.Tasks.Task` struct (`lib/arbor_mcp/tasks/task.ex`), DSL
 `execution` instruction, `taskSupport` in `Types.V20251125`. Notably the `tools/call`
 task-augmentation path was **never implemented** — nothing reads a `task` field or returns a
 `CreateTaskResult`.
@@ -509,7 +509,7 @@ New extension shape:
 | `ttl` / `poll_interval` (struct, L37-38 & L49-50) emitted as `"ttl"` / `"pollInterval"` (wire, `to_map/1` L172-173) | Modern wire emits `"ttlMs"` / `"pollIntervalMs"`; retain the old public fields as 1.x aliases or use a separate extension struct |
 | — | `CreateTaskResult` with `resultType: "task"` |
 
-The existing `ExMCP.Tasks.Task` state machine (`working` / `input_required` / `completed` /
+The existing `Arbor.MCP.Tasks.Task` state machine (`working` / `input_required` / `completed` /
 `failed` / `cancelled`) matches the new spec exactly. Reuse the state logic, add
 `inputRequests` and `error`, and make serialization era-specific. Do not rename/remove public
 rc.5 struct fields in place; retain aliases throughout 1.x or add a separate extension struct.
@@ -519,7 +519,7 @@ rc.5 struct fields in place; retain aliases throughout 1.x or add a separate ext
 
 ### 4.8 Authorization
 
-`lib/ex_mcp/authorization/` (6100 LOC, 28 files) needs:
+`lib/arbor_mcp/authorization/` (6100 LOC, 28 files) needs:
 
 1. **RFC 9207** — authorization servers SHOULD return `iss`; clients **MUST** validate a
    present `iss` against the recorded issuer before redeeming the code.
@@ -535,11 +535,11 @@ rc.5 struct fields in place; retain aliases throughout 1.x or add a separate ext
 
 ### 4.9 Types & schema
 
-`lib/ex_mcp/types.ex` is 702 LOC of hand-written types, plus four per-version modules totalling
+`lib/arbor_mcp/types.ex` is 702 LOC of hand-written types, plus four per-version modules totalling
 706 LOC (`v20241105` 103, `v20250326` 114, `v20250618` 218, `v20251125` 271) that are
 documentation-grade and not used for runtime validation.
 
-**Action:** add `lib/ex_mcp/types/v20260728.ex`. Given the size of the delta, consider
+**Action:** add `lib/arbor_mcp/types/v20260728.ex`. Given the size of the delta, consider
 generating it from the vendored `schema.json` rather than hand-writing — but that is a
 nice-to-have, not a blocker. `mix mcp.sync_spec --version 2026-07-28` should land the spec
 docs and `schema.ts` / `schema.json` under `docs/mcp-specs/2026-07-28/` on day one.
@@ -547,7 +547,7 @@ docs and `schema.ts` / `schema.json` under `docs/mcp-specs/2026-07-28/` on day o
 ### 4.10 Testing
 
 248 files / 73k LOC. The compliance suite has a structural problem for this migration:
-`test/ex_mcp/compliance/version_generator.ex` has `@versions ["2024-11-05", "2025-03-26", "2025-06-18"]`
+`test/arbor_mcp/compliance/version_generator.ex` has `@versions ["2024-11-05", "2025-03-26", "2025-06-18"]`
 — `2025-11-25` was added as a standalone hand-written file instead. Adding `2026-07-28` needs a
 decision: extend the generator (and backfill `2025-11-25` into it), or write another standalone.
 
@@ -589,14 +589,14 @@ advertised.
 > here and the estimates below are wrong.
 
 **Inherited from rc.5** (do not redo): single version registry, single method table
-(`ExMCP.Protocol.Methods`), single error-code module with `-32020`/`-32021`/`-32022` defined
+(`Arbor.MCP.Protocol.Methods`), single error-code module with `-32020`/`-32021`/`-32022` defined
 additively, `era_for/1` / `modern?/1` helpers, a version-derived compliance test generator,
 and characterization tests pinning per-version wire output.
 
 **Remaining Phase 0 work — the parts that genuinely require the protocol migration:**
 
 - [x] `mix mcp.sync_spec --version 2026-07-28` → `docs/mcp-specs/2026-07-28/` (+ `schema.ts`, `schema.json`).
-      Verify `dev/ex_mcp/spec_sync/file_mapper.ex` maps the new pages (`basic/patterns/*`,
+      Verify `dev/arbor_mcp/spec_sync/file_mapper.ex` maps the new pages (`basic/patterns/*`,
       `basic/versioning`, `basic/transports/*`, `server/discover`, `server/utilities/caching`) —
       the 2026-07-28 doc tree was reorganised relative to 2025-11-25 and the mapper will need
       new entries.
@@ -637,36 +637,36 @@ changes are covered by tests.
 
 ### Phase 1 — Types
 
-- [x] `lib/ex_mcp/types/v20260728.ex`: `RequestMetaObject`, `NotificationMetaObject`,
+- [x] `lib/arbor_mcp/types/v20260728.ex`: `RequestMetaObject`, `NotificationMetaObject`,
       `ResultMetaObject`, `ResultType`, `CacheableResult`, `DiscoverResult`,
       `InputRequests` / `InputResponses` / `InputRequiredResult`, `SubscriptionFilter`,
       `SubscriptionsListenRequest`/`Result`, `HeaderMismatchError`,
       `UnsupportedProtocolVersionError`, `MissingRequiredClientCapabilityError`.
-- [x] Add `extensions` to `client_capabilities` / `server_capabilities` in `ExMCP.Types`.
+- [x] Add `extensions` to `client_capabilities` / `server_capabilities` in `Arbor.MCP.Types`.
 - [x] Loosen `inputSchema`/`outputSchema` types to any JSON Schema 2020-12, and
       `structuredContent` to any JSON value (currently narrower).
 - [x] Numeric schema `minimum`/`maximum`/`default` fields use `number`, not `integer`
       (upstream generator fix).
 
 **Exit:** compiles; `mix dialyzer` clean. Conformance is covered by type-metadata tests in
-`test/ex_mcp/types/v20260728_test.exs`; runtime promotion remains a separate Phase 2 gate.
+`test/arbor_mcp/types/v20260728_test.exs`; runtime promotion remains a separate Phase 2 gate.
 
 ---
 
 ### Phase 2 — Wire plumbing
 
-- [x] `ExMCP.Protocol.Meta` (new): build/parse the `io.modelcontextprotocol/*` `_meta` block;
+- [x] `Arbor.MCP.Protocol.Meta` (new): build/parse the `io.modelcontextprotocol/*` `_meta` block;
       enforce the `_meta` key-naming rules (reserved `*.modelcontextprotocol` / `*.mcp` second
       labels); OTel passthrough for `traceparent`/`tracestate`/`baggage`.
-- [x] `ExMCP.Internal.RequestParams`: inject required `_meta` on every modern outbound request.
+- [x] `Arbor.MCP.Internal.RequestParams`: inject required `_meta` on every modern outbound request.
       Single choke point — do **not** scatter this across the ~30 `encode_*` functions.
-- [x] `ExMCP.Server.RequestContext` (new) + extraction in `Dispatch`, `RequestProcessor`,
+- [x] `Arbor.MCP.Server.RequestContext` (new) + extraction in `Dispatch`, `RequestProcessor`,
       `MethodHandlers`. Validate required fields → `-32602` / HTTP `400`.
-- [x] `ExMCP.Server.ResultNormalizer`: stamp `resultType: "complete"` and
+- [x] `Arbor.MCP.Server.ResultNormalizer`: stamp `resultType: "complete"` and
       `_meta["io.modelcontextprotocol/serverInfo"]` on modern results.
 - [x] Client: parse `resultType`; absent ⇒ `"complete"` only for a known legacy connection;
       missing on modern or unknown/unnegotiated values ⇒ protocol error.
-- [x] `ExMCP.Server.Discover` (new) + wire `server/discover` into all four method tables.
+- [x] `Arbor.MCP.Server.Discover` (new) + wire `server/discover` into all four method tables.
 - [x] Client: `server/discover` request + `DiscoverResult` → populate `:server_info`,
       `:server_capabilities`, `:protocol_version`.
 - [x] `MissingRequiredClientCapabilityError` emission when a handler needs an undeclared
@@ -677,13 +677,13 @@ changes are covered by tests.
       RC soak. A later transport-lifecycle fix may require that soak to restart.
 
 **Exit:** a modern client can call `server/discover` + `tools/list` + `tools/call` against a
-modern ExMCP server over stdio, with no `initialize`.
+modern ArborMCP server over stdio, with no `initialize`.
 
 ---
 
 ### Phase 3 — Era detection & dual-era dispatch
 
-- [x] `ExMCP.Client.EraProbe` (new):
+- [x] `Arbor.MCP.Client.EraProbe` (new):
       - stdio/local/test: send `server/discover` with the preferred modern version.
         `DiscoverResult` ⇒ modern. Recognised modern JSON-RPC error (e.g. `-32022`) ⇒ modern,
         retry with an advertised version. A non-modern JSON-RPC error, or a timeout while the
@@ -716,7 +716,7 @@ modern ExMCP server over stdio, with no `initialize`.
         bounded same-origin `307`/`308`; never replay bodies, cookies, authorization or
         `Mcp-Param-*` across origin or scheme downgrade. Key pins/caches to the configured/final
         endpoint identity.
-- [x] `ExMCP.Client.ConnectionManager`: branch on era. Modern path skips
+- [x] `Arbor.MCP.Client.ConnectionManager`: branch on era. Modern path skips
       `send_initialize_request`/`send_initialized` entirely.
 - [x] Server: dual-era selection — a request carrying modern `_meta` is served statelessly;
       an `initialize` request selects legacy semantics scoped to the process (stdio) or session
@@ -738,11 +738,11 @@ modern ExMCP server over stdio, with no `initialize`.
 
 ### Phase 4 — MRTR
 
-- [x] `ExMCP.Client.MRTR` (new): on `resultType: "input_required"`, fulfil each `inputRequests`
-      entry via the existing `ExMCP.Client.Handler` callbacks, then re-issue the original
+- [x] `Arbor.MCP.Client.MRTR` (new): on `resultType: "input_required"`, fulfil each `inputRequests`
+      entry via the existing `Arbor.MCP.Client.Handler` callbacks, then re-issue the original
       request with a **new id**, `inputResponses`, and the echoed-verbatim `requestState`.
       Never inspect `requestState`. Omit it entirely if the server didn't send one.
-- [x] Round-trip cap + telemetry (`[:ex_mcp, :client, :mrtr, :round]`).
+- [x] Round-trip cap + telemetry (`[:arbor_mcp, :client, :mrtr, :round]`).
 - [x] Carry one overall deadline and cancellation scope across every round. Add limits for the
       number of rounds, `inputRequests` per round, and serialized request/response bytes so a
       peer cannot amplify work indefinitely. A timed-out MRTR scope cancels any in-flight input
@@ -759,12 +759,12 @@ modern ExMCP server over stdio, with no `initialize`.
       request_state, state}` handler returns, honoured on `tools/call`, `resources/read`,
       `prompts/get` **only** (spec forbids elsewhere).
 - [x] Always generate a sealed library envelope, even when the handler supplies no application
-      state, so a fresh-ID/cross-node retry can validate expected input IDs and round. ExMCP does
+      state, so a fresh-ID/cross-node retry can validate expected input IDs and round. ArborMCP does
       not use the spec's optional no-`requestState` form for server-produced MRTR results.
 - [x] Retry dispatch: parse `inputResponses`, verify/decode `requestState`, validate response IDs,
       and populate `RequestContext.input_responses` / `.request_state` before re-invoking the
       original handler. Add context-aware callback/DSL access while adapting old arities.
-- [x] `ExMCP.Server.RequestState` (new): AEAD seal/unseal with a digest of the canonical immutable
+- [x] `Arbor.MCP.Server.RequestState` (new): AEAD seal/unseal with a digest of the canonical immutable
       original method/params (excluding retry fields), expected input IDs, round number, protocol
       version, endpoint, capability fingerprint, and principal/tenant. Reject any mismatch.
 - [x] Define a versioned, algorithm-tagged sealed-state envelope with key ID, random nonce,
@@ -785,7 +785,7 @@ modern ExMCP server over stdio, with no `initialize`.
       Otherwise expose explicit at-least-once semantics in `RequestContext`. Atomically consume a
       JTI before dispatch and test concurrent same-request replay separately from cross-request/
       principal replay.
-- [x] `ExMCP.Server.DSL.Result.input_required/2` builder.
+- [x] `Arbor.MCP.Server.DSL.Result.input_required/2` builder.
 - [x] Legacy path (server-initiated requests via `HandlerServer` / `SSESession`) stays intact
       and is used only when `era == :legacy`.
 
@@ -801,7 +801,7 @@ two-node mixed-snapshot rotation test described above.
 
 ### Phase 5 — Subscriptions
 
-- [x] `ExMCP.Server.Subscriptions` (new): registry of `{subscription_id, honoured_filter,
+- [x] `Arbor.MCP.Server.Subscriptions` (new): registry of `{subscription_id, honoured_filter,
       transport_ref, principal_id, tenant_id, expires_at}` with no raw credential material.
 - [x] Put the registry behind an adapter. The default local adapter may use ETS, but clustered
       HTTP deployments need PubSub-backed fan-out because the process producing a change may not
@@ -821,7 +821,7 @@ two-node mixed-snapshot rotation test described above.
 - [x] Cancellation: HTTP ⇒ closing the SSE stream; stdio ⇒ `notifications/cancelled` on the
       listen request id. Modern HTTP cancellation closes only the owning POST response process;
       chunk failure or process exit removes the registry entry and stops delivery.
-- [x] `ExMCP.Client.Subscription` (new) + re-implement `subscribe_resource/2` /
+- [x] `Arbor.MCP.Client.Subscription` (new) + re-implement `subscribe_resource/2` /
       `unsubscribe_resource/2` on top of it for modern; keep `resources/subscribe` for legacy.
 - [x] Implement immutable-filter replacement: ref-count the desired resource set, open and
       acknowledge a replacement listen request, then cancel the old one. Define overlap/gap and
@@ -838,7 +838,7 @@ two-node mixed-snapshot rotation test described above.
       stream with telemetry instead of allowing unbounded memory growth.
 - [x] Monitor transport owners and remove registrations on disconnect/cancellation. Generate
       unguessable subscription IDs and re-check authorization when establishing a replacement
-      stream after reconnect. **The wire ID remains the spec-required client request ID; ExMCP
+      stream after reconnect. **The wire ID remains the spec-required client request ID; ArborMCP
       separately generates an unguessable internal registry token.**
 - [x] Define long-lived authorization behavior: bind the listener to the authenticated principal,
       close it on credential revocation/expiry when observable, and set a configurable maximum
@@ -892,7 +892,7 @@ deployment configuration and the per-node quota boundary are documented.
       This covers `subscriptions/listen` and ordinary request streams: client timeout/manual
       cancellation closes only the owning POST, chunk failure kills its worker, and an owner
       watchdog terminates the temporary handler if the connection disappears.
-- [x] `ExMCP.Plugs.ProtocolVersion` unconditional for modern (drop the default-off flag for the
+- [x] `Arbor.MCP.Plugs.ProtocolVersion` unconditional for modern (drop the default-off flag for the
       modern era while retaining the legacy compatibility switch).
 - [x] Define ambiguous-delivery semantics before enabling automatic reconnect retries. The
       spec-default policy follows the modern transport requirement and reissues a broken
@@ -915,13 +915,13 @@ deployment configuration and the per-node quota boundary are documented.
       case variants before dispatch. Add reverse-proxy integration tests so header normalization
       or buffering by common proxies cannot silently change protocol behavior. **Complete:** in
       addition to direct validation, literal HTTP requests now cross a front Cowboy connection,
-      a normalizing/buffering forwarding hop, and the ExMCP Cowboy endpoint. The matrix verifies
+      a normalizing/buffering forwarding hop, and the ArborMCP Cowboy endpoint. The matrix verifies
       valid streaming headers, duplicate/case-conflicting required fields, oversized names and
       values, obsolete folding/injection, and no handler dispatch on rejection. Production-proxy
       preservation/rejection and buffering requirements are documented explicitly.
 - [x] Treat every `Mcp-Param-*` value as potentially sensitive. Redact it from Plug/client debug
       logs, telemetry and proxy examples just like `Authorization`; document that operators must
-      configure upstream access-log redaction too. **ExMCP does not attach raw request headers to
+      configure upstream access-log redaction too. **ArborMCP does not attach raw request headers to
       its HTTP logs or telemetry; server regression coverage pins that invariant, and the security
       and configuration guides call out proxy/load-balancer/APM redaction explicitly.**
 
@@ -957,7 +957,7 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       `cacheScope` on cacheable complete results. A valid `ttlMs: 0` means immediately stale.
       **The originating method is retained for asynchronous stdio/SSE responses, so validation
       is transport-independent; structured client responses expose both fields.**
-- [x] **1.0 scope decision — client storage/reuse deferred.** A future `ExMCP.Client.Cache` must
+- [x] **1.0 scope decision — client storage/reuse deferred.** A future `Arbor.MCP.Client.Cache` must
       define freshness as `now < t_received + ttlMs`; no background polling;
       `list_changed` notification invalidates immediately;
       MRTR retries (carrying `inputResponses`/`requestState`) **MUST NOT** be cached; per-page
@@ -979,7 +979,7 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       discovers every result definition requiring `ttlMs` + `cacheScope`, maps it to its request
       method, and pins the runtime validator to that exact set.**
 - [x] Server: per-request `logLevel` from `_meta`; **MUST NOT** emit `notifications/message` for
-      requests without it. `ExMCP.Server.Context.send_log_message/3` filters below-threshold
+      requests without it. `Arbor.MCP.Server.Context.send_log_message/3` filters below-threshold
       events and uses only the owning request stream. `logging/setLevel` remains legacy-only.
 - [x] Deterministic `tools/list` ordering. **Modern results are sorted lexicographically by tool
       name after invalid `x-mcp-header` definitions are removed; legacy handler ordering is
@@ -987,8 +987,8 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 - [x] JSON Schema: `$ref` MUST NOT auto-dereference network URIs (opt-in only, off by default,
       host allowlist, reject loopback/link-local/private, timeouts, size limits, logging);
       bound composition-keyword depth / subschema count / validation time. Touches
-      `ExMCP.Content.SchemaValidator` and `ExMCP.Content.Validation`. **Every content, helper,
-      DSL, deprecated-tools, and registry path uses `ExMCP.Content.SchemaPolicy`. The default
+      `Arbor.MCP.Content.SchemaValidator` and `Arbor.MCP.Content.Validation`. **Every content, helper,
+      DSL, deprecated-tools, and registry path uses `Arbor.MCP.Content.SchemaPolicy`. The default
       rejects external refs before ExJsonSchema's global resolver; the opt-in resolver requires
       an allowlist and applies bounded, IP-pinned fetching. Schema bytes/depth/object count/
       composition depth and resolve/validation time are bounded in both modes.**
@@ -1011,13 +1011,13 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 ### Phase 8 — Tasks extension
 
 - [x] Extension identifier `io.modelcontextprotocol/tasks` in client + server
-      `capabilities.extensions`. **`ExMCP.Tasks.Extension` owns the canonical identifier,
+      `capabilities.extensions`. **`Arbor.MCP.Tasks.Extension` owns the canonical identifier,
       capability fragment, declaration checks, and result-type negotiation; configured client
       capabilities flow through every request and configured server capabilities flow through
       `server/discover`. The legacy `tasks` capability never enables the extension.**
 - [x] `CreateTaskResult` with `resultType: "task"`, returned **unsolicited** from `tools/call`
       (and other supported requests) when the client declared the extension. Server MUST check
-      the client declared it first. **`ExMCP.Tasks.Server.create/4` checks the scoped client
+      the client declared it first. **`Arbor.MCP.Tasks.Server.create/4` checks the scoped client
       declaration, synchronously creates the task through the configured store, and returns the
       handle only after insertion succeeds. The result envelope and all server transport
       boundaries reject undeclared or malformed task handles, and the client accepts them only
@@ -1039,7 +1039,7 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       task ID, HTTP and stdio streams accept the extension notification, malformed client-side
       events are dropped, and reconnect resynchronization polls every acknowledged task before
       queued events are released.**
-- [x] `ExMCP.Tasks.Task`: emit modern wire keys `ttlMs` / `pollIntervalMs`; add
+- [x] `Arbor.MCP.Tasks.Task`: emit modern wire keys `ttlMs` / `pollIntervalMs`; add
       `inputRequests`, `error`. Keep existing public struct fields/accessors as deprecated aliases
       throughout 1.x, or introduce a separate extension struct, so Phase 8 does not silently
       break rc.5 callers. **`to_map/1` retains the legacy representation; era-aware `to_map/2`
@@ -1047,7 +1047,7 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       intact, while the struct adds `input_requests` and `error`; generated IDs now use
       cryptographic randomness.**
 - [x] Durable creation before responding; task IDs survive client restarts. **The configurable
-      `ExMCP.Tasks.Store` contract covers create/get/input/cancellation/worker transitions and
+      `Arbor.MCP.Tasks.Store` contract covers create/get/input/cancellation/worker transitions and
       requires ownership checks on every operation. The supervised ETS implementation is bounded,
       TTL-aware, atomic on one node, and survives client/connection/worker restarts; deployments
       needing application/node restart recovery configure a persistent implementation.**
@@ -1078,9 +1078,9 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       hosted JWKS metadata. Configured CIMD keys produce RFC 7523 client assertions for both auth
       code and client-credentials token requests, with no downgrade when signing fails.**
 - [x] Add explicit client configuration: `{:pre_registered, client_id, secret_ref}`,
-      `{:cimd, https_url}`, or `:auto`, plus `application_type: :native | :web`. ExMCP may provide
+      `{:cimd, https_url}`, or `:auto`, plus `application_type: :native | :web`. ArborMCP may provide
       a Plug/helper to serve a CIMD but must not imply that a CLI can magically host HTTPS.
-      **`ExMCP.Authorization.RegistrationPolicy` implements these strategies. Secret references
+      **`Arbor.MCP.Authorization.RegistrationPolicy` implements these strategies. Secret references
       may be resolved from an environment variable or zero-arity callback at use time; resolver
       failures never expose the secret. Existing `client_id`, `client_secret`, and
       `client_metadata_url` keys remain supported as 1.x compatibility aliases. Documentation
@@ -1100,7 +1100,7 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       rejection details, and performs no weakening retry.**
 - [x] Key persisted credentials by issuer; refuse cross-AS reuse; re-register on AS change;
       surface an error on mismatched pre-registered credentials. **A pluggable
-      `ExMCP.Authorization.CredentialStore` boundary now validates every returned key and record.
+      `Arbor.MCP.Authorization.CredentialStore` boundary now validates every returned key and record.
       The full OAuth flow reuses DCR credentials only from the exact discovered-issuer partition,
       persists new registrations and tokens when an adapter is configured, and re-registers when
       that issuer partition misses. Modern pre-registered configuration requires an exact
@@ -1161,7 +1161,7 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 
 ### Phase 10 — Compatibility audit, docs, release
 
-- [x] **Do not remove public APIs in this migration.** Keep `ExMCP.Server.Tools` + related
+- [x] **Do not remove public APIs in this migration.** Keep `Arbor.MCP.Server.Tools` + related
       modules throughout 1.x. Update the current “removed in 1.1.0” notices in `README.md`,
       `CLAUDE.md`, `docs/DSL_GUIDE.md`, `docs/getting-started/MIGRATION.md`, and module docs to
       “removed in 2.0.0”; removal in 1.1 would violate SemVer. **All public documentation,
@@ -1175,7 +1175,7 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 - [x] HTTP+SSE (2024-11-05) is **decided:** keep it available and clearly deprecated throughout
       1.x, but exclude it from new-server defaults. “Dual-era server by default” means both
       protocol eras on enabled modern transports; it does not auto-enable a deprecated transport.
-      **`ExMCP.HttpPlug` and `ExMCP.Server.Transport` now default the standalone transport off.
+      **`Arbor.MCP.HttpPlug` and `Arbor.MCP.Server.Transport` now default the standalone transport off.
       `legacy_http_sse: true` is the explicit option; rc.5's `sse_enabled: true` remains a 1.x
       alias. The retained GET endpoint emits the required raw `endpoint` event, its announced
       POST endpoint accepts the session query and returns `202`, and JSON-RPC responses are sent
@@ -1185,10 +1185,10 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       routing, alias, default-selection and SSE formatting tests cover the compatibility path.**
 - [x] Keep Roots/Sampling/Logging; add deprecation notes pointing at the suggested migrations
       (tool params / resource URIs for roots; direct LLM APIs for sampling; stderr or OTel for
-      logging). **All representative `ExMCP.Server`, `ExMCP.Client`, request-context and Handler
+      logging). **All representative `Arbor.MCP.Server`, `Arbor.MCP.Client`, request-context and Handler
       behaviour functions/callbacks remain exported throughout 1.x. Their compiled docs now
       identify the MCP 2026-07-28 protocol deprecation and the feature-specific migration path;
-      they deliberately do not carry Elixir `@deprecated` metadata because ExMCP has not
+      they deliberately do not carry Elixir `@deprecated` metadata because ArborMCP has not
       scheduled these public APIs for removal during 1.x. The README, user guide, configuration
       guide and migration guide distinguish retained wire compatibility from recommended new
       designs. `DeprecationCompatibilityTest` locks the exports, callback surface, migration
@@ -1208,7 +1208,7 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       regression tests lock the reader-critical claims. `mix docs`, the 5-test documentation
       suite, and 107 focused era, request-context, HTTP Plug, request-stream, subscription and
       header tests pass.**
-- [x] `CHANGELOG.md` separates the rc.6 MCP wire changes from ExMCP public-API compatibility
+- [x] `CHANGELOG.md` separates the rc.6 MCP wire changes from ArborMCP public-API compatibility
       and preserves the intended stable 1.0 boundary. The rc.6 package and application default
       started the first modern-preferred soak. The post-rc.6 SSE fix now requires another RC
       and a fresh soak while retaining the same protocol-mode default.
@@ -1281,7 +1281,7 @@ request while a legacy node was live, then closed the subscription, completed MR
 legacy-only, reconciled external state, rejected silent modern-pin downgrade, and accepted legacy
 only after explicit cache reset. The operator reran the same test with a server compiled from the
 exact `v1.0.0-rc.5` tag; it negotiated `2025-11-25` and reported package version `1.0.0-rc.5`.
-See `test/ex_mcp/integration/rollback_drill_test.exs` and `docs/RELEASE_1_0_0.md`.
+See `test/arbor_mcp/integration/rollback_drill_test.exs` and `docs/RELEASE_1_0_0.md`.
 
 The rc.6 release note assigns an owner and evidence source for every gate, defines the load-test
 workload and regression budget against rc.5, and records the qualifying conformance-harness and
@@ -1298,24 +1298,24 @@ Things downstream users will notice.
 
 | Change | Severity | Mitigation |
 |---|---|---|
-| `ExMCP.Client.server_info/1`, `server_capabilities/1`, `protocol_version/1` | none | Populated from `DiscoverResult` in modern; same shape |
-| `ExMCP.Client.Handler` behaviour | none | MRTR reuses the same callbacks |
-| `ExMCP.Client.ping/2` | source-compatible | Legacy sends `ping`; modern performs an uncached `server/discover` liveness request and preserves the public success/error shape |
-| `ExMCP.Client.set_log_level/2` | source-compatible | Keep it as a client-wide default that populates per-request `_meta`; add a per-request override |
-| `ExMCP.Client.subscribe_resource/2` | source-compatible | Re-implemented over `subscriptions/listen` |
+| `Arbor.MCP.Client.server_info/1`, `server_capabilities/1`, `protocol_version/1` | none | Populated from `DiscoverResult` in modern; same shape |
+| `Arbor.MCP.Client.Handler` behaviour | none | MRTR reuses the same callbacks |
+| `Arbor.MCP.Client.ping/2` | source-compatible | Legacy sends `ping`; modern performs an uncached `server/discover` liveness request and preserves the public success/error shape |
+| `Arbor.MCP.Client.set_log_level/2` | source-compatible | Keep it as a client-wide default that populates per-request `_meta`; add a per-request override |
+| `Arbor.MCP.Client.subscribe_resource/2` | source-compatible | Re-implemented over `subscriptions/listen` |
 | Server handler return tuples | additive | New `{:input_required, …}` |
 | Server handlers receiving `_meta` in tool args | compatible transition | Introduce context-aware callback variants or an accessor additively; keep existing callback arities and `_meta` merging throughout 1.x |
-| `ExMCP.Server.Tools` | deprecated, still available | Correct removal target to ExMCP 2.0; migration to `ExMCP.Server.DSL` remains recommended |
+| `Arbor.MCP.Server.Tools` | deprecated, still available | Correct removal target to ArborMCP 2.0; migration to `Arbor.MCP.Server.DSL` remains recommended |
 | DSL `execution` instruction | legacy-only in modern mode | Keep the public DSL instruction for 1.x; it affects only the `2025-11-25` wire path |
 | Tasks API (`tasks/list`, `tasks/result`) | legacy-only in modern mode | Keep public helpers for legacy; add `tasks/get`/`update`/`cancel` extension helpers without removing old functions in 1.x |
-| `ExMCP.SessionManager` | modern: unused | Still exported for legacy; document as legacy-only |
+| `Arbor.MCP.SessionManager` | modern: unused | Still exported for legacy; document as legacy-only |
 
 ---
 
 ## 7. Test strategy
 
 1. **Extend the compliance generator.** Add `2025-11-25` and `2026-07-28` to
-   `test/ex_mcp/compliance/version_generator.ex` `@versions` and write
+   `test/arbor_mcp/compliance/version_generator.ex` `@versions` and write
    `handlers/handler20251125.ex` + `handler20260728.ex`. Make the `Features.*` modules
    era-conditional where the flow changed (roots, sampling, elicitation, logging, transport).
 2. **New feature modules** for `Features.Discover`, `Features.MRTR`, `Features.Subscriptions`,
@@ -1345,7 +1345,7 @@ Things downstream users will notice.
    discovery, request context, result envelopes, MRTR, subscriptions, routing headers,
    POST-owned SSE, and stateless session semantics. CI runs each lane in an isolated BEAM VM.
 9. **Public API compatibility** — compile and run representative rc.5 client/server modules,
-   including `ExMCP.Server.Tools`, old handler callback arities and legacy task helpers.
+   including `Arbor.MCP.Server.Tools`, old handler callback arities and legacy task helpers.
 10. **Chaos/load** — disconnect HTTP responses before/after dispatch, restart stdio servers,
     reconnect subscriptions, exercise slow consumers, and publish changes from a different
     cluster node. Assert bounded mailboxes, cleanup and explicit ambiguous outcomes.
@@ -1357,7 +1357,7 @@ Things downstream users will notice.
 | # | Item | Notes |
 |---|---|---|
 | R1 | **Ecosystem timing.** Most servers and clients in the wild are legacy. | Dual-era is the hedge. Ship modern behind the explicit protocol mode first; flip the default only after pinned official-SDK interop passes. |
-| R2 | **Health checks lose `ping`.** ExMCP's 30s idle ping is load-bearing for auto-reconnect. | Use an uncached `server/discover` as the modern liveness operation and preserve `Client.ping/2` as a compatibility wrapper. |
+| R2 | **Health checks lose `ping`.** ArborMCP's 30s idle ping is load-bearing for auto-reconnect. | Use an uncached `server/discover` as the modern liveness operation and preserve `Client.ping/2` as a compatibility wrapper. |
 | R3 | **`requestState` key management.** MRTR security depends on an AEAD key shared by every node that can resume a request. | Version the envelope, support key IDs/rotation, bind principal + request digest + expiry, and fail clearly when a configured MRTR flow cannot decrypt state. |
 | R4 | **HTTP plug complexity.** `do_dispatch/4` already has 14 clauses (L153-262); dual-era adds more. | Consider splitting modern vs legacy into separate plug modules behind a router rather than growing `do_dispatch/4`. |
 | R5 | **Stateless servers break existing user handlers** that relied on per-connection state. | The spec's answer is explicit server-minted handles as tool arguments (§"Stateful Tools"). Needs a documented migration recipe with an example. |
@@ -1369,7 +1369,7 @@ Things downstream users will notice.
 | R11 | **Perpetual-RC risk.** Adding the full optional extension/cache work could indefinitely delay 1.0. | Gate 1.0 on modern core and normative auth only; allow Tasks and the cache optimization to move to 1.1 without advertising unsupported capability. |
 | Q1 | When does modern become the default? | **Decided:** rc.6 is the first migration RC and defaults to modern-preferred because every implementation and qualification gate completed before publication; the final 1.0 RC and stable 1.0 retain that default. Automatic legacy fallback remains enabled. |
 | Q2 | Generate `types/v20260728.ex` from `schema.json`, or hand-write? | **Decided: generate** from the vendored schema, keep the generator in `dev/`, and review the generated diff plus small handwritten ergonomic aliases. |
-| Q3 | Keep `ExMCP.SessionManager`'s event buffering at all? | Only legacy uses it. Keep, mark legacy-only, and skip supervising it when configured modern-only. |
+| Q3 | Keep `Arbor.MCP.SessionManager`'s event buffering at all? | Only legacy uses it. Keep, mark legacy-only, and skip supervising it when configured modern-only. |
 | Q4 | Ship `1.0.0` stable on `2025-11-25` before modern support? | **Decided: no.** Keep rc.5 as the legacy baseline, add dual-era `2026-07-28` support in further RCs, then cut stable 1.0. |
 
 ---

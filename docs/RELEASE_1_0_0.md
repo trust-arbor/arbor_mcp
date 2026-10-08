@@ -1,21 +1,21 @@
-# ExMCP 1.0.0
+# ArborMCP 1.0.0
 
-ExMCP 1.0 is the first stable release of the dual-era MCP and ACP library. It
+ArborMCP 1.0 is the first stable release of the dual-era MCP and ACP library. It
 preserves the public API, wire behavior, security posture, lifecycle semantics,
 and `:prefer_modern` default of `1.0.0-rc.8`.
 
 ## Installation
 
 ```elixir
-{:ex_mcp, "~> 1.0"}
+{:arbor_mcp, "~> 1.0"}
 ```
 
 Set rollout policy explicitly when an upgrade must not change it:
 
 ```elixir
-config :ex_mcp, protocol_mode: :prefer_modern
+config :arbor_mcp, protocol_mode: :prefer_modern
 # Emergency legacy-era rollback; exact rc.5 behavior requires package rollback:
-# config :ex_mcp, protocol_mode: :legacy_only
+# config :arbor_mcp, protocol_mode: :legacy_only
 ```
 
 ## Stable baseline
@@ -25,8 +25,8 @@ config :ex_mcp, protocol_mode: :prefer_modern
   available throughout 1.x.
 - ACP major v1 includes native client/agent support and managed adapters for
   Claude Code, Codex, and Pi. ZCode remains deferred until after 1.0.
-- `ExMCP.Server.Tools` remains deprecated but available throughout 1.x;
-  `ExMCP.Server.Handler` with `ExMCP.Server.DSL` is the recommended API.
+- `Arbor.MCP.Server.Tools` remains deprecated but available throughout 1.x;
+  `Arbor.MCP.Server.Handler` with `Arbor.MCP.Server.DSL` is the recommended API.
 - MCP/ACP subprocess isolation, bounded queues and frames, server-issued legacy
   sessions, OAuth destination validation, and persist-before-delivery SSE
   replay retain the rc.8 security baseline.
@@ -58,7 +58,7 @@ pinned to `2.0.0`; legacy conformance remains pinned independently to `0.1.16`.
 
 The 2026-08-22 dependency audit also identified medium-severity
 `EEF-CVE-2026-43971` in Cowlib's `cow_link:link/1` encoder. Cowlib 2.19.0 is
-the latest Hex release and does not yet contain the upstream fix. ExMCP and
+the latest Hex release and does not yet contain the upstream fix. ArborMCP and
 its Plug/Cowboy server stack do not call the affected encoder; a BEAM-import
 regression test locks that assumption. The exact advisory exception shares the
 existing 2026-09-12 Cowlib review deadline and must be removed as soon as a
@@ -73,11 +73,11 @@ the modern node, passed the reconciled operation state to rc.5, and received
 server metadata reported package version `1.0.0-rc.5`.
 
 The same test proved that a legacy observation cannot overwrite an infinite
-modern era pin. Only an explicit `ExMCP.Client.EraCache.clear/1` allowed the
+modern era pin. Only an explicit `Arbor.MCP.Client.EraCache.clear/1` allowed the
 legacy observation to be stored. CI runs the self-contained legacy-only path:
 
 ```console
-mix test test/ex_mcp/integration/rollback_drill_test.exs --include integration
+mix test test/arbor_mcp/integration/rollback_drill_test.exs --include integration
 ```
 
 The release-gate run exported `v1.0.0-rc.5`, compiled its locked production

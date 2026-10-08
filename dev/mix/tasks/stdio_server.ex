@@ -15,18 +15,15 @@ defmodule Mix.Tasks.StdioServer do
   @shortdoc "Runs a stdio MCP server"
 
   def run(_args) do
+    Mix.Task.run("app.config")
+    configure_host_logging()
     Mix.Task.run("app.start")
-
-    # Configure for STDIO mode
-    Application.put_env(:ex_mcp, :stdio_mode, true)
-    Application.put_env(:ex_mcp, :stdio_startup_delay, 10)
-    Logger.configure(level: :emergency)
 
     # Define the server inline to avoid compilation issues
     Code.eval_string("""
     defmodule ExampleStdioServer do
-      use ExMCP.Server.Handler
-      use ExMCP.Server.DSL, name: "ExampleStdioServer", version: "1.0.0"
+      use Arbor.MCP.Server.Handler
+      use Arbor.MCP.Server.DSL, name: "ExampleStdioServer", version: "1.0.0"
 
       tool "say_hello", "Say hello to someone via stdio" do
         input_schema(%{
@@ -38,7 +35,7 @@ defmodule Mix.Tasks.StdioServer do
         })
 
         run fn %{"name" => name}, state ->
-          content = [%{type: "text", text: "Hello, \#{name}! Welcome to ExMCP via stdio! 📝✨"}]
+          content = [%{type: "text", text: "Hello, \#{name}! Welcome to Arbor.MCP via stdio! 📝✨"}]
           {:ok, %{content: content}, state}
         end
       end
@@ -116,12 +113,12 @@ defmodule Mix.Tasks.StdioServer do
     """)
 
     # Get the configured protocol version
-    protocol_version = Application.get_env(:ex_mcp, :protocol_version, "2025-03-26")
+    protocol_version = Application.get_env(:arbor_mcp, :protocol_version, "2025-03-26")
 
     IO.puts(:stderr, """
-    📡 ExMCP stdio Server Ready!
+    📡 Arbor.MCP stdio Server Ready!
 
-    Example usage with ExMCP client:
+    Example usage with Arbor.MCP client:
     {"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"#{protocol_version}","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}},"id":1}
     {"jsonrpc":"2.0","method":"tools/list","params":{},"id":2}
     {"jsonrpc":"2.0","method":"tools/call","params":{"name":"say_hello","arguments":{"name":"World"}},"id":3}
@@ -131,10 +128,32 @@ defmodule Mix.Tasks.StdioServer do
 
     # Start the server using the standard STDIO transport
     # The module is defined dynamically above, so we need to call it dynamically
-    # credo:disable-for-next-line Credo.Check.Refactor.Apply
-    {:ok, _server} = apply(ExampleStdioServer, :start_link, [[transport: :stdio]])
+    server_module = Module.concat(["ExampleStdioServer"])
+    {:ok, _server} = server_module.start_link(transport: :stdio, stdio_startup_delay: 10)
 
     # Keep the process alive
     Process.sleep(:infinity)
+  end
+
+  # This standalone command owns its VM's default logger handler. Preserve
+  # its level, formatter and filters while routing diagnostics away from JSON-RPC.
+  defp configure_host_logging do
+    {:ok, %{module: :logger_std_h} = handler} = :logger.get_handler_config(:default)
+
+    config =
+      handler
+      |> Map.drop([:id, :module])
+      |> Map.update!(:config, &Map.put(&1, :type, :standard_error))
+
+    # Mix app.start restarts Logger, so persist this host-owned boot policy too.
+    boot_config =
+      config
+      |> Map.put(:module, :logger_std_h)
+      |> Map.update!(:config, &Map.to_list/1)
+      |> Map.to_list()
+
+    Application.put_env(:logger, :default_handler, boot_config)
+    :ok = :logger.remove_handler(:default)
+    :ok = :logger.add_handler(:default, :logger_std_h, config)
   end
 end

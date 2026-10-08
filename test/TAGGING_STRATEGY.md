@@ -1,6 +1,6 @@
-# ExMCP Test Tagging Strategy
+# ArborMCP Test Tagging Strategy
 
-This document describes the test tagging strategy for ExMCP, which enables running specific test suites and managing test execution efficiently.
+This document describes the test tagging strategy for ArborMCP, which enables running specific test suites and managing test execution efficiently.
 
 ## Overview
 
@@ -26,8 +26,6 @@ Tests are tagged to categorize them by:
 - **`:requires_stdio`** - Tests requiring stdio transport
 - **`:requires_beam`** - Tests requiring BEAM transport
 - **`:external`** - Tests requiring external services
-- **`:interop_acp_cli`** - Opt-in, credential-free lifecycle tests against all four adapter CLIs
-- **`:interop_acp_ecosystem`** - Opt-in initialization/session smoke test for one reviewed native ACP command
 
 ### Characteristics
 
@@ -112,7 +110,7 @@ mix test.tags
 Use `@moduletag` when all tests in a module share the same characteristic:
 
 ```elixir
-defmodule ExMCP.Compliance.ProtocolTest do
+defmodule Arbor.MCP.Compliance.ProtocolTest do
   use ExUnit.Case
   
   @moduletag :compliance
@@ -205,7 +203,7 @@ Or configure in your CI pipeline:
 
 ### Compliance Test
 ```elixir
-defmodule ExMCP.Compliance.BatchTest do
+defmodule Arbor.MCP.Compliance.BatchTest do
   use ExUnit.Case
   
   @moduletag :compliance
@@ -220,7 +218,7 @@ end
 
 ### Integration Test
 ```elixir
-defmodule ExMCP.Integration.StreamableHTTPTransportTest do
+defmodule Arbor.MCP.Integration.StreamableHTTPTransportTest do
   use ExUnit.Case
   
   @moduletag :integration
@@ -237,7 +235,7 @@ end
 
 ### Performance Test
 ```elixir
-defmodule ExMCP.Performance.ThroughputTest do
+defmodule Arbor.MCP.Performance.ThroughputTest do
   use ExUnit.Case
   
   @moduletag :performance

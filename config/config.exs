@@ -1,7 +1,7 @@
 import Config
 
-# ExMCP Configuration
-config :ex_mcp,
+# Arbor.MCP Configuration
+config :arbor_mcp,
   # Legacy protocol revision used by initialize-based compatibility helpers.
   # Options: "2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"
   # Default: "2025-11-25" (newest legacy revision). MCP 2026-07-28 is the
@@ -30,9 +30,9 @@ config :ex_mcp,
 # There is intentionally no default: the values below are illustrative
 # placeholders, not endpoints anyone should point at. Configure the real
 # authorization server in YOUR application's config. The key actually read at
-# runtime is `ExMCP.Authorization.ServerConfig`:
+# runtime is `Arbor.MCP.Authorization.ServerConfig`:
 #
-#     config :ex_mcp, ExMCP.Authorization.ServerConfig,
+#     config :arbor_mcp, Arbor.MCP.Authorization.ServerConfig,
 #       default_server: :auth_server,
 #       servers: %{
 #         auth_server: %{
@@ -52,7 +52,7 @@ config :ex_mcp,
 # Defines the metadata returned by /.well-known/oauth-authorization-server.
 # Also intentionally left unset; example:
 #
-#     config :ex_mcp, :oauth2_authorization_server_metadata,
+#     config :arbor_mcp, :oauth2_authorization_server_metadata,
 #       # (Required) The authorization server issuer identifier.
 #       issuer: "https://auth.example.com",
 #       # (Required) URL of the authorization endpoint.
@@ -72,23 +72,23 @@ config :ex_mcp,
 
 # Security Configuration
 #
-# These are ExMCP's own defaults, restated here for visibility. A library's
+# These are Arbor.MCP's own defaults, restated here for visibility. A library's
 # config is not loaded by dependent applications: to change any of this, copy
 # the setting into YOUR application's config.
 #
-# The defaults are fail-closed. `ExMCP.Transport.SecurityGuard` classifies
+# The defaults are fail-closed. `Arbor.MCP.Transport.SecurityGuard` classifies
 # every outbound URL against exact :trusted_origins and explicit broad
 # :trusted_hosts; anything else has its
 # credential headers stripped and must be approved by :consent_handler, which
 # denies by default. A client pointed at a non-localhost MCP server therefore
 # needs that server's origin declared:
 #
-#     config :ex_mcp, :security,
+#     config :arbor_mcp, :security,
 #       trusted_origins: ["https://mcp.example.com"]
 #
 # A trusted origin is exempt from both stripping and consent. See
 # docs/SECURITY.md.
-config :ex_mcp, :security,
+config :arbor_mcp, :security,
   # Exact origins treated as the same security domain. Scheme and effective
   # port are part of the match. Add the MCP servers this application connects to.
   trusted_origins: [],
@@ -99,9 +99,9 @@ config :ex_mcp, :security,
   additional_sensitive_headers: [],
 
   # Consent management. Asked to approve access to origins that are NOT
-  # trusted. ExMCP.ConsentHandler.CLI prompts interactively;
-  # ExMCP.ConsentHandler.Web defers to an out-of-band web flow.
-  consent_handler: ExMCP.ConsentHandler.Deny,
+  # trusted. Arbor.MCP.ConsentHandler.CLI prompts interactively;
+  # Arbor.MCP.ConsentHandler.Web defers to an out-of-band web flow.
+  consent_handler: Arbor.MCP.ConsentHandler.Deny,
   # Milliseconds. Handlers receive this as :consent_ttl in seconds.
   consent_ttl: :timer.hours(24),
   consent_cache_cleanup_interval: :timer.minutes(5),
@@ -110,7 +110,7 @@ config :ex_mcp, :security,
   log_security_actions: true,
   audit_log_level: :info,
 
-  # Enforcement switches, read by ExMCP.Transport.SecurityGuard. Setting either
+  # Enforcement switches, read by Arbor.MCP.Transport.SecurityGuard. Setting either
   # to false disables that control for every transport; prefer declaring
   # :trusted_origins instead.
   enable_token_passthrough_prevention: true,

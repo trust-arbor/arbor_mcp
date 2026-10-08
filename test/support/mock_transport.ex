@@ -1,9 +1,9 @@
-defmodule ExMCP.Test.MockTransport do
+defmodule Arbor.MCP.Test.MockTransport do
   @moduledoc """
   Simple mock transport for testing the state machine.
   """
 
-  @behaviour ExMCP.Transport
+  @behaviour Arbor.MCP.Transport
 
   defstruct [:server_fn, :state]
 

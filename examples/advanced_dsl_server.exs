@@ -1,14 +1,14 @@
 #!/usr/bin/env elixir
 
-# Advanced MCP server using the modern ExMCP Handler + DSL API.
+# Advanced MCP server using the modern Arbor.MCP Handler + DSL API.
 
 Mix.install([
-  {:ex_mcp, path: Path.expand("..", __DIR__)}
+  {:arbor_mcp, path: Path.expand("..", __DIR__)}
 ])
 
 defmodule AdvancedServer do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL, name: "advanced-server", version: "1.0.0"
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, name: "advanced-server", version: "1.0.0"
 
   @impl true
   def init(_args) do
@@ -22,22 +22,22 @@ defmodule AdvancedServer do
   end
 
   tool "analyze_data", "Analyzes a list of numbers" do
-    title "Analyze Data"
-    param :data, {:array, :number}, required: true, description: "Numbers to analyze"
-    param :method, :string, default: "all", description: "mean, median, or all"
-    param :precision, :integer, default: 2
+    title("Analyze Data")
+    param(:data, {:array, :number}, required: true, description: "Numbers to analyze")
+    param(:method, :string, default: "all", description: "mean, median, or all")
+    param(:precision, :integer, default: 2)
 
-    output_schema %{
+    output_schema(%{
       type: "object",
       properties: %{
         count: %{type: "integer"},
         result: %{type: "object"}
       },
       required: ["count", "result"]
-    }
+    })
 
-    # ToolResult is aliased by `use ExMCP.Server.DSL`
-    run fn %{data: data, method: method, precision: precision}, state ->
+    # ToolResult is aliased by `use Arbor.MCP.Server.DSL`
+    run(fn %{data: data, method: method, precision: precision}, state ->
       result =
         data
         |> Enum.map(&to_number/1)
@@ -48,15 +48,15 @@ defmodule AdvancedServer do
          count: length(data),
          result: result
        }), state}
-    end
+    end)
   end
 
   tool "transform_text", "Transforms text through a list of operations" do
-    title "Transform Text"
-    param :text, :string, required: true
-    param :operations, {:array, :string}, default: ["uppercase"]
+    title("Transform Text")
+    param(:text, :string, required: true)
+    param(:operations, {:array, :string}, default: ["uppercase"])
 
-    run fn %{text: text, operations: operations}, state ->
+    run(fn %{text: text, operations: operations}, state ->
       transformed =
         operations
         |> List.wrap()
@@ -68,39 +68,39 @@ defmodule AdvancedServer do
          transformed: transformed,
          operations: operations
        }), state}
-    end
+    end)
   end
 
   resource_template "doc://project/{name}", "Project documents" do
-    title "Project Document"
-    mime_type "text/plain"
-    param :name, :string
+    title("Project Document")
+    mime_type("text/plain")
+    param(:name, :string)
 
-    read fn %{name: name, uri: uri}, state ->
+    read(fn %{name: name, uri: uri}, state ->
       case Map.fetch(state.documents, name) do
         {:ok, content} -> {:ok, %{uri: uri, text: content}, state}
         :error -> {:error, "Unknown document: #{name}", state}
       end
-    end
+    end)
   end
 
   resource "config://app", "Application configuration" do
-    title "Application Config"
-    mime_type "application/json"
-    annotations %{audience: ["assistant"], priority: 0.8}
+    title("Application Config")
+    mime_type("application/json")
+    annotations(%{audience: ["assistant"], priority: 0.8})
 
-    read fn %{uri: uri}, state ->
+    read(fn %{uri: uri}, state ->
       {:ok, %{uri: uri, text: state.documents["config"]}, state}
-    end
+    end)
   end
 
   prompt "code_assistant", "Creates a coding assistant prompt" do
-    title "Code Assistant"
-    arg :language, required: true, description: "Programming language"
-    arg :task, required: true, description: "What to implement"
-    arg :style, description: "Coding style preferences"
+    title("Code Assistant")
+    arg(:language, required: true, description: "Programming language")
+    arg(:task, required: true, description: "What to implement")
+    arg(:style, description: "Coding style preferences")
 
-    render fn %{language: language, task: task} = args, state ->
+    render(fn %{language: language, task: task} = args, state ->
       style = Map.get(args, :style, "clean and readable")
 
       {:ok,
@@ -115,7 +115,7 @@ defmodule AdvancedServer do
            }
          ]
        }, state}
-    end
+    end)
   end
 
   defp to_number(value) when is_number(value), do: value

@@ -16,7 +16,7 @@ ExUnit.after_suite(fn _results ->
   # Safety net: cleanup any truly orphaned test processes.
   # Suppress logs since this runs outside test capture scope.
   Logger.configure(level: :error)
-  ExMCP.TestSupport.cleanup_orphans()
+  Arbor.MCP.TestSupport.cleanup_orphans()
   :ok
 end)
 
@@ -45,32 +45,33 @@ case Task.yield(Task.async(&:public_key.cacerts_get/0), 15_000) do
 end
 
 # Start test consent handler agent
-{:ok, _} = ExMCP.ConsentHandler.Test.start_link()
+{:ok, _} = Arbor.MCP.ConsentHandler.Test.start_link()
 
 # Start ValidatorRegistry for content validation tests
-{:ok, _} = ExMCP.Content.ValidatorRegistry.start_link(name: ExMCP.Content.ValidatorRegistry)
+{:ok, _} =
+  Arbor.MCP.Content.ValidatorRegistry.start_link(name: Arbor.MCP.Content.ValidatorRegistry)
 
 # Ensure compliance version modules are generated
-Code.ensure_loaded(ExMCP.Compliance.VersionGenerator)
+Code.ensure_loaded(Arbor.MCP.Compliance.VersionGenerator)
 
 # Enable test mode for SSE handlers to prevent blocking in tests
-Application.put_env(:ex_mcp, :test_mode, true)
+Application.put_env(:arbor_mcp, :test_mode, true)
 
 # Keep the production validation deadline tight while allowing for scheduler
 # contention from highly concurrent test runs. Deadline behavior is tested with
 # explicit per-call overrides in SchemaPolicyTest.
-Application.put_env(:ex_mcp, :json_schema, validation_timeout_ms: 1_000)
+Application.put_env(:arbor_mcp, :json_schema, validation_timeout_ms: 1_000)
 
 # Don't stop the application - let tests that need it have access to it
 # Individual tests can stop/restart if needed for isolation
-# Application.stop(:ex_mcp)
+# Application.stop(:arbor_mcp)
 
 # Ensure the application is started for tests that need it
-{:ok, _} = Application.ensure_all_started(:ex_mcp)
+{:ok, _} = Application.ensure_all_started(:arbor_mcp)
 
 # Safe cleanup: Only handle network resources that might block new tests
 # Application processes are handled by OTP supervision - don't force kill them
-ExMCP.TestSupport.safe_cleanup_network_resources()
+Arbor.MCP.TestSupport.safe_cleanup_network_resources()
 
 # Configure default exclusions for fast local development
 # These can be overridden with --include flags
@@ -115,4 +116,4 @@ ExUnit.start(capture_log: true)
 
 # No mocking library is used. Tests rely on lightweight in-process test
 # transports (`transport: :test`), hand-written stub modules injected via
-# options, and the helpers in `test/support/` plus `ExMCP.Testing.*`.
+# options, and the helpers in `test/support/` plus `Arbor.MCP.Testing.*`.

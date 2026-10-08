@@ -1,10 +1,10 @@
-defmodule ExMCP.Test.FlexibleMockTransport do
+defmodule Arbor.MCP.Test.FlexibleMockTransport do
   @moduledoc """
   A flexible mock transport that accepts multiple protocol versions
   for testing version negotiation.
   """
 
-  @behaviour ExMCP.Transport
+  @behaviour Arbor.MCP.Transport
 
   def connect(opts) do
     case Keyword.get(opts, :fail_connect) do
@@ -37,7 +37,7 @@ defmodule ExMCP.Test.FlexibleMockTransport do
   def receive_message(state), do: recv(state, 5000)
 end
 
-defmodule ExMCP.Test.FlexibleMockServer do
+defmodule Arbor.MCP.Test.FlexibleMockServer do
   @moduledoc """
   Flexible mock server that handles protocol version negotiation.
   """

@@ -1,6 +1,17 @@
-# Migration Guide
+# Historical ExMCP Migration Notes
 
-This guide helps you upgrade your ExMCP applications between versions. Each section covers breaking changes and provides migration examples.
+For the current package split and Runtime APIs, start with the
+[v1-to-v2 migration guide](../guides/MIGRATING_V1_TO_V2.md). ArborMCP RC1 is
+published; the corrected independent-version replacements are pending. its [RC notes](../guides/V2_RELEASE_CANDIDATE.md) describe the
+current testing scope and limits.
+
+The record below preserves the ExMCP 0.x and 1.x migrations, including the
+rc.5-to-modern protocol rollout. Its `ExMCP.*` names, `:ex_mcp` dependencies,
+old API examples and release-candidate planning language belong to those
+historical versions. They are not ArborMCP installation or API instructions.
+For current protocol-mode configuration, use the
+[configuration guide](../CONFIGURATION.md#protocol-eras-and-modes).
+
 
 ## Table of Contents
 
@@ -278,12 +289,12 @@ The biggest breaking change in v0.5.0 was transport renaming:
 
 ```elixir
 # Before (v0.4.x)
-ExMCP.Client.start_link(transport: :sse, ...)
-MyServer.start_link(transport: :sse, ...)
+ExMCP.Client.start_link(transport: :sse, url: "http://localhost:8080/mcp")
+MyServer.start_link(transport: :sse, port: 8080)
 
 # After (v0.5.x+)
-ExMCP.Client.start_link(transport: :http, ...)
-MyServer.start_link(transport: :http, ...)
+ExMCP.Client.start_link(transport: :http, url: "http://localhost:8080/mcp")
+MyServer.start_link(transport: :http, port: 8080)
 ```
 
 **Rationale:** The `:sse` transport identifier was renamed to `:http` before the

@@ -1,4 +1,4 @@
-defmodule ExMCP.Testing.MockLLM do
+defmodule Arbor.MCP.Testing.MockLLM do
   @moduledoc """
   Mock LLM decision engine for agent simulation tests.
 

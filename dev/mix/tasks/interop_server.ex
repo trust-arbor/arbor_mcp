@@ -19,18 +19,19 @@ defmodule Mix.Tasks.InteropServer do
   def run(args) do
     modern? = "modern" in args
 
-    Mix.Task.run("app.start")
+    app_start_args =
+      if "--no-compile" in args, do: ["--no-compile", "--no-deps-check"], else: []
 
-    # Configure for STDIO mode
-    Application.put_env(:ex_mcp, :stdio_mode, true)
-    Logger.configure(level: :emergency)
+    Mix.Task.run("app.config", app_start_args)
+    configure_host_logging()
+    Mix.Task.run("app.start", app_start_args)
 
     Code.eval_string(~S"""
     defmodule InteropHandler do
-      use ExMCP.Server.Handler
-      use ExMCP.Server.DSL, name: "elixir-interop-server", version: "1.0.0"
+      use Arbor.MCP.Server.Handler
+      use Arbor.MCP.Server.DSL, name: "elixir-interop-server", version: "1.0.0"
 
-      alias ExMCP.Server.Context
+      alias Arbor.MCP.Server.Context
 
       def __server_info__, do: %{name: "elixir-interop-server", version: "1.0.0"}
 
@@ -73,7 +74,7 @@ defmodule Mix.Tasks.InteropServer do
                 "profile" => %{
                   "method" => "elicitation/create",
                   "params" => %{
-                    "message" => "Choose an ExMCP interop display name",
+                    "message" => "Choose an Arbor.MCP interop display name",
                     "requestedSchema" => %{
                       "type" => "object",
                       "properties" => %{"name" => %{"type" => "string"}},
@@ -84,7 +85,7 @@ defmodule Mix.Tasks.InteropServer do
               }
 
               {:ok,
-               ExMCP.Server.DSL.Result.input_required(requests, %{"server" => "ex_mcp"}), state}
+               Arbor.MCP.Server.DSL.Result.input_required(requests, %{"server" => "ex_mcp"}), state}
 
             %{"profile" => %{"content" => %{"name" => name}}} ->
               {:ok, "#{name}:#{Context.request_state()["server"]}", state}
@@ -94,7 +95,7 @@ defmodule Mix.Tasks.InteropServer do
 
       tool "publish_tools_changed", "Publishes a tools list-changed notification" do
         run fn _arguments, state ->
-          ExMCP.Server.notify_tools_changed(self())
+          Arbor.MCP.Server.notify_tools_changed(self())
           {:ok, "published", state}
         end
       end
@@ -133,7 +134,7 @@ defmodule Mix.Tasks.InteropServer do
       [module: InteropHandler]
       |> maybe_enable_modern(modern?)
 
-    {:ok, server} = ExMCP.Server.StdioServer.start_link(server_opts)
+    {:ok, server} = Arbor.MCP.Server.StdioServer.start_link(server_opts)
 
     # Exit with the transport instead of leaving a nested BEAM VM behind after
     # the SDK closes its end of the stdio pipe.
@@ -142,6 +143,28 @@ defmodule Mix.Tasks.InteropServer do
     receive do
       {:DOWN, ^server_ref, :process, ^server, _reason} -> :ok
     end
+  end
+
+  # This standalone command owns its VM's default logger handler. Preserve
+  # its level, formatter and filters while routing diagnostics away from JSON-RPC.
+  defp configure_host_logging do
+    {:ok, %{module: :logger_std_h} = handler} = :logger.get_handler_config(:default)
+
+    config =
+      handler
+      |> Map.drop([:id, :module])
+      |> Map.update!(:config, &Map.put(&1, :type, :standard_error))
+
+    # Mix app.start restarts Logger, so persist this host-owned boot policy too.
+    boot_config =
+      config
+      |> Map.put(:module, :logger_std_h)
+      |> Map.update!(:config, &Map.to_list/1)
+      |> Map.to_list()
+
+    Application.put_env(:logger, :default_handler, boot_config)
+    :ok = :logger.remove_handler(:default)
+    :ok = :logger.add_handler(:default, :logger_std_h, config)
   end
 
   defp maybe_enable_modern(opts, false), do: opts

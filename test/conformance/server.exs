@@ -1,13 +1,18 @@
-# ExMCP Conformance Test Server
+# Arbor.MCP Conformance Test Server
 #
 # Implements the "everything server" for MCP conformance testing.
-# Uses library infrastructure (HttpPlug, SSESession, DnsRebinding).
+# Uses the addressed Runtime, HttpPlug and DnsRebinding infrastructure.
 # Tool/resource/prompt definitions are the only test-specific code.
 #
 # Start with: elixir test/conformance/server.exs [port]
 # Then run:   npx @modelcontextprotocol/conformance server --url http://localhost:PORT/mcp
 
-Mix.install([{:ex_mcp, path: "."}, {:plug_cowboy, "~> 2.7"}, {:jason, "~> 1.4"}])
+Mix.install([
+  {:arbor_mcp, path: "."},
+  {:plug_cowboy, "~> 2.7"},
+  {:ranch, "== 1.8.1"},
+  {:jason, "~> 1.4"}
+])
 
 # ── Test Data ────────────────────────────────────────────────────
 
@@ -25,9 +30,10 @@ Application.put_env(:conformance, :test_audio, test_audio)
 # ── Handler (tools, resources, prompts) ──────────────────────────
 
 defmodule ConformanceHandler do
-  use ExMCP.Server.Handler
+  use Arbor.MCP.Server.Handler
 
-  alias ExMCP.Server.Context
+  alias Arbor.MCP.Server
+  alias Arbor.MCP.Server.Context
 
   @json_schema_uri "https://json-schema.org/draft/2020-12/schema"
 
@@ -240,37 +246,138 @@ defmodule ConformanceHandler do
      ], state}
   end
 
-  # Legacy bidirectional scenarios are handled by the fixture router. Modern
-  # request-scoped notifications are emitted by the real HttpPlug path.
-  def handle_call_tool("test_tool_with_logging", _args, state),
-    do: {:ok, [%{type: "text", text: "Tool with logging executed successfully"}], state}
+  # Notifications and reverse requests execute in the original Runtime Task.
+  def handle_call_tool("test_tool_with_logging", _args, state) do
+    for message <- ["Tool execution started", "Tool processing data", "Tool execution completed"] do
+      :ok = log_message(message)
+    end
+
+    {:ok, [%{type: "text", text: "Tool with logging executed successfully"}], state}
+  end
 
   def handle_call_tool("test_tool_with_progress", _args, state) do
     token = Context.progress_token() || 0
 
     for progress <- [0, 50, 100] do
-      :ok =
-        Context.report_progress(
-          progress,
-          100,
-          "Completed step #{progress} of 100"
-        )
+      :ok = Context.report_progress(progress, 100, "Completed step #{progress} of 100")
+      Process.sleep(50)
     end
 
     {:ok, [%{type: "text", text: to_string(token)}], state}
   end
 
-  def handle_call_tool("test_sampling", %{"prompt" => p}, state),
-    do: {:ok, [%{type: "text", text: "Sampling: #{p}"}], state}
+  def handle_call_tool("test_sampling", %{"prompt" => prompt}, state) do
+    params = %{
+      "messages" => [%{"role" => "user", "content" => %{"type" => "text", "text" => prompt}}],
+      "maxTokens" => 100
+    }
 
-  def handle_call_tool("test_elicitation", %{"message" => m}, state),
-    do: {:ok, [%{type: "text", text: "Elicitation: #{m}"}], state}
+    case Server.create_message(ConformanceRuntime, params) do
+      {:ok, result} ->
+        text =
+          get_in(result, ["content", "text"]) || get_in(result, ["message", "content", "text"]) ||
+            "No response"
 
-  def handle_call_tool("test_elicitation_sep1034_defaults", _args, state),
-    do: {:ok, [%{type: "text", text: "Elicitation defaults"}], state}
+        {:ok, [%{type: "text", text: "LLM response: #{text}"}], state}
 
-  def handle_call_tool("test_elicitation_sep1330_enums", _args, state),
-    do: {:ok, [%{type: "text", text: "Elicitation enums"}], state}
+      {:error, reason} ->
+        {:error, "Sampling error: #{inspect(reason)}", state}
+    end
+  end
+
+  def handle_call_tool("test_elicitation", %{"message" => message}, state) do
+    elicit(
+      message,
+      %{
+        "type" => "object",
+        "properties" => %{"response" => %{"type" => "string", "description" => "User's response"}},
+        "required" => ["response"]
+      },
+      "User response",
+      state
+    )
+  end
+
+  def handle_call_tool("test_elicitation_sep1034_defaults", _args, state) do
+    schema = %{
+      "type" => "object",
+      "properties" => %{
+        "name" => %{"type" => "string", "description" => "User name", "default" => "John Doe"},
+        "age" => %{"type" => "integer", "description" => "User age", "default" => 30},
+        "score" => %{"type" => "number", "description" => "User score", "default" => 95.5},
+        "status" => %{
+          "type" => "string",
+          "description" => "User status",
+          "enum" => ["active", "inactive", "pending"],
+          "default" => "active"
+        },
+        "verified" => %{
+          "type" => "boolean",
+          "description" => "Verification status",
+          "default" => true
+        }
+      },
+      "required" => []
+    }
+
+    elicit(
+      "Please review and update the form fields with defaults",
+      schema,
+      "Elicitation completed",
+      state
+    )
+  end
+
+  def handle_call_tool("test_elicitation_sep1330_enums", _args, state) do
+    schema = %{
+      "type" => "object",
+      "properties" => %{
+        "untitledSingle" => %{
+          "type" => "string",
+          "description" => "Select one option",
+          "enum" => ["option1", "option2", "option3"]
+        },
+        "titledSingle" => %{
+          "type" => "string",
+          "description" => "Select one with titles",
+          "oneOf" => [
+            %{"const" => "value1", "title" => "First Option"},
+            %{"const" => "value2", "title" => "Second Option"},
+            %{"const" => "value3", "title" => "Third Option"}
+          ]
+        },
+        "legacyEnum" => %{
+          "type" => "string",
+          "description" => "Select one (legacy)",
+          "enum" => ["opt1", "opt2", "opt3"],
+          "enumNames" => ["Option One", "Option Two", "Option Three"]
+        },
+        "untitledMulti" => %{
+          "type" => "array",
+          "description" => "Select multiple",
+          "minItems" => 1,
+          "maxItems" => 3,
+          "items" => %{"type" => "string", "enum" => ["option1", "option2", "option3"]}
+        },
+        "titledMulti" => %{
+          "type" => "array",
+          "description" => "Select multiple with titles",
+          "minItems" => 1,
+          "maxItems" => 3,
+          "items" => %{
+            "anyOf" => [
+              %{"const" => "value1", "title" => "First Choice"},
+              %{"const" => "value2", "title" => "Second Choice"},
+              %{"const" => "value3", "title" => "Third Choice"}
+            ]
+          }
+        }
+      },
+      "required" => []
+    }
+
+    elicit("Please select options from the enum fields", schema, "Elicitation completed", state)
+  end
 
   def handle_call_tool("json_schema_2020_12_tool", _args, state),
     do: {:ok, [%{type: "text", text: "JSON Schema 2020-12"}], state}
@@ -279,7 +386,7 @@ defmodule ConformanceHandler do
     do: {:ok, [%{type: "text", text: value}], state}
 
   def handle_call_tool("test_missing_capability", _args, state) do
-    {:error, ExMCP.Error.missing_required_client_capability(%{"sampling" => %{}}), state}
+    {:error, Arbor.MCP.Error.missing_required_client_capability(%{"sampling" => %{}}), state}
   end
 
   def handle_call_tool("test_input_required_result_elicitation", _args, state) do
@@ -418,7 +525,14 @@ defmodule ConformanceHandler do
   end
 
   def handle_call_tool("test_error_handling", _args, state),
-    do: {:error, "This tool intentionally returns an error for testing", state}
+    do:
+      {:ok,
+       %{
+         "isError" => true,
+         "content" => [
+           %{"type" => "text", "text" => "This tool intentionally returns an error for testing"}
+         ]
+       }, state}
 
   def handle_call_tool("test_streaming_elicitation", _args, state) do
     _ = Context.report_progress(50, 100)
@@ -508,8 +622,8 @@ defmodule ConformanceHandler do
 
   def handle_read_resource(uri, state) do
     error =
-      ExMCP.Error.protocol_error(
-        ExMCP.Protocol.ErrorCodes.resource_not_found("2026-07-28"),
+      Arbor.MCP.Error.protocol_error(
+        Arbor.MCP.Protocol.ErrorCodes.resource_not_found("2026-07-28"),
         "Resource not found",
         %{"uri" => uri}
       )
@@ -532,11 +646,11 @@ defmodule ConformanceHandler do
 
   @impl true
   def handle_subscribe_resource(uri, state),
-    do: {:ok, %{state | subscriptions: MapSet.put(state.subscriptions, uri)}}
+    do: {:ok, %{}, %{state | subscriptions: MapSet.put(state.subscriptions, uri)}}
 
   @impl true
   def handle_unsubscribe_resource(uri, state),
-    do: {:ok, %{state | subscriptions: MapSet.delete(state.subscriptions, uri)}}
+    do: {:ok, %{}, %{state | subscriptions: MapSet.delete(state.subscriptions, uri)}}
 
   # ── Prompts ────────────────────────────────────────────────
 
@@ -689,6 +803,26 @@ defmodule ConformanceHandler do
     }
   end
 
+  defp log_message(message) do
+    case Context.current() do
+      %{era: :legacy} -> Server.send_log_message(ConformanceRuntime, :info, message, %{})
+      _modern -> Context.send_log_message(:info, message)
+    end
+  end
+
+  defp elicit(message, schema, label, state) do
+    case Server.elicit(ConformanceRuntime, %{"message" => message, "requestedSchema" => schema}) do
+      {:ok, result} ->
+        text =
+          "#{label}: action=#{result["action"]}, content=#{Jason.encode!(result["content"] || %{})}"
+
+        {:ok, [%{type: "text", text: text}], state}
+
+      {:error, reason} ->
+        {:error, "Elicitation error: #{inspect(reason)}", state}
+    end
+  end
+
   defp mrtr_tools do
     for {name, description} <- [
           {"test_input_required_result_elicitation", "Tests elicitation input requests"},
@@ -721,23 +855,17 @@ defmodule ConformanceHandler do
   end
 end
 
-# ── SSE Router (handles bidirectional tools) ─────────────────────
+# ── Runtime Mount ──────────────────────────────────────────────
 
 defmodule ConformanceRouter do
   @behaviour Plug
-  import Plug.Conn
-  require Logger
 
-  alias ExMCP.Plugs.DnsRebinding
-  alias ExMCP.Server.SSESession
+  alias Arbor.MCP.Plugs.DnsRebinding
 
-  @sse_tools ~w(test_tool_with_logging test_tool_with_progress test_sampling test_elicitation test_elicitation_sep1034_defaults test_elicitation_sep1330_enums)
-
-  # allowed_origins :any — this is a localhost-only conformance fixture; the
-  # DnsRebinding plug above already pins the Host header to localhost names,
-  # and HttpPlug no longer has a same-origin Origin fallback.
-  @mcp_opts ExMCP.HttpPlug.init(
-              handler: ConformanceHandler,
+  # The fixture binds only localhost. Host validation runs before HttpPlug,
+  # and the explicit origin policy accepts conformance browser origins.
+  @mcp_opts Arbor.MCP.HttpPlug.init(
+              runtime: ConformanceRuntime,
               server_info: %{name: "mcp-conformance-test-server", version: "1.0.0"},
               protocol_mode: :prefer_modern,
               mrtr: true,
@@ -746,8 +874,10 @@ defmodule ConformanceRouter do
                 keys: %{"conformance" => :binary.copy(<<42>>, 32)},
                 ttl_seconds: 300
               ],
-              sse_enabled: true,
+              legacy_http_sse: true,
+              sse_mode: :stream,
               cors_enabled: true,
+              allowed_hosts: ["localhost", "127.0.0.1", "::1", "[::1]"],
               allowed_origins: :any
             )
 
@@ -756,438 +886,26 @@ defmodule ConformanceRouter do
 
   @impl true
   def call(conn, _opts) do
-    # DNS rebinding protection
     conn = DnsRebinding.call(conn, DnsRebinding.init([]))
-    if conn.halted, do: conn, else: route(conn)
-  end
-
-  defp route(%{method: "POST"} = conn) do
-    if modern_request?(conn) do
-      ExMCP.HttpPlug.call(conn, @mcp_opts)
-    else
-      route_legacy_post(conn)
-    end
-  end
-
-  defp route_legacy_post(conn) do
-    {:ok, body, conn} = read_body(conn)
-
-    case Jason.decode(body) do
-      {:ok, %{"method" => "tools/call", "params" => %{"name" => name}, "id" => id} = req}
-      when name in @sse_tools ->
-        handle_sse_tool(conn, name, id, req)
-
-      {:ok, %{"id" => id, "result" => result}} when not is_nil(id) ->
-        SSESession.handle_response(id, {:ok, result})
-        conn |> put_resp_header("mcp-session-id", session_id(conn)) |> send_resp(202, "")
-
-      {:ok, %{"id" => id, "error" => error}} when not is_nil(id) ->
-        SSESession.handle_response(id, {:error, error})
-        conn |> put_resp_header("mcp-session-id", session_id(conn)) |> send_resp(202, "")
-
-      _ ->
-        handle_normal_post(conn, body)
-    end
-  end
-
-  defp modern_request?(conn) do
-    case get_req_header(conn, "mcp-protocol-version") do
-      [version] -> version == "2026-07-28" or version not in ExMCP.supported_versions()
-      _other -> false
-    end
-  end
-
-  defp route(%{method: "GET"} = conn) do
-    if Enum.any?(get_req_header(conn, "accept"), &String.contains?(&1, "text/event-stream")) do
-      sid = session_id(conn)
-      SSESession.register_sse_stream(sid)
-
-      conn
-      |> put_resp_header("content-type", "text/event-stream")
-      |> put_resp_header("cache-control", "no-cache")
-      |> put_resp_header("connection", "keep-alive")
-      |> put_resp_header("mcp-session-id", sid)
-      |> send_chunked(200)
-      |> then(&SSESession.run_sse_loop(&1, sid))
-    else
-      ExMCP.HttpPlug.call(conn, @mcp_opts)
-    end
-  end
-
-  defp route(conn), do: ExMCP.HttpPlug.call(conn, @mcp_opts)
-
-  defp handle_normal_post(conn, body) do
-    case Jason.decode(body) do
-      {:ok, request} ->
-        sid = session_id(conn)
-        mcp_conn = ExMCP.MessageProcessor.new(request, transport: :http)
-
-        processed =
-          ExMCP.MessageProcessor.process(mcp_conn, %{
-            handler: ConformanceHandler,
-            server_info: %{name: "mcp-conformance-test-server", version: "1.0.0"}
-          })
-
-        req_id = request["id"]
-
-        case processed.response do
-          nil when req_id == nil ->
-            conn |> put_resp_header("mcp-session-id", sid) |> send_resp(202, "")
-
-          nil ->
-            conn
-            |> put_resp_content_type("application/json")
-            |> put_resp_header("mcp-session-id", sid)
-            |> send_resp(
-              500,
-              Jason.encode!(%{
-                jsonrpc: "2.0",
-                error: %{code: -32603, message: "No response"},
-                id: request["id"]
-              })
-            )
-
-          response ->
-            conn
-            |> put_resp_content_type("application/json")
-            |> put_resp_header("mcp-session-id", sid)
-            |> put_resp_header("mcp-protocol-version", "2025-11-25")
-            |> send_resp(200, Jason.encode!(response))
-        end
-
-      {:error, _} ->
-        conn
-        |> put_resp_content_type("application/json")
-        |> send_resp(
-          400,
-          Jason.encode!(%{jsonrpc: "2.0", error: %{code: -32700, message: "Parse error"}})
-        )
-    end
-  end
-
-  # ── SSE Tool Handlers ────────────────────────────────────────
-
-  defp handle_sse_tool(conn, name, id, req) do
-    # Prefer client-supplied session id so POST tools/call matches GET SSE.
-    # If the header is missing, wait for the sole live SSE stream (POST-before-GET race).
-    case resolve_sse_session_id(conn) do
-      {:ok, sid} ->
-        conn =
-          conn
-          |> put_resp_header("content-type", "text/event-stream")
-          |> put_resp_header("cache-control", "no-cache")
-          |> put_resp_header("connection", "keep-alive")
-          |> put_resp_header("mcp-session-id", sid)
-          |> send_chunked(200)
-
-        do_sse_tool(conn, name, id, req, sid)
-
-      {:error, reason} ->
-        Logger.warning(
-          "SSE stream not ready for tool=#{name} reason=#{inspect(reason)}; " <>
-            "bidirectional request would fail"
-        )
-
-        conn
-        |> put_resp_content_type("application/json")
-        |> send_resp(
-          200,
-          Jason.encode!(%{
-            jsonrpc: "2.0",
-            id: id,
-            result: %{
-              content: [
-                %{
-                  type: "text",
-                  text: "Error: no SSE stream (#{inspect(reason)}) for tool #{name}"
-                }
-              ],
-              isError: true
-            }
-          })
-        )
-    end
-  end
-
-  defp do_sse_tool(conn, "test_tool_with_logging", id, _req, _sid) do
-    for msg <- ["Tool execution started", "Tool processing data", "Tool execution completed"] do
-      sse_event(conn, %{
-        jsonrpc: "2.0",
-        method: "notifications/message",
-        params: %{level: "info", logger: "conformance-test-server", data: msg}
-      })
-
-      Process.sleep(50)
-    end
-
-    sse_event(conn, %{
-      jsonrpc: "2.0",
-      id: id,
-      result: %{content: [%{type: "text", text: "Tool with logging executed successfully"}]}
-    })
-
-    conn
-  end
-
-  defp do_sse_tool(conn, "test_tool_with_progress", id, req, _sid) do
-    token = get_in(req, ["params", "_meta", "progressToken"]) || 0
-
-    for {p, t} <- [{0, 100}, {50, 100}, {100, 100}] do
-      sse_event(conn, %{
-        jsonrpc: "2.0",
-        method: "notifications/progress",
-        params: %{
-          progressToken: token,
-          progress: p,
-          total: t,
-          message: "Completed step #{p} of #{t}"
-        }
-      })
-
-      Process.sleep(50)
-    end
-
-    sse_event(conn, %{
-      jsonrpc: "2.0",
-      id: id,
-      result: %{content: [%{type: "text", text: "#{token}"}]}
-    })
-
-    conn
-  end
-
-  defp do_sse_tool(conn, "test_sampling", id, req, sid) do
-    prompt = get_in(req, ["params", "arguments", "prompt"]) || "Test prompt"
-
-    case SSESession.send_request(sid, "sampling/createMessage", %{
-           messages: [%{role: "user", content: %{type: "text", text: prompt}}],
-           maxTokens: 100
-         }) do
-      {:ok, result} ->
-        text =
-          get_in(result, ["content", "text"]) || get_in(result, ["message", "content", "text"]) ||
-            "No response"
-
-        sse_event(conn, %{
-          jsonrpc: "2.0",
-          id: id,
-          result: %{content: [%{type: "text", text: "LLM response: #{text}"}]}
-        })
-
-      {:error, reason} ->
-        sse_event(conn, %{
-          jsonrpc: "2.0",
-          id: id,
-          result: %{content: [%{type: "text", text: "Sampling error: #{inspect(reason)}"}]}
-        })
-    end
-
-    conn
-  end
-
-  defp do_sse_tool(conn, "test_elicitation", id, req, sid) do
-    message = get_in(req, ["params", "arguments", "message"]) || "Please provide info"
-
-    case SSESession.send_request(sid, "elicitation/create", %{
-           message: message,
-           requestedSchema: %{
-             type: "object",
-             properties: %{response: %{type: "string", description: "User's response"}},
-             required: ["response"]
-           }
-         }) do
-      {:ok, result} ->
-        sse_event(conn, %{
-          jsonrpc: "2.0",
-          id: id,
-          result: %{
-            content: [
-              %{
-                type: "text",
-                text:
-                  "User response: action=#{result["action"]}, content=#{Jason.encode!(result["content"] || %{})}"
-              }
-            ]
-          }
-        })
-
-      {:error, reason} ->
-        sse_event(conn, %{
-          jsonrpc: "2.0",
-          id: id,
-          result: %{content: [%{type: "text", text: "Elicitation error: #{inspect(reason)}"}]}
-        })
-    end
-
-    conn
-  end
-
-  defp do_sse_tool(conn, "test_elicitation_sep1034_defaults", id, _req, sid) do
-    schema = %{
-      type: "object",
-      properties: %{
-        name: %{type: "string", description: "User name", default: "John Doe"},
-        age: %{type: "integer", description: "User age", default: 30},
-        score: %{type: "number", description: "User score", default: 95.5},
-        status: %{
-          type: "string",
-          description: "User status",
-          enum: ["active", "inactive", "pending"],
-          default: "active"
-        },
-        verified: %{type: "boolean", description: "Verification status", default: true}
-      },
-      required: []
-    }
-
-    case SSESession.send_request(sid, "elicitation/create", %{
-           message: "Please review and update the form fields with defaults",
-           requestedSchema: schema
-         }) do
-      {:ok, result} ->
-        sse_event(conn, %{
-          jsonrpc: "2.0",
-          id: id,
-          result: %{
-            content: [
-              %{
-                type: "text",
-                text:
-                  "Elicitation completed: action=#{result["action"]}, content=#{Jason.encode!(result["content"] || %{})}"
-              }
-            ]
-          }
-        })
-
-      {:error, reason} ->
-        sse_event(conn, %{
-          jsonrpc: "2.0",
-          id: id,
-          result: %{content: [%{type: "text", text: "Error: #{inspect(reason)}"}]}
-        })
-    end
-
-    conn
-  end
-
-  defp do_sse_tool(conn, "test_elicitation_sep1330_enums", id, _req, sid) do
-    schema = %{
-      type: "object",
-      properties: %{
-        untitledSingle: %{
-          type: "string",
-          description: "Select one option",
-          enum: ["option1", "option2", "option3"]
-        },
-        titledSingle: %{
-          type: "string",
-          description: "Select one with titles",
-          oneOf: [
-            %{const: "value1", title: "First Option"},
-            %{const: "value2", title: "Second Option"},
-            %{const: "value3", title: "Third Option"}
-          ]
-        },
-        legacyEnum: %{
-          type: "string",
-          description: "Select one (legacy)",
-          enum: ["opt1", "opt2", "opt3"],
-          enumNames: ["Option One", "Option Two", "Option Three"]
-        },
-        untitledMulti: %{
-          type: "array",
-          description: "Select multiple",
-          minItems: 1,
-          maxItems: 3,
-          items: %{type: "string", enum: ["option1", "option2", "option3"]}
-        },
-        titledMulti: %{
-          type: "array",
-          description: "Select multiple with titles",
-          minItems: 1,
-          maxItems: 3,
-          items: %{
-            anyOf: [
-              %{const: "value1", title: "First Choice"},
-              %{const: "value2", title: "Second Choice"},
-              %{const: "value3", title: "Third Choice"}
-            ]
-          }
-        }
-      },
-      required: []
-    }
-
-    case SSESession.send_request(sid, "elicitation/create", %{
-           message: "Please select options from the enum fields",
-           requestedSchema: schema
-         }) do
-      {:ok, result} ->
-        sse_event(conn, %{
-          jsonrpc: "2.0",
-          id: id,
-          result: %{
-            content: [
-              %{
-                type: "text",
-                text:
-                  "Elicitation completed: action=#{result["action"]}, content=#{Jason.encode!(result["content"] || %{})}"
-              }
-            ]
-          }
-        })
-
-      {:error, reason} ->
-        sse_event(conn, %{
-          jsonrpc: "2.0",
-          id: id,
-          result: %{content: [%{type: "text", text: "Error: #{inspect(reason)}"}]}
-        })
-    end
-
-    conn
-  end
-
-  defp sse_event(conn, data),
-    do: Plug.Conn.chunk(conn, "event: message\ndata: #{Jason.encode!(data)}\n\n")
-
-  # Session id for ordinary requests: honor header or mint a stable-looking id.
-  defp session_id(conn) do
-    case get_req_header(conn, "mcp-session-id") do
-      [sid | _] when is_binary(sid) and sid != "" -> sid
-      _ -> "session-#{System.unique_integer([:positive])}"
-    end
-  end
-
-  # Bidirectional tools MUST share the GET SSE session id.
-  defp resolve_sse_session_id(conn) do
-    case get_req_header(conn, "mcp-session-id") do
-      [sid | _] when is_binary(sid) and sid != "" ->
-        case SSESession.await_sse_stream(sid, 3_000) do
-          :ok -> {:ok, sid}
-          {:error, :timeout} -> {:error, {:no_sse_stream, sid}}
-        end
-
-      _ ->
-        case SSESession.await_sole_live_session_id(3_000) do
-          {:ok, sid} -> {:ok, sid}
-          {:error, reason} -> {:error, reason}
-        end
-    end
+    if conn.halted, do: conn, else: Arbor.MCP.HttpPlug.call(conn, @mcp_opts)
   end
 end
 
 # ── Start Server ─────────────────────────────────────────────────
 
 port = String.to_integer(List.first(System.argv(), "3001"))
-IO.puts("Starting ExMCP conformance server on port #{port}...")
+IO.puts("Starting Arbor.MCP conformance server on port #{port}...")
 
-# Create the SSE session table once, owned by this long-lived script process.
-# Creating it lazily from request processes raced concurrent first requests
-# (server-sse-multiple-streams) and tied the table's life to a single request.
-ExMCP.Server.SSESession.init()
+children = [
+  {Arbor.MCP.Server.Runtime,
+   name: ConformanceRuntime,
+   transport: :mounted_http,
+   handler: ConformanceHandler,
+   handler_args: [],
+   services: [replay_cache: []]},
+  {Plug.Cowboy, scheme: :http, plug: ConformanceRouter, options: [port: port, ip: {127, 0, 0, 1}]}
+]
 
-children = [{Plug.Cowboy, scheme: :http, plug: ConformanceRouter, options: [port: port]}]
 {:ok, _} = Supervisor.start_link(children, strategy: :one_for_one)
 
 IO.puts("Server ready on http://localhost:#{port}/mcp")

@@ -1,8 +1,8 @@
-# ExMCP 2.0 Roadmap
+# ArborMCP v2 and ArborACP v1 Roadmap
 
-- **Status:** Full v2 scope accepted; independent package projects and runtime foundation implemented; transport integration and release qualification underway
-- **Target:** Arbor package v2 release, Friday 2026-10-09, after qualification and RC soak
-- **Last updated:** 2026-10-04
+- **Status:** Accepted v2 implementation complete; audit fixes and release qualification in progress
+- **Target:** ArborMCP 2.0 / ArborACP 1.0 release, Friday 2026-10-09, after qualification and RC soak
+- **Last updated:** 2026-10-07
 - **Related release work:** [`RELEASE_1_0_0.md`](./RELEASE_1_0_0.md),
   [`API_DIFF_RC5_TO_1_0.md`](./API_DIFF_RC5_TO_1_0.md),
   [`POST_1_0_MAINTENANCE_PLAN.md`](./POST_1_0_MAINTENANCE_PLAN.md),
@@ -16,6 +16,53 @@
   [`V2_RELEASE_PLAN.md`](./V2_RELEASE_PLAN.md)
 
 ---
+
+## Current scope and release status — October 7, 2026
+
+The accepted architectural scope is implemented: independent MCP, ACP and RPC
+projects; the optional adapter bundle and HTTP listeners; per-server Runtime
+ownership; common dispatch and bounded scheduling; scoped stores; unified
+results; DSL constraints/composition; `with_connection`; API retirements and
+migration guidance. The delivery phases and dated decisions below preserve the
+planning history, not a list of features still awaiting implementation.
+
+All four original `2.0.0-rc.1` packages are published and their archive
+checksums were verified. Current source prepares MCP `2.0.0-rc.2` and RPC,
+ACP and Adapters `1.0.0-rc.1`, with independent 1.x dependency requirements.
+The replacements are not yet published. Preserve existing versions and tags;
+retirement follows verified replacement installation.
+
+The accepted package split and runtime/scheduler scope is implemented. Optional
+HTTP dependency ranges, Claude file limits and ZCode settings fixes passed their
+recorded checks. Supported/latest MCP CI passed at `0812257`; ACP and RPC retain
+their own recorded source selections. Prior receipts do not qualify new metadata.
+
+Further performance investigation is deferred at the user's request. Adopted
+encoder/accounting and revision-token changes remain; mixed experimental changes
+are not promoted. Document measured performance costs for the stable decision.
+The [DSL/Spark and public API review](V2_DSL_API_REVIEW.md) records remaining
+facade bridges, shutdown/fallback inconsistencies and DSL validation proposals
+before the release freeze. Those API changes are not yet implemented.
+
+Remaining gates are final metadata/source/archive association, applicable CI,
+conformance/SDK/CLI and dependency-contract checks, real downstream integrations,
+long-lived peer capacity policy, registry installation and the final candidate's
+continuous 48-hour soak. No qualifying soak is active; stable qualification is
+incomplete. See [RC notes](guides/V2_RELEASE_CANDIDATE.md) for consumer limits.
+
+See the [release plan](V2_RELEASE_PLAN.md#current-release-status--october-7-2026).
+
+ExMCP 1.x remains maintained on `codex/maintenance-1.x`, preserved from
+`3914a927`. Compatible fixes require their own 1.x qualification; the v2 split,
+namespace changes, scheduler and API removals are not wholesale backports. The
+[maintenance policy](MAINTENANCE_POLICY.md) governs the two release lines.
+
+The earlier design questions now resolve to serialized stateful or explicit
+stateless execution, opaque Runtime/service references, scoped store contracts,
+retained legacy protocol support, and compile-time DSL composition. Package and
+adapter ownership are implemented. Public middleware and a general dialect
+framework remain deliberately deferred; distributed databases/event sourcing
+remain outside core scope. No hot-upgrade guarantee is introduced.
 
 ## 1. Purpose
 
@@ -33,7 +80,7 @@ This roadmap records:
   evolve; and
 - the rules for safely backporting selected work to 1.x.
 
-It is the canonical ExMCP 2.0 planning document. The similarly named
+It is the canonical ArborMCP and ArborACP 2.0 planning document. The similarly named
 [`PRE_2_0_TECH_DEBT_PLAN.md`](./PRE_2_0_TECH_DEBT_PLAN.md) is completed rc.5
 release history, not the 2.0 roadmap.
 
@@ -85,8 +132,10 @@ and consumer migration wait for qualified artifacts. Package ownership and
 shared mechanics are specified in [V2_PACKAGE_CONTRACT.md](./V2_PACKAGE_CONTRACT.md).
 
 The ACP repository now exists at
-[`trust-arbor/arbor_acp`](https://github.com/trust-arbor/arbor_acp). Its three
-standalone projects have independent minimum/current toolchain checks. MCP v2
+[`trust-arbor/arbor_acp`](https://github.com/trust-arbor/arbor_acp). Its core and
+adapter projects have independent toolchain checks. Shared mechanics live in the
+separate [ArborRPC repository](https://github.com/trust-arbor/arbor_rpc), with its
+Mix project at the repository root. MCP v2
 is developed in [draft PR #76](https://github.com/trust-arbor/arbor_mcp/pull/76),
 and shared child-process convergence in
 [ACP draft PR #1](https://github.com/trust-arbor/arbor_acp/pull/1). Supported
@@ -592,8 +641,9 @@ The package-topology design compared these options:
 | Independent `ex_mcp` and `ex_acp` with copied helpers | Two simple dependency graphs and independent releases | Security, framing, environment, and JSON-RPC fixes can drift. Copying those implementations is not acceptable. |
 | `ex_mcp` and `ex_acp` depend on a small shared package | No duplicated security-sensitive code; independent protocol packages and dependency sets | Adds a third public app, versioning policy, release order, compatibility matrix, and another release/maintenance coordination surface. |
 
-The accepted topology uses two repositories: MCP in `trust-arbor/arbor_mcp`,
-and RPC, ACP core and the optional adapter bundle in `trust-arbor/arbor_acp`.
+The accepted topology uses three repositories: MCP in `trust-arbor/arbor_mcp`,
+RPC in `trust-arbor/arbor_rpc`, and ACP core with the optional adapter bundle
+in `trust-arbor/arbor_acp`.
 The implemented shared candidate factors JSON-RPC, bounded framing, child
 PATH/environment, Port ownership and finite cleanup into `arbor_rpc` with
 protocol-specific wrappers. ACP-only helpers remain ACP-owned. Remeasure
@@ -638,9 +688,10 @@ For the edge count, select xref entries whose source begins with
 `lib/ex_mcp/acp/` and whose target does not. Recompute all figures at the start
 of the spike rather than treating this baseline as a target.
 
-### 10.2 Other open decisions
+### 10.2 Other design questions — historical Phase 1 register
 
-These need focused design records during Phase 1:
+These were the Phase 1 questions. Their current implementation or deferred
+disposition is recorded in the current-status section above:
 
 1. **Handler state model:** whether 2.0 supports serialized stateful and
    concurrent stateless modes only, or also defines isolated/partitioned state.

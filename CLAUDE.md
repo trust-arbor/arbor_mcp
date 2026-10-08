@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ExMCP is an Elixir implementation of the Model Context Protocol (MCP), enabling AI models to communicate with external tools and resources through a standardized protocol.
+ArborMCP is an Elixir implementation of the Model Context Protocol (MCP), enabling AI models to communicate with external tools and resources through a standardized protocol.
 
 ## Version Management
 
@@ -46,7 +46,7 @@ ExMCP is an Elixir implementation of the Model Context Protocol (MCP), enabling 
 # Essential commands
 mix deps.get          # Install dependencies
 mix test              # Run all tests
-mix test test/ex_mcp/internal/protocol_compliance_test.exs  # Run specific test file
+mix test test/arbor_mcp/internal/protocol_compliance_test.exs  # Run specific test file
 mix format            # Format code (required before committing)
 mix credo             # Static code analysis
 mix dialyzer          # Type checking (run after significant changes)
@@ -70,41 +70,41 @@ mix mcp.sync_spec     # Sync upstream MCP spec docs into docs/mcp-specs/
 
 The library follows a layered architecture:
 
-1. **Transport Layer** (`lib/ex_mcp/transport/`)
+1. **Transport Layer** (`lib/arbor_mcp/transport/`)
    - Defines behaviour for different communication protocols
    - Implementations: stdio, Streamable HTTP, BEAM (Erlang processes), test
    - Each transport handles message framing and delivery
 
-2. **Protocol Layer** (`lib/ex_mcp/internal/protocol.ex`)
+2. **Protocol Layer** (`lib/arbor_mcp/internal/protocol.ex`)
    - JSON-RPC 2.0 message encoding/decoding
    - Request/response correlation
    - Error handling
 
 3. **Client/Server Layer**
-   - `ExMCP.Client`: Manages connections, auto-reconnection, request routing
-   - `ExMCP.Server`: Request handling, capability negotiation
-   - `ExMCP.Server.Handler`: Behaviour for implementing server handlers
+   - `Arbor.MCP.Client`: Manages connections, auto-reconnection, request routing
+   - `Arbor.MCP.Server`: Request handling, capability negotiation
+   - `Arbor.MCP.Server.Handler`: Behaviour for implementing server handlers
 
-4. **ACP Layer** (`lib/ex_mcp/acp/`)
+4. **ACP Layer** (`lib/arbor_mcp/acp/`)
    - Agent Client Protocol for controlling coding agents
-   - `ExMCP.ACP.Client`: GenServer managing agent connections over stdio
-   - `ExMCP.ACP.Adapter`: Behaviour for adapting non-native agents (Claude Code, Codex, Pi, ZCode)
-   - `ExMCP.ACP.AdapterBridge`: Bridge between ACP and agent-native protocols
+   - `Arbor.MCP.ACP.Client`: GenServer managing agent connections over stdio
+   - `Arbor.MCP.ACP.Adapter`: Behaviour for adapting non-native agents (Claude Code, Codex, Pi, ZCode)
+   - `Arbor.MCP.ACP.AdapterBridge`: Bridge between ACP and agent-native protocols
 
-5. **Application Layer** (`lib/ex_mcp/application.ex`)
+5. **Application Layer** (`lib/arbor_mcp/application.ex`)
    - OTP application supervision tree
    - Server discovery and management
 
 Everything under `lib/` ships to Hex. Repo-only tooling lives in `dev/`
-(`dev/mix/tasks/` and `dev/ex_mcp/spec_sync/`), which is compiled in `:dev` and
+(`dev/mix/tasks/` and `dev/arbor_mcp/spec_sync/`), which is compiled in `:dev` and
 `:test` via `elixirc_paths/1` but is deliberately excluded from
 `package.files`, so those mix tasks never show up in a consumer's `mix help`.
-`ExMCP.Testing.*` is the opposite case: it stays in `lib/` as a published,
+`Arbor.MCP.Testing.*` is the opposite case: it stays in `lib/` as a published,
 documented test kit.
 
 ## MCP Protocol Eras
 
-ExMCP 1.0 supports the legacy MCP revisions (`2024-11-05` through
+ArborMCP 1.0 supports the legacy MCP revisions (`2024-11-05` through
 `2025-11-25`) and the wire-incompatible latest stable revision (`2026-07-28`). Treat
 the era as a first-class connection property; do not scatter date comparisons
 or infer modern behavior from one method in feature code.
@@ -125,15 +125,15 @@ version order.
 
 Era responsibilities:
 
-- `ExMCP.Internal.VersionRegistry` owns the version lists, era classification,
+- `Arbor.MCP.Internal.VersionRegistry` owns the version lists, era classification,
   enablement, and preference ordering.
-- `ExMCP.Client.ConnectionManager`, `EraProbe`, and `EraCache` own selection,
+- `Arbor.MCP.Client.ConnectionManager`, `EraProbe`, and `EraCache` own selection,
   evidence-based fallback, and peer observations. Never retry an application
   operation in another era.
 - A modern observation is pinned and cannot silently downgrade. Legacy cache
   entries expire so upgraded peers can be discovered. A cached-modern probe
   failure is an operator-visible error.
-- `ExMCP.Server.RequestContext` validates per-request modern metadata and mode
+- `Arbor.MCP.Server.RequestContext` validates per-request modern metadata and mode
   compatibility. HandlerServer/stdio connections pin on the first valid
   modern request or legacy `initialize` and must reject later era mixing.
 - Modern success results require `resultType`. MRTR returns
@@ -155,9 +155,9 @@ See `docs/ARCHITECTURE.md`, `docs/TRANSPORT_GUIDE.md`, and
 ## Key Patterns
 
 - All public APIs use `{:ok, result}` or `{:error, reason}` tuples
-- Transport implementations must handle the `ExMCP.Transport` behaviour
-- Server handlers implement the `ExMCP.Server.Handler` behaviour
-- Use `ExMCP.Types` for type definitions and specs
+- Transport implementations must handle the `Arbor.MCP.Transport` behaviour
+- Server handlers implement the `Arbor.MCP.Server.Handler` behaviour
+- Use `Arbor.MCP.Types` for type definitions and specs
 - Protocol messages follow MCP specification exactly
 
 ## Testing Approach
@@ -178,13 +178,13 @@ synchronization point — in rough order of preference:
 
 1. `assert_receive` / `refute_receive` on a message the code under test sends
 2. `Process.monitor/1` + `assert_receive {:DOWN, ref, :process, pid, reason}`
-3. A synchronous round-trip that flushes the pipeline (e.g. `ExMCP.Client.ping/1`
+3. A synchronous round-trip that flushes the pipeline (e.g. `Arbor.MCP.Client.ping/1`
    after firing a notification — the notification is ordered before the ping)
-4. Telemetry: `ExMCP.TestHelpers.assert_event/2`, `wait_for_event/2`,
+4. Telemetry: `Arbor.MCP.TestHelpers.assert_event/2`, `wait_for_event/2`,
    `refute_event/2`
-5. `ExMCP.TestHelpers.wait_until(fun, timeout: ms)` as a deadline-bounded poll
+5. `Arbor.MCP.TestHelpers.wait_until(fun, timeout: ms)` as a deadline-bounded poll
 
-Note that `ExMCP.Client.start_link/1` performs full protocol-era establishment
+Note that `Arbor.MCP.Client.start_link/1` performs full protocol-era establishment
 inside `init/1`, so once it returns `{:ok, pid}` the client is already `:ready`.
 That means `initialize` + `notifications/initialized` in the legacy era or a
 successful `server/discover` probe in the modern era. Never sleep "to let the
@@ -196,35 +196,35 @@ When implementing new features:
 1. Follow existing patterns in similar modules
 2. Add comprehensive tests before implementation
 3. Run `mix format` and `mix credo` before committing
-4. Update type specs in `lib/ex_mcp/types.ex` if adding new message types
-5. Prefer `ExMCP.Server.DSL` over the deprecated `ExMCP.Server.Tools` API
+4. Update type specs in `lib/arbor_mcp/types.ex` if adding new message types
+5. Use `Arbor.MCP.Server.Handler` and `Arbor.MCP.Server.DSL`; the Tools family is removed in v2
 
 ## Client implementation
 
-The public MCP client API is **`ExMCP.Client`** (GenServer). There is no
+The public MCP client API is **`Arbor.MCP.Client`** (GenServer). There is no
 `client_adapter` / `LegacyAdapter` / `StateMachineAdapter` switch anymore, and
-`ExMCP.Client.StateMachine` was deleted when auto-reconnect landed — connection
-state is plain fields on the `ExMCP.Client` struct (`:connection_status` is one
+`Arbor.MCP.Client.StateMachine` was deleted when auto-reconnect landed — connection
+state is plain fields on the `Arbor.MCP.Client` struct (`:connection_status` is one
 of `:connecting`, `:ready`, `:reconnecting`, `:disconnected`).
 
-`ExMCP.Client.start_link/1` connects **synchronously**: the transport
+`Arbor.MCP.Client.start_link/1` connects **synchronously**: the transport
 connection and selected-era establishment happen inside `init/1`, so a
 successful return means the client is already `:ready`. Legacy mode performs
 `initialize` and sends `notifications/initialized`; modern mode completes
 `server/discover` and sends no initialized notification.
 
-Internal connection lifecycle helpers live under `ExMCP.Client.*` (for example
-`ExMCP.Client.ConnectionManager` and `ExMCP.Client.RequestHandler`). Prefer
-`ExMCP.Client` and the top-level `ExMCP.start_client/1` helpers in application
+Internal connection lifecycle helpers live under `Arbor.MCP.Client.*` (for example
+`Arbor.MCP.Client.ConnectionManager` and `Arbor.MCP.Client.RequestHandler`). Prefer
+`Arbor.MCP.Client` and the top-level `Arbor.MCP.start_client/1` helpers in application
 code.
 
 ### Auto-reconnection (client)
 
-When the transport closes unexpectedly, `ExMCP.Client` fails pending requests
+When the transport closes unexpectedly, `Arbor.MCP.Client` fails pending requests
 and reconnects with exponential backoff and jitter (defaults: initial 1s,
 multiplier 2, cap 60s, up to 10 attempts). Configure via the `:reconnect`,
 `:max_reconnect_attempts`, and `:reconnect_backoff` options on
-`ExMCP.Client.start_link/1`. Explicit `disconnect/1`/`stop/2` never triggers
+`Arbor.MCP.Client.start_link/1`. Explicit `disconnect/1`/`stop/2` never triggers
 reconnection.
 
 ### Health checks (client)
@@ -244,41 +244,43 @@ The client stack emits telemetry such as:
 
 ```elixir
 # Request lifecycle
-[:ex_mcp, :client, :request, :sent]
-[:ex_mcp, :client, :request, :completed]
+[:arbor_mcp, :client, :request, :sent]
+[:arbor_mcp, :client, :request, :completed]
 
 # Connection lifecycle
-[:ex_mcp, :client, :connected]
-[:ex_mcp, :client, :disconnected]
-[:ex_mcp, :client, :era, :settled]
-[:ex_mcp, :client, :era, :fallback]
-[:ex_mcp, :client, :era, :observed]
+[:arbor_mcp, :client, :connected]
+[:arbor_mcp, :client, :disconnected]
+[:arbor_mcp, :client, :era, :settled]
+[:arbor_mcp, :client, :era, :fallback]
+[:arbor_mcp, :client, :era, :observed]
 
 # Receiver (transport message loop)
-[:ex_mcp, :client, :receiver, :started]
-[:ex_mcp, :client, :receiver, :message]
+[:arbor_mcp, :client, :receiver, :started]
+[:arbor_mcp, :client, :receiver, :message]
 
 # Reconnection
-[:ex_mcp, :client, :reconnect, :attempt]
-[:ex_mcp, :client, :reconnect, :success]
-[:ex_mcp, :client, :reconnect, :error]
-[:ex_mcp, :client, :reconnect, :timeout]
+[:arbor_mcp, :client, :reconnect, :attempt]
+[:arbor_mcp, :client, :reconnect, :success]
+[:arbor_mcp, :client, :reconnect, :error]
+[:arbor_mcp, :client, :reconnect, :timeout]
 ```
 
 ### Server DSL
 
-- Prefer `ExMCP.Server.Handler` + `ExMCP.Server.DSL` for tools/resources/prompts.
-- `ExMCP.Server.Tools` is **deprecated**, retained throughout 1.x, and planned for removal in **2.0.0**.
+- Prefer `Arbor.MCP.Server.Handler` + `Arbor.MCP.Server.DSL` for tools/resources/prompts.
+- The `Server.Tools` family is removed in v2. Use Handler + DSL and `Arbor.MCP.Server.Result`. ExMCP 1.x retains its deprecated APIs on the maintenance branch.
 
 ## Deprecated / planned removals
 
 | API | Status |
 |-----|--------|
-| `ExMCP.Server.Tools` (+ `Simplified`, helpers) | Deprecated → **planned for removal in 2.0.0** |
-| Client adapter layer (`LegacyAdapter`, etc.) | Already removed; use `ExMCP.Client` |
+| `Arbor.MCP.Server.Tools` (+ `Simplified`, helpers) | Removed in v2; use Handler + DSL + Result |
+| Client adapter layer (`LegacyAdapter`, etc.) | Already removed; use `Arbor.MCP.Client` |
 
 ## Development notes
 
-- Primary public APIs: `ExMCP`, `ExMCP.Client`, `ExMCP.Server` / `Handler` / `DSL`, transports, `ExMCP.HttpPlug`, `ExMCP.ACP.*`, `ExMCP.Authorization`, `ExMCP.Content`, `ExMCP.Types`.
-- `ExMCP.Internal.VersionRegistry` is the canonical protocol-version registry. `ExMCP.Protocol.VersionNegotiator` is a compatibility shim for public negotiation helpers and retains a separate, non-wire capability vocabulary.
-- Other modules under `ExMCP.*` are internal unless documented otherwise.
+- Primary public APIs: `Arbor.MCP`, `Arbor.MCP.Client`, `Arbor.MCP.Server` / `Handler` / `DSL`, transports, `Arbor.MCP.HttpPlug`, `Arbor.MCP.Authorization`, `Arbor.MCP.Content`, `Arbor.MCP.Types`.
+- `Arbor.MCP.Internal.VersionRegistry` is the canonical legacy protocol-version registry. The accepted retirement of `VersionNegotiator.build_capabilities/1` removes its separate capability vocabulary; see `docs/V2_API_MIGRATION.md` for retained negotiation helpers.
+- ACP lives in `trust-arbor/arbor_acp` under `Arbor.ACP.*`; shared mechanics live in `trust-arbor/arbor_rpc` under `Arbor.RPC.*`.
+- ExMCP 1.x maintenance and backport rules are in `docs/MAINTENANCE_POLICY.md`.
+- Other modules under `Arbor.MCP.*` are internal unless documented otherwise.

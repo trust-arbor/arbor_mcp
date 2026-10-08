@@ -1,6 +1,6 @@
-defmodule ExMCP.Testing.PerformanceProfiler do
+defmodule Arbor.MCP.Testing.PerformanceProfiler do
   @moduledoc """
-  Performance profiling utilities for ExMCP integration tests.
+  Performance profiling utilities for Arbor.MCP integration tests.
 
   This module provides comprehensive performance measurement and analysis
   tools for MCP operations across different transports and scenarios.
@@ -17,7 +17,7 @@ defmodule ExMCP.Testing.PerformanceProfiler do
 
   ## Usage
 
-      alias ExMCP.Testing.PerformanceProfiler
+      alias Arbor.MCP.Testing.PerformanceProfiler
       
       # Profile a single operation
       {result, metrics} = PerformanceProfiler.profile_operation(fn ->

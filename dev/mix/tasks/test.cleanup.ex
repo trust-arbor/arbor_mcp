@@ -27,21 +27,21 @@ defmodule Mix.Tasks.Test.Cleanup do
     :test_server,
     :test_http_server,
     :test_sse_server,
-    ExMCP.TestServer,
-    ExMCP.TestHTTPServer,
-    ExMCP.TestSSEServer,
+    Arbor.MCP.TestServer,
+    Arbor.MCP.TestHTTPServer,
+    Arbor.MCP.TestSSEServer,
     # Don't kill the main application processes - they should be managed by Application.stop/1
-    # ExMCP.Supervisor,
-    # ExMCP.Registry,
-    ExMCP.Testing.MockServer
+    # Arbor.MCP.Supervisor,
+    # Arbor.MCP.Registry,
+    Arbor.MCP.Testing.MockServer
   ]
   @cowboy_listeners [
     :test_http_server,
     :test_sse_server,
     :test_http_listener,
     :test_sse_listener,
-    ExMCP.TestHTTPServer.HTTP,
-    ExMCP.TestSSEServer.HTTP
+    Arbor.MCP.TestHTTPServer.HTTP,
+    Arbor.MCP.TestSSEServer.HTTP
   ]
 
   @impl Mix.Task

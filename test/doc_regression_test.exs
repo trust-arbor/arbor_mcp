@@ -1,4 +1,4 @@
-defmodule ExMCP.DocRegressionTest do
+defmodule Arbor.MCP.DocRegressionTest do
   @moduledoc """
   Regression tests for documentation shapes.
 
@@ -10,10 +10,10 @@ defmodule ExMCP.DocRegressionTest do
   use ExUnit.Case, async: true
 
   # This test would have caught the pre-audit 1-arg list_* and incomplete
-  # initialize shapes in PHOENIX_GUIDE, USER_GUIDE, lib/ex_mcp.ex, etc.
+  # initialize shapes in PHOENIX_GUIDE, USER_GUIDE, lib/arbor_mcp.ex, etc.
   test "documented raw Handler callback shapes work (2-arity lists, full initialize, proper returns)" do
     defmodule DocRegressionRawHandler do
-      use ExMCP.Server.Handler
+      use Arbor.MCP.Server.Handler
 
       @impl true
       def init(_args), do: {:ok, %{}}
@@ -22,7 +22,7 @@ defmodule ExMCP.DocRegressionTest do
       def handle_initialize(_params, state) do
         {:ok,
          %{
-           protocolVersion: ExMCP.protocol_version(),
+           protocolVersion: Arbor.MCP.protocol_version(),
            serverInfo: %{name: "doc-regression", version: "1.0.0"},
            capabilities: %{tools: %{}, resources: %{}}
          }, state}
@@ -64,25 +64,25 @@ defmodule ExMCP.DocRegressionTest do
     end
 
     {:ok, server} =
-      ExMCP.Server.HandlerServer.start_link(
+      Arbor.MCP.Server.HandlerServer.start_link(
         handler: DocRegressionRawHandler,
         transport: :test
       )
 
-    {:ok, client} = ExMCP.Client.start_link(transport: :test, server: server)
+    {:ok, client} = Arbor.MCP.Client.start_link(transport: :test, server: server)
 
-    assert {:ok, %{"tools" => tools}} = ExMCP.Client.list_tools(client, format: :map)
+    assert {:ok, %{"tools" => tools}} = Arbor.MCP.Client.list_tools(client, format: :map)
     assert Enum.any?(tools, &(&1["name"] == "echo" || &1[:name] == "echo"))
 
     assert {:ok, result} =
-             ExMCP.Client.call_tool(client, "echo", %{"message" => "world"}, format: :map)
+             Arbor.MCP.Client.call_tool(client, "echo", %{"message" => "world"}, format: :map)
 
     assert result["content"] |> hd() |> Map.get("text") =~ "echo: world"
 
     # Also exercise a resource to cover documented shapes
-    assert {:ok, _} = ExMCP.Client.list_resources(client, format: :map)
+    assert {:ok, _} = Arbor.MCP.Client.list_resources(client, format: :map)
 
-    ExMCP.Client.stop(client)
+    Arbor.MCP.Client.stop(client)
     GenServer.stop(server)
   end
 
@@ -120,7 +120,7 @@ defmodule ExMCP.DocRegressionTest do
       assert migration =~ term, "migration guide is missing #{inspect(term)}"
     end
 
-    refute migration =~ "ExMCP does not\n  implement it yet"
+    refute migration =~ "ArborMCP does not\n  implement it yet"
     assert mixfile =~ ~s("docs/getting-started/MIGRATION.md")
   end
 
@@ -139,14 +139,14 @@ defmodule ExMCP.DocRegressionTest do
     configuration = File.read!("docs/CONFIGURATION.md")
     quickstart = File.read!("docs/getting-started/QUICKSTART.md")
     coverage = File.read!("docs/MCP_COVERAGE_MATRIX.md")
-    ex_mcp_source = File.read!("lib/ex_mcp.ex")
+    ex_mcp_source = File.read!("lib/arbor_mcp.ex")
 
     for {file, content} <- [
           {"README.md", readme},
           {"docs/CONFIGURATION.md", configuration},
           {"docs/getting-started/QUICKSTART.md", quickstart},
           {"docs/MCP_COVERAGE_MATRIX.md", coverage},
-          {"lib/ex_mcp.ex", ex_mcp_source}
+          {"lib/arbor_mcp.ex", ex_mcp_source}
         ] do
       assert content =~ "2026-07-28", "#{file} does not name the latest MCP revision"
 
@@ -155,10 +155,11 @@ defmodule ExMCP.DocRegressionTest do
     end
 
     refute readme =~ "**2025-11-25** (latest stable)"
-    assert readme =~ "2025-11-25`, for initialize-based compatibility"
-    assert readme =~ "`1.0.0` is the stable modern-preferred release"
-    assert readme =~ "wire- and API-compatible with rc.8"
-    assert readme =~ "application default is `:prefer_modern`"
+    assert readme =~ "**Version 2 release candidate preparation.**"
+    assert readme =~ "`arbor_mcp` 2.0 has not been released"
+    assert readme =~ "`ex_mcp`"
+    assert readme =~ "protocol_mode: :prefer_modern"
+    refute readme =~ "Arbor.MCP.ACP"
     assert configuration =~ "defaults to `:prefer_modern`"
     assert quickstart =~ "`:prefer_modern`"
     assert coverage =~ "defaults to `:prefer_modern`"
@@ -195,10 +196,10 @@ defmodule ExMCP.DocRegressionTest do
 
     for term <- [
           "Protocol Era Model",
-          "ExMCP.Client.EraProbe",
-          "ExMCP.Client.EraCache",
-          "ExMCP.Server.RequestContext",
-          "ExMCP.Protocol.ResultEnvelope"
+          "Arbor.MCP.Client.EraProbe",
+          "Arbor.MCP.Client.EraCache",
+          "Arbor.MCP.Server.RequestContext",
+          "Arbor.MCP.Protocol.ResultEnvelope"
         ] do
       assert architecture =~ term, "architecture guide is missing #{inspect(term)}"
     end
@@ -220,9 +221,9 @@ defmodule ExMCP.DocRegressionTest do
   end
 
   test "public HTTP docs do not present legacy sessions as modern behavior" do
-    http_transport = File.read!("lib/ex_mcp/transport/http.ex")
-    session_manager = File.read!("lib/ex_mcp/session_manager.ex")
-    negotiator = File.read!("lib/ex_mcp/protocol/version_negotiator.ex")
+    http_transport = File.read!("lib/arbor_mcp/transport/http.ex")
+    session_manager = File.read!("lib/arbor_mcp/session_manager.ex")
+    negotiator = File.read!("lib/arbor_mcp/protocol/version_negotiator.ex")
 
     for term <- [
           "both supported MCP wire eras",
@@ -284,7 +285,6 @@ defmodule ExMCP.DocRegressionTest do
     end
 
     for packaged_guide <- [
-          "docs/ACP_GUIDE.md",
           "docs/ARCHITECTURE.md",
           "docs/CONFIGURATION.md",
           "docs/DEVELOPMENT.md",

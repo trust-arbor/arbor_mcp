@@ -1,4 +1,9 @@
-# ExMCP 1.x Store Adapter
+# ExMCP 1.x Store Adapter (historical design)
+
+This document records the pre-split 1.x design. Its global owners and planned
+follow-ups do not describe v2 startup. For current configuration, use the
+[runtime guide](RUNTIME_GUIDE.md), [configuration guide](CONFIGURATION.md) and
+[v1-to-v2 migration guide](guides/MIGRATING_V1_TO_V2.md).
 
 - **Status:** Accepted — unpublished `ExMCP.Internal.SessionStore` seam
   with default ETS and opt-in DETS
@@ -95,7 +100,7 @@ results.
 Phase 4 requires the event-store contract to cover the bullets below.
 The accepted 1.x meaning of each bullet is **what SessionManager does
 today**. The suite in
-`test/ex_mcp/session_store_contract_test.exs` pins that meaning against
+`test/arbor_mcp/session_store_contract_test.exs` pins that meaning against
 ETS (including restart-empties) and DETS (same public outcomes except
 restart/ownership).
 Documented gaps are called out here and in the tests; they are not

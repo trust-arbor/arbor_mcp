@@ -1,9 +1,9 @@
-defmodule ExMCP.TestServer do
+defmodule Arbor.MCP.TestServer do
   @moduledoc """
-  A minimal, isolated test server that does not `use ExMCP.Server`.
+  A minimal, isolated test server that does not `use Arbor.MCP.Server`.
 
   This server is a pure GenServer that mimics the behavior of a real MCP
-  server for integration testing purposes. It avoids the `use ExMCP.Server`
+  server for integration testing purposes. It avoids the `use Arbor.MCP.Server`
   macro when tests need complete process isolation.
   """
   use GenServer

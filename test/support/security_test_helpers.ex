@@ -1,6 +1,6 @@
-defmodule ExMCP.Test.Support.SecurityTestHelpers do
+defmodule Arbor.MCP.Test.Support.SecurityTestHelpers do
   @moduledoc """
-  Provides test utilities for security-related scenarios in ExMCP.
+  Provides test utilities for security-related scenarios in Arbor.MCP.
 
   This module includes helpers for:
   - Generating various types of tokens and credentials.

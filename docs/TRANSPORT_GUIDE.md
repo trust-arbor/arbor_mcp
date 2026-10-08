@@ -1,6 +1,6 @@
-# ExMCP Transport Guide
+# ArborMCP Transport Guide
 
-ExMCP supports stdio, Streamable HTTP, BEAM-local, and test transports. The
+ArborMCP supports stdio, Streamable HTTP, BEAM-local, and test transports. The
 deprecated MCP 2024-11-05 HTTP+SSE transport is an explicit compatibility
 option, not a new-server default.
 
@@ -21,7 +21,7 @@ newline-delimited JSON-RPC.
 
 ```elixir
 {:ok, client} =
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :stdio,
     command: ["node", "server.js"],
     cd: "/path/to/project",
@@ -36,12 +36,11 @@ Supported options:
 - `:env` - environment variables as `{"KEY", "VALUE"}` tuples.
 - `:timeout` - client operation timeout.
 
-Stdio servers must write only JSON-RPC to stdout. Starting stdio mode
-configures VM-global Logger, Application, and OTP logger settings so
-protocol output is not contaminated. That change is process-wide for the
-BEAM VM, not scoped to the stdio connection. See
-[Configuration — Logging](CONFIGURATION.md#logging). 1.x keeps this
-global behavior; 2.0 may replace it.
+Stdio servers must write only JSON-RPC to stdout. ArborMCP 2.0 preserves
+VM-global Logger and Application settings. The host configures diagnostics to
+stderr or another non-protocol sink before application startup. See
+[Configuration — Logging](CONFIGURATION.md#logging) for release configuration
+and the retained explicit legacy suppression utility.
 
 Stdio frames are UTF-8 bytes. The process locale decides whether the VM
 opens stdio as a character device (UTF-8 locales) or a byte device (any
@@ -72,6 +71,12 @@ an application concern, not a transport one.
 
 ## Streamable HTTP
 
+HTTP clients and the mounted `Arbor.MCP.HttpPlug` remain core. A standalone
+server needs the qualified backend dependencies listed in the
+[HTTP listener guide](HTTP_LISTENERS.md) and uses
+`http_adapter: :cowboy` (the default) or `:bandit`. See the
+[HTTP listener guide](HTTP_LISTENERS.md) for version floors and lifecycle.
+
 The HTTP transport supports two wire shapes on one MCP POST endpoint. A
 protocol mode determines how the client establishes the era; it is not a
 choice between separate `:http` transport modules.
@@ -86,14 +91,14 @@ choice between separate `:http` transport modules.
 | Resume/termination | `Last-Event-ID`; DELETE session | Not resumable; close the owning response stream |
 
 The client's `use_sse` option controls the standalone GET stream used by
-legacy Streamable HTTP. ExMCP disables it, clears any session ID, and stops
+legacy Streamable HTTP. ArborMCP disables it, clears any session ID, and stops
 sending `Last-Event-ID` after a connection settles modern. Modern request and
 subscription streams use SSE on the owning POST response automatically and do
 not require `use_sse: true`.
 
 ```elixir
 {:ok, client} =
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :http,
     url: "https://api.example.com/mcp",
     protocol_mode: :prefer_modern,
@@ -140,15 +145,16 @@ Supported client options include:
 HTTP requests use finite absolute deadlines, identity encoding, redirect-free
 clients, and incremental response limits. A delimiter-free SSE slow drip cannot
 extend the idle deadline indefinitely; the peer must complete a frame within
-the configured timeout and buffer limit. Before every connection ExMCP validates
+the configured timeout and buffer limit. Before every connection ArborMCP validates
 the complete DNS answer and pins the socket to an approved address while keeping
 the original hostname for HTTP Host, TLS SNI, and certificate validation. Mixed
 public/private answers, link-local addresses, and reserved ranges fail closed.
 
-For OAuth client registration, configure one explicit strategy:
+For OAuth client registration, choose one `auth` value below and pass it as
+`auth: auth` when starting the HTTP client:
 
 ```elixir
-auth: %{
+auth = %{
   client_registration:
     {:pre_registered, "client-id", {:env, "MCP_CLIENT_SECRET"}},
   credential_issuer: "https://auth.example.com",
@@ -156,7 +162,7 @@ auth: %{
 }
 
 # Or a self-hosted Client ID Metadata Document:
-auth: %{
+auth = %{
   client_registration:
     {:cimd, "https://client.example/oauth/metadata.json"}
 }
@@ -166,13 +172,13 @@ auth: %{
 `client_metadata_url` when the authorization server advertises CIMD, then
 deprecated DCR only when `registration_endpoint` is advertised. DCR requires
 an explicit `application_type: :native | :web` and a stable `redirect_port`;
-ExMCP never invents a CIMD URL or guesses the application type. A missing
+ArborMCP never invents a CIMD URL or guesses the application type. A missing
 strategy returns an actionable registration error.
 
 Modern pre-registered credentials must include `credential_issuer`, which is
 compared exactly with discovered AS metadata. To retain DCR credentials and
 tokens safely across flows, configure an adapter implementing
-`ExMCP.Authorization.CredentialStore`; registrations are issuer + client-ID
+`Arbor.MCP.Authorization.CredentialStore`; registrations are issuer + client-ID
 bound and tokens use the complete authorization partition. See the
 [Configuration Guide](CONFIGURATION.md#issuer-bound-credential-persistence).
 
@@ -192,7 +198,7 @@ Mcp-Name: weather
 {"jsonrpc":"2.0","id":42,"method":"tools/call","params":{...}}
 ```
 
-ExMCP derives the routing headers from the validated body. It strips custom
+ArborMCP derives the routing headers from the validated body. It strips custom
 values for reserved MCP headers before sending a modern request, so callers
 cannot create a header/body disagreement.
 
@@ -218,7 +224,7 @@ A modern result always has `resultType: "complete"` or
 `resultType: "input_required"`. For `input_required`, the client satisfies the
 embedded elicitation, sampling, or roots requests and sends the original
 operation again as a new POST with `inputResponses` and the opaque
-`requestState`. ExMCP never turns those inputs into independent server-to-client
+`requestState`. ArborMCP never turns those inputs into independent server-to-client
 JSON-RPC requests on the HTTP stream.
 
 Long-lived notifications use a `subscriptions/listen` request. Its POST
@@ -236,7 +242,7 @@ wire shape.
 
 ### Safe era fallback
 
-With `:prefer_modern`, ExMCP sends a bounded `server/discover` probe first. It
+With `:prefer_modern`, ArborMCP sends a bounded `server/discover` probe first. It
 falls back to `initialize` only when the response is recognized as evidence of
 a legacy peer and the transport is still usable. A recognized modern error,
 unsupported modern revision, timeout, authentication failure, or broken
@@ -251,36 +257,62 @@ an intentional re-probe after an operator-controlled deployment change.
 ### Phoenix/Plug Server
 
 ```elixir
+# In Application.start/2, before the borrowed Phoenix endpoint:
+children = [
+  {Arbor.MCP.Server.Runtime,
+   name: MyApp.MCPRuntime,
+   handler: MyApp.MCPServer,
+   handler_args: [],
+   transport: :mounted_http,
+   protocol_mode: :prefer_modern}
+]
+Supervisor.start_link(children, strategy: :one_for_one)
+
+# In the router:
 scope "/mcp" do
   pipe_through [:api, :mcp_auth]
 
-  forward "/", ExMCP.HttpPlug,
-    handler: MyApp.MCPServer,
-    server_info: %{name: "my-app", version: "1.0.0"},
+  forward "/", Arbor.MCP.HttpPlug,
+    runtime: MyApp.MCPRuntime,
     protocol_mode: :prefer_modern,
     cors_enabled: true
 end
 ```
 
-Put HTTP concerns in Plug pipelines before `ExMCP.HttpPlug`: authentication,
+Put HTTP concerns in Plug pipelines before `Arbor.MCP.HttpPlug`: authentication,
 request signing, rate limiting, CORS/origin decisions, and DNS rebinding checks.
 
 ### Deprecated MCP 2024-11-05 HTTP+SSE
 
-Existing deployments can retain the old two-endpoint transport throughout
-ExMCP 1.x by opting in:
+The pinned MCP 2024-11-05 two-endpoint transport remains available in
+ArborMCP 2.x by explicitly opting in:
 
 ```elixir
-forward "/mcp", ExMCP.HttpPlug,
-  handler: MyApp.MCPServer,
+# In Application.start/2, before the borrowed Phoenix endpoint:
+children = [
+  {Arbor.MCP.Server.Runtime,
+   name: MyApp.MCPRuntime,
+   handler: MyApp.MCPServer,
+   handler_args: [],
+   transport: :mounted_http,
+   protocol_mode: :legacy_only}
+]
+Supervisor.start_link(children, strategy: :one_for_one)
+
+# In the router:
+forward "/mcp", Arbor.MCP.HttpPlug,
+  runtime: MyApp.MCPRuntime,
+  protocol_mode: :legacy_only,
   legacy_http_sse: true
 ```
 
 The GET endpoint defaults to `/sse`; its first event is `endpoint`, containing
 the POST URI (default `/message`) and session ID. Configure those paths with
-`:legacy_http_sse_path` and `:legacy_http_sse_post_path`. The rc.5
-`:sse_enabled` option remains a deprecated alias until ExMCP 2.0. New servers
-should use Streamable HTTP and leave this option off. Selecting
+`:legacy_http_sse_path` and `:legacy_http_sse_post_path`. ArborMCP 2.x rejects
+the former server constructor aliases `:sse_enabled` and `:use_sse`; use
+`:legacy_http_sse` for this transport. The HTTP client option `:use_sse` remains
+available for legacy Streamable HTTP GET streams. New servers should use
+Streamable HTTP and leave `:legacy_http_sse` off. Selecting
 `:prefer_legacy` or `:prefer_modern` does not enable this transport;
 `:modern_only` disables it even if the compatibility flag is present.
 
@@ -293,11 +325,22 @@ on the GET stream.
 
 ```elixir
 # Server — two-endpoint transport (not Streamable HTTP)
-{:ok, _} =
+children = [
+  {Arbor.MCP.Server.Runtime,
+   name: MyApp.MCPRuntime,
+   handler: MyApp.MCPServer,
+   handler_args: [],
+   transport: :mounted_http,
+   protocol_mode: :legacy_only}
+]
+{:ok, _runtime_supervisor} = Supervisor.start_link(children, strategy: :one_for_one)
+
+# This host owns the Cowboy listener; the mounted Runtime borrows it.
+{:ok, _listener} =
   Plug.Cowboy.http(
-    ExMCP.HttpPlug,
+    Arbor.MCP.HttpPlug,
     [
-      handler: MyApp.MCPServer,
+      runtime: MyApp.MCPRuntime,
       protocol_mode: :legacy_only,
       legacy_http_sse: true,
       legacy_http_sse_path: "/sse",
@@ -308,7 +351,7 @@ on the GET stream.
 
 # Client — GET /sse first, then POST to the advertised /message URI
 {:ok, client} =
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :sse,
     url: "http://localhost:4000"
   )
@@ -316,7 +359,7 @@ on the GET stream.
 # If the plug is forwarded under a prefix, include that prefix in url.
 # Custom GET/POST paths match :legacy_http_sse_path / :legacy_http_sse_post_path.
 {:ok, client} =
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :sse,
     url: "http://localhost:4000/mcp",
     sse_path: "/events",
@@ -327,7 +370,7 @@ on the GET stream.
 Open GET `/sse` with `Accept: text/event-stream` first. The first event is
 `endpoint`; JSON-RPC then goes to the advertised POST URI (default
 `/message?sessionId=...`). This is **not** Streamable HTTP.
-`ExMCP.Client.start_link(transport: :http, use_sse: true)` GETs the same MCP
+`Arbor.MCP.Client.start_link(transport: :http, use_sse: true)` GETs the same MCP
 endpoint after `initialize`; `use_sse: false` disables that standalone GET.
 `transport: :sse` is the 2024-11-05 two-endpoint client.
 
@@ -347,7 +390,7 @@ per-request context, exactly as stdio does.
   )
 
 {:ok, client} =
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :beam,
     server: server,
     protocol_mode: :prefer_modern
@@ -374,13 +417,13 @@ tree:
 
 ```elixir
 {:ok, server} =
-  ExMCP.Server.HandlerServer.start_link(
+  Arbor.MCP.Server.HandlerServer.start_link(
     transport: :test,
     handler: MyServer
   )
 
 {:ok, client} =
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :test,
     server: server
   )
@@ -391,7 +434,7 @@ tree:
 Client retries:
 
 ```elixir
-ExMCP.Client.start_link(
+Arbor.MCP.Client.start_link(
   transport: :http,
   url: "https://api.example.com/mcp",
   retry_policy: [max_attempts: 3, initial_delay: 100, max_delay: 2_000]
@@ -401,7 +444,7 @@ ExMCP.Client.start_link(
 Transport wrapper:
 
 ```elixir
-ExMCP.Client.start_link(
+Arbor.MCP.Client.start_link(
   transport: :http,
   url: "https://api.example.com/mcp",
   reliability: [
@@ -416,9 +459,9 @@ ExMCP.Client.start_link(
 Transports emit connection and message telemetry. BEAM-local events use the
 generic transport event names with `metadata.transport == :beam`:
 
-- `[:ex_mcp, :transport, :connection, :opened]`
-- `[:ex_mcp, :transport, :message, :sent]`
-- `[:ex_mcp, :transport, :message, :received]`
+- `[:arbor_mcp, :transport, :connection, :opened]`
+- `[:arbor_mcp, :transport, :message, :sent]`
+- `[:arbor_mcp, :transport, :message, :received]`
 
 ## Selection Guide
 

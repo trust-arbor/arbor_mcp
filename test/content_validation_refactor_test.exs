@@ -1,8 +1,8 @@
-defmodule ExMCP.ContentValidationRefactorTest do
+defmodule Arbor.MCP.ContentValidationRefactorTest do
   use ExUnit.Case, async: true
 
-  alias ExMCP.Content.{Sanitizer, SchemaValidator, SecurityScanner, Transformer}
-  alias ExMCP.Content.Validation
+  alias Arbor.MCP.Content.{Sanitizer, SchemaValidator, SecurityScanner, Transformer}
+  alias Arbor.MCP.Content.Validation
 
   describe "SchemaValidator" do
     test "validates required fields for text content" do

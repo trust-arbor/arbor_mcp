@@ -3,34 +3,39 @@
 # BEAM-local MCP server. This transport is for client and server processes that
 # run in the same BEAM VM and communicate with MCP-shaped Elixir terms.
 
-Mix.install([
-  {:ex_mcp, path: Path.expand("../..", __DIR__)}
-], verbose: false)
+Mix.install(
+  [
+    {:arbor_mcp, path: Path.expand("../..", __DIR__)}
+  ],
+  verbose: false
+)
 
 Logger.configure(level: :info)
 
 defmodule BeamHelloServer do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL, name: "beam-hello-server", version: "1.0.0"
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, name: "beam-hello-server", version: "1.0.0"
 
   @impl true
   def init(_args), do: {:ok, %{messages: []}}
 
   tool "beam_hello", "Returns a greeting from the local BEAM server" do
-    title "BEAM Hello"
-    param :message, :string, default: "Hello from the BEAM."
+    title("BEAM Hello")
+    param(:message, :string, default: "Hello from the BEAM.")
 
-    run fn %{message: message}, state ->
+    run(fn %{message: message}, state ->
       new_state = %{state | messages: [message | state.messages]}
-      {:ok, ToolResult.structured(message, %{messages_seen: length(new_state.messages)}), new_state}
-    end
+
+      {:ok, ToolResult.structured(message, %{messages_seen: length(new_state.messages)}),
+       new_state}
+    end)
   end
 
   resource "beam://system/info", "Current BEAM VM information" do
-    title "BEAM System Information"
-    mime_type "application/json"
+    title("BEAM System Information")
+    mime_type("application/json")
 
-    read fn %{uri: uri}, state ->
+    read(fn %{uri: uri}, state ->
       info = %{
         node: inspect(Node.self()),
         otp_release: List.to_string(:erlang.system_info(:otp_release)),
@@ -38,14 +43,14 @@ defmodule BeamHelloServer do
       }
 
       {:ok, %{uri: uri, text: Jason.encode!(info)}, state}
-    end
+    end)
   end
 
   prompt "beam_expert", "Creates a BEAM/OTP discussion prompt" do
-    title "BEAM Expert"
-    arg :topic, required: true
+    title("BEAM Expert")
+    arg(:topic, required: true)
 
-    render fn %{topic: topic}, state ->
+    render(fn %{topic: topic}, state ->
       {:ok,
        %{
          messages: [
@@ -55,7 +60,7 @@ defmodule BeamHelloServer do
            }
          ]
        }, state}
-    end
+    end)
   end
 end
 

@@ -1,4 +1,4 @@
-defmodule ExMCP.TestHelpers.ErrorTestServer do
+defmodule Arbor.MCP.TestHelpers.ErrorTestServer do
   @moduledoc """
   Test server that always returns errors for testing error handling paths.
 
@@ -7,7 +7,7 @@ defmodule ExMCP.TestHelpers.ErrorTestServer do
   patterns, but this test server only ever returns errors. The warnings are
   benign and can be ignored.
   """
-  use ExMCP.Server.Handler
+  use Arbor.MCP.Server.Handler
 
   @tools [
     %{name: "protocol_error", description: "Raises a protocol error", inputSchema: %{}},
@@ -55,7 +55,7 @@ defmodule ExMCP.TestHelpers.ErrorTestServer do
   @impl true
   def handle_call_tool("protocol_error", _args, state) do
     # Return a protocol error with specific structure expected by tests
-    error = %ExMCP.Error.ProtocolError{
+    error = %Arbor.MCP.Error.ProtocolError{
       code: -32602,
       message: "MCP Protocol Error (-32602): Invalid parameters",
       data: %{"field" => "name"}
@@ -67,7 +67,7 @@ defmodule ExMCP.TestHelpers.ErrorTestServer do
   @impl true
   def handle_call_tool("transport_error", _args, state) do
     # Return a transport error with specific structure expected by tests
-    error = %ExMCP.Error.TransportError{
+    error = %Arbor.MCP.Error.TransportError{
       transport: "stdio",
       reason: :connection_lost,
       details: %{"attempts" => 3}
@@ -79,7 +79,7 @@ defmodule ExMCP.TestHelpers.ErrorTestServer do
   @impl true
   def handle_call_tool("tool_error", _args, state) do
     # Return a tool error with specific structure expected by tests
-    error = %ExMCP.Error.ToolError{
+    error = %Arbor.MCP.Error.ToolError{
       tool_name: "test_tool",
       reason: "Tool execution failed",
       arguments: nil
@@ -91,7 +91,7 @@ defmodule ExMCP.TestHelpers.ErrorTestServer do
   @impl true
   def handle_call_tool("resource_error", _args, state) do
     # Return a resource error with specific structure expected by tests
-    error = %ExMCP.Error.ResourceError{
+    error = %Arbor.MCP.Error.ResourceError{
       uri: "file:///test.txt",
       operation: :read,
       reason: "Permission denied"
@@ -103,7 +103,7 @@ defmodule ExMCP.TestHelpers.ErrorTestServer do
   @impl true
   def handle_call_tool("validation_error", _args, state) do
     # Return a validation error with specific structure expected by tests
-    error = %ExMCP.Error.ValidationError{
+    error = %Arbor.MCP.Error.ValidationError{
       field: "validation_error",
       value: nil,
       reason: "Must be positive"

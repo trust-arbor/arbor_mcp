@@ -1,6 +1,6 @@
 defmodule Mix.Tasks.Test.Tags do
   @moduledoc """
-  List and describe test tags used in ExMCP.
+  List and describe test tags used in Arbor.MCP.
 
   ## Usage
 
@@ -58,7 +58,7 @@ defmodule Mix.Tasks.Test.Tags do
 
   @impl Mix.Task
   def run(_args) do
-    IO.puts("\n📋 ExMCP Test Tags\n")
+    IO.puts("\n📋 Arbor.MCP Test Tags\n")
     IO.puts("Use these tags with mix test:\n")
     IO.puts("  mix test --only <tag>     # Run only tests with this tag")
     IO.puts("  mix test --include <tag>  # Include excluded tests with this tag")

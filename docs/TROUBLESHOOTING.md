@@ -1,4 +1,33 @@
-# ExMCP Troubleshooting Guide
+# ArborMCP Troubleshooting Guide
+
+Version 2 is under development. Local `Mix.install/2` examples require
+`ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc` until the shared dependency is published.
+
+## Installation and v1 migration
+
+### Hex cannot find `arbor_mcp` or `arbor_rpc`
+
+The v2 release candidate is not yet published. Follow the source-checkout
+instructions in the [quickstart](getting-started/QUICKSTART.md), using the
+v2 MCP branch and a separate ArborRPC checkout. Set `ARBOR_RPC_PATH` before
+resolving the MCP dependency. Once published, use the exact coordinated RC
+versions from the [RC guide](guides/V2_RELEASE_CANDIDATE.md).
+
+### Native helper does not compile or cannot be found in a release
+
+On macOS/Linux, source installation builds the ArborRPC helper with a C17
+compiler, including HTTP-only and BEAM-only applications. `CC` names one
+compiler executable. Build the release on a compatible target platform and
+include the dependency's built `priv` contents. An assembled release does not
+compile the helper at startup. See
+[ArborRPC troubleshooting](https://github.com/trust-arbor/arbor_rpc/blob/main/docs/TROUBLESHOOTING.md).
+
+### A renamed module or option no longer exists
+
+The v2 change includes API retirements as well as namespace changes. The old
+Tools DSL, `HttpPlug.start_link` and mount `handler_call_timeout` are removed.
+Use the [migration guide](guides/MIGRATING_V1_TO_V2.md), a supervised Runtime
+and `request_timeout_ms`; a global `ExMCP` text replacement is insufficient.
 
 ## stdio
 
@@ -13,14 +42,18 @@ Use stderr for diagnostics:
 IO.puts(:stderr, "debug")
 ```
 
-For scripts with `Mix.install/2`, configure logging before installing deps:
+Configure logging in the host before applications start:
 
 ```elixir
-Application.put_env(:ex_mcp, :stdio_mode, true)
-Application.put_env(:logger, :level, :emergency)
-
-Mix.install([{:ex_mcp, "~> 1.0"}], verbose: false)
+# Host config/config.exs or config/runtime.exs
+config :logger, :default_handler, config: [type: :standard_error]
 ```
+
+Library startup and stdio connection preserve that configuration and normal log
+levels. `:stdio_mode` no longer configures the VM logger automatically. Standalone
+script examples explicitly replace their host-owned default handler before
+`Mix.install/2`; that function may still print dependency/compiler output to
+stdout. Prefer compiled releases when stdout must be clean from process boot.
 
 ### Server hangs after starting
 
@@ -33,24 +66,24 @@ MyServer.start_link(transport: :stdio)
 For clients, `command` must be a list:
 
 ```elixir
-ExMCP.Client.start_link(transport: :stdio, command: ["node", "server.js"])
+Arbor.MCP.Client.start_link(transport: :stdio, command: ["node", "server.js"])
 ```
 
 ## HTTP
 
 ### Connection refused
 
-Check the URL and endpoint path. If the path is included in `url`, ExMCP uses
+Check the URL and endpoint path. If the path is included in `url`, ArborMCP uses
 that as the default endpoint:
 
 ```elixir
-ExMCP.Client.start_link(transport: :http, url: "http://localhost:4000/mcp")
+Arbor.MCP.Client.start_link(transport: :http, url: "http://localhost:4000/mcp")
 ```
 
 Or provide it explicitly:
 
 ```elixir
-ExMCP.Client.start_link(
+Arbor.MCP.Client.start_link(
   transport: :http,
   url: "http://localhost:4000",
   endpoint: "/mcp"
@@ -60,7 +93,7 @@ ExMCP.Client.start_link(
 ### CORS errors
 
 For Phoenix/Plug servers, configure CORS in your Plug pipeline or pass
-`cors_enabled: true` to `ExMCP.HttpPlug`.
+`cors_enabled: true` to `Arbor.MCP.HttpPlug`.
 
 ### SSE stream does not start
 
@@ -85,7 +118,7 @@ era-specific lifecycle.
 Set the intended compatibility policy explicitly:
 
 ```elixir
-ExMCP.Client.start_link(
+Arbor.MCP.Client.start_link(
   transport: :http,
   url: "https://example.com/mcp",
   protocol_mode: :prefer_modern
@@ -122,7 +155,7 @@ Every MCP 2026-07-28 request must include a `_meta` object with:
 ```
 
 `io.modelcontextprotocol/clientInfo` is optional, but when present it must
-contain non-empty `name` and `version` strings. ExMCP adds these fields for its
+contain non-empty `name` and `version` strings. ArborMCP adds these fields for its
 own clients; this error usually indicates a custom peer, manually constructed
 JSON-RPC message, or middleware that rewrote `params._meta`.
 
@@ -133,8 +166,8 @@ Modern HTTP requests must carry exactly one `MCP-Protocol-Version` and
 `resources/read`, and `prompts/get` also require a matching `Mcp-Name`.
 Annotated tool arguments may require `Mcp-Param-*` headers.
 
-ExMCP derives and replaces these headers automatically. If the error occurs
-with an ExMCP client, inspect reverse-proxy behavior: duplicate headers must
+ArborMCP derives and replaces these headers automatically. If the error occurs
+with an ArborMCP client, inspect reverse-proxy behavior: duplicate headers must
 not be collapsed by choosing one value, and routing headers must not be
 cached, normalized to a different value, or injected by middleware.
 
@@ -146,13 +179,13 @@ a non-negative integer `ttlMs` and `cacheScope` equal to `"public"` or
 `"private"`. Non-complete results must not contain cache hints. Legacy result
 maps do not gain these fields merely because the transport is HTTP.
 
-When the server uses ExMCP's normal Handler or DSL dispatch, return the usual
+When the server uses ArborMCP's normal Handler or DSL dispatch, return the usual
 `{:ok, result, state}` / `ToolResult.*` shape and let
-`ExMCP.Server.ResultNormalizer` add `resultType` plus conservative cache
+`Arbor.MCP.Server.ResultNormalizer` add `resultType` plus conservative cache
 defaults (`ttlMs: 0`, `cacheScope: "private"`). Suspend an operation with
-`ExMCP.Server.DSL.Result.input_required/2` or the documented
+`Arbor.MCP.Server.DSL.Result.input_required/2` or the documented
 `{:input_required, ...}` handler tuple. If a custom peer constructs raw wire
-results or bypasses ExMCP dispatch, it must add and validate the modern fields
+results or bypasses ArborMCP dispatch, it must add and validate the modern fields
 itself. See [Modern result cache hints](CONFIGURATION.md#modern-result-cache-hints).
 
 ### GET or DELETE returns 405
@@ -173,7 +206,7 @@ legacy Streamable HTTP connections.
 {:ok, server} = MyServer.start_link(transport: :beam)  # DSL provides start_link; raw handlers use HandlerServer
 Process.alive?(server)
 
-{:ok, client} = ExMCP.Client.start_link(transport: :beam, server: server)
+{:ok, client} = Arbor.MCP.Client.start_link(transport: :beam, server: server)
 ```
 
 Do not use `transport: :native`; it was removed in the 1.0 API cleanup.
@@ -182,13 +215,13 @@ Do not use `transport: :native`; it was removed in the 1.0 API cleanup.
 
 ### Tools do not appear
 
-Use `ExMCP.Server.Handler` and `ExMCP.Server.DSL` together, and make sure the
+Use `Arbor.MCP.Server.Handler` and `Arbor.MCP.Server.DSL` together, and make sure the
 server starts through a supported transport:
 
 ```elixir
 defmodule MyServer do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL
 
   tool "ping", "Health check" do
     run fn _args, state ->
@@ -198,6 +231,33 @@ defmodule MyServer do
 end
 ```
 
+## Runtime capacity and lifecycle
+
+### Request ID tracking capacity exceeded
+
+BEAM/test and stdio peers retain at most `max_request_ids` distinct request IDs
+(10,000 by default) for duplicate-execution protection. A long-lived connection
+can reach that limit even when each individual request succeeds and finishes.
+Choose an appropriate finite bound and plan connection rotation. For BEAM/test,
+stop the old Client and start a new Client against the retained server. Calling
+`Client.connect/2` does not reconnect an existing Client PID. HTTP sessions have
+separate request-ID retention and expiration.
+
+### Increasing concurrency fails validation
+
+Stateful callbacks are serialized. More than one callback worker requires
+`execution: :stateless`, and those callbacks must return unchanged initialized
+state. Queue capacity and input/output byte limits are independent of concurrency.
+See the [runtime guide](RUNTIME_GUIDE.md).
+
+### Stopping a client does not stop its server
+
+An existing BEAM server, Phoenix listener or borrowed service belongs to its
+original owner. Stop the Runtime when its whole endpoint should end. Under a
+parent supervisor, terminate that child through the parent if it should remain
+stopped. Check cleanup results: process death does not by itself establish
+native child reaping or remote request cancellation.
+
 ## Debugging
 
 Enable debug logging for non-stdio transports:
@@ -206,15 +266,20 @@ Enable debug logging for non-stdio transports:
 Logger.configure(level: :debug)
 ```
 
-Inspect local server state when using BEAM-local tests:
+Inspect formatted OTP status when diagnosing a Runtime:
 
 ```elixir
-:sys.get_state(server)
+:sys.get_status(server)
 ```
+
+The returned server PID is a supervisor, not the handler-state GenServer.
+Normal library diagnostics omit request/handler payloads. Raw state inspection
+and explicitly enabled debug buffers may expose sensitive data; see
+[runtime diagnostics](V2_RUNTIME_DIAGNOSTICS.md).
 
 Run focused tests:
 
 ```bash
-mix test test/ex_mcp/client_beam_transport_test.exs
-mix test test/ex_mcp/server/transport_test.exs
+mix test test/arbor_mcp/client_beam_transport_test.exs
+mix test test/arbor_mcp/server/transport_test.exs
 ```

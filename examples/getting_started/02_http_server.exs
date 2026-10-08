@@ -2,21 +2,26 @@
 
 # HTTP MCP server without SSE.
 
-Mix.install([
-  {:ex_mcp, path: Path.expand("../..", __DIR__)}
-], verbose: false)
+Mix.install(
+  [
+    {:arbor_mcp, path: Path.expand("../..", __DIR__)},
+    {:plug_cowboy, "~> 2.7"},
+    {:ranch, "== 1.8.1"}
+  ],
+  verbose: false
+)
 
 Logger.configure(level: :info)
 
 defmodule HttpHelloServer do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL, name: "http-hello-server", version: "1.0.0"
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, name: "http-hello-server", version: "1.0.0"
 
   resource "hello://world", "A friendly greeting from the HTTP server" do
-    title "Hello World"
-    mime_type "text/plain"
+    title("Hello World")
+    mime_type("text/plain")
 
-    read fn %{uri: uri}, state ->
+    read(fn %{uri: uri}, state ->
       {:ok,
        %{
          uri: uri,
@@ -26,20 +31,20 @@ defmodule HttpHelloServer do
          This endpoint uses regular HTTP JSON-RPC request/response handling.
          """
        }, state}
-    end
+    end)
   end
 
   resource "hello://stats", "Static demo server statistics" do
-    title "Server Statistics"
-    mime_type "application/json"
+    title("Server Statistics")
+    mime_type("application/json")
 
-    read fn %{uri: uri}, state ->
+    read(fn %{uri: uri}, state ->
       {:ok,
        %{
          uri: uri,
          text: Jason.encode!(%{transport: "http", server_time: DateTime.utc_now()})
        }, state}
-    end
+    end)
   end
 end
 
@@ -53,7 +58,7 @@ if System.get_env("MCP_ENV") != "test" do
     HttpHelloServer.start_link(
       transport: :http,
       port: port,
-      use_sse: false,
+      legacy_http_sse: false,
       name: :http_hello_server
     )
 

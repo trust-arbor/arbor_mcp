@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, 'codex/maintenance-1.x' ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, master, 'codex/maintenance-1.x' ]
   workflow_dispatch:
 
 permissions:
@@ -22,8 +22,6 @@ permissions:
 #   slow / performance / stress
 #                         `extended` job -> mix test.suite performance
 #   interop ............... `interop` job (Node.js + npm)
-#   external .............. opt-in real-CLI ACP adapter interop; vendor CLIs
-#                           are not installed by the standard CI jobs.
 #   live_server ........... reserved for tests requiring a live service.
 #   wip / skip ............ intentionally never run; `scripts/check_skip_tags.sh`
 #                           fails the build if a test is left tagged :skip.
@@ -32,8 +30,196 @@ env:
   MIX_ENV: test
   CI_OTP_VERSION: '27.0'
   CI_ELIXIR_VERSION: '1.17.3'
+  ARBOR_RPC_PATH: ${{ github.workspace }}/.arbor-v2/rpc
 
 jobs:
+  archive_consumer:
+    name: Four-package archive consumer / Elixir ${{ matrix.toolchain.elixir }} / OTP ${{ matrix.toolchain.otp }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      MIX_ENV: prod
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain:
+          # Keep the minimum pair; refresh the other pins after BEAM latest passes.
+          - {elixir: '1.17.3', otp: '27.0'}
+          - {elixir: '1.18.5', otp: '27.3.4.18'}
+          - {elixir: '1.19.6', otp: '28.5.0.7'}
+          - {elixir: '1.20.4', otp: '29.1.1'}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+    - name: Check out unpublished ACP packages
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        repository: trust-arbor/arbor_acp
+        ref: b05ed4a507cc6b31cb710ce08b55b28f108f23ec
+        path: .arbor-v2/acp
+        persist-credentials: false
+    - name: Check out unpublished shared RPC
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        repository: trust-arbor/arbor_rpc
+        ref: b2e4abee581b060310202c0b8b4d9a5d0e2e3995
+        path: .arbor-v2/rpc
+        persist-credentials: false
+    - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+      with:
+        otp-version: ${{ matrix.toolchain.otp }}
+        elixir-version: ${{ matrix.toolchain.elixir }}
+        version-type: strict
+    - name: Read independent package source versions
+      run: |
+        python3 -B - <<'PYVERSION'
+        import os, pathlib, re
+        paths = [pathlib.Path("mix.exs"), pathlib.Path(".arbor-v2/rpc/mix.exs"), pathlib.Path(".arbor-v2/acp/packages/arbor_acp/mix.exs"), pathlib.Path(".arbor-v2/acp/packages/arbor_acp_adapters/mix.exs")]
+        packages = ['arbor_mcp', 'arbor_rpc', 'arbor_acp', 'arbor_acp_adapters']
+        with open(os.environ["GITHUB_ENV"], "a") as output:
+            for package, path in zip(packages, paths):
+                versions = re.findall(r'@version "([^\"]+)"', path.read_text())
+                if len(versions) != 1 or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", versions[0]):
+                    raise SystemExit("Invalid package source version: " + package)
+                output.write("ARCHIVE_EXPECTED_VERSION_" + package.upper() + "=" + versions[0] + "\n")
+        PYVERSION
+    - name: Check consumer formatting
+      if: matrix.toolchain.elixir == '1.17.3'
+      run: mix format --check-formatted fixtures/archive_consumer/mix.exs fixtures/archive_consumer/lib/combined_archive_consumer.ex
+    - name: Build publishable source archives
+      run: |
+        mkdir -p archive-consumer-input
+        mix deps.get --only prod
+        env -u ARBOR_RPC_PATH mix hex.build --output "archive-consumer-input/arbor_mcp-$ARCHIVE_EXPECTED_VERSION_ARBOR_MCP.tar"
+        (
+          cd .arbor-v2/rpc
+          mix deps.get --only prod
+          mix hex.build --output "$GITHUB_WORKSPACE/archive-consumer-input/arbor_rpc-$ARCHIVE_EXPECTED_VERSION_ARBOR_RPC.tar"
+        )
+        for package in arbor_acp arbor_acp_adapters; do
+          version_variable="ARCHIVE_EXPECTED_VERSION_${package^^}"
+          package_version="${!version_variable}"
+          (
+            cd ".arbor-v2/acp/packages/$package"
+            ARBOR_V2_LOCAL=1 mix deps.get --only prod
+            env -u ARBOR_RPC_PATH ARBOR_V2_LOCAL=0 mix hex.build --output "$GITHUB_WORKSPACE/archive-consumer-input/$package-$package_version.tar"
+          )
+        done
+    - name: Install archives and probe a compiler-free release
+      run: python3 scripts/check_archive_consumer.py archive-consumer-input
+    - name: Preserve qualified source archives
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: four-package-source-archives-${{ matrix.toolchain.elixir }}
+        path: archive-consumer-input/*.tar
+
+  listener_archive_consumer:
+    name: HTTP archive consumer / ${{ matrix.adapter }} / Elixir ${{ matrix.toolchain.elixir }} / OTP ${{ matrix.toolchain.otp }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MIX_ENV: prod
+    strategy:
+      fail-fast: false
+      matrix:
+        adapter: [cowboy, bandit]
+        toolchain:
+          # Keep the minimum pair; refresh the other pins after BEAM latest passes.
+          - {elixir: '1.17.3', otp: '27.0'}
+          - {elixir: '1.18.5', otp: '27.3.4.18'}
+          - {elixir: '1.19.6', otp: '28.5.0.7'}
+          - {elixir: '1.20.4', otp: '29.1.1'}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+    - name: Check out unpublished shared RPC
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        repository: trust-arbor/arbor_rpc
+        ref: b2e4abee581b060310202c0b8b4d9a5d0e2e3995
+        path: .arbor-v2/rpc
+        persist-credentials: false
+    - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+      with:
+        otp-version: ${{ matrix.toolchain.otp }}
+        elixir-version: ${{ matrix.toolchain.elixir }}
+        version-type: strict
+    - name: Read independent package source versions
+      run: |
+        python3 -B - <<'PYVERSION'
+        import os, pathlib, re
+        paths = [pathlib.Path("mix.exs"), pathlib.Path(".arbor-v2/rpc/mix.exs")]
+        packages = ['arbor_mcp', 'arbor_rpc']
+        with open(os.environ["GITHUB_ENV"], "a") as output:
+            for package, path in zip(packages, paths):
+                versions = re.findall(r'@version "([^\"]+)"', path.read_text())
+                if len(versions) != 1 or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", versions[0]):
+                    raise SystemExit("Invalid package source version: " + package)
+                output.write("ARCHIVE_EXPECTED_VERSION_" + package.upper() + "=" + versions[0] + "\n")
+        PYVERSION
+    - name: Check HTTP consumer formatting
+      if: matrix.toolchain.elixir == '1.17.3'
+      run: mix format --check-formatted fixtures/listener_archive_consumer/mix.exs fixtures/listener_archive_consumer/lib/listener_archive_consumer.ex fixtures/listener_archive_consumer/compile_mcp.exs
+    - name: Build source archives
+      run: |
+        mkdir -p listener-archive-input
+        mix deps.get --only prod
+        env -u ARBOR_RPC_PATH mix hex.build --output "listener-archive-input/arbor_mcp-$ARCHIVE_EXPECTED_VERSION_ARBOR_MCP.tar"
+        (
+          cd .arbor-v2/rpc
+          mix deps.get --only prod
+          mix hex.build --output "$GITHUB_WORKSPACE/listener-archive-input/arbor_rpc-$ARCHIVE_EXPECTED_VERSION_ARBOR_RPC.tar"
+        )
+    - name: Match every shipped source file to its commit
+      run: >
+        python3 -B scripts/check_archive_source_selection.py
+        --archives listener-archive-input
+        --mcp-source . --rpc-source .arbor-v2/rpc
+        --version "$ARCHIVE_EXPECTED_VERSION_ARBOR_MCP" --rpc-version "$ARCHIVE_EXPECTED_VERSION_ARBOR_RPC" --output listener-archive-input/source-selection.json
+    - name: Resolve the selected HTTP backend and probe installed and compiler-free applications
+      run: >
+        python3 -B scripts/check_listener_archive_consumer.py
+        --archives listener-archive-input
+        --workspace "$RUNNER_TEMP/listener-archive-consumer"
+        --expected-version "$ARCHIVE_EXPECTED_VERSION_ARBOR_MCP" --expected-rpc-version "$ARCHIVE_EXPECTED_VERSION_ARBOR_RPC" --adapter ${{ matrix.adapter }}
+        --selection-manifest listener-archive-input/source-selection.json
+    - name: Probe host-owned Cowboy installed and compiler-free applications
+      if: matrix.adapter == 'cowboy' && matrix.toolchain.elixir == '1.19.6'
+      run: >
+        python3 -B scripts/check_listener_archive_consumer.py
+        --archives listener-archive-input
+        --workspace "$RUNNER_TEMP/listener-archive-consumer-host"
+        --expected-version "$ARCHIVE_EXPECTED_VERSION_ARBOR_MCP" --expected-rpc-version "$ARCHIVE_EXPECTED_VERSION_ARBOR_RPC" --adapter cowboy --ownership host
+        --selection-manifest listener-archive-input/source-selection.json
+    - name: Preserve HTTP archive qualification receipts
+      if: always()
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      with:
+        name: http-archive-consumer-${{ matrix.adapter }}-${{ matrix.toolchain.elixir }}
+        path: |
+          listener-archive-input/*
+          ${{ runner.temp }}/listener-archive-consumer/result.json
+          ${{ runner.temp }}/listener-archive-consumer/logs/*
+          ${{ runner.temp }}/listener-archive-consumer/installed-probe.json
+          ${{ runner.temp }}/listener-archive-consumer/release-probe.json
+          ${{ runner.temp }}/listener-archive-consumer/consumer/mix.lock
+        if-no-files-found: error
+    - name: Preserve host-owned Cowboy archive qualification receipts
+      if: always() && matrix.adapter == 'cowboy' && matrix.toolchain.elixir == '1.19.6'
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      with:
+        name: http-archive-consumer-cowboy-host-${{ matrix.toolchain.elixir }}
+        path: |
+          listener-archive-input/*
+          ${{ runner.temp }}/listener-archive-consumer-host/result.json
+          ${{ runner.temp }}/listener-archive-consumer-host/logs/*
+          ${{ runner.temp }}/listener-archive-consumer-host/installed-probe.json
+          ${{ runner.temp }}/listener-archive-consumer-host/release-probe.json
+          ${{ runner.temp }}/listener-archive-consumer-host/consumer/mix.lock
+        if-no-files-found: error
+
   test:
     name: Test on OTP ${{matrix.otp}} / Elixir ${{matrix.elixir}}
     runs-on: ubuntu-latest
@@ -44,14 +230,14 @@ jobs:
           - otp: '27.0'
             elixir: '1.17.3'
             quality: true
-          - otp: '27.0'
-            elixir: '1.18.4'
+          - otp: '27.3.4.18'
+            elixir: '1.18.5'
             quality: false
-          - otp: '28.1'
-            elixir: '1.19.5'
+          - otp: '28.5.0.7'
+            elixir: '1.19.6'
             quality: false
-          - otp: '29.0'
-            elixir: '1.20.0'
+          - otp: '29.1.1'
+            elixir: '1.20.4'
             quality: false
 
     steps:
@@ -59,11 +245,21 @@ jobs:
       with:
         persist-credentials: false
 
+    # Temporary source checkout until the shared RPC package is published.
+    - name: Check out unpublished shared RPC
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        repository: trust-arbor/arbor_rpc
+        ref: b2e4abee581b060310202c0b8b4d9a5d0e2e3995
+        path: .arbor-v2/rpc
+        persist-credentials: false
+
     - name: Set up Elixir
       uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
       with:
         otp-version: ${{matrix.otp}}
         elixir-version: ${{matrix.elixir}}
+        version-type: strict
 
     - name: Restore deps/_build cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -84,7 +280,7 @@ jobs:
 
     - name: Build Hex package
       if: matrix.quality
-      run: mix hex.build --output /tmp/ex_mcp-package.tar
+      run: env -u ARBOR_RPC_PATH mix hex.build --output /tmp/arbor_mcp-package.tar
 
     - name: Compile dependencies
       run: mix deps.compile
@@ -108,12 +304,12 @@ jobs:
     - name: Compile without warnings
       # Dependencies are compiled in the preceding step. Avoid re-checking them
       # under warnings-as-errors: OTP 29 reports deprecations in third-party
-      # Erlang sources (notably jose) that ExMCP cannot fix locally.
+      # Erlang sources (notably jose) that Arbor.MCP cannot fix locally.
       run: mix compile --warnings-as-errors --no-deps-check
 
     - name: Generate documentation without warnings
       if: matrix.quality
-      run: MIX_ENV=dev mix docs
+      run: MIX_ENV=dev mix docs --warnings-as-errors
 
     - name: Run unit tests
       run: mix test --exclude compliance
@@ -134,11 +330,21 @@ jobs:
       with:
         persist-credentials: false
 
+    # Temporary source checkout until the shared RPC package is published.
+    - name: Check out unpublished shared RPC
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        repository: trust-arbor/arbor_rpc
+        ref: b2e4abee581b060310202c0b8b4d9a5d0e2e3995
+        path: .arbor-v2/rpc
+        persist-credentials: false
+
     - name: Set up Elixir
       uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+        version-type: strict
 
     - name: Restore deps/_build cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -158,8 +364,8 @@ jobs:
 
     # One job, not a per-version matrix: the legacy compliance suite is generated
     # across every initialize-compatible revision in a single run
-    # (test/ex_mcp/compliance/version_generator.ex plus the version-specific
-    # handlers in test/ex_mcp/compliance/handlers/), and 2025-11-25 behaviour is
+    # (test/arbor_mcp/compliance/version_generator.ex plus the version-specific
+    # handlers in test/arbor_mcp/compliance/handlers/), and 2025-11-25 behaviour is
     # covered by the dedicated files (icons_test.exs, version_*_test.exs).
     # Modern 2026-07-28 coverage lives in the era-specific unit/integration
     # suites and scripts/conformance.sh modern.
@@ -179,11 +385,21 @@ jobs:
       with:
         persist-credentials: false
 
+    # Temporary source checkout until the shared RPC package is published.
+    - name: Check out unpublished shared RPC
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        repository: trust-arbor/arbor_rpc
+        ref: b2e4abee581b060310202c0b8b4d9a5d0e2e3995
+        path: .arbor-v2/rpc
+        persist-credentials: false
+
     - name: Set up Elixir
       uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+        version-type: strict
 
     - name: Restore deps/_build cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -215,11 +431,21 @@ jobs:
       with:
         persist-credentials: false
 
+    # Temporary source checkout until the shared RPC package is published.
+    - name: Check out unpublished shared RPC
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        repository: trust-arbor/arbor_rpc
+        ref: b2e4abee581b060310202c0b8b4d9a5d0e2e3995
+        path: .arbor-v2/rpc
+        persist-credentials: false
+
     - name: Set up Elixir
       uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+        version-type: strict
 
     - name: Set up Node.js
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -252,26 +478,23 @@ jobs:
     # themselves if `node` is unavailable. Each direction and protocol era
     # runs in its own VM so subprocess and transport state cannot leak between
     # the legacy SDK and the 2026-07-28 SDK.
-    - name: Run legacy TypeScript client to ExMCP server tests
+    - name: Run legacy TypeScript client to Arbor.MCP server tests
       run: mix test --only interop_ts_client
 
-    - name: Run legacy ExMCP client to TypeScript server tests
+    - name: Run legacy Arbor.MCP client to TypeScript server tests
       run: mix test --only interop_ex_mcp_client
 
-    - name: Run modern TypeScript stdio client to ExMCP server tests
+    - name: Run modern TypeScript stdio client to Arbor.MCP server tests
       run: mix test --only interop_modern_ts_client
 
-    - name: Run modern ExMCP stdio client to TypeScript server tests
+    - name: Run modern Arbor.MCP stdio client to TypeScript server tests
       run: mix test --only interop_modern_ex_mcp_client
 
-    - name: Run modern TypeScript HTTP client to ExMCP server tests
+    - name: Run modern TypeScript HTTP client to Arbor.MCP server tests
       run: mix test --only interop_modern_ts_http_client
 
-    - name: Run modern ExMCP HTTP client to TypeScript server tests
+    - name: Run modern Arbor.MCP HTTP client to TypeScript server tests
       run: mix test --only interop_modern_ex_mcp_http_client
-
-    - name: Run ACP 1.4.0 SDK interop tests
-      run: mix test --only interop_acp
 
   external-conformance:
     name: MCP 2026-07-28 external conformance
@@ -287,11 +510,21 @@ jobs:
       with:
         persist-credentials: false
 
+    # Temporary source checkout until the shared RPC package is published.
+    - name: Check out unpublished shared RPC
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        repository: trust-arbor/arbor_rpc
+        ref: b2e4abee581b060310202c0b8b4d9a5d0e2e3995
+        path: .arbor-v2/rpc
+        persist-credentials: false
+
     - name: Set up Elixir
       uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+        version-type: strict
 
     - name: Set up Node.js
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -337,11 +570,21 @@ jobs:
       with:
         persist-credentials: false
 
+    # Temporary source checkout until the shared RPC package is published.
+    - name: Check out unpublished shared RPC
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        repository: trust-arbor/arbor_rpc
+        ref: b2e4abee581b060310202c0b8b4d9a5d0e2e3995
+        path: .arbor-v2/rpc
+        persist-credentials: false
+
     - name: Set up Elixir
       uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+        version-type: strict
 
     - name: Restore deps/_build cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -382,11 +625,21 @@ jobs:
       with:
         persist-credentials: false
 
+    # Temporary source checkout until the shared RPC package is published.
+    - name: Check out unpublished shared RPC
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        repository: trust-arbor/arbor_rpc
+        ref: b2e4abee581b060310202c0b8b4d9a5d0e2e3995
+        path: .arbor-v2/rpc
+        persist-credentials: false
+
     - name: Set up Elixir
       uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+        version-type: strict
 
     - name: Restore deps/_build cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6

@@ -4,15 +4,15 @@
 # Demonstrates Response and Error helpers
 
 Mix.install([
-  {:ex_mcp, path: Path.expand("../..", __DIR__)}
+  {:arbor_mcp, path: Path.expand("../..", __DIR__)}
 ])
 
-alias ExMCP.Response
-alias ExMCP.Error
+alias Arbor.MCP.Response
+alias Arbor.MCP.Error
 
 IO.puts("""
 ==========================================
-ExMCP Structured Responses Demo
+Arbor.MCP Structured Responses Demo
 ==========================================
 """)
 
@@ -20,7 +20,7 @@ ExMCP Structured Responses Demo
 IO.puts("1. Creating Responses:\n")
 
 # Text response
-text_resp = Response.text("Hello from ExMCP!", "greeting_tool")
+text_resp = Response.text("Hello from Arbor.MCP!", "greeting_tool")
 IO.inspect(text_resp, label: "Text response")
 
 # JSON response  
@@ -29,6 +29,7 @@ data = %{
   score: 95,
   passed: true
 }
+
 json_resp = Response.json(data, "score_calculator")
 IO.inspect(json_resp, label: "JSON response")
 
@@ -54,13 +55,15 @@ method_err = Error.method_not_found("tools/unknown")
 IO.inspect(method_err, label: "Method not found")
 
 # Tool-specific errors
-tool_err = Error.tool_error("Division by zero", "calculator",
-  data: %{
-    operation: "divide",
-    numerator: 10,
-    denominator: 0
-  }
-)
+tool_err =
+  Error.tool_error("Division by zero", "calculator",
+    data: %{
+      operation: "divide",
+      numerator: 10,
+      denominator: 0
+    }
+  )
+
 IO.inspect(tool_err, label: "Tool error with data")
 
 # 4. Error Conversion
@@ -101,7 +104,7 @@ tools_content = [
     input_schema: %{type: "object", properties: %{}}
   },
   %{
-    name: "calculate", 
+    name: "calculate",
     description: "Perform calculations",
     input_schema: %{type: "object", properties: %{}}
   }

@@ -1,4 +1,4 @@
-defmodule ExMCP.Test.RawHTTPServer do
+defmodule Arbor.MCP.Test.RawHTTPServer do
   @moduledoc """
   Single-connection TCP server that replays a scripted HTTP/1.1 response.
 

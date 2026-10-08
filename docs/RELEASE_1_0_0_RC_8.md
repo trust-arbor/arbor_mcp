@@ -1,4 +1,4 @@
-# ExMCP 1.0.0-rc.8
+# ArborMCP 1.0.0-rc.8
 
 `1.0.0-rc.8` is a narrow, behavior-preserving follow-up to the published
 `1.0.0-rc.7` candidate. It keeps rc.7's MCP and ACP wire behavior,
@@ -17,7 +17,7 @@ comparison.
   session discovery, lookup, and safe deletion. Slash-command input hints are
   normalized to the ACP object shape.
 - An opt-in `:interop_acp_cli` suite launches the real Claude Code, Codex, and
-  Pi CLIs through `ExMCP.ACP.AdapterTransport`. It exercises initialization,
+  Pi CLIs through `Arbor.MCP.ACP.AdapterTransport`. It exercises initialization,
   session creation/listing/close, and clean shutdown without sending a prompt
   or calling an LLM.
 - Subprocess environment isolation, positive-integer option lookup, and
@@ -39,15 +39,15 @@ defaults, process-ownership changes, or new runtime dependencies in rc.8.
 ## Installation
 
 ```elixir
-{:ex_mcp, "~> 1.0.0-rc.8"}
+{:arbor_mcp, "~> 1.0.0-rc.8"}
 ```
 
 Pin rollout policy when it must not change with a package upgrade:
 
 ```elixir
-config :ex_mcp, protocol_mode: :prefer_modern
+config :arbor_mcp, protocol_mode: :prefer_modern
 # Emergency legacy-era rollback; exact rc.5 behavior still requires package rollback:
-# config :ex_mcp, protocol_mode: :legacy_only
+# config :arbor_mcp, protocol_mode: :legacy_only
 ```
 
 ## ACP CLI interoperability

@@ -1,0 +1,1511 @@
+defmodule Arbor.MCP.Server.Runtime.Admission do
+  @moduledoc false
+
+  use GenServer
+
+  @impl true
+  def format_status(status),
+    do: Arbor.MCP.Server.Runtime.Diagnostics.format_status(status, __MODULE__)
+
+  @cleanup_turn_ms 10
+
+  alias Arbor.MCP.Server.Runtime.{
+    ByteBudget,
+    Deadline,
+    Failure,
+    HTTPCancellation,
+    HTTPResponseLoans,
+    Initialization,
+    Ref,
+    RetainedTerm,
+    ShutdownControl,
+    ShutdownGuard
+  }
+
+  def start_link(opts) do
+    table = Keyword.fetch!(opts, :table)
+
+    with {:ok, _context} <- Initialization.begin(table, opts[:config], :cohort),
+         {:ok, pid} <-
+           GenServer.start_link(__MODULE__, opts, timeout: Initialization.remaining(table)),
+         :ok <- Initialization.watch(table, pid) do
+      {:ok, pid}
+    end
+  end
+
+  # The bounded ETS slot is claimed before sending even the small confirmation
+  # message. No request payload is ever placed in this owner's mailbox.
+  @spec reserve(Ref.t(), map(), keyword()) :: {:ok, map(), map()} | {:error, atom()}
+  def reserve(runtime, request, opts) do
+    table = Ref.table(runtime)
+
+    with {:ok, invocation_deadline} <- invocation_deadline(opts),
+         :ok <- invocation_open(invocation_deadline),
+         :ok <- Deadline.validate(Keyword.get(opts, :admission_deadline, :infinity)),
+         :ok <- input_open(table, opts),
+         {:ok, route} <- route(table),
+         {:ok, bytes} <- request_size(request, opts, route.config),
+         opts = materialize_options(opts),
+         {:ok, reservation} <-
+           claim_slot(runtime, route, request, bytes, opts, invocation_deadline) do
+      confirm_candidate(table, route, reservation)
+    end
+  end
+
+  defp activate_scheduler(scheduler, config, context, state) do
+    state = drain(state, :runtime_restarted)
+    if state.scheduler_ref, do: Process.demonitor(state.scheduler_ref, [:flush])
+    generation = make_ref()
+    monitor = Process.monitor(scheduler)
+
+    route = %{
+      admission: self(),
+      scheduler: scheduler,
+      generation: generation,
+      config: config,
+      initialization_epoch: context.epoch
+    }
+
+    :ets.insert(state.table, [{:route, :closed}, {:prepared_route, route}])
+
+    :ok =
+      ByteBudget.reset(
+        state.table,
+        generation,
+        config,
+        HTTPResponseLoans.retained_tokens(state.table)
+      )
+
+    result =
+      if Initialization.current?(state.table, context),
+        do: {:ok, generation},
+        else: {:error, :runtime_init_timeout}
+
+    {:reply, result, %{state | scheduler_ref: monitor, generation: generation, config: config}}
+  end
+
+  defp confirm_candidate(table, route, reservation) do
+    {wait, timeout_reason} = Deadline.confirmation_budget(reservation)
+
+    if wait == 0 do
+      rollback_candidate(table, reservation)
+      {:error, timeout_reason}
+    else
+      try do
+        case GenServer.call(route.admission, {:confirm, reservation.token}, wait) do
+          {:ok, confirmed} ->
+            {:ok, route, confirmed}
+
+          {:error, _reason} = error ->
+            rollback_candidate(table, reservation)
+            error
+        end
+      catch
+        :exit, {:timeout, _call} ->
+          GenServer.cast(route.admission, {:abandon, reservation.token})
+          {:error, timeout_reason}
+
+        :exit, _reason ->
+          # Confirmation may have succeeded before the caller timed out. Keep
+          # the slot until the admission owner has released its ledger record;
+          # otherwise another producer could reuse count capacity too soon.
+          GenServer.cast(route.admission, {:abandon, reservation.token})
+          {:error, :runtime_unavailable}
+      end
+    end
+  end
+
+  def route(table) do
+    case :ets.lookup(table, :route) do
+      [{:route, %{scheduler: scheduler} = route}] when is_pid(scheduler) ->
+        if Process.alive?(scheduler) and ShutdownControl.available?(table),
+          do: {:ok, route},
+          else: {:error, :runtime_unavailable}
+
+      _ ->
+        {:error, :runtime_unavailable}
+    end
+  rescue
+    ArgumentError -> {:error, :runtime_unavailable}
+  end
+
+  def activate(table, scheduler, config) do
+    [{:admission, admission}] = :ets.lookup(table, :admission)
+    {:ok, context} = Initialization.current(table)
+
+    if Initialization.current?(table, context) do
+      GenServer.call(
+        admission,
+        {:activate, scheduler, config, context},
+        Initialization.remaining(table)
+      )
+    else
+      {:error, :runtime_init_timeout}
+    end
+  catch
+    :exit, _reason -> {:error, :runtime_init_timeout}
+  end
+
+  def publish_ready(table, context) do
+    [{:admission, admission}] = :ets.lookup(table, :admission)
+
+    with :ok <-
+           GenServer.call(
+             admission,
+             {:publish_ready, context},
+             Deadline.remaining(context.deadline)
+           ),
+         do: Initialization.ready_return(table, context)
+  catch
+    :exit, _reason ->
+      Initialization.abort(table, context)
+      {:error, :runtime_init_timeout}
+  end
+
+  def prepare_edge(table, route, context) do
+    [{:admission, admission}] = :ets.lookup(table, :admission)
+
+    result =
+      GenServer.call(
+        admission,
+        {:prepare_edge, route, context},
+        Deadline.remaining(context.deadline)
+      )
+
+    if Initialization.current?(table, context), do: result, else: {:error, :runtime_init_timeout}
+  catch
+    :exit, _reason -> {:error, :runtime_init_timeout}
+  end
+
+  def bind(table, token), do: call(table, {:bind, token})
+  def find(table, key), do: call(table, {:find, key})
+  def terminal(table, token, result), do: call(table, {:terminal, token, result})
+
+  def adopt_http_response(table, token, control_token, digest, deadline) do
+    with [{:admission, admission}] <- :ets.lookup(table, :admission),
+         remaining when remaining > 0 <- Deadline.remaining(deadline),
+         do:
+           GenServer.call(
+             admission,
+             {:adopt_http_response, token, control_token, digest},
+             remaining
+           ),
+         else: (_retired -> {:error, :reverse_response_retired})
+  rescue
+    ArgumentError -> {:error, :reverse_response_retired}
+  catch
+    :exit, _reason -> {:error, :reverse_response_retired}
+  end
+
+  def release(table, token), do: call(table, {:release, token})
+  def close(table, reason), do: call(table, {:close, reason})
+  def seal_input(table), do: call(table, :seal_input)
+  def seal_input(table, edge, connection), do: call(table, {:seal_input, edge, connection})
+  def stats(table), do: call(table, :stats)
+  def promote(table, token, request, opts), do: call(table, {:promote, token, request, opts})
+  def release_step(table, token), do: call(table, {:release_step, token})
+  def checkout(table, token), do: call(table, {:checkout, token})
+
+  def current(table, token) do
+    case :ets.lookup(table, {:reservation, token}) do
+      [{_key, reservation}] -> {:ok, Map.delete(reservation, :payload)}
+      _ -> {:error, :admission_lost}
+    end
+  end
+
+  def pending_ingress(table) do
+    for {{:reservation, token}, %{stage: :published} = reservation} <- :ets.tab2list(table),
+        do: {token, Map.delete(reservation, :payload)}
+  end
+
+  def publish(table, route, reservation, payload, edge) do
+    key = {:reservation, reservation.token}
+    payload = RetainedTerm.materialize(payload)
+    stored = Map.merge(reservation, %{payload: payload, stage: :published, edge: edge})
+
+    match =
+      {{key, :"$1"}, [{:"=:=", :"$1", {:const, reservation}}],
+       [{{{:const, key}, {:const, stored}}}]}
+
+    if :ets.select_replace(table, [match]) == 1 do
+      GenServer.cast(route.admission, {:ingress_ready, reservation.token, edge})
+      :ok
+    else
+      {:error, :admission_lost}
+    end
+  rescue
+    ArgumentError -> {:error, :runtime_unavailable}
+  end
+
+  def pending_key?(table, {scope, :inbound, id} = key) do
+    :ets.member(table, {:request, key}) or
+      :ets.match_object(table, {{:wire_request, scope, id, :_}, :_}) != []
+  end
+
+  def pending_key?(table, key), do: :ets.member(table, {:request, key})
+
+  def cancel_ingress(table, token, id), do: call(table, {:cancel_ingress, token, id})
+
+  def cancel_http_future(table, token, generation, phase, deadline) do
+    remaining = Deadline.remaining(deadline)
+
+    with true <- remaining > 0,
+         {:ok, %{admission: admission}} <- route(table) do
+      GenServer.call(
+        admission,
+        {:http_future_cancel, token, generation, phase},
+        min(remaining, 1_000)
+      )
+    else
+      false -> :not_queued
+      _retired -> {:error, :runtime_unavailable}
+    end
+  catch
+    :exit, {:timeout, _call} -> :pending
+    :exit, _reason -> {:error, :runtime_unavailable}
+  end
+
+  def origin_active?(table, %{token: token, generation: generation, scope: scope}) do
+    case current(table, token) do
+      {:ok, %{terminal: false, generation: ^generation, scope: ^scope} = reservation} ->
+        reservation.deadline > System.monotonic_time(:millisecond) and
+          Process.alive?(reservation.owner) and not :ets.member(table, {:cancelled, token})
+
+      _ ->
+        false
+    end
+  end
+
+  def origin_active?(_table, nil), do: true
+  def origin_active?(_table, _invalid), do: false
+
+  # A source outcome cell outlives only the charged input/control/output records
+  # retaining it. Completed success is immutable; cancelling a later reused ID
+  # cannot revoke a prior successful invocation's admitted control effects.
+  def complete_output_phase(table, token) do
+    case current(table, token) do
+      {:ok, reservation} -> settle_output_phase(reservation, :completed)
+      _ -> :ok
+    end
+  end
+
+  def control_output_origin(table, token, owner) do
+    case current(table, token) do
+      {:ok, %{kind: :edge_control, owner: ^owner, origin_output: proof}} -> {:ok, proof}
+      _ -> {:error, :request_cancelled}
+    end
+  end
+
+  def output_origin_valid?(_table, nil), do: true
+
+  def output_origin_valid?(table, %{
+        phase: phase,
+        token: token,
+        generation: generation,
+        scope: scope,
+        deadline: deadline
+      }) do
+    with {:ok, %{generation: ^generation}} <- route(table),
+         true <- deadline > System.monotonic_time(:millisecond) do
+      case :atomics.get(phase, 1) do
+        1 ->
+          case current(table, token) do
+            {:ok, %{output_phase: ^phase, generation: ^generation, scope: ^scope}} ->
+              not :ets.member(table, {:cancelled, token})
+
+            _ ->
+              false
+          end
+
+        2 ->
+          true
+
+        _ ->
+          false
+      end
+    else
+      _ -> false
+    end
+  rescue
+    ArgumentError -> false
+  end
+
+  def key(scope, request_id, direction), do: {scope, direction, request_id}
+
+  @impl true
+  def init(opts) do
+    table = Keyword.fetch!(opts, :table)
+    supervisor = Keyword.fetch!(opts, :supervisor)
+    :ok = Initialization.watch(table, self())
+
+    :ets.insert(table, {:admission, self()})
+    retained = HTTPResponseLoans.recover(table)
+
+    for {{:reservation, token}, %{terminal: false} = reservation} <- :ets.tab2list(table),
+        not MapSet.member?(retained, token) do
+      deliver_reply(
+        reservation.reply_to,
+        token,
+        Failure.result(reservation, :runtime_restarted)
+      )
+    end
+
+    for object <- :ets.tab2list(table),
+        not Initialization.preserve_record?(object),
+        not retained_response_record?(object, retained) do
+      :ets.delete_object(table, object)
+    end
+
+    :ets.insert(table, [{:admission, self()}, {:route, :closed}])
+    response_index = HTTPResponseLoans.install(table)
+    ByteBudget.clear(table, retained)
+
+    reservations =
+      Map.new(
+        for {{:reservation, token}, stored} <- :ets.tab2list(table),
+            MapSet.member?(retained, token),
+            do: {token, %{stored | monitor: nil, timer: nil, terminal: true}}
+      )
+
+    Process.send_after(self(), :reap_unconfirmed, 100)
+
+    {:ok,
+     %{
+       table: table,
+       supervisor: supervisor,
+       reservations: reservations,
+       response_index: response_index,
+       monitors: %{},
+       bytes: 0,
+       control_bytes: 0,
+       response_bytes:
+         Enum.sum(
+           Enum.map(reservations, fn {_token, reservation} -> response_bytes(reservation) end)
+         ),
+       scheduler_ref: nil,
+       generation: nil,
+       config: nil
+     }}
+  end
+
+  @impl true
+  def handle_call(:reference, _from, state) do
+    {:reply, {:ok, Ref.new(state.supervisor, state.table)}, state}
+  end
+
+  def handle_call({:activate, scheduler, config, context}, _from, state) do
+    if Initialization.current?(state.table, context) do
+      activate_scheduler(scheduler, config, context, state)
+    else
+      {:reply, {:error, :runtime_init_timeout}, state}
+    end
+  end
+
+  def handle_call({:publish_ready, context}, _from, state) do
+    result =
+      case :ets.lookup(state.table, :prepared_route) do
+        [{:prepared_route, %{initialization_epoch: epoch, scheduler: scheduler} = route}]
+        when epoch == context.epoch ->
+          if route.generation == state.generation and Process.alive?(scheduler),
+            do: Initialization.commit_ready(state.table, context, route),
+            else: {:error, :runtime_init_timeout}
+
+        _retired ->
+          {:error, :runtime_init_timeout}
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:prepare_edge, route, context}, _from, state) do
+    if Initialization.current?(state.table, context) and state.generation == route.generation and
+         Process.alive?(route.scheduler) do
+      state =
+        Enum.reduce(state.reservations, state, fn {token, reservation}, current ->
+          if not Process.alive?(reservation.owner),
+            do: deliver_terminal(current, token, Failure.result(reservation, :owner_down)),
+            else: current
+        end)
+
+      :ets.insert(
+        state.table,
+        {:prepared_route, Map.put(route, :initialization_epoch, context.epoch)}
+      )
+
+      result =
+        if Initialization.current?(state.table, context),
+          do: :ok,
+          else: {:error, :runtime_init_timeout}
+
+      {:reply, result, state}
+    else
+      {:reply, {:error, :runtime_init_timeout}, state}
+    end
+  end
+
+  def handle_call({:confirm, token}, _from, state) do
+    case ByteBudget.candidate(state.table, token) do
+      reservation when is_map(reservation) ->
+        case input_open(state.table, Map.to_list(reservation)) do
+          :ok -> confirm_reservation(reservation, state)
+          error -> {:reply, error, state}
+        end
+
+      _ ->
+        {:reply, {:error, :admission_lost}, state}
+    end
+  end
+
+  def handle_call({:seal_input, edge, connection}, _from, state) do
+    if :ets.lookup(state.table, :edge_connection) == [{:edge_connection, edge, connection}] do
+      :ets.insert(state.table, {:input_sealed, true})
+      {:reply, :ok, state}
+    else
+      {:reply, {:error, :connection_closed}, state}
+    end
+  end
+
+  def handle_call(:seal_input, _from, state) do
+    :ets.insert(state.table, {:input_sealed, true})
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:checkout, token}, _from, state) do
+    case :ets.lookup(state.table, {:reservation, token}) do
+      [{_key, %{stage: :published, terminal: false, payload: payload} = stored}] ->
+        if stored.deadline > System.monotonic_time(:millisecond) do
+          {stored, state} = monitor_ingress_owner(stored, state)
+          reservation = %{Map.delete(stored, :payload) | stage: :processing}
+          :ets.insert(state.table, {{:reservation, token}, reservation})
+          {:reply, {:ok, reservation, payload}, put_in(state.reservations[token], reservation)}
+        else
+          state = deliver_terminal(state, token, Failure.result(stored, :handler_timeout))
+          {:reply, {:error, :handler_timeout}, state}
+        end
+
+      _ ->
+        {:reply, {:error, :admission_lost}, state}
+    end
+  end
+
+  def handle_call({:cancel_ingress, token, id}, _from, state) do
+    case Map.get(state.reservations, token) do
+      reservation when is_map(reservation) ->
+        if id in reservation.wire_ids and id not in reservation.uncancellable_ids and
+             (not reservation.terminal or reservation.request_id != id) do
+          :ets.insert(state.table, {{:wire_cancel, token, id}, true})
+
+          if reservation.request_id == id and reservation.kind == :rpc do
+            :ets.insert(state.table, {{:cancelled, token}, true})
+            settle_output_phase(reservation, :invalid)
+          end
+        end
+
+      _ ->
+        :ok
+    end
+
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:http_future_cancel, token, generation, phase}, {caller, _alias}, state) do
+    with {:ok, %{scheduler: ^caller, generation: ^generation}} <- route(state.table),
+         {:ok, source} <- HTTPCancellation.consumed_source(state.table, token, generation, phase) do
+      Enum.each(state.reservations, fn {_target_token, reservation} ->
+        if HTTPCancellation.future_target?(state.table, source, reservation) do
+          HTTPCancellation.mark_future(state.table, source, reservation)
+        end
+      end)
+
+      send(caller, {:http_future_cancel_settled, token, generation, phase})
+      {:reply, :ok, state}
+    else
+      _retired -> {:reply, {:error, :http_cancellation_retired}, state}
+    end
+  end
+
+  def handle_call({:bind, token}, _from, state) do
+    case Map.get(state.reservations, token) do
+      %{bound: false, terminal: false} = reservation ->
+        if Process.alive?(reservation.owner) do
+          Process.demonitor(reservation.monitor, [:flush])
+          Process.cancel_timer(reservation.timer)
+          bound = %{reservation | bound: true, monitor: nil, timer: nil}
+          reservations = Map.put(state.reservations, token, bound)
+          monitors = Map.delete(state.monitors, reservation.monitor)
+          :ets.insert(state.table, {{:reservation, token}, bound})
+          {:reply, {:ok, bound}, %{state | reservations: reservations, monitors: monitors}}
+        else
+          state = deliver_terminal(state, token, Failure.result(reservation, :owner_down))
+          {:reply, {:error, :owner_down}, release_reservation(state, token)}
+        end
+
+      _ ->
+        {:reply, {:error, :admission_lost}, state}
+    end
+  end
+
+  def handle_call({:promote, token, request, opts}, _from, state) do
+    case Map.get(state.reservations, token) do
+      %{bound: false, terminal: false} = reservation ->
+        request_id = RetainedTerm.materialize(Map.get(request, "id"))
+        key = key(reservation.scope, request_id || {:notification, token}, :inbound)
+
+        cond do
+          reservation.deadline <= System.monotonic_time(:millisecond) ->
+            {:reply, {:error, :handler_timeout}, state}
+
+          RetainedTerm.bytes(key) > 4_096 ->
+            {:reply, {:error, :invalid_scope}, state}
+
+          Enum.any?(state.reservations, fn {other, entry} ->
+            other != token and entry.key == key
+          end) ->
+            {:reply, {:error, :duplicate_request_id}, state}
+
+          true ->
+            :ets.delete_object(state.table, {{:request, reservation.key}, token})
+
+            reservation = %{
+              reservation
+              | request_id: request_id,
+                key: key,
+                kind: Keyword.get(opts, :kind, :rpc)
+            }
+
+            :ets.insert(state.table, [
+              {{:request, key}, token},
+              {{:reservation, token}, reservation}
+            ])
+
+            if :ets.member(state.table, {:wire_cancel, token, request_id}),
+              do: :ets.insert(state.table, {{:cancelled, token}, true})
+
+            {:reply, {:ok, reservation}, put_in(state.reservations[token], reservation)}
+        end
+
+      _ ->
+        {:reply, {:error, :admission_lost}, state}
+    end
+  end
+
+  def handle_call({:release_step, token}, _from, state) do
+    case Map.get(state.reservations, token) do
+      %{terminal: true} = reservation ->
+        old_monitor = reservation.monitor
+        if reservation.monitor, do: Process.demonitor(reservation.monitor, [:flush])
+        if reservation.timer, do: Process.cancel_timer(reservation.timer)
+        monitor = Process.monitor(reservation.owner)
+        phase = new_output_phase()
+
+        timer =
+          Process.send_after(
+            self(),
+            {:unbound_timeout, token, phase},
+            max(0, reservation.deadline - System.monotonic_time(:millisecond))
+          )
+
+        :ets.delete_object(state.table, {{:request, reservation.key}, token})
+
+        :ets.delete(
+          state.table,
+          {:wire_request, reservation.scope, reservation.request_id, token}
+        )
+
+        :ets.delete(state.table, {:wire_cancel, token, reservation.request_id})
+        :ets.delete(state.table, {:http_wire_cancel, token, reservation.request_id})
+        key = key(reservation.scope, {:notification, token}, :inbound)
+
+        reservation = %{
+          reservation
+          | bound: false,
+            terminal: false,
+            monitor: monitor,
+            timer: timer,
+            request_id: nil,
+            wire_ids: List.delete(reservation.wire_ids, reservation.request_id),
+            kind: :ingress,
+            key: key,
+            stage: :holding,
+            monitoring_owner: true,
+            output_phase: phase
+        }
+
+        :ets.insert(state.table, {{:reservation, token}, reservation})
+        :ets.delete(state.table, {:cancelled, token})
+        send(reservation.owner, {:arbor_mcp_step_ready, token})
+
+        {:reply, :ok,
+         %{
+           state
+           | reservations: Map.put(state.reservations, token, reservation),
+             monitors:
+               state.monitors
+               |> Map.delete(old_monitor)
+               |> Map.put(monitor, token)
+         }}
+
+      _ ->
+        {:reply, {:error, :admission_lost}, state}
+    end
+  end
+
+  def handle_call({:find, key}, _from, state) do
+    direct =
+      Enum.find_value(state.reservations, fn {_token, entry} -> if entry.key == key, do: entry end)
+
+    result =
+      direct ||
+        earliest(
+          Enum.filter(Map.values(state.reservations), fn entry ->
+            {scope, direction, id} = key
+            direction == :inbound and entry.scope == scope and id in entry.wire_ids
+          end)
+        )
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:terminal, token, result}, _from, state) do
+    {:reply, :ok, deliver_terminal(state, token, result)}
+  end
+
+  def handle_call({:release, token}, _from, state),
+    do: {:reply, :ok, release_reservation(state, token)}
+
+  def handle_call({:adopt_http_response, token, control_token, digest}, {gateway, _alias}, state) do
+    result =
+      case state.reservations[token] do
+        reservation when is_map(reservation) ->
+          HTTPResponseLoans.adopt(
+            state.table,
+            state.response_index,
+            reservation,
+            control_token,
+            gateway,
+            digest
+          )
+
+        _retired ->
+          {:error, :reverse_response_retired}
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:close, reason}, _from, state) do
+    :ets.insert(state.table, {:route, :closed})
+    {:reply, :ok, %{drain(state, reason) | generation: nil}}
+  end
+
+  def handle_call(:stats, _from, state) do
+    slots = :ets.match_object(state.table, {{:slot, :_}, :_, :_})
+    data_capacity = state.config.max_concurrency + state.config.max_queue
+
+    data_slots =
+      Enum.filter(slots, fn {{:slot, index}, _token, _producer} -> index <= data_capacity end)
+
+    bytes = ByteBudget.used(state.table)
+
+    {:reply,
+     %{
+       reserved: length(slots),
+       reserved_envelopes: envelope_count(slots),
+       admitted_work: length(data_slots),
+       admitted_envelopes: envelope_count(data_slots),
+       confirmed_work: confirmed_work(state.reservations),
+       pending_byte_cleanup: length(ByteBudget.pending(state.table)),
+       pending_bytes: bytes.data + bytes.outgoing + bytes.incoming,
+       control_bytes: bytes.outgoing + bytes.incoming,
+       response_bytes: bytes.incoming,
+       confirmed: map_size(state.reservations)
+     }, state}
+  end
+
+  @impl true
+  def handle_cast({:ingress_ready, token, edge}, state) do
+    state =
+      case :ets.lookup(state.table, {:reservation, token}) do
+        [{_key, %{stage: stage, terminal: false, bound: false} = stored}]
+        when stage in [:published, :processing] ->
+          {_stored, state} = monitor_ingress_owner(stored, state)
+          state
+
+        _ ->
+          state
+      end
+
+    wake_edge(state.table, edge)
+    {:noreply, state}
+  end
+
+  def handle_cast({:abandon, token}, state) do
+    case ByteBudget.candidate(state.table, token) do
+      reservation when is_map(reservation) -> release_slot(state.table, reservation)
+      _ -> :ok
+    end
+
+    {:noreply, release_reservation(state, token)}
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{scheduler_ref: ref} = state) do
+    :ets.insert(state.table, {:route, :closed})
+    {:noreply, %{drain(state, :runtime_restarted) | scheduler_ref: nil, generation: nil}}
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+    case Map.get(state.monitors, ref) do
+      nil ->
+        if HTTPResponseLoans.monitor?(state.response_index, ref),
+          do: {:noreply, reap_response_loans(state)},
+          else: {:noreply, state}
+
+      token ->
+        state =
+          deliver_terminal(
+            state,
+            token,
+            Failure.result(state.reservations[token], :producer_down)
+          )
+
+        {:noreply,
+         if(retain_ingress?(state, token), do: state, else: release_reservation(state, token))}
+    end
+  end
+
+  def handle_info({:unbound_timeout, token, phase}, state) do
+    case Map.get(state.reservations, token) do
+      %{bound: false, output_phase: ^phase} ->
+        state =
+          deliver_terminal(
+            state,
+            token,
+            Failure.result(state.reservations[token], :handler_timeout)
+          )
+
+        {:noreply,
+         if(retain_ingress?(state, token), do: state, else: release_reservation(state, token))}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:unbound_timeout, _old_token}, state), do: {:noreply, state}
+
+  def handle_info(:http_response_ready, state), do: {:noreply, reap_response_loans(state)}
+
+  def handle_info(:byte_cleanup, state) do
+    ByteBudget.reap(state.table, Deadline.now() + @cleanup_turn_ms)
+    {:noreply, state}
+  end
+
+  def handle_info(:reap_unconfirmed, state) do
+    state = reap_response_loans(state)
+    cleanup_deadline = Deadline.now() + @cleanup_turn_ms
+    ByteBudget.reap(state.table, cleanup_deadline)
+    # A producer may be killed between insert_new and confirm. Reap those
+    # bounded slot records without charging bytes or allocating a monitor.
+    producers =
+      state.table
+      |> :ets.match_object({{:slot, :_}, :_, :_})
+      |> Enum.map(fn {_key, token, producer} -> {token, producer} end)
+      |> Enum.uniq()
+
+    for {token, producer} <- producers,
+        not Map.has_key?(state.reservations, token),
+        not Process.alive?(producer) do
+      release_slot(state.table, %{token: token, producer: producer}, deadline: cleanup_deadline)
+    end
+
+    for {{:cancel_control, _key}, producer} = object <- :ets.tab2list(state.table),
+        not Process.alive?(producer) do
+      :ets.delete_object(state.table, object)
+    end
+
+    Process.send_after(self(), :reap_unconfirmed, 100)
+    {:noreply, state}
+  end
+
+  defp monitor_ingress_owner(%{monitoring_owner: true} = stored, state), do: {stored, state}
+
+  defp monitor_ingress_owner(stored, state) do
+    previous = state.reservations[stored.token]
+    Process.demonitor(previous.monitor, [:flush])
+    monitor = Process.monitor(stored.owner)
+    stored = %{stored | monitor: monitor, monitoring_owner: true}
+    :ets.insert(state.table, {{:reservation, stored.token}, stored})
+
+    state = %{
+      state
+      | reservations: Map.put(state.reservations, stored.token, Map.delete(stored, :payload)),
+        monitors: state.monitors |> Map.delete(previous.monitor) |> Map.put(monitor, stored.token)
+    }
+
+    {stored, state}
+  end
+
+  defp confirm_reservation(reservation, state) do
+    deadline_error = Deadline.admission_error(reservation)
+
+    cond do
+      ShutdownGuard.closing?(state.table) ->
+        {:reply, {:error, :runtime_stopped}, state}
+
+      reservation.generation != state.generation ->
+        {:reply, {:error, :runtime_unavailable}, state}
+
+      not reservation_available?(state.table, reservation) ->
+        release_slot(state.table, reservation)
+        {:reply, {:error, :admission_lost}, state}
+
+      deadline_error ->
+        release_slot(state.table, reservation)
+        {:reply, {:error, deadline_error}, state}
+
+      not origin_active?(state.table, reservation.origin) ->
+        release_slot(state.table, reservation)
+        {:reply, {:error, :request_cancelled}, state}
+
+      not participants_alive?(reservation) ->
+        release_slot(state.table, reservation)
+        {:reply, {:error, :owner_down}, state}
+
+      byte_budget_exhausted?(state, reservation) ->
+        release_slot(state.table, reservation)
+        {:reply, {:error, :server_busy}, state}
+
+      Enum.any?(state.reservations, fn {_token, existing} -> existing.key == reservation.key end) ->
+        release_slot(state.table, reservation)
+        {:reply, {:error, :duplicate_request_id}, state}
+
+      true ->
+        monitor = Process.monitor(reservation.producer)
+        phase = new_output_phase()
+
+        timer =
+          Process.send_after(
+            self(),
+            {:unbound_timeout, reservation.token, phase},
+            max(0, reservation.deadline - System.monotonic_time(:millisecond))
+          )
+
+        reservation =
+          Map.merge(reservation, %{
+            monitor: monitor,
+            timer: timer,
+            bound: false,
+            terminal: false,
+            monitoring_owner: false,
+            sequence: System.unique_integer([:monotonic, :positive]),
+            output_phase: phase
+          })
+
+        state = %{
+          state
+          | reservations: Map.put(state.reservations, reservation.token, reservation),
+            monitors: Map.put(state.monitors, monitor, reservation.token),
+            bytes: state.bytes + data_bytes(reservation),
+            control_bytes:
+              state.control_bytes +
+                control_bytes(reservation),
+            response_bytes: state.response_bytes + response_bytes(reservation)
+        }
+
+        :ets.insert(state.table, {{:request, reservation.key}, reservation.token})
+        :ets.insert(state.table, {{:reservation, reservation.token}, reservation})
+        ByteBudget.confirm(state.table, reservation.token)
+
+        for id <- reservation.wire_ids,
+            do:
+              :ets.insert(
+                state.table,
+                {{:wire_request, reservation.scope, id, reservation.token}, true}
+              )
+
+        :telemetry.execute(
+          [:arbor_mcp, :server, :request, :admitted],
+          %{count: 1, request_bytes: reservation.bytes},
+          %{runtime: state.supervisor}
+        )
+
+        {:reply, {:ok, reservation}, state}
+    end
+  end
+
+  defp reservation_available?(table, reservation),
+    do:
+      slot_owned?(table, reservation) and
+        not ByteBudget.release_requested?(table, reservation.token)
+
+  defp participants_alive?(reservation),
+    do: Process.alive?(reservation.producer) and Process.alive?(reservation.owner)
+
+  defp request_size(request, opts, config) do
+    request_bytes = RetainedTerm.bytes(request, config.max_request_bytes)
+    context_bytes = RetainedTerm.bytes(Keyword.get(opts, :dispatch_opts, []))
+
+    context_bytes = context_bytes + retained_option_bytes(opts)
+
+    bytes = request_bytes + context_bytes
+
+    budget =
+      if Keyword.get(opts, :kind) in [:edge_control, :edge_response],
+        do: config.max_control_bytes,
+        else: config.max_pending_bytes
+
+    cond do
+      request_bytes > config.max_request_bytes -> {:error, :request_too_large}
+      bytes > budget -> {:error, :server_busy}
+      true -> {:ok, bytes}
+    end
+  end
+
+  defp materialize_options(opts) do
+    Enum.reduce([:dispatch_opts, :wire_ids, :origin, :uncancellable_ids, :scope], opts, fn key,
+                                                                                           acc ->
+      case Keyword.fetch(acc, key) do
+        {:ok, value} -> Keyword.put(acc, key, RetainedTerm.materialize(value))
+        :error -> acc
+      end
+    end)
+  end
+
+  defp retained_option_bytes(opts) do
+    Enum.reduce(
+      [:wire_ids, :origin, :uncancellable_ids, :scope, :admission_deadline, :invocation_deadline],
+      0,
+      fn key, bytes ->
+        case Keyword.fetch(opts, key) do
+          {:ok, nil} -> bytes
+          {:ok, value} -> bytes + RetainedTerm.bytes(value)
+          :error -> bytes
+        end
+      end
+    )
+  end
+
+  defp claim_slot(runtime, route, request, bytes, opts, invocation_deadline) do
+    token = make_ref()
+    producer = self()
+    caller = Keyword.get(opts, :caller, producer)
+    owner = Keyword.get(opts, :owner, producer)
+    target = Keyword.get(opts, :reply_to, producer)
+    timeout = Keyword.get(opts, :timeout, route.config.request_timeout_ms)
+    scope = Keyword.get(opts, :scope, {:connection, owner})
+    direction = Keyword.get(opts, :direction, :inbound)
+    request_id = RetainedTerm.materialize(Map.get(request, "id"))
+    key = key(scope, request_id || {:notification, token}, direction)
+    participant_error = participant_error(owner, caller)
+
+    cond do
+      participant_error ->
+        {:error, participant_error}
+
+      not local_reply_target?(target) ->
+        {:error, :invalid_reply_target}
+
+      not is_integer(timeout) or timeout <= 0 ->
+        {:error, :invalid_timeout}
+
+      RetainedTerm.bytes(key) > 4_096 ->
+        {:error, :invalid_scope}
+
+      not valid_origin?(Keyword.get(opts, :origin)) ->
+        {:error, :invalid_origin}
+
+      true ->
+        count = work_count(request, opts)
+        timeout = min(timeout, route.config.request_timeout_ms)
+        deadline = min(System.monotonic_time(:millisecond) + timeout, invocation_deadline)
+        admission_deadline = Keyword.get(opts, :admission_deadline, :infinity)
+
+        limit =
+          Deadline.admission_limit(%{deadline: deadline, admission_deadline: admission_deadline})
+
+        available = available_slots(route.config, Keyword.get(opts, :kind))
+
+        with {:ok, origin_output} <- capture_output_origin(Ref.table(runtime), opts),
+             {:ok, slots} <-
+               claim_work_slots(Ref.table(runtime), available, count, token, producer, limit) do
+          reservation = %{
+            token: token,
+            slot: hd(slots),
+            slots: slots,
+            work_count: count,
+            producer: producer,
+            caller: caller,
+            owner: owner,
+            reply_to: target,
+            kind: Keyword.get(opts, :kind, :rpc),
+            budget_kind: Keyword.get(opts, :kind, :rpc),
+            stage: if(Keyword.get(opts, :via_edge, false), do: :waiting, else: :direct),
+            edge: Keyword.get(opts, :edge),
+            origin: Keyword.get(opts, :origin),
+            origin_status: :active,
+            origin_output: origin_output,
+            wire_ids: Keyword.get(opts, :wire_ids, []),
+            uncancellable_ids: Keyword.get(opts, :uncancellable_ids, []),
+            batch?: Keyword.get(opts, :batch?, false),
+            # One immutable outcome cell per retained invocation (including
+            # a batch's current member); copied source proofs add explicit
+            # control bytes. Failed candidates allocate no native cells.
+            bytes:
+              bytes + 64 + output_origin_bytes(origin_output) +
+                work_metadata_bytes(request, slots, token, producer),
+            request_id: request_id,
+            key: key,
+            scope: scope,
+            generation: route.generation,
+            timeout: timeout,
+            admission_deadline: admission_deadline,
+            deadline: deadline
+          }
+
+          claim_candidate(Ref.table(runtime), route.generation, reservation)
+        end
+    end
+  rescue
+    ArgumentError -> {:error, :runtime_unavailable}
+  end
+
+  # Private HTTP ingress shortening only. Validate the signed64 value before
+  # serialization, slots or payload publication; an omitted value preserves
+  # the existing configured work deadline and the independent caller wait.
+  defp invocation_deadline(opts), do: invocation_deadline(opts, :absent)
+  defp invocation_deadline([], :absent), do: {:ok, :infinity}
+  defp invocation_deadline([], deadline), do: {:ok, deadline}
+
+  defp invocation_deadline([{:invocation_deadline, deadline} | rest], :absent)
+       when is_integer(deadline) do
+    case Deadline.validate(deadline) do
+      :ok -> invocation_deadline(rest, deadline)
+      _invalid -> {:error, :invalid_invocation_deadline}
+    end
+  end
+
+  defp invocation_deadline([{:invocation_deadline, _value} | _rest], _seen),
+    do: {:error, :invalid_invocation_deadline}
+
+  defp invocation_deadline([{key, _value} | rest], seen) when is_atom(key),
+    do: invocation_deadline(rest, seen)
+
+  defp invocation_deadline(_invalid, _seen), do: {:error, :invalid_invocation_deadline}
+
+  defp invocation_open(:infinity), do: :ok
+
+  defp invocation_open(deadline) do
+    if Deadline.now() < deadline, do: :ok, else: {:error, :handler_timeout}
+  end
+
+  defp participant_error(owner, caller) do
+    cond do
+      not local_pid?(owner) -> :invalid_owner
+      not local_pid?(caller) -> :invalid_caller
+      true -> nil
+    end
+  end
+
+  defp input_open(table, opts) do
+    if :ets.member(table, :input_sealed) and
+         not (Keyword.get(opts, :kind) == :edge_control and
+                not is_nil(Keyword.get(opts, :origin)) and
+                origin_active?(table, Keyword.get(opts, :origin))) do
+      {:error, :runtime_input_sealed}
+    else
+      :ok
+    end
+  rescue
+    ArgumentError -> {:error, :runtime_unavailable}
+  end
+
+  defp claim_candidate(table, generation, reservation) do
+    case ByteBudget.claim(table, generation, reservation) do
+      :ok ->
+        {:ok, reservation}
+
+      {:error, _reason} = error ->
+        rollback_candidate(table, reservation)
+        error
+    end
+  end
+
+  defp slot_owned?(table, reservation) do
+    Enum.all?(reservation.slots, fn slot ->
+      :ets.lookup(table, {:slot, slot}) == [
+        {{:slot, slot}, reservation.token, reservation.producer}
+      ]
+    end)
+  end
+
+  defp rollback_candidate(table, reservation) do
+    {deadline, _reason} = Deadline.admission_limit(reservation)
+    ByteBudget.release(table, reservation.token, deadline: deadline)
+  end
+
+  defp release_slot(table, reservation, opts \\ []) do
+    ByteBudget.release(table, reservation.token, opts)
+  end
+
+  defp work_count(%{"payload" => members}, opts) when is_list(members) do
+    if Keyword.get(opts, :kind) == :edge_control,
+      do: 1,
+      else: max(1, length(members))
+  end
+
+  defp work_count(_request, _opts), do: 1
+
+  # The input payload/context/options remain charged once. Arrays add the
+  # serialized permit records and new reservation slot metadata once, rather
+  # than retaining or charging a separate copy of every member payload.
+  defp work_metadata_bytes(%{"payload" => members}, slots, token, producer)
+       when is_list(members) do
+    metadata = %{slot: hd(slots), slots: slots, work_count: length(slots)}
+    records = Enum.map(slots, &{{:slot, &1}, token, producer})
+    cleanup_bytes = ByteBudget.cleanup_record_bytes(token, producer)
+
+    RetainedTerm.bytes(metadata) + cleanup_bytes +
+      Enum.sum(Enum.map(records, &:erlang.external_size/1))
+  end
+
+  defp work_metadata_bytes(_request, _slots, _token, _producer), do: 0
+
+  defp claim_work_slots(table, available, count, token, producer, limit, attempts \\ 512)
+
+  defp claim_work_slots(_table, _available, _count, _token, _producer, _deadline, 0),
+    do: {:error, :server_busy}
+
+  defp claim_work_slots(
+         table,
+         available,
+         count,
+         token,
+         producer,
+         {deadline, reason} = limit,
+         attempts
+       ) do
+    if System.monotonic_time(:millisecond) >= deadline do
+      {:error, reason}
+    else
+      slots = available |> Stream.reject(&:ets.member(table, {:slot, &1})) |> Enum.take(count)
+
+      records = [
+        ByteBudget.cleanup_record(token, producer)
+        | Enum.map(slots, &{{:slot, &1}, token, producer})
+      ]
+
+      cond do
+        length(slots) != count -> {:error, :server_busy}
+        :ets.insert_new(table, records) -> {:ok, slots}
+        true -> claim_work_slots(table, available, count, token, producer, limit, attempts - 1)
+      end
+    end
+  end
+
+  defp envelope_count(slots) do
+    slots |> Enum.map(fn {_key, token, _producer} -> token end) |> Enum.uniq() |> length()
+  end
+
+  defp confirmed_work(reservations) do
+    Enum.reduce(reservations, 0, fn {_token, reservation}, total ->
+      if reservation.kind in [:edge_control, :edge_response],
+        do: total,
+        else: total + reservation.work_count
+    end)
+  end
+
+  defp data_bytes(reservation),
+    do:
+      if(budget_kind(reservation) in [:edge_control, :edge_response],
+        do: 0,
+        else: reservation.bytes
+      )
+
+  defp control_bytes(reservation),
+    do: if(budget_kind(reservation) == :edge_control, do: reservation.bytes, else: 0)
+
+  defp response_bytes(reservation),
+    do: if(budget_kind(reservation) == :edge_response, do: reservation.bytes, else: 0)
+
+  defp budget_kind(reservation), do: Map.get(reservation, :budget_kind, reservation.kind)
+
+  defp available_slots(%{max_control_queue: 0}, kind)
+       when kind in [:edge_control, :edge_response] do
+    []
+  end
+
+  defp available_slots(config, :edge_control) do
+    capacity = config.max_concurrency + config.max_queue
+    (capacity + 1)..(capacity + config.max_control_queue)
+  end
+
+  defp available_slots(config, :edge_response) do
+    capacity = config.max_concurrency + config.max_queue + config.max_control_queue
+    (capacity + 1)..(capacity + config.max_control_queue)
+  end
+
+  defp available_slots(config, _kind), do: 1..(config.max_concurrency + config.max_queue)
+
+  defp valid_origin?(nil), do: true
+
+  defp valid_origin?(%{token: token, generation: generation, scope: scope} = origin),
+    do:
+      is_reference(token) and is_reference(generation) and map_size(origin) == 3 and
+        RetainedTerm.bytes(scope) <= 4_096
+
+  defp valid_origin?(_origin), do: false
+
+  defp new_output_phase do
+    phase = :atomics.new(1, signed: false)
+    :atomics.put(phase, 1, 1)
+    phase
+  end
+
+  defp settle_output_phase(%{output_phase: phase}, status) do
+    :atomics.compare_exchange(phase, 1, 1, if(status == :completed, do: 2, else: 3))
+    :ok
+  end
+
+  defp settle_output_phase(_candidate, _status), do: :ok
+
+  defp output_origin_bytes(nil), do: 0
+  defp output_origin_bytes(proof), do: RetainedTerm.bytes(proof)
+
+  defp capture_output_origin(table, opts) do
+    case Keyword.get(opts, :origin) do
+      nil ->
+        {:ok, nil}
+
+      %{token: token, generation: generation, scope: scope} ->
+        case current(table, token) do
+          {:ok, %{output_phase: phase, generation: ^generation, scope: ^scope} = source} ->
+            {:ok,
+             %{
+               phase: phase,
+               token: token,
+               generation: generation,
+               scope: scope,
+               deadline: source.deadline
+             }}
+
+          _ ->
+            {:error, :request_cancelled}
+        end
+    end
+  end
+
+  defp settle_origin_controls(state, token) do
+    phase = state.reservations[token].output_phase
+
+    status = if :atomics.get(phase, 1) == 2, do: :completed, else: :invalid
+
+    Enum.reduce(state.reservations, state, fn
+      {control, %{origin: %{token: ^token}, origin_output: %{phase: ^phase}}}, state ->
+        case :ets.lookup(state.table, {:reservation, control}) do
+          [{key, stored}] ->
+            stored = %{stored | origin_status: status}
+            :ets.insert(state.table, {key, stored})
+            put_in(state.reservations[control], Map.delete(stored, :payload))
+
+          _ ->
+            state
+        end
+
+      _entry, state ->
+        state
+    end)
+  end
+
+  defp deliver_terminal(state, token, result) do
+    case Map.get(state.reservations, token) do
+      %{terminal: false} = reservation ->
+        status =
+          if match?({:ok, _}, result) or result == :notification, do: :completed, else: :invalid
+
+        settle_output_phase(reservation, status)
+        state = settle_origin_controls(state, token)
+
+        reservation =
+          case :ets.lookup(state.table, {:reservation, token}) do
+            [{_key, stored}] -> Map.delete(stored, :payload)
+            _ -> reservation
+          end
+
+        :ets.insert(state.table, {{:reservation, token}, %{reservation | terminal: true}})
+
+        :telemetry.execute(
+          [:arbor_mcp, :server, :request, :completed],
+          %{
+            count: 1,
+            duration_ms:
+              max(
+                0,
+                System.monotonic_time(:millisecond) - (reservation.deadline - reservation.timeout)
+              )
+          },
+          %{runtime: state.supervisor, outcome: outcome_class(result)}
+        )
+
+        deliver_reply(reservation.reply_to, token, result)
+
+        if not reservation.bound and reservation.stage in [:published, :processing, :holding] and
+             is_pid(reservation.edge) and match?({:error, _reason}, result),
+           do: send(reservation.edge, {:runtime_ingress_expired, token})
+
+        reservations = Map.put(state.reservations, token, %{reservation | terminal: true})
+        %{state | reservations: reservations}
+
+      _ ->
+        state
+    end
+  end
+
+  defp deliver_reply(target, token, result) do
+    send(target, {:arbor_mcp_runtime, token, result})
+    :ok
+  rescue
+    # Erlang cannot distinguish an ordinary reference from a process alias
+    # during admission. Delivery is best effort and must not interrupt the
+    # terminal ledger update or a restart's outstanding-reservation cleanup.
+    ArgumentError -> :ok
+  end
+
+  defp release_reservation(state, token) do
+    if HTTPResponseLoans.retained?(state.table, token),
+      do: state,
+      else: release_unretained_reservation(state, token)
+  end
+
+  defp release_unretained_reservation(state, token) do
+    case Map.pop(state.reservations, token) do
+      {nil, _reservations} ->
+        state
+
+      {reservation, reservations} ->
+        settle_output_phase(reservation, :invalid)
+        if reservation.monitor, do: Process.demonitor(reservation.monitor, [:flush])
+        if reservation.timer, do: Process.cancel_timer(reservation.timer)
+        release_slot(state.table, reservation)
+        :ets.delete_object(state.table, {{:request, reservation.key}, token})
+        :ets.delete(state.table, {:reservation, token})
+        :ets.delete(state.table, {:cancelled, token})
+
+        for id <- reservation.wire_ids do
+          :ets.delete(state.table, {:wire_request, reservation.scope, id, token})
+          :ets.delete(state.table, {:wire_cancel, token, id})
+          :ets.delete(state.table, {:http_wire_cancel, token, id})
+        end
+
+        %{
+          state
+          | reservations: reservations,
+            monitors: Map.delete(state.monitors, reservation.monitor),
+            bytes: state.bytes - data_bytes(reservation),
+            control_bytes:
+              state.control_bytes -
+                control_bytes(reservation),
+            response_bytes: state.response_bytes - response_bytes(reservation)
+        }
+    end
+  end
+
+  defp earliest([]), do: nil
+  defp earliest(entries), do: Enum.min_by(entries, & &1.sequence)
+
+  defp wake_edge(table, edge) when is_pid(edge) do
+    if :ets.insert_new(table, {{:ingress_wakeup, edge}, true}),
+      do: send(edge, :runtime_ingress_ready)
+
+    :ok
+  end
+
+  defp retain_ingress?(state, token) do
+    reservation = state.reservations[token]
+
+    if reservation.stage in [:published, :processing, :holding] do
+      if is_pid(reservation.edge), do: wake_edge(state.table, reservation.edge)
+      Process.alive?(reservation.owner)
+    else
+      false
+    end
+  end
+
+  defp byte_budget_exhausted?(state, %{kind: :edge_control} = reservation),
+    do: state.control_bytes + reservation.bytes > state.config.max_control_bytes
+
+  defp byte_budget_exhausted?(state, %{kind: :edge_response} = reservation),
+    do: state.response_bytes + reservation.bytes > state.config.max_control_bytes
+
+  defp byte_budget_exhausted?(state, reservation),
+    do: state.bytes + reservation.bytes > state.config.max_pending_bytes
+
+  defp drain(state, reason) do
+    :ets.insert(state.table, {:route, :closed})
+    HTTPResponseLoans.retire_unread(state.table)
+    retained = HTTPResponseLoans.retained_tokens(state.table)
+    ByteBudget.clear(state.table, retained)
+
+    state =
+      Enum.reduce(Map.keys(state.reservations), state, fn token, acc ->
+        acc
+        |> deliver_terminal(token, Failure.result(acc.reservations[token], reason))
+        |> release_reservation(token)
+      end)
+
+    for {{:slot, _slot}, token, _producer} = object <- :ets.tab2list(state.table),
+        not MapSet.member?(retained, token),
+        do: :ets.delete_object(state.table, object)
+
+    for {{:byte_cleanup, token}, _producer, _operation} = object <- :ets.tab2list(state.table),
+        not MapSet.member?(retained, token),
+        do: :ets.delete_object(state.table, object)
+
+    :ets.select_delete(state.table, [{{{:cancel_control, :_}, :_}, [], [true]}])
+    state
+  end
+
+  defp retained_response_record?({{:http_response_loan, _control}, loan}, retained),
+    do: MapSet.member?(retained, loan.input)
+
+  defp retained_response_record?({{:reservation, token}, _stored}, retained),
+    do: MapSet.member?(retained, token)
+
+  defp retained_response_record?({{:slot, _slot}, token, _producer}, retained),
+    do: MapSet.member?(retained, token)
+
+  defp retained_response_record?({{:byte_cleanup, token}, _producer, _operation}, retained),
+    do: MapSet.member?(retained, token)
+
+  defp retained_response_record?({{:byte_budget, _lane}, _budget}, _retained), do: true
+  defp retained_response_record?(_object, _retained), do: false
+
+  defp reap_response_loans(state) do
+    settled = HTTPResponseLoans.reap(state.table)
+    HTTPResponseLoans.reap_index(state.table, state.response_index)
+    Enum.reduce(settled, state, fn token, state -> release_reservation(state, token) end)
+  end
+
+  defp outcome_class({:ok, %{"error" => _error}}), do: :application_error
+  defp outcome_class({:ok, _response}), do: :ok
+  defp outcome_class({:error, %{"error" => %{"data" => %{"type" => type}}}}), do: type
+  defp outcome_class({:error, reason}) when is_atom(reason), do: reason
+  defp outcome_class(:notification), do: :notification
+
+  defp local_pid?(pid), do: is_pid(pid) and node(pid) == node()
+
+  defp local_reply_target?(target) do
+    (is_pid(target) or is_reference(target)) and node(target) == node()
+  end
+
+  defp call(table, message) do
+    case :ets.lookup(table, :admission) do
+      [{:admission, owner}] -> GenServer.call(owner, message, 5_000)
+      _ -> {:error, :runtime_unavailable}
+    end
+  rescue
+    ArgumentError -> {:error, :runtime_unavailable}
+  catch
+    :exit, _reason -> {:error, :runtime_unavailable}
+  end
+end

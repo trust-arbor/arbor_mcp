@@ -1,4 +1,4 @@
-defmodule ExMCP.Test.HTTPServer do
+defmodule Arbor.MCP.Test.HTTPServer do
   @moduledoc """
   Simple HTTP server for testing SSE and other HTTP-based transports.
   """
@@ -68,20 +68,20 @@ defmodule ExMCP.Test.HTTPServer do
         {:_,
          [
            # Standard endpoints
-           {"/mcp/v1/sse", ExMCP.Test.HTTPServer.SSEHandler, [server: self()]},
-           {"/mcp/v1/messages", ExMCP.Test.HTTPServer.MessageHandler, [server: self()]},
+           {"/mcp/v1/sse", Arbor.MCP.Test.HTTPServer.SSEHandler, [server: self()]},
+           {"/mcp/v1/messages", Arbor.MCP.Test.HTTPServer.MessageHandler, [server: self()]},
            # Support custom endpoints for testing
-           {"/custom/api/sse", ExMCP.Test.HTTPServer.SSEHandler, [server: self()]},
-           {"/custom/api/messages", ExMCP.Test.HTTPServer.MessageHandler, [server: self()]},
-           {"/v2/mcp/sse", ExMCP.Test.HTTPServer.SSEHandler, [server: self()]},
-           {"/v2/mcp/messages", ExMCP.Test.HTTPServer.MessageHandler, [server: self()]},
-           {"/api/mcp/sse", ExMCP.Test.HTTPServer.SSEHandler, [server: self()]},
-           {"/api/mcp/messages", ExMCP.Test.HTTPServer.MessageHandler, [server: self()]},
-           {"/api/messages", ExMCP.Test.HTTPServer.MessageHandler, [server: self()]},
-           {"/api/sse", ExMCP.Test.HTTPServer.SSEHandler, [server: self()]},
-           {"/messages", ExMCP.Test.HTTPServer.MessageHandler, [server: self()]},
-           {"/sse", ExMCP.Test.HTTPServer.SSEHandler, [server: self()]},
-           {:_, ExMCP.Test.HTTPServer.NotFoundHandler, []}
+           {"/custom/api/sse", Arbor.MCP.Test.HTTPServer.SSEHandler, [server: self()]},
+           {"/custom/api/messages", Arbor.MCP.Test.HTTPServer.MessageHandler, [server: self()]},
+           {"/v2/mcp/sse", Arbor.MCP.Test.HTTPServer.SSEHandler, [server: self()]},
+           {"/v2/mcp/messages", Arbor.MCP.Test.HTTPServer.MessageHandler, [server: self()]},
+           {"/api/mcp/sse", Arbor.MCP.Test.HTTPServer.SSEHandler, [server: self()]},
+           {"/api/mcp/messages", Arbor.MCP.Test.HTTPServer.MessageHandler, [server: self()]},
+           {"/api/messages", Arbor.MCP.Test.HTTPServer.MessageHandler, [server: self()]},
+           {"/api/sse", Arbor.MCP.Test.HTTPServer.SSEHandler, [server: self()]},
+           {"/messages", Arbor.MCP.Test.HTTPServer.MessageHandler, [server: self()]},
+           {"/sse", Arbor.MCP.Test.HTTPServer.SSEHandler, [server: self()]},
+           {:_, Arbor.MCP.Test.HTTPServer.NotFoundHandler, []}
          ]}
       ])
 
@@ -161,7 +161,7 @@ defmodule ExMCP.Test.HTTPServer do
   end
 end
 
-defmodule ExMCP.Test.HTTPServer.MessageHandler do
+defmodule Arbor.MCP.Test.HTTPServer.MessageHandler do
   @moduledoc false
   require Logger
 
@@ -257,7 +257,7 @@ defmodule ExMCP.Test.HTTPServer.MessageHandler do
   end
 end
 
-defmodule ExMCP.Test.HTTPServer.SSEHandler do
+defmodule Arbor.MCP.Test.HTTPServer.SSEHandler do
   @moduledoc false
 
   def init(req, opts) do
@@ -327,7 +327,7 @@ defmodule ExMCP.Test.HTTPServer.SSEHandler do
   end
 end
 
-defmodule ExMCP.Test.HTTPServer.NotFoundHandler do
+defmodule Arbor.MCP.Test.HTTPServer.NotFoundHandler do
   @moduledoc false
 
   def init(req, opts) do

@@ -1,12 +1,12 @@
-# ExMCP Server DSL Guide
+# ArborMCP Server DSL Guide
 
-ExMCP's server DSL defines MCP tools, resources, resource templates, and prompts
-next to the functions that handle them. Use it with `ExMCP.Server.Handler`:
+ArborMCP's server DSL defines MCP tools, resources, resource templates, and prompts
+next to the functions that handle them. Use it with `Arbor.MCP.Server.Handler`:
 
 ```elixir
 defmodule MyServer do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL, name: "my-server", version: "1.0.0"
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, name: "my-server", version: "1.0.0"
 
   tool "echo", "Echo back the input" do
     title "Echo"
@@ -19,12 +19,46 @@ defmodule MyServer do
 end
 ```
 
-This generates the standard `ExMCP.Server.Handler` callbacks for listing and
+This generates the standard `Arbor.MCP.Server.Handler` callbacks for listing and
 dispatching declared capabilities. The generated `start_link/1` supports
 `:beam`, `:test`, `:stdio`, and `:http` transports. Modern HTTP SSE streams are
 owned by the POST request and require no server transport flag. The deprecated
 2024-11-05 two-endpoint transport remains available with
-`legacy_http_sse: true` throughout ExMCP 1.x.
+`legacy_http_sse: true` in ArborMCP 2.x for pinned legacy protocol revisions.
+
+## Shared declarations
+
+Compose existing DSL modules at compilation with `components: [MyApp.SharedTools]`:
+
+```elixir
+defmodule MyApp.Server do
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, components: [MyApp.SharedTools]
+end
+```
+
+`MyApp.SharedTools` uses the same Handler and DSL declarations. Its tools,
+resources, templates and prompts are included once; nested components flatten
+at compilation, and duplicate identities fail with both declaration locations.
+Inherited callbacks receive the host state and callback context, preserving their
+own private helpers, defaults and compiled validators. Including a component
+initializes only the host handler and starts one Runtime. Component callbacks
+must accept the host's state shape.
+
+## Declaration validation
+
+`use Arbor.MCP.Server.DSL` accepts `:name`, `:version`, `:server_info` and
+`:components`; unknown or repeated options fail compilation. Nested instructions
+must appear inside a primitive block. Parameter and prompt-argument names must
+be unique within that primitive, and scalar instructions such as `title`,
+`annotations` or `input_schema` may appear only once. Errors identify the source
+file and offending line.
+
+`name` supplies resource or resource-template metadata. Tool and prompt names
+come from their declaration identifiers. `annotations` applies to tools,
+resources and resource templates. Metadata with no meaning for a primitive is
+rejected rather than ignored. Existing declaration syntax, component ordering,
+host state, schema validation and explicit default/null/false semantics remain.
 
 ## Tools
 
@@ -69,24 +103,61 @@ param :scores, {:array, :number}, required: true
 Bare `:array` is **not** valid — the item type is required so the generated
 `inputSchema` is correct.
 
-You can also pass a full JSON Schema with `input_schema` (DSL instruction,
-snake_case). That becomes the MCP `inputSchema` field on the wire.
-`input_schema` and `output_schema` are **JSON Schema 2020-12** documents
-(`https://json-schema.org/draft/2020-12/schema`).
+Use literal schema maps with `input_schema` and `output_schema`. The input map
+must have root `type: "object"`; the output schema must also be a map. Standalone
+boolean JSON Schemas are valid for `Content.SchemaPolicy`, but `false` is not a
+valid MCP Tool descriptor and is rejected rather than replaced by a generated
+schema. An omitted or `nil` output schema deliberately disables output validation.
+Malformed declarations fail while the handler module compiles.
 
-Declared params are normalized so handlers can use atom keys and defaults.
+The pinned MCP 2026-07-28 schema defaults to JSON Schema 2020-12.
+`SchemaPolicy` uses JSV for omitted or explicit 2020-12 declarations and
+ExJsonSchema for explicit drafts 4, 6 and 7. Unknown dialects reject. Validation
+returns no transformed data; defaults and coercion remain application decisions.
+See [the dialect contract](V2_SCHEMA_DIALECT.md) for reference restrictions,
+format semantics and qualification.
+
+Declared params retain existing atom-key convenience and missing-value defaults.
+Before a tool callback runs, its compiled input schema validates the arguments
+and any explicitly declared param defaults. Invalid arguments return JSON-RPC
+invalid params (`-32602`) with the handler state unchanged. Framework `_meta`
+is passed to the callback separately from schema validation. Literal schema
+`default` annotations do not insert values, and values are never coerced.
+
+Param constraints use Elixir option names and emit standard JSON Schema keys:
+
+```elixir
+param :count, :integer, minimum: 1, maximum: 100, multiple_of: 1
+param :name, :string, min_length: 1, max_length: 64, pattern: "^[a-z]+$"
+param :mode, :string, enum: ["fast", "safe"], default: "safe"
+param :tags, {:array, :string}, max_items: 10, unique_items: true, default: []
+param :settings, :object, additional_properties: false, max_properties: 0
+```
+
+Numeric options also include `exclusive_minimum` and `exclusive_maximum`;
+arrays support `min_items`; objects support `min_properties`. Unknown,
+duplicate, malformed or inapplicable options fail at the declaration line.
+Use `schema: %{...}` for nested properties, array items or nullable schemas;
+it replaces the generated property schema and cannot be mixed with constraint
+options. An explicit `default: nil` is retained and inserted when missing,
+alongside existing false and empty-array defaults. Defaults must satisfy the
+input schema when the tool is called.
 
 ### Response helpers and normalization
 
-`ToolResult` is an **alias** for `ExMCP.Server.DSL.Result`, injected only inside
-modules that `use ExMCP.Server.DSL`. Outside those modules, use the fully
+`ToolResult` is an **alias** for `Arbor.MCP.Server.Result`, injected only inside
+modules that `use Arbor.MCP.Server.DSL`. Outside those modules, use the fully
 qualified module:
 
 ```elixir
-ExMCP.Server.DSL.Result.structured("done", %{count: 1})
+Arbor.MCP.Server.Result.structured("done", %{count: 1})
 ```
 
-`ToolResult` provides `text/1`, `error/1`, and `structured/2`. The DSL also
+`ToolResult` provides complete-result constructors: `text/1`, `error/1,2`,
+`content/1`, `image/2`, `audio/2`, `resource/1` and `structured/2,3`.
+Modern structured values can be objects, arrays, strings, numbers, booleans or
+null; retained legacy tool results require a structured object. Existing
+`Arbor.MCP.Server.DSL.Result` calls forward to the same implementation. The DSL also
 normalizes several plain return shapes from `run` / `read` / `render`:
 
 | Return from handler | Normalized result |
@@ -94,40 +165,41 @@ normalizes several plain return shapes from `run` / `read` / `render`:
 | `"hello"` | text content |
 | `%{text: "hello"}` | text content |
 | `%{content: [...]}` | used as-is (plus structured key cleanup) |
-| `ToolResult.structured(text, map)` | text + `structuredContent` |
+| `ToolResult.structured(text, value)` | text + `structuredContent` |
 | `{:error, reason}` | tool/resource/prompt error shape |
 | `{:ok, result}` or `{:ok, result, state}` | both accepted |
 
 ### Image, audio, and embedded resource results
 
 A `run` handler may return several content blocks. Build image, audio, and
-embedded-resource items with `ExMCP.Content` (base64 payload plus MIME type):
+embedded-resource items with `Arbor.MCP.Content` (base64 payload plus MIME type):
 
 ```elixir
 tool "preview", "Return a thumbnail, clip, and attached spec" do
   run fn _args, state ->
     image = File.read!("priv/preview.png") |> Base.encode64()
     audio = File.read!("priv/clip.mp3") |> Base.encode64()
+    spec = File.read!("priv/spec.pdf") |> Base.encode64()
 
     {:ok,
      %{
        content: [
-         ExMCP.Content.image(image, "image/png"),
-         ExMCP.Content.audio(audio, "audio/mp3"),
-         ExMCP.Content.resource(%{
+         Arbor.MCP.Content.image(image, "image/png"),
+         Arbor.MCP.Content.audio(audio, "audio/mp3"),
+         Arbor.MCP.Content.resource(%{
            uri: "file:///spec.pdf",
-           name: "Spec",
-           mimeType: "application/pdf"
+           mimeType: "application/pdf",
+           blob: spec
          })
        ]
      }, state}
   end
 end
 
-{:ok, result} = ExMCP.Client.call_tool(client, "preview", %{})
+{:ok, result} = Arbor.MCP.Client.call_tool(client, "preview", %{})
 ```
 
-`ExMCP.Content.image/2`, `ExMCP.Content.audio/2`, and `ExMCP.Content.resource/1` are protocol content
+`Arbor.MCP.Content.image/2`, `Arbor.MCP.Content.audio/2`, and `Arbor.MCP.Content.resource/1` are protocol content
 builders, not image-processing APIs.
 
 ## Compile-time checks
@@ -191,7 +263,7 @@ resource "asset://logo.png", "Product logo" do
   end
 end
 
-{:ok, contents} = ExMCP.Client.read_resource(client, "asset://logo.png")
+{:ok, contents} = Arbor.MCP.Client.read_resource(client, "asset://logo.png")
 ```
 
 Resource templates use URI variables and optional typed params:
@@ -245,11 +317,11 @@ prompt "review_screenshot", "Review a screenshot" do
     {:ok,
      %{
        messages: [
-         %{role: "user", content: ExMCP.Content.image(image, "image/png")},
+         %{role: "user", content: Arbor.MCP.Content.image(image, "image/png")},
          %{
            role: "user",
            content:
-             ExMCP.Content.resource(%{
+             Arbor.MCP.Content.resource(%{
                uri: "file:///notes.md",
                name: "Notes",
                mimeType: "text/markdown"
@@ -263,11 +335,11 @@ end
 
 ### Getting a prompt with no arguments
 
-`ExMCP.Client.get_prompt/2` defaults arguments to `%{}`:
+`Arbor.MCP.Client.get_prompt/2` defaults arguments to `%{}`:
 
 ```elixir
-{:ok, prompt} = ExMCP.Client.get_prompt(client, "review_screenshot")
-{:ok, prompt} = ExMCP.Client.get_prompt(client, "code_review", %{"code" => "def add(a, b), do: a + b"})
+{:ok, prompt} = Arbor.MCP.Client.get_prompt(client, "review_screenshot")
+{:ok, prompt} = Arbor.MCP.Client.get_prompt(client, "code_review", %{"code" => "def add(a, b), do: a + b"})
 ```
 
 ## Metadata
@@ -303,46 +375,55 @@ For a hand-written handler without the DSL:
 
 ```elixir
 {:ok, pid} =
-  ExMCP.Server.HandlerServer.start_link(
+  Arbor.MCP.Server.start_link(
     transport: :test,
     handler: MyHandler
   )
 ```
 
-`ExMCP.start_server/1` is also available as a top-level convenience wrapper for
-`ExMCP.Server.HandlerServer.start_link/1`.
+`MyServer.start_link/1` delegates to `Arbor.MCP.Server.start_link/1`, so plain
+handlers and DSL handlers share all four transport paths. Both child specs
+describe runtime supervisors. `Arbor.MCP.start_server/1` remains startup shorthand
+with its legacy `:test` default; the canonical Server constructor defaults to `:beam`.
+Select transports explicitly in production.
+
+Use `Arbor.MCP.Server.stop/2` for bounded shutdown and `Server.stats/1` for
+tagged inspection. Supervised endpoints retain their parent's restart policy.
 
 **Fast verification tip:** After `mix compile`, `mix examples.getting_started` runs a quick in-process demo of the DSL + client patterns shown throughout this guide (and in QUICKSTART.md).
 
-## Deprecated: `ExMCP.Server.Tools`
+## Migrating from removed `ExMCP.Server.Tools`
 
-`ExMCP.Server.Tools` and `ExMCP.Server.Tools.Simplified` are **deprecated** and
-will be retained throughout 1.x, with removal planned for **2.0.0**. They only covered tools (not resources/prompts)
-and overlapped with this DSL.
+The former `ExMCP.Server.Tools` family was removed in v2. There is no
+`Arbor.MCP.Server.Tools` replacement module or compatibility shim. Use
+`Arbor.MCP.Server.Handler` with this DSL, which also covers resources and prompts.
 
 | Old (`Server.Tools`) | New (`Server.DSL`) |
 |----------------------|--------------------|
-| `use ExMCP.Server.Tools` | `use ExMCP.Server.DSL, name: "...", version: "..."` |
+| `use ExMCP.Server.Tools` | `use Arbor.MCP.Server.DSL, name: "...", version: "..."` |
 | `tool "name" do ... handle fn ... end end` | `tool "name" do ... run fn ... end end` |
 | `handle fn args, state -> ... end` | `run fn args, state -> ... end` |
 | (tools only) | also `resource`, `resource_template`, `prompt` |
 
-Using the old modules prints a compile-time deprecation warning.
+See the [v1-to-v2 migration guide](guides/MIGRATING_V1_TO_V2.md) for the
+other retired helpers and package changes.
 
 ## Migration From The Removed Legacy DSL
 
-The former `use ExMCP.Server` macro and `deftool`, `defresource`, and
+The former `use Arbor.MCP.Server` macro and `deftool`, `defresource`, and
 `defprompt` declarations have been removed. Migrate by:
 
-1. Replacing `use ExMCP.Server` with `use ExMCP.Server.Handler` and
-   `use ExMCP.Server.DSL`.
+1. Replacing `use Arbor.MCP.Server` with `use Arbor.MCP.Server.Handler` and
+   `use Arbor.MCP.Server.DSL`.
 2. Replacing `deftool` blocks with `tool` blocks and colocated `run` handlers.
 3. Replacing `defresource` blocks with `resource` or `resource_template` blocks
    and colocated `read` handlers.
 4. Replacing `defprompt` blocks with `prompt` blocks and colocated `render`
    handlers.
-5. Replacing the removed `ExMCP.Server.start_link` helper with `MyServer.start_link/1`,
-   `ExMCP.Server.HandlerServer.start_link/1`, or `ExMCP.start_server/1`.
+5. Replacing legacy server construction with `Arbor.MCP.Server.start_link/1`,
+   using `handler: MyHandler` and an explicit transport, or generated
+   `MyServer.start_link/1`. The v2 constructor returns a runtime supervisor;
+   it does not restore the removed `use Server` macro or legacy DSL.
 
 Old generated getters such as `get_tools/0`, `get_resources/0`, and
 `get_prompts/0` are no longer part of the server API. Use the standard handler

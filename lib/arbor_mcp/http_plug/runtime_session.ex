@@ -1,0 +1,258 @@
+defmodule Arbor.MCP.HttpPlug.RuntimeSession do
+  @moduledoc false
+  alias Arbor.MCP.Server.Runtime
+
+  alias Arbor.MCP.Server.Runtime.{
+    HTTPSessionStreamBinding,
+    HTTPWriterBinding,
+    HTTPWriterRegistry,
+    ServiceRef,
+    Services
+  }
+
+  alias Arbor.MCP.SessionManager
+  alias Arbor.MCP.SessionManager.SessionLease
+
+  # Session authority is addressed to this root and bound to the captured
+  # socket invocation before an initialization claim can outlive a store RPC.
+  def prepare(_runtime, _binding, nil, _request, _metadata),
+    do: {:ok, %{service: nil, lease: nil, claim: nil, opts: []}}
+
+  def prepare(runtime, binding, reference, request, metadata) do
+    with {:ok, service} <- Runtime.service(runtime, :sessions),
+         {:ok, proof} <- HTTPWriterBinding.validate(binding, runtime),
+         opts = [deadline: proof.deadline],
+         {:ok, lease} <- lease(service, reference, request, metadata, opts) do
+      prepare_lease(service, binding, lease, request, opts)
+    else
+      {:error, reason} -> {:error, {:runtime_session_rejected, reference_id(reference), reason}}
+    end
+  end
+
+  defp reference_id({:existing_session, id}), do: id
+  defp reference_id(_new), do: nil
+
+  defp prepare_lease(service, binding, lease, request, opts) do
+    with :ok <- bind(binding, lease),
+         {:ok, claim} <-
+           claim(
+             service,
+             lease,
+             initialization_request(request) || request,
+             Keyword.put(opts, :invocation, binding)
+           ),
+         :ok <- claim_ids(service, lease, request, opts) do
+      {:ok, %{service: service, lease: lease, claim: claim, opts: opts}}
+    else
+      {:error, reason} -> {:error, {:runtime_session_rejected, SessionLease.id(lease), reason}}
+    end
+  end
+
+  # A legacy initialization batch begins with its one initialization request.
+  # The claim remains pending until the complete array has been admitted for IO.
+  def initialization_request([%{"method" => "initialize"} = first | _]), do: first
+  def initialization_request(%{"method" => "initialize"} = request), do: request
+  def initialization_request(_request), do: nil
+
+  def valid_initialization_batch?(members) do
+    initializers = Enum.filter(members, &match?(%{"method" => "initialize"}, &1))
+
+    initializers == [] or
+      (length(initializers) == 1 and
+         match?(
+           %{"method" => "initialize", "id" => id} when is_binary(id) or is_integer(id),
+           List.first(members)
+         ))
+  end
+
+  defp lease(service, :new_session, _request, metadata, opts),
+    do: SessionManager.create_session(service, metadata, opts)
+
+  defp lease(service, {:existing_session, id}, request, metadata, opts) do
+    if initialization_request(request),
+      do: SessionManager.ensure_session(service, id, metadata, opts),
+      else: SessionManager.ensure_initialized_session(service, id, metadata, opts)
+  end
+
+  defp bind(binding, lease), do: HTTPWriterRegistry.bind_lease(binding, lease)
+
+  def addressed(runtime, binding, id, metadata, bind? \\ true) do
+    with {:ok, service} <- Runtime.service(runtime, :sessions),
+         {:ok, proof} <- HTTPWriterBinding.validate(binding, runtime),
+         opts = [deadline: proof.deadline],
+         {:ok, lease} <- SessionManager.ensure_initialized_session(service, id, metadata, opts),
+         :ok <- if(bind?, do: bind(binding, lease), else: :ok) do
+      {:ok, %{service: service, lease: lease, claim: nil, opts: opts}}
+    end
+  end
+
+  # The deprecated transport opens a session before initialize. Only the
+  # original short entry may create/ensure/bind it; the established long target
+  # later grants replay reads and IO, never claim or mutation authority.
+  def alias_get(runtime, binding, reference, metadata) do
+    with {:ok, service} <- Runtime.service(runtime, :sessions),
+         {:ok, proof} <- HTTPWriterBinding.validate(binding, runtime),
+         opts = [deadline: proof.deadline],
+         {:ok, lease} <- alias_lease(service, reference, metadata, opts),
+         :ok <- bind(binding, lease) do
+      {:ok, %{service: service, lease: lease, claim: nil, opts: opts}}
+    end
+  end
+
+  defp alias_lease(service, :new_session, metadata, opts),
+    do: SessionManager.create_session(service, metadata, opts)
+
+  defp alias_lease(service, {:existing_session, id}, metadata, opts),
+    do: SessionManager.ensure_session(service, id, metadata, opts)
+
+  def with_replay_target(session, target), do: Map.put(session, :replay_target, target)
+
+  defp replay_opts(%{replay_target: target} = session) do
+    with {:ok, runtime} <- ServiceRef.validate(session.service, :sessions),
+         {:ok, proof} <- HTTPSessionStreamBinding.validate(target, runtime),
+         true <- proof.lease == session.lease,
+         do: {:ok, [deadline: proof.deadline]},
+         else: (_closed -> {:error, :http_session_stream_closed})
+  end
+
+  defp replay_opts(session), do: {:ok, session.opts}
+
+  # Capture the existing store cursor before the GET handshake. A first GET
+  # does not replay historical events unless Last-Event-ID requests them.
+  def replay_cursor(session) do
+    with {:ok, opts} <- replay_opts(session),
+         do: SessionManager.replay_cursor(session.service, session.lease, opts)
+  end
+
+  def replay_page(session, cursor) do
+    with {:ok, service} <- Services.resolve(session.service, :sessions),
+         {:ok, read_opts} <- replay_opts(session) do
+      opts =
+        Keyword.merge(read_opts,
+          max_events: min(32, Keyword.get(service.options, :max_replay_page_events, 32)),
+          max_bytes: min(65_536, Keyword.get(service.options, :max_replay_page_bytes, 65_536))
+        )
+
+      SessionManager.replay_page(session.service, session.lease, cursor, opts)
+    end
+  end
+
+  def delete(session, binding) do
+    with {:ok, effect} <-
+           HTTPWriterRegistry.prepare(binding, "", metadata: %{operation: :session_delete}) do
+      case terminate(session) do
+        :ok ->
+          case HTTPWriterRegistry.publish(effect) do
+            :ok ->
+              {:ok, effect, session}
+
+            error ->
+              HTTPWriterRegistry.release(effect)
+              error
+          end
+
+        error ->
+          HTTPWriterRegistry.release(effect)
+          error
+      end
+    end
+  end
+
+  defp claim(service, lease, %{"method" => "initialize"} = request, opts) do
+    case SessionManager.claim_initialization(service, lease, opts) do
+      {:error, reason}
+      when reason in [:session_already_initialized, :initialization_in_progress] ->
+        {:error, {:session_lifecycle_rejected, request["id"], reason}}
+
+      result ->
+        result
+    end
+  end
+
+  defp claim(_service, _lease, _request, _opts), do: {:ok, nil}
+
+  defp claim_ids(service, lease, members, opts) when is_list(members) do
+    Enum.reduce_while(members, :ok, fn member, :ok ->
+      case claim_ids(service, lease, member, opts) do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp claim_ids(service, lease, %{"id" => id, "method" => method}, opts)
+       when is_binary(id) or is_integer(id) do
+    case SessionManager.claim_request_id(service, lease, id, opts) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        {:error, {:request_id_rejected, SessionLease.id(lease), id, reason, method}}
+    end
+  end
+
+  defp claim_ids(_service, _lease, _notification, _opts), do: :ok
+
+  def id(%{lease: nil}), do: nil
+  def id(%{lease: lease}), do: SessionLease.id(lease)
+
+  def version(%{lease: nil}), do: nil
+
+  def version(%{service: service, lease: lease, opts: opts}) do
+    case SessionManager.get_session(service, lease, opts) do
+      {:ok, session} -> Map.get(session, :protocol_version)
+      _closed -> nil
+    end
+  end
+
+  # Initialization settlement runs under the original authenticated cutoff and
+  # lease. A failed initialization closes only this captured session epoch.
+  def finalize(%{claim: nil}, _request, _response, _expected), do: :ok
+
+  def finalize(session, requests, responses, expected) when is_list(requests) do
+    initial = initialization_request(requests)
+
+    response =
+      if is_list(responses),
+        do: Enum.find(responses, &(is_map(&1) and &1["id"] == initial["id"])),
+        else: nil
+
+    if response do
+      finalize(session, initial, response, expected)
+    else
+      terminate(session)
+    end
+  end
+
+  def finalize(_session, %{"method" => "initialize"}, %{"error" => _error}, _expected), do: :ok
+
+  def finalize(session, %{"method" => "initialize"}, response, expected) do
+    version = get_in(response, ["result", "protocolVersion"])
+
+    if version == expected and is_binary(version) do
+      case SessionManager.complete_initialization(
+             session.service,
+             session.claim,
+             version,
+             session.opts
+           ) do
+        :ok ->
+          :ok
+
+        error ->
+          terminate(session)
+          error
+      end
+    else
+      terminate(session)
+      {:error, :session_manager_unavailable}
+    end
+  end
+
+  def finalize(_session, _request, _response, _expected), do: :ok
+
+  def terminate(%{lease: nil}), do: :ok
+
+  def terminate(session),
+    do: SessionManager.terminate_session(session.service, session.lease, session.opts)
+end

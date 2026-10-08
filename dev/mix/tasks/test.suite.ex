@@ -1,6 +1,6 @@
 defmodule Mix.Tasks.Test.Suite do
   @moduledoc """
-  Run specific test suites for ExMCP.
+  Run specific test suites for Arbor.MCP.
 
   ## Usage
 

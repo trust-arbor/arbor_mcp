@@ -1,14 +1,14 @@
 #!/usr/bin/env elixir
 
-# Sandboxed file manager MCP server using the modern ExMCP Handler + DSL API.
+# Sandboxed file manager MCP server using the modern Arbor.MCP Handler + DSL API.
 
 Mix.install([
-  {:ex_mcp, path: Path.expand("..", __DIR__)}
+  {:arbor_mcp, path: Path.expand("..", __DIR__)}
 ])
 
 defmodule FileManager do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL, name: "file-manager", version: "1.0.0"
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, name: "file-manager", version: "1.0.0"
 
   @impl true
   def init(args) do
@@ -22,14 +22,14 @@ defmodule FileManager do
   end
 
   tool "list_files", "Lists files under the sandbox root" do
-    title "List Files"
-    param :path, :string, default: "."
-    param :recursive, :boolean, default: false
+    title("List Files")
+    param(:path, :string, default: ".")
+    param(:recursive, :boolean, default: false)
 
-    run fn %{path: path, recursive: recursive}, state ->
+    run(fn %{path: path, recursive: recursive}, state ->
       with {:ok, full_path} <- safe_path(state.root_dir, path),
            {:ok, files} <- list_files(full_path, state.root_dir, recursive) do
-        # ToolResult is aliased by `use ExMCP.Server.DSL`
+        # ToolResult is aliased by `use Arbor.MCP.Server.DSL`
         {:ok,
          ToolResult.structured("Found #{length(files)} entries.", %{
            root: state.root_dir,
@@ -39,30 +39,30 @@ defmodule FileManager do
       else
         {:error, reason} -> {:error, reason, state}
       end
-    end
+    end)
   end
 
   tool "read_file", "Reads a text file from the sandbox" do
-    title "Read File"
-    param :path, :string, required: true
+    title("Read File")
+    param(:path, :string, required: true)
 
-    run fn %{path: path}, state ->
+    run(fn %{path: path}, state ->
       with {:ok, full_path} <- safe_path(state.root_dir, path),
            {:ok, content} <- File.read(full_path) do
         {:ok, content, state}
       else
         {:error, reason} -> {:error, "Could not read #{path}: #{inspect(reason)}", state}
       end
-    end
+    end)
   end
 
   tool "write_file", "Writes a text file inside the sandbox" do
-    title "Write File"
-    param :path, :string, required: true
-    param :content, :string, required: true
-    param :mode, :string, default: "write", description: "write, append, or create"
+    title("Write File")
+    param(:path, :string, required: true)
+    param(:content, :string, required: true)
+    param(:mode, :string, default: "write", description: "write, append, or create")
 
-    run fn %{path: path, content: content, mode: mode}, state ->
+    run(fn %{path: path, content: content, mode: mode}, state ->
       with {:ok, full_path} <- safe_path(state.root_dir, path),
            :ok <- File.mkdir_p(Path.dirname(full_path)),
            :ok <- write_file(full_path, content, mode) do
@@ -70,59 +70,59 @@ defmodule FileManager do
       else
         {:error, reason} -> {:error, "Could not write #{path}: #{inspect(reason)}", state}
       end
-    end
+    end)
   end
 
   tool "file_info", "Returns metadata for a sandboxed file" do
-    title "File Info"
-    param :path, :string, required: true
+    title("File Info")
+    param(:path, :string, required: true)
 
-    run fn %{path: path}, state ->
+    run(fn %{path: path}, state ->
       with {:ok, full_path} <- safe_path(state.root_dir, path),
            {:ok, info} <- file_info(full_path, state.root_dir) do
         {:ok, ToolResult.structured("Metadata for #{path}.", info), state}
       else
         {:error, reason} -> {:error, "Could not inspect #{path}: #{inspect(reason)}", state}
       end
-    end
+    end)
   end
 
   resource_template "file:///{path}", "Reads a text file from the sandbox" do
-    title "Sandbox File"
-    mime_type "text/plain"
-    param :path, :string
+    title("Sandbox File")
+    mime_type("text/plain")
+    param(:path, :string)
 
-    read fn %{path: path, uri: uri}, state ->
+    read(fn %{path: path, uri: uri}, state ->
       with {:ok, full_path} <- safe_path(state.root_dir, path),
            {:ok, content} <- File.read(full_path) do
         {:ok, %{uri: uri, text: content}, state}
       else
         {:error, reason} -> {:error, "Could not read #{path}: #{inspect(reason)}", state}
       end
-    end
+    end)
   end
 
   resource_template "file-metadata:///{path}", "Returns file metadata as JSON" do
-    title "File Metadata"
-    mime_type "application/json"
-    param :path, :string
+    title("File Metadata")
+    mime_type("application/json")
+    param(:path, :string)
 
-    read fn %{path: path, uri: uri}, state ->
+    read(fn %{path: path, uri: uri}, state ->
       with {:ok, full_path} <- safe_path(state.root_dir, path),
            {:ok, info} <- file_info(full_path, state.root_dir) do
         {:ok, %{uri: uri, text: Jason.encode!(info)}, state}
       else
         {:error, reason} -> {:error, "Could not inspect #{path}: #{inspect(reason)}", state}
       end
-    end
+    end)
   end
 
   prompt "organize_files", "Creates a file organization prompt" do
-    title "Organize Files"
-    arg :directory, required: true
-    arg :strategy
+    title("Organize Files")
+    arg(:directory, required: true)
+    arg(:strategy)
 
-    render fn %{directory: directory} = args, state ->
+    render(fn %{directory: directory} = args, state ->
       strategy = Map.get(args, :strategy, "by type and purpose")
 
       {:ok,
@@ -137,7 +137,7 @@ defmodule FileManager do
            }
          ]
        }, state}
-    end
+    end)
   end
 
   defp default_root_dir do

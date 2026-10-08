@@ -1,4 +1,4 @@
-// MCP 2026-07-28 TypeScript SDK client used by ExMCP interop tests.
+// MCP 2026-07-28 TypeScript SDK client used by Arbor.MCP interop tests.
 // Connects with an exact version pin so the test cannot fall back to legacy.
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -35,10 +35,11 @@ const waitFor = (promise, timeoutMs, label) =>
 // variables. Pass MIX_ENV explicitly so a clean CI runner reuses the
 // already-compiled test build instead of compiling a dev build on stdout, and
 // forward the parent's Mix paths so a version manager (mise/asdf) child loads
-// the same Hex archive as the parent instead of a stale global one.
+// the same Hex archive as the parent instead of a stale global one. Explicit
+// split-development overrides must also select the same RPC source/build/lock.
 function mixChildEnv() {
   const env = { MIX_ENV: process.env.MIX_ENV ?? "test" };
-  for (const name of ["MIX_HOME", "MIX_ARCHIVES"]) {
+  for (const name of ["MIX_HOME", "MIX_ARCHIVES", "MIX_DEPS_PATH", "ARBOR_RPC_PATH", "ARBOR_V2_DEPS", "ARBOR_V2_BUILD", "ARBOR_V2_LOCK"]) {
     if (process.env[name]) env[name] = process.env[name];
   }
   return env;

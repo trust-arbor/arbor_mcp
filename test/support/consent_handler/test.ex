@@ -1,4 +1,4 @@
-defmodule ExMCP.ConsentHandler.Test do
+defmodule Arbor.MCP.ConsentHandler.Test do
   @moduledoc """
   Test consent handler for automated testing scenarios.
 
@@ -9,21 +9,21 @@ defmodule ExMCP.ConsentHandler.Test do
   ## Usage in Tests
 
       # Setup test consent responses
-      ExMCP.ConsentHandler.Test.start_link()
-      ExMCP.ConsentHandler.Test.set_consent_response("user1", "https://api.example.com", :approved)
-      ExMCP.ConsentHandler.Test.set_consent_response("user2", "https://evil.com", :denied)
+      Arbor.MCP.ConsentHandler.Test.start_link()
+      Arbor.MCP.ConsentHandler.Test.set_consent_response("user1", "https://api.example.com", :approved)
+      Arbor.MCP.ConsentHandler.Test.set_consent_response("user2", "https://evil.com", :denied)
 
       # Run your security tests...
 
       # Verify consent was requested
-      history = ExMCP.ConsentHandler.Test.get_consent_history()
+      history = Arbor.MCP.ConsentHandler.Test.get_consent_history()
       assert length(history) == 2
 
       # Cleanup
-      ExMCP.ConsentHandler.Test.clear_all_consents()
+      Arbor.MCP.ConsentHandler.Test.clear_all_consents()
   """
 
-  @behaviour ExMCP.ConsentHandler
+  @behaviour Arbor.MCP.ConsentHandler
 
   use Agent
 

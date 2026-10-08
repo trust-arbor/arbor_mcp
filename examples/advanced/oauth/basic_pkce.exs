@@ -3,13 +3,13 @@
 # Offline OAuth 2.1 PKCE helper example.
 
 Mix.install([
-  {:ex_mcp, path: Path.expand("../../..", __DIR__)}
+  {:arbor_mcp, path: Path.expand("../../..", __DIR__)}
 ])
 
-alias ExMCP.Authorization
-alias ExMCP.Authorization.PKCE
+alias Arbor.MCP.Authorization
+alias Arbor.MCP.Authorization.PKCE
 
-IO.puts("ExMCP OAuth 2.1 PKCE example")
+IO.puts("Arbor.MCP OAuth 2.1 PKCE example")
 IO.puts(String.duplicate("=", 32))
 
 {:ok, verifier, challenge} = Authorization.generate_pkce_challenge()
@@ -17,7 +17,10 @@ IO.puts(String.duplicate("=", 32))
 IO.puts("Verifier length: #{byte_size(verifier)}")
 IO.puts("Challenge length: #{byte_size(challenge)}")
 IO.puts("Verifier valid?: #{inspect(PKCE.validate_verifier(verifier))}")
-IO.puts("Challenge verifies?: #{inspect(Authorization.verify_pkce_challenge(verifier, challenge))}")
+
+IO.puts(
+  "Challenge verifies?: #{inspect(Authorization.verify_pkce_challenge(verifier, challenge))}"
+)
 
 authorization_url =
   URI.new!("https://auth.example.com/oauth/authorize")

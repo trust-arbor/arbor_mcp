@@ -1,4 +1,4 @@
-defmodule ExMCP.TestHelpers.RefactoredTestServer do
+defmodule Arbor.MCP.TestHelpers.RefactoredTestServer do
   @moduledoc """
   Test server for integration testing.
 
@@ -6,8 +6,8 @@ defmodule ExMCP.TestHelpers.RefactoredTestServer do
   due to the DSL generating comprehensive pattern matches. These warnings are
   benign and can be ignored.
   """
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL, name: "Refactored Test Server", version: "1.0.0"
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, name: "Refactored Test Server", version: "1.0.0"
 
   tool "test_tool", "Test tool" do
     input_schema(%{

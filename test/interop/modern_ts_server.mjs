@@ -1,4 +1,4 @@
-// MCP 2026-07-28 TypeScript SDK server used by ExMCP stdio interop tests.
+// MCP 2026-07-28 TypeScript SDK server used by Arbor.MCP stdio interop tests.
 // The v2 serving entry rejects legacy initialization, so this fixture cannot
 // silently fall back to a 2025 protocol revision.
 import { serveStdio } from "@modelcontextprotocol/server/stdio";

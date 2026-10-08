@@ -1,15 +1,15 @@
 #!/usr/bin/env elixir
 
-# Practical weather-style MCP server using the modern ExMCP Handler + DSL API.
+# Practical weather-style MCP server using the modern Arbor.MCP Handler + DSL API.
 # The data is simulated so the example is self-contained.
 
 Mix.install([
-  {:ex_mcp, path: Path.expand("..", __DIR__)}
+  {:arbor_mcp, path: Path.expand("..", __DIR__)}
 ])
 
 defmodule WeatherService do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL, name: "weather-service", version: "1.0.0"
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, name: "weather-service", version: "1.0.0"
 
   @impl true
   def init(_args) do
@@ -17,12 +17,12 @@ defmodule WeatherService do
   end
 
   tool "get_weather", "Gets current weather for a location" do
-    title "Get Weather"
-    param :location, :string, required: true
-    param :units, :string, default: "celsius", description: "celsius, fahrenheit, or kelvin"
-    param :detailed, :boolean, default: false
+    title("Get Weather")
+    param(:location, :string, required: true)
+    param(:units, :string, default: "celsius", description: "celsius, fahrenheit, or kelvin")
+    param(:detailed, :boolean, default: false)
 
-    run fn %{location: location, units: units, detailed: detailed}, state ->
+    run(fn %{location: location, units: units, detailed: detailed}, state ->
       weather = generate_weather(location, units)
       new_state = put_in(state.cache[location], weather)
 
@@ -33,17 +33,17 @@ defmodule WeatherService do
           "#{location}: #{weather.temperature} #{weather.unit}, #{weather.condition}"
         end
 
-      # ToolResult is aliased by `use ExMCP.Server.DSL`
+      # ToolResult is aliased by `use Arbor.MCP.Server.DSL`
       {:ok, ToolResult.structured(text, weather), new_state}
-    end
+    end)
   end
 
   tool "get_forecast", "Gets a simulated multi-day forecast" do
-    title "Get Forecast"
-    param :location, :string, required: true
-    param :days, :integer, default: 5
+    title("Get Forecast")
+    param(:location, :string, required: true)
+    param(:days, :integer, default: 5)
 
-    run fn %{location: location, days: days}, state ->
+    run(fn %{location: location, days: days}, state ->
       forecast = build_forecast(location, days)
 
       {:ok,
@@ -51,14 +51,14 @@ defmodule WeatherService do
          location: location,
          forecast: forecast
        }), state}
-    end
+    end)
   end
 
   tool "compare_weather", "Compares current weather across locations" do
-    title "Compare Weather"
-    param :locations, {:array, :string}, required: true
+    title("Compare Weather")
+    param(:locations, {:array, :string}, required: true)
 
-    run fn %{locations: locations}, state ->
+    run(fn %{locations: locations}, state ->
       comparisons =
         locations
         |> Enum.take(5)
@@ -69,40 +69,40 @@ defmodule WeatherService do
         |> Enum.map_join("\n", &"#{&1.location}: #{&1.temperature} #{&1.unit}, #{&1.condition}")
 
       {:ok, ToolResult.structured(summary, %{comparisons: comparisons}), state}
-    end
+    end)
   end
 
   resource "weather://favorites", "Saved favorite locations" do
-    title "Favorite Locations"
-    mime_type "application/json"
+    title("Favorite Locations")
+    mime_type("application/json")
 
-    read fn %{uri: uri}, state ->
+    read(fn %{uri: uri}, state ->
       {:ok,
        %{
          uri: uri,
          text: Jason.encode!(%{favorites: state.favorites, default_units: state.units})
        }, state}
-    end
+    end)
   end
 
   resource_template "weather://current/{location}", "Cached or generated current weather" do
-    title "Current Weather"
-    mime_type "application/json"
-    param :location, :string
+    title("Current Weather")
+    mime_type("application/json")
+    param(:location, :string)
 
-    read fn %{location: location, uri: uri}, state ->
+    read(fn %{location: location, uri: uri}, state ->
       weather = Map.get(state.cache, location) || generate_weather(location, state.units)
       {:ok, %{uri: uri, text: Jason.encode!(weather)}, state}
-    end
+    end)
   end
 
   prompt "weather_assistant", "Creates an activity-planning weather prompt" do
-    title "Weather Planning Assistant"
-    arg :activity, required: true
-    arg :location, required: true
-    arg :date
+    title("Weather Planning Assistant")
+    arg(:activity, required: true)
+    arg(:location, required: true)
+    arg(:date)
 
-    render fn %{activity: activity, location: location} = args, state ->
+    render(fn %{activity: activity, location: location} = args, state ->
       date = Map.get(args, :date, "today")
 
       {:ok,
@@ -117,7 +117,7 @@ defmodule WeatherService do
            }
          ]
        }, state}
-    end
+    end)
   end
 
   defp generate_weather(location, units) do
@@ -128,7 +128,8 @@ defmodule WeatherService do
       location: location,
       temperature: temperature,
       unit: unit,
-      condition: Enum.at(["sunny", "cloudy", "rainy", "partly cloudy"], stable_number(location, 4)),
+      condition:
+        Enum.at(["sunny", "cloudy", "rainy", "partly cloudy"], stable_number(location, 4)),
       humidity: 35 + stable_number(location <> "humidity", 45),
       wind_kph: 5 + stable_number(location <> "wind", 25),
       observed_at: DateTime.utc_now() |> DateTime.to_iso8601()

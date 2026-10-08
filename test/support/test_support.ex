@@ -1,6 +1,6 @@
-defmodule ExMCP.TestSupport do
+defmodule Arbor.MCP.TestSupport do
   @moduledoc """
-  Test support utilities for ExMCP tests.
+  Test support utilities for Arbor.MCP tests.
 
   Provides helpers for:
   - Safe network resource cleanup (ports, listeners)
@@ -36,7 +36,7 @@ defmodule ExMCP.TestSupport do
         opts
       )
 
-    ExUnit.Callbacks.start_supervised!({ExMCP.Server, server_opts})
+    ExUnit.Callbacks.start_supervised!({Arbor.MCP.Server, server_opts})
   end
 
   @doc """
@@ -51,7 +51,7 @@ defmodule ExMCP.TestSupport do
         opts
       )
 
-    ExUnit.Callbacks.start_supervised!({ExMCP.Client, client_opts})
+    ExUnit.Callbacks.start_supervised!({Arbor.MCP.Client, client_opts})
   end
 
   @doc """
@@ -88,8 +88,8 @@ defmodule ExMCP.TestSupport do
       :test_sse_server,
       :test_http_listener,
       :test_sse_listener,
-      ExMCP.TestHTTPServer.HTTP,
-      ExMCP.TestSSEServer.HTTP
+      Arbor.MCP.TestHTTPServer.HTTP,
+      Arbor.MCP.TestSSEServer.HTTP
     ]
 
     Enum.each(test_listeners, fn listener ->
@@ -142,7 +142,7 @@ defmodule ExMCP.TestSupport do
       "test_client",
       "test_http",
       "test_sse",
-      "ExMCP.Test"
+      "Arbor.MCP.Test"
     ]
 
     Process.registered()

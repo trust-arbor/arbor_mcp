@@ -1,6 +1,15 @@
-# ExMCP Development Guide
+# ArborMCP Development Guide
 
-This guide covers everything you need to know for developing, testing, and contributing to ExMCP.
+This guide covers developing, testing, and contributing to the MCP package.
+Version 2 is under development; use the
+[v2 roadmap](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/V2_ROADMAP.md)
+for release scope and qualification status.
+
+`ARBOR_RPC_PATH` selects the repository root of a local
+[ArborRPC checkout](https://github.com/trust-arbor/arbor_rpc). `ARBOR_V2_DEPS` can reuse an
+existing source cache during split QA, while `ARBOR_V2_BUILD` and `ARBOR_V2_LOCK`
+select isolated build and lock paths. Package consumer checks must also run with
+these overrides unset and use the built release artifacts.
 
 ## Table of Contents
 
@@ -17,14 +26,22 @@ This guide covers everything you need to know for developing, testing, and contr
 
 - Elixir 1.17+ (enforced by `mix.exs`)
 - Erlang/OTP 27–29 (the current CI matrix)
+- C17 compiler on macOS/Linux (the ArborRPC source dependency builds a native helper)
 - Git with hooks support
+
+The [CI policy](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/.github/BEAM_CI.md) records the tested Elixir 1.17–1.20 /
+OTP 27–29 pairs and latest-version lanes; not every cross-product is supported.
 
 ### Initial Setup
 
 ```bash
 # Clone the repository
-git clone https://github.com/azmaveth/ex_mcp.git
-cd ex_mcp
+git clone --branch codex/v2-migration https://github.com/trust-arbor/arbor_mcp.git
+cd arbor_mcp
+
+# Until arbor_rpc is published, select its checkout explicitly.
+git clone https://github.com/trust-arbor/arbor_rpc.git ../arbor_rpc
+export ARBOR_RPC_PATH="$(cd ../arbor_rpc && pwd)"
 
 # Install dependencies
 mix deps.get
@@ -35,6 +52,10 @@ mix git_hooks.install
 # Verify setup
 mix compile --warnings-as-errors && mix credo
 ```
+
+While v2 is unmerged, use `codex/v2-migration`; `master` remains the supported
+ExMCP 1.x line. After the default-branch cutover, follow the published release
+instructions. Keep a lockfile for repeatable local dependency resolution.
 
 ### Essential Development Commands
 
@@ -51,8 +72,8 @@ mix dialyzer          # Type checking (run after significant changes)
 mix sobelow --skip    # Security analysis
 
 # Testing
-mix test              # Run all tests
-mix test test/ex_mcp/protocol_test.exs  # Run specific test file
+mix test              # Default suite; integration/external/slow tags are excluded
+mix test test/arbor_mcp/client_beam_transport_test.exs  # Run specific test file
 mix coveralls.html    # Generate coverage report
 MIX_ENV=test mix compile              # Compile for test environment
 
@@ -81,16 +102,7 @@ mix test --only interop_modern_ex_mcp_client
 mix test --only interop_modern_ts_http_client
 mix test --only interop_modern_ex_mcp_http_client
 
-# ACP ecosystem tracking and credential-free real-agent initialization.
-mix acp.compat.check --offline
-mix acp.compat.check
-ACP_ECOSYSTEM_AGENT_ID=gemini mix test --only interop_acp_ecosystem
-
-# Built-in adapters against their native vendor CLIs (all four CLIs required).
-mix test --only interop_acp_cli
-
 # After doc or example changes, re-verify key snippets and the getting-started demo:
-#   mix run -e '...'   (see DOCS_EXAMPLES_AUDIT_PLAN.md for example verifiers)
 #   elixir examples/getting_started/demo_client.exs
 #   mix examples.getting_started   # fast alias (see examples/README.md)
 
@@ -98,7 +110,7 @@ mix test --only interop_acp_cli
 
 ## Code Quality Tools
 
-ExMCP uses a comprehensive set of code quality tools to ensure maintainable, reliable code:
+ArborMCP uses a comprehensive set of code quality tools to ensure maintainable, reliable code:
 
 ### Formatter
 - **Tool**: Elixir's built-in code formatter
@@ -120,7 +132,7 @@ ExMCP uses a comprehensive set of code quality tools to ensure maintainable, rel
 - **Usage**: `mix dialyzer`
 - **Purpose**: Find type inconsistencies and potential runtime errors
 - **When to run**: After significant changes or before releases
-- **PLT location**: `_dialyzer/` (gitignored)
+- **PLT location**: `priv/plts/` (gitignored)
 
 ### Sobelow
 - **Tool**: Security analysis
@@ -135,21 +147,21 @@ ExMCP uses a comprehensive set of code quality tools to ensure maintainable, rel
 - **Target**: Aim for >80% coverage on core modules
 
 ### Git Hooks
-- **Pre-commit**: Runs formatter, credo, and compile checks
-- **Pre-push**: Runs full test suite
-- **Setup**: Automatically configured with `make setup`
-- **Bypass**: Use `--no-verify` only in emergencies
+- **Pre-commit**: Checks formatting, compilation, Credo, Dialyzer and staged skip tags
+- **Pre-push**: No tasks are currently configured; run relevant tests before pushing
+- **Setup**: `mix git_hooks.install`; the development config also enables auto-install
+- **Source of truth**: `config/config.exs`
 
 ## Testing Strategy
 
-ExMCP uses a sophisticated test tagging strategy for efficient test execution across different scenarios.
+ArborMCP uses a sophisticated test tagging strategy for efficient test execution across different scenarios.
 
 ### Test Categories
 
 #### Core Test Suites
 
 ```bash
-# Fast unit tests (default, ~5s)
+# Unit-tagged tests
 mix test.suite unit
 
 # MCP specification compliance tests
@@ -216,12 +228,13 @@ Tests follow a clear structure mirroring the source code:
 
 ```
 test/
-├── ex_mcp/                    # Core module tests
+├── arbor_mcp/                 # Core module tests
 │   ├── client/               # Client implementation tests
 │   ├── server/               # Server implementation tests
 │   ├── transport/            # Transport layer tests
 │   └── compliance/           # MCP revision/compliance tests
-├── integration/              # Cross-component integration tests
+├── interop/                  # TypeScript MCP SDK fixtures
+├── conformance/              # External harness entry points
 └── support/                  # Test helpers and utilities
 ```
 
@@ -251,83 +264,20 @@ test/
 - Edge case discovery
 - Uses PropCheck library
 
-#### Golden Transcript Tests (ACP Codex adapter)
-- Pin the current native wire behavior of `ExMCP.ACP.Adapters.Codex` so its
-  internals can be restructured without changing what reaches the app-server
-  or the ACP client
-- Live under `test/ex_mcp/acp/adapters/codex/characterization/`, one file per
-  area (lifecycle, prompt content, permissions, session updates, MCP
-  configuration, faults, catalog), with fixtures under
-  `test/fixtures/acp/codex/<area>/<scenario>.term`
-- Driven by `ExMCP.Test.CodexGolden` (`test/support/acp/codex_golden.ex`):
-  a scenario is a list of steps (`{:init, opts}`, `:post_connect`,
-  `{:outbound, msg}`, `{:inbound, msg}`, `{:inbound_raw, line}`,
-  `{:note, text}`) fed through the adapter's public translation callbacks;
-  `assert_golden/4` compares the recorded transcript with the fixture
-- Adapter-generated ids are normalized to placeholders such as
-  `"codex-permission-<1>"`; every precondition is reached through real flows
-  and no test seeds adapter state or calls private functions
-- Regenerate fixtures only for the scenarios you changed, then run the file
-  normally and review the fixture diff by eye:
+#### ACP and adapter tests
 
-```bash
-CODEX_GOLDEN=update mix test test/ex_mcp/acp/adapters/codex/characterization/catalog_golden_test.exs:42
-mix test test/ex_mcp/acp/adapters/codex/characterization/catalog_golden_test.exs
-```
-
-  A fixture diff in a pull request is a wire change and must be explained as
-  one; the update run always fails so it cannot be mistaken for a passing run.
-
-#### Golden Transcript Tests (ACP Pi adapter)
-- Same model for `ExMCP.ACP.Adapters.Pi`: one file per gate area (rpc,
-  control_groups, stream_events, prompt_flow, config, slash_commands,
-  session_safety) under `test/ex_mcp/acp/adapters/pi/characterization/`,
-  fixtures under `test/fixtures/acp/pi/<area>/<scenario>.term`
-- Driven by `ExMCP.Test.PiGolden` (`test/support/acp/pi_golden.ex`) with
-  shared step builders in `ExMCP.Test.PiGolden.Flows`; every run gets a
-  private sandbox (agent dir, session dir, session map, cwd, fake `pi`)
-  referenced from steps as `"<sandbox>"`, so no scenario can touch `~/.pi`
-- `{:respond, type, data}` answers the most recent RPC request of that type;
-  `{:init, managed: true}` runs against the fake `pi`, whose echoed stdin
-  is recorded as `port_writes` and whose `{:port_exit, code}` is a real exit
-- Regenerate with `PI_GOLDEN=update`, exactly like the Codex suite:
-
-```bash
-PI_GOLDEN=update mix test test/ex_mcp/acp/adapters/pi/characterization/config_golden_test.exs:42
-mix test test/ex_mcp/acp/adapters/pi/characterization/config_golden_test.exs
-```
-
-#### Golden Transcript Tests (ACP Claude adapter)
-- Same model for `ExMCP.ACP.Adapters.ClaudeSDK`: one file per gate area
-  (lifecycle, prompt_content, permissions, session_updates, mcp_config,
-  faults, catalog) under
-  `test/ex_mcp/acp/adapters/claude_sdk/characterization/`, fixtures under
-  `test/fixtures/acp/claude/<area>/<scenario>.term`
-- Driven by `ExMCP.Test.ClaudeGolden` (`test/support/acp/claude_golden.ex`)
-  with shared step builders in `ExMCP.Test.ClaudeGolden.Flows`; every run gets
-  a private sandbox (Claude config dir, cwd, fake `claude`) referenced from
-  steps as `"<sandbox>"` and `"<sandbox-key>"`, so no scenario can touch
-  `~/.claude`; a fixture containing the home directory fails the run
-- `{:respond_control, subtype, response}` answers the most recent SDK control
-  request of that subtype; a step function receives the raw transcript, so
-  `ClaudeGolden.request_ids/1` answers a real `session/request_permission` or
-  `elicitation/create` id
-- Scenario-supplied ACP request ids must be strings: the adapter mints bare
-  monotonic integers starting at 1, and the harness refuses an integer id it
-  did not mint
-- Regenerate with `CLAUDE_GOLDEN=update`, exactly like the other two suites:
-
-```bash
-CLAUDE_GOLDEN=update mix test test/ex_mcp/acp/adapters/claude_sdk/characterization/catalog_golden_test.exs:42
-mix test test/ex_mcp/acp/adapters/claude_sdk/characterization/catalog_golden_test.exs
-```
+ACP protocol, native agent and vendor golden transcript tests belong to
+[ArborACP](https://github.com/trust-arbor/arbor_acp). They are not part of the MCP
+package or its CI jobs. Shared JSON-RPC and framing contracts are tested in the
+`arbor_rpc` package; MCP integration tests still check their use at each MCP
+transport boundary.
 
 ### Writing Tests
 
 Follow these patterns when writing tests:
 
 ```elixir
-defmodule ExMCP.SomeModuleTest do
+defmodule Arbor.MCP.SomeModuleTest do
   use ExUnit.Case, async: true  # Use async: false for shared state
   
   # Add appropriate tags
@@ -357,61 +307,42 @@ end
 
 ## Test Process Cleanup
 
-Tests that start servers can sometimes leave processes running if they crash. ExMCP provides several tools to clean up these stray processes:
+Use ExUnit supervision (`start_supervised!/1`) for test-owned server/client
+fixtures and distinct names or ephemeral ports for independent tests. The
+normal test support reports occupied ports; a port number alone does not prove
+that its listener belongs to the test run.
 
-### Automatic Cleanup
-
-```bash
-# Clean up before running tests (automatic with make test)
-mix test.cleanup
-
-# Manual cleanup with verbose output
-mix test.cleanup --verbose
-
-# Dry run to see what would be cleaned
-mix test.cleanup --dry-run
-
-# Skip automatic cleanup if needed
-SKIP_TEST_CLEANUP=true mix test
-```
-
-### What Gets Cleaned
-
-The cleanup tools will:
-- Stop any Cowboy listeners from tests
-- Kill registered test processes
-- Free up commonly used test ports (8080-8085, 9000-9002)
-- Clean up stray beam.smp processes from test runs
-
-### Manual Process Investigation
-
-If you encounter persistent process issues:
+To investigate a collision without stopping anything:
 
 ```bash
-# Check for running beam processes
-ps aux | grep beam
-
-# Check for listening ports
-lsof -i :8080-8085
-
-# Kill specific processes if needed
-pkill -f "beam.*test"
+lsof -nP -iTCP:8080 -sTCP:LISTEN
+mix test.cleanup --dry-run --verbose
 ```
+
+The legacy cleanup task can stop matching listeners/processes and target common
+test ports. Review its dry-run output before using it in a shared development
+session. Stop only processes that you started and can identify; broad `pkill`
+patterns can terminate unrelated applications. Runtime-owned resources should
+normally be reclaimed through their supervising test or Runtime shutdown.
 
 ## Contributing
 
 ### Contribution Workflow
 
 1. **Fork the repository** on GitHub
-2. **Create a feature branch** from `master`:
+2. **Create a feature branch** from the v2 migration branch while it is under review:
    ```bash
+   git checkout codex/v2-migration
    git checkout -b feature/your-feature-name
    ```
 3. **Make your changes** following the coding standards
 4. **Run quality checks**:
    ```bash
-   make quality  # Format, credo, compile checks
-   make test     # Full test suite
+   mix format --check-formatted
+   mix compile --warnings-as-errors
+   mix credo
+   mix test
+   mix docs --warnings-as-errors
    ```
 5. **Commit your changes** with conventional commit messages:
    ```bash
@@ -487,19 +418,24 @@ Include:
 
 ## Release Process
 
+The [v2 release plan](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/V2_RELEASE_PLAN.md)
+records the current package split, release order and qualification gates. The
+protocol transition checklist below is the historical 1.0 checklist and does not
+replace the v2 gates. A target date never waives a failing release gate.
+
 ### Version Management
 
-ExMCP follows [Semantic Versioning](https://semver.org/):
+ArborMCP follows [Semantic Versioning](https://semver.org/):
 
 - **Patch** (`0.6.1`): Bug fixes, documentation updates
 - **Minor** (`0.7.0`): New features, non-breaking changes
 - **Major** (`1.0.0`): Breaking changes
 
-### Release Checklist
+### Historical 1.0 Protocol Transition Checklist
 
-The [MCP 2026-07-28 migration plan](https://github.com/azmaveth/ex_mcp/blob/master/docs/MCP_2026_07_28_MIGRATION_PLAN.md) is the
+The [MCP 2026-07-28 migration plan](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_2026_07_28_MIGRATION_PLAN.md) is the
 authoritative checklist for the 1.0 protocol transition. The
-[coverage matrix](https://github.com/azmaveth/ex_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md) records the corresponding local and
+[coverage matrix](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md) records the corresponding local and
 official-suite evidence. If a gate misses, publish another release candidate;
 do not move unfinished protocol work into stable 1.0.
 
@@ -551,15 +487,15 @@ For critical bugs in production releases:
 - **This guide**: Development setup and processes
 - **[User Guide](guides/USER_GUIDE.md)**: Feature usage and examples  
 - **[Architecture Guide](ARCHITECTURE.md)**: Internal design decisions
-- **[MCP 2026-07-28 Migration Plan](https://github.com/azmaveth/ex_mcp/blob/master/docs/MCP_2026_07_28_MIGRATION_PLAN.md)**: Release gates and implementation record
-- **[MCP Coverage Matrix](https://github.com/azmaveth/ex_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md)**: Protocol-by-protocol test evidence
-- **[rc.5 to 1.0 API Diff](https://github.com/azmaveth/ex_mcp/blob/master/docs/API_DIFF_RC5_TO_1_0.md)**: Public compatibility audit
-- **[API Docs](https://hexdocs.pm/ex_mcp)**: Complete API reference
+- **[MCP 2026-07-28 Migration Plan](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_2026_07_28_MIGRATION_PLAN.md)**: Release gates and implementation record
+- **[MCP Coverage Matrix](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md)**: Protocol-by-protocol test evidence
+- **[rc.5 to 1.0 API Diff](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/API_DIFF_RC5_TO_1_0.md)**: Public compatibility audit
+- **[Published 1.x API Docs](https://hexdocs.pm/ex_mcp)**: Previous package reference; v2 documentation is generated with `mix docs` during development
 
 ### Community
 - **Elixir Forum**: For general Elixir questions
-- **ExMCP Community**: Growing community of contributors and users
+- **ArborMCP Community**: Growing community of contributors and users
 
 ---
 
-Thank you for contributing to ExMCP! Your contributions help make MCP implementation in Elixir more robust and accessible to the community.
+Thank you for contributing to ArborMCP! Your contributions help make MCP implementation in Elixir more robust and accessible to the community.

@@ -1,602 +1,334 @@
 # Phoenix Integration Guide
 
-ExMCP provides seamless integration with Phoenix applications through the `ExMCP.HttpPlug` module, which implements the standard Plug behavior. This allows you to easily add MCP (Model Context Protocol) server capabilities to your existing Phoenix applications.
+Mount `Arbor.MCP.HttpPlug` through your Phoenix router and supervise one MCP
+runtime separately from the host endpoint. The runtime initializes its handler
+once and owns scheduled callbacks, bounded output and configured services. The
+Phoenix request process owns its `Plug.Conn` and the host listener.
 
-## Quick Setup
+RC1 publication is pending. Until then, use a local `arbor_mcp`
+checkout and set `ARBOR_RPC_PATH` to the sibling `arbor_rpc` package when fetching
+dependencies. The released 1.x package remains `ex_mcp`. This guide describes
+the Runtime mounting contract; see the [RC notes](V2_RELEASE_CANDIDATE.md) for
+the qualified consumer scope and open stable-release gates.
 
-### 1. Add ExMCP to Your Phoenix Project
+## Dependencies
 
 ```elixir
-# In mix.exs
-defp deps do
-  [
-    {:ex_mcp, "~> 1.0"},
-    # ... your other dependencies
-  ]
-end
+# mix.exs, alongside your existing Phoenix dependencies
+{:arbor_mcp, path: "../arbor_mcp"}
 ```
 
-### 2. Create an MCP Handler
+Use MCP's `codex/v2-migration` branch, not its still-1.x `master`, and the
+separate ArborRPC `main` checkout. The [Quickstart](../getting-started/QUICKSTART.md)
+shows the clone and path setup.
 
-Create a handler module that implements your MCP server logic.
-For most Phoenix apps the **DSL** (shown first) is the easiest approach.
-Raw callbacks are also supported when you need fully dynamic behavior.
+After publication, replace the path dependency with
+`{:arbor_mcp, "== 2.0.0-rc.2"}` and remove the local RPC override. Source
+installation still requires C17 even though Phoenix owns the listener.
 
-#### Recommended: DSL Handler
+Use your host application's HTTP adapter. A mounted plug does not require an
+ArborMCP-owned Cowboy or Bandit listener. The consumer qualification fixture pins
+Phoenix 1.8.15, whose package declares Elixir `~> 1.15`; that includes ArborMCP's
+Elixir 1.17 minimum. Your application's own Phoenix, adapter and dependency
+requirements still apply. This is a qualified consumer version, not a promise
+that every Phoenix release works with every ArborMCP toolchain.
+
+## Handler and runtime
+
+A handler uses the same DSL as a standalone MCP server:
 
 ```elixir
-# lib/my_app/mcp_handler.ex
 defmodule MyApp.MCPHandler do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL, name: "my-phoenix-app", version: "1.0.0"
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, name: "my-phoenix-app", version: "1.0.0"
 
-  tool "get_user_count", "Get the total number of registered users" do
-    run fn _args, state ->
-      count = MyApp.Accounts.count_users()
-      {:ok, %{content: [%{type: "text", text: "Total users: #{count}"}]}, state}
-    end
-  end
+  @impl true
+  def init(_application_opts), do: {:ok, %{calls: 0}}
 
   tool "search_posts", "Search blog posts" do
-    param :query, :string, required: true, description: "Search query"
-    param :limit, :integer, default: 10
+    param :query, :string, required: true
+    param :limit, :integer, default: 10, minimum: 1, maximum: 50
 
     run fn %{query: query, limit: limit}, state ->
       posts = MyApp.Blog.search_posts(query, limit: limit)
-
-      results =
-        Enum.map(posts, fn post ->
-          %{type: "text", text: "**#{post.title}**\n#{post.excerpt}\nPublished: #{post.published_at}"}
-        end)
-
-      {:ok, %{content: results}, state}
+      content = Enum.map(posts, &%{type: "text", text: &1.title})
+      {:ok, %{content: content}, %{state | calls: state.calls + 1}}
     end
   end
 end
 ```
 
-#### Alternative: Raw Handler Callbacks
-
-Use this style only when you need completely dynamic tool/resource lists.
+Add a named runtime to the application supervisor before the endpoint:
 
 ```elixir
-# lib/my_app/mcp_handler.ex
-defmodule MyApp.MCPHandler do
-  use ExMCP.Server.Handler
+children = [
+  # Your application's other children...
+  {Arbor.MCP.Server.Runtime,
+   name: MyApp.MCPRuntime,
+   transport: :mounted_http,
+   handler: MyApp.MCPHandler,
+   handler_args: [],
+   request_timeout_ms: 10_000,
+   services: [replay_cache: []]},
+  MyAppWeb.Endpoint
+]
 
-  @impl true
-  def init(_args), do: {:ok, %{}}
-
-  @impl true
-  def handle_initialize(_params, state) do
-    {:ok,
-     %{
-       protocolVersion: ExMCP.protocol_version(),
-       serverInfo: %{
-         name: Application.get_env(:my_app, :app_name, "my-phoenix-app"),
-         version: Application.spec(:my_app, :vsn) |> to_string()
-       },
-       capabilities: %{
-         tools: %{},
-         resources: %{}
-       }
-     }, state}
-  end
-
-  @impl true
-  def handle_list_tools(_cursor, state) do
-    tools = [
-      %{
-        name: "get_user_count",
-        description: "Get the total number of registered users",
-        inputSchema: %{type: "object", properties: %{}}
-      },
-      %{
-        name: "search_posts",
-        description: "Search blog posts",
-        inputSchema: %{
-          type: "object",
-          properties: %{
-            query: %{type: "string", description: "Search query"},
-            limit: %{type: "integer", minimum: 1, maximum: 50, default: 10}
-          },
-          required: ["query"]
-        }
-      }
-    ]
-
-    {:ok, tools, nil, state}
-  end
-
-  @impl true
-  def handle_call_tool("get_user_count", _args, state) do
-    count = MyApp.Accounts.count_users()
-
-    {:ok,
-     %{
-       content: [
-         %{type: "text", text: "Total registered users: #{count}"}
-       ]
-     }, state}
-  end
-
-  def handle_call_tool("search_posts", args, state) do
-    query = Map.get(args, "query")
-    limit = Map.get(args, "limit", 10)
-
-    posts = MyApp.Blog.search_posts(query, limit: limit)
-
-    results =
-      Enum.map(posts, fn post ->
-        %{
-          type: "text",
-          text: "**#{post.title}**\n#{post.excerpt}\nPublished: #{post.published_at}"
-        }
-      end)
-
-    {:ok, %{content: results}, state}
-  end
-
-  def handle_call_tool(tool_name, _args, state) do
-    {:ok,
-     %{
-       content: [%{type: "text", text: "Unknown tool: #{tool_name}"}],
-       isError: true
-     }, state}
-  end
-
-  # Other callbacks (provide sensible defaults or implementations)
-  @impl true
-  def handle_list_resources(_cursor, state), do: {:ok, [], nil, state}
-
-  @impl true
-  def handle_read_resource(_uri, state) do
-    {:error, "Resources not implemented", state}
-  end
-
-  @impl true
-  def handle_list_prompts(_cursor, state), do: {:ok, [], nil, state}
-
-  @impl true
-  def handle_get_prompt(_name, _args, state) do
-    {:error, "Prompts not implemented", state}
-  end
-end
+Supervisor.start_link(children, strategy: :one_for_one, name: MyApp.Supervisor)
 ```
 
-### 3. Add to Your Phoenix Router
+`handler_args` supplies application-level `init/1` arguments. `init/1` is not run
+for every HTTP request. Stateful callbacks are serialized by the runtime; use
+request context for identity and authorization, rather than putting the current
+HTTP user into persistent handler state. The explicit `:mounted_http` mode selects legacy-capable runtime service defaults
+for sessions and resource subscriptions; replay protection remains explicitly
+configured above. A generic runtime keeps these services opt-in. Standalone
+modern-only deployments should select only the services they use.
+
+A supervised child follows its supervisor's restart policy. To leave it stopped,
+terminate that child through its parent supervisor. `Runtime.stop/2` stops the
+current runtime instance and its proven owned work; it does not stop the borrowed
+Phoenix endpoint, socket pool or listener.
+
+## Endpoint parser and router
+
+Keep the host JSON parser before the router. Already parsed JSON is read from
+`conn.body_params`; the plug does not require a second body read.
 
 ```elixir
-# lib/my_app_web/router.ex
+# lib/my_app_web/endpoint.ex, before `plug MyAppWeb.Router`
+plug Plug.Parsers,
+  parsers: [:urlencoded, :multipart, :json],
+  pass: ["*/*"],
+  json_decoder: Phoenix.json_library()
+
+plug MyAppWeb.Router
+```
+
+Mount the plug through `forward`:
+
+```elixir
 defmodule MyAppWeb.Router do
   use MyAppWeb, :router
 
-  # ... your existing pipelines
-
-  pipeline :mcp do
-    plug :accepts, ["json"]
-    # Add authentication if needed:
-    # plug MyAppWeb.Plugs.Authenticate
-  end
-
-  # ... your existing routes
-
   scope "/api" do
-    pipe_through :mcp
-    
-    # Mount MCP server at /api/mcp
-    forward "/mcp", ExMCP.HttpPlug,
-      handler: MyApp.MCPHandler,
+    forward "/mcp", Arbor.MCP.HttpPlug,
+      runtime: MyApp.MCPRuntime,
       protocol_mode: :prefer_modern,
-      server_info: %{
-        name: "my-phoenix-app",
-        version: "1.0.0"
-      },
-      cors_enabled: true    # Enable CORS for web clients
+      path: "/mcp",
+      allowed_hosts: ["mcp.example.com"],
+      allowed_origins: ["https://app.example.com"]
   end
 end
 ```
 
-`ExMCP.HttpPlug` routes relative to its mount point and halts the conn after
-responding, so `forward` is the right way to mount it. Bodies already consumed
-by the endpoint's `Plug.Parsers` are picked up from `conn.body_params`. One
-thing a forward cannot provide is the host-root RFC 9728 metadata path,
-`/.well-known/oauth-protected-resource/api/mcp`: when you enable OAuth, mount
-`ExMCP.Plugs.ProtectedResourceMetadata` at the host root for it.
+The public mount is `/api/mcp`. `forward` supplies relative `path_info` and the
+mount prefix in `script_name`; the plug handles its mount root. `:path` is the
+public option for the configured logical endpoint, defaulting to `/mcp`. That
+configured value appears in `Context.current().endpoint`; it is not the Phoenix
+mount prefix. HTTP correlation separately validates the actual mount identity.
+The runtime name is resolved for each request, so the compiled router can remain
+in place across runtime replacement.
 
-`:prefer_modern` accepts both MCP eras and advertises `2026-07-28`, the latest
-stable revision, first. Use `:modern_only` only when every client is modern;
-use `:legacy_only` as a rollback switch. The curl request below deliberately
-uses the legacy compatibility shape. ExMCP clients in a modern-enabled mode
-send the required 2026-07-28 metadata and routing headers automatically.
+Do not restrict this route to an `accepts` pipeline that excludes
+`text/event-stream`. The same POST may return JSON or SSE, and legacy GET uses
+SSE. Keep browser CORS, permitted origins, host validation and authentication
+consistent with the host deployment. A request without `Origin` still needs
+appropriate host and authentication policy.
 
-### 4. Test Your Integration
+`HttpPlug` responds and halts the connection. An unconditional endpoint plug
+would consume unrelated routes. If OAuth protected-resource discovery is enabled,
+mount `Arbor.MCP.Plugs.ProtectedResourceMetadata` at the host root for
+`/.well-known/oauth-protected-resource/api/mcp`; the router forward cannot see
+that host-root path.
 
-Start your Phoenix server and test the MCP endpoint:
+## Request identity and application context
 
-```bash
-# Start Phoenix server
-mix phx.server
-
-# Test with curl
-curl -X POST http://localhost:4000/api/mcp \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "tools/list",
-    "params": {}
-  }'
-
-# Expected response:
-# {
-#   "jsonrpc": "2.0",
-#   "id": 1,
-#   "result": {
-#     "tools": [
-#       {
-#         "name": "get_user_count",
-#         "description": "Get the total number of registered users",
-#         "input_schema": {"type": "object", "properties": {}}
-#       },
-#       {
-#         "name": "search_posts",
-#         "description": "Search blog posts",
-#         "input_schema": {
-#           "type": "object",
-#           "properties": {
-#             "query": {"type": "string", "description": "Search query"},
-#             "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10}
-#           },
-#           "required": ["query"]
-#         }
-#       }
-#     ]
-#   }
-# }
-```
-
-## Advanced Configuration
-
-### Authentication & Authorization
-
-Integrate MCP with your existing Phoenix authentication:
+Authenticate in a host plug before the forward. Resolve trusted identity from
+verified server-side facts, rather than from tool arguments or caller-supplied
+identity headers. For example, after your authentication plug assigns
+`:current_user` and `:current_tenant`:
 
 ```elixir
-# lib/my_app_web/plugs/mcp_auth.ex
-defmodule MyAppWeb.Plugs.MCPAuth do
-  import Plug.Conn
-  
-  def init(opts), do: opts
-  
-  def call(conn, _opts) do
-    case get_req_header(conn, "authorization") do
-      ["Bearer " <> token] ->
-        case MyApp.Auth.verify_token(token) do
-          {:ok, user} ->
-            assign(conn, :current_user, user)
-          
-          {:error, _reason} ->
-            conn
-            |> put_status(401)
-            |> Phoenix.Controller.json(%{error: "Invalid token"})
-            |> halt()
-        end
-      
-      _ ->
-        conn
-        |> put_status(401)
-        |> Phoenix.Controller.json(%{error: "Authorization required"})
-        |> halt()
+defmodule MyAppWeb.MCPContext do
+  def application(conn, request) do
+    %{
+      user: conn.assigns[:current_user],
+      tenant: conn.assigns[:current_tenant],
+      request_id: request["id"]
+    }
+  end
+
+  def principal(conn, _request, _token_info) do
+    case conn.assigns[:current_user] do
+      nil -> nil
+      user -> to_string(user.id)
+    end
+  end
+
+  def tenant(conn, _request, _token_info) do
+    case conn.assigns[:current_tenant] do
+      nil -> nil
+      tenant -> to_string(tenant.id)
     end
   end
 end
-
-# In your router:
-pipeline :mcp_authenticated do
-  plug :accepts, ["json"]
-  plug MyAppWeb.Plugs.MCPAuth
-end
-
-scope "/api" do
-  pipe_through :mcp_authenticated
-  
-  forward "/mcp", ExMCP.HttpPlug,
-    handler: MyApp.AuthenticatedMCPHandler,
-    handler_opts: fn conn ->
-      [current_user: conn.assigns[:current_user]]
-    end,
-    server_info: %{name: "secure-app", version: "1.0.0"}
-end
 ```
 
-### Accessing Request Context
-
-Access the current user and other Phoenix context in your MCP handler:
+Add these options to the forward after your host authentication pipeline:
 
 ```elixir
-defmodule MyApp.AuthenticatedMCPHandler do
-  use ExMCP.Server.Handler
-
-  @impl true
-  def init(opts) do
-    {:ok, %{current_user: Keyword.fetch!(opts, :current_user)}}
-  end
-  
-  @impl true
-  def handle_call_tool("get_my_posts", _args, state) do
-    user = state.current_user
-    
-    posts = MyApp.Blog.list_user_posts(user.id)
-    
-    results = Enum.map(posts, fn post ->
-      %{type: "text", text: "#{post.title}: #{post.excerpt}"}
-    end)
-    
-    {:ok, results, state}
-  end
-end
+[
+  handler_opts: {MyAppWeb.MCPContext, :application, []},
+  principal_id: {MyAppWeb.MCPContext, :principal, []},
+  tenant_id: {MyAppWeb.MCPContext, :tenant, []}
+]
 ```
 
-### Server-Sent Events (SSE)
+For runtime mounting, `handler_opts` becomes the callback's per-request
+`Arbor.MCP.Server.Context.current().application_context`. A static value, one-arity `conn` function,
+two-arity `conn, request` function or MFA is supported. The application-context
+MFA receives `[conn, request | extra_args]`; identity MFAs receive
+`[conn, request, token_info | extra_args]`. A router can safely store these MFA
+options without embedding a closure in its compiled configuration.
 
-ExMCP supports real-time communication via SSE. Clients can connect to the SSE endpoint for live updates:
-
-```javascript
-// JavaScript client example
-const eventSource = new EventSource('http://localhost:4000/api/mcp/sse');
-
-eventSource.onmessage = function(event) {
-  const response = JSON.parse(event.data);
-  console.log('Received MCP response:', response);
-};
-
-// Send MCP requests via regular HTTP POST
-fetch('http://localhost:4000/api/mcp', {
-  method: 'POST',
-  headers: {'Content-Type': 'application/json'},
-  body: JSON.stringify({
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'tools/call',
-    params: {name: 'get_user_count', arguments: {}}
-  })
-});
-// Response will arrive via SSE connection
-```
-
-### Resource Integration
-
-Expose your Phoenix application data as MCP resources:
+Use the context inside the callback:
 
 ```elixir
-@impl true
-def handle_list_resources(_cursor, state) do
-  resources = [
-    %{
-      uri: "phoenix://users",
-      name: "User List",
-      description: "List of all registered users",
-      mimeType: "application/json"
-    },
-    %{
-      uri: "phoenix://posts/recent",
-      name: "Recent Posts",
-      description: "Most recent blog posts",
-      mimeType: "application/json"
-    }
-  ]
-  {:ok, resources, nil, state}
-end
+alias Arbor.MCP.Server.Context
 
-@impl true
-def handle_read_resource("phoenix://users", state) do
-  users = MyApp.Accounts.list_users()
-  
-  data = Enum.map(users, fn user ->
-    %{id: user.id, email: user.email, name: user.name}
-  end)
-  
-  content = [%{
-    type: "text",
-    text: Jason.encode!(data, pretty: true),
-    mimeType: "application/json"
-  }]
-  
-  {:ok, content, state}
-end
+# Inside a tool callback:
+context = Context.current()
+user = context.application_context.user
+MyApp.Authorization.authorize!(user, :read_posts)
 
-def handle_read_resource("phoenix://posts/recent", state) do
-  posts = MyApp.Blog.list_recent_posts(limit: 10)
-  
-  content = [%{
-    type: "text", 
-    text: Jason.encode!(posts, pretty: true),
-    mimeType: "application/json"
-  }]
-  
-  {:ok, content, state}
+if Context.progress_token() do
+  :ok = Context.report_progress(1, 2, "Searching")
 end
 ```
 
-## Production Considerations
+Context and its origin proof are invocation-scoped. Retain neither the context
+nor a `Plug.Conn` as handler state for a later request. Successful callbacks keep
+admitted effects valid under their original cutoff; cancellation, expiry and
+retired peers suppress queued effects. Completed callback state is not rolled
+back by a later advisory cancellation.
 
-### Performance
+## Modern HTTP requests
 
-- **Connection Pooling**: Use a connection pool for database operations in your MCP handlers
-- **Caching**: Cache frequently requested data to reduce database load
-- **Rate Limiting**: Implement rate limiting for MCP endpoints if needed
+`:prefer_modern` accepts both eras. Modern requests use protocol `2026-07-28`,
+per-request capability metadata and routing headers. They do not use a transport
+session or an `initialize` handshake.
 
-```elixir
-# Rate limiting example with Hammer
-pipeline :mcp_rate_limited do
-  plug :accepts, ["json"]
-  plug MyAppWeb.Plugs.RateLimit, bucket_name: "mcp_api"
-end
+```bash
+curl http://localhost:4000/api/mcp \
+  -H 'Host: mcp.example.com' \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'MCP-Protocol-Version: 2026-07-28' \
+  -H 'MCP-Method: tools/call' \
+  -H 'MCP-Name: search_posts' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_posts","arguments":{"query":"elixir"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
 ```
 
-### Security
+The response contains a tool result with `content`; wire tool descriptors use
+`inputSchema`, not `input_schema`. The DSL validates declared parameters and
+inserts explicit defaults before calling the tool. Raw dynamic handlers must
+provide their own compiled validation/default policy.
 
-- **Input Validation**: Always validate tool arguments and resource URIs
-- **Authorization**: Check user permissions before executing tools or reading resources
-- **Audit Logging**: Log all MCP operations for security auditing
+Progress and logs travel on the originating POST's SSE response when that
+request selects SSE and supplies the required metadata. They are not delivered
+through a separate modern `EventSource` connection. Modern GET and DELETE return
+405. Use the ArborMCP client or an SDK that implements the selected protocol
+era for full request/response-stream handling.
 
-```elixir
-@impl true
-def handle_call_tool(tool_name, args, state) do
-  # Log the operation
-  Logger.info("MCP tool called", tool: tool_name, args: args, user: get_current_user_id())
-  
-  # Validate permissions
-  case check_tool_permission(tool_name, get_current_user()) do
-    :ok -> 
-      # Execute tool
-      do_call_tool(tool_name, args, state)
-    
-    {:error, reason} ->
-      error = %{code: -32000, message: "Permission denied: #{reason}"}
-      {:error, error, state}
-  end
-end
+Anonymous cancellation sent from another POST is advisory and cannot authorize
+cross-request cancellation. Closing the originating response stream can cancel
+its own pending work. Cross-POST cancellation requires a matching trusted
+principal/tenant, actual endpoint and request scope. Returning 202 for a
+notification is not proof that a target was found or canceled.
+
+## Legacy sessions and SSE
+
+Legacy clients first POST `initialize` with a supported legacy revision, such
+as `2025-11-25`, then retain the returned `Mcp-Session-Id`. Send the negotiated
+`MCP-Protocol-Version` and that session ID on later session requests.
+
+```bash
+curl -i http://localhost:4000/api/mcp \
+  -H 'Host: mcp.example.com' \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"example","version":"1"}}}'
+
+# Substitute the actual returned session ID:
+curl http://localhost:4000/api/mcp \
+  -H 'Host: mcp.example.com' \
+  -H 'Content-Type: application/json' \
+  -H 'Mcp-Session-Id: SESSION_ID' \
+  -H 'MCP-Protocol-Version: 2025-11-25' \
+  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+
+curl http://localhost:4000/api/mcp \
+  -H 'Host: mcp.example.com' \
+  -H 'Accept: text/event-stream' \
+  -H 'Mcp-Session-Id: SESSION_ID' \
+  -H 'MCP-Protocol-Version: 2025-11-25' \
+  -H 'Last-Event-ID: LAST_RECEIVED_EVENT_ID'
+
+curl -X DELETE http://localhost:4000/api/mcp \
+  -H 'Host: mcp.example.com' \
+  -H 'Mcp-Session-Id: SESSION_ID' \
+  -H 'MCP-Protocol-Version: 2025-11-25'
 ```
 
-### Monitoring
+GET replay uses the runtime's addressed session service. Disconnecting an SSE
+stream preserves the initialized session for reconnect; successful DELETE ends
+that session and its stream without stopping the host listener. An unknown or
+foreign replay cursor fails before an SSE response is started. The deprecated
+2024-11-05 `/sse` and `/message` aliases require explicit
+`legacy_http_sse: true`; they are a compatibility flow, not the modern transport.
 
-Monitor your MCP endpoints like any other Phoenix endpoint:
+The curl examples set `Host` to match the router's allowlist while connecting
+to a local development socket. Use the actual deployment host in production.
+Omit `Last-Event-ID` for a first GET; substitute only a cursor received from
+this initialized session when reconnecting.
 
-```elixir
-# Add Telemetry events for MCP operations
-defmodule MyApp.MCPTelemetry do
-  def track_tool_call(tool_name, duration, success) do
-    :telemetry.execute(
-      [:my_app, :mcp, :tool_call],
-      %{duration: duration},
-      %{tool: tool_name, success: success}
-    )
-  end
-end
+## Ownership, pressure and deployment
 
-# In your handler:
-@impl true
-def handle_call_tool(tool_name, args, state) do
-  start_time = System.monotonic_time()
-  
-  result = do_call_tool(tool_name, args, state)
-  
-  duration = System.monotonic_time() - start_time
-  success = case result do
-    {:ok, _, _} -> true
-    _ -> false
-  end
-  
-  MyApp.MCPTelemetry.track_tool_call(tool_name, duration, success)
-  
-  result
-end
-```
+The runtime prepares bounded output before committing handler state. The HTTP
+request process remains borrowed: the library does not kill the host process or
+adopt its listener. A blocked or uncertain socket write remains charged until
+actual completion or confirmed socket loss. A delivery ACK means the adapter
+write returned, not that the client consumed the response. An in-flight write
+may be irreversible; timeout does not promise rollback, retry or remote cleanup.
 
-## Examples and Use Cases
+Set runtime input/output limits and finite request/output/cleanup budgets for
+your workload. Apply host body limits, authentication and rate limits before
+MCP admission. Handler state, custom side effects, kernel buffers and arbitrary
+host mailbox sends are outside those managed limits.
 
-### E-commerce Integration
+Keep the host's Logger configuration under application control. Audit only
+approved identifiers and timings; logging tool arguments, results, tokens,
+`Plug.Conn` or trusted `sys` state exposes application data. An application that
+logs returned typed errors is making its own trusted diagnostic decision.
 
-```elixir
-# Expose product search and order management
-@impl true
-def handle_list_tools(_cursor, state) do
-  tools = [
-    %{
-      name: "search_products",
-      description: "Search for products in the catalog",
-      inputSchema: %{
-        type: "object",
-        properties: %{
-          query: %{type: "string"},
-          category: %{type: "string"},
-          price_max: %{type: "number"}
-        }
-      }
-    },
-    %{
-      name: "get_order_status", 
-      description: "Get the status of an order",
-      inputSchema: %{
-        type: "object",
-        properties: %{
-          order_id: %{type: "string"}
-        },
-        required: ["order_id"]
-      }
-    }
-  ]
-  {:ok, tools, nil, state}
-end
-```
-
-### Analytics Dashboard
-
-```elixir
-# Expose analytics data as MCP tools
-@impl true
-def handle_call_tool("get_dashboard_metrics", args, state) do
-  timeframe = Map.get(args, "timeframe", "last_7_days")
-  
-  metrics = MyApp.Analytics.get_metrics(timeframe)
-  
-  result = [%{
-    type: "text",
-    text: """
-    📊 Dashboard Metrics (#{timeframe}):
-    
-    👥 Active Users: #{metrics.active_users}
-    📈 Page Views: #{metrics.page_views}
-    💰 Revenue: $#{metrics.revenue}
-    📊 Conversion Rate: #{metrics.conversion_rate}%
-    """
-  }]
-  
-  {:ok, result, state}
-end
-```
+For a standalone library-owned HTTP listener, use the runtime/listener startup
+contract in [HTTP listeners](../HTTP_LISTENERS.md). Lower-level listener helpers
+and a Phoenix-mounted borrowed endpoint have different ownership. Do not wrap a
+host endpoint in library-owned shutdown machinery.
 
 ## Troubleshooting
 
-### Common Issues
+- A missing named runtime is an admission failure. Check the runtime child and
+  its name before changing routing or retrying a committed operation.
+- A parser failure occurs before MCP dispatch. Check the endpoint JSON decoder,
+  content type and host body limits.
+- A 403 origin or 421 host response occurs before tool execution. Correct the
+  deployment allowlists rather than disabling validation indiscriminately.
+- A stalled SSE response needs proxy/adapter timeout and buffering checks. A
+  timeout does not prove that an already-started write or application side
+  effect was undone.
 
-1. **CORS Errors**: Ensure `cors_enabled: true` in your HttpPlug configuration
-2. **Authentication Issues**: Verify your authentication pipeline is working correctly
-3. **SSE Connection Drops**: Check your load balancer timeout settings
-4. **JSON Parsing Errors**: Validate your tool arguments schema
-
-### Debug Mode
-
-Enable debug logging to troubleshoot issues:
-
-```elixir
-# In config/dev.exs
-config :logger, level: :debug
-
-# In your handler:
-require Logger
-
-@impl true
-def handle_call_tool(tool_name, args, state) do
-  Logger.debug("MCP tool call: #{tool_name} with args: #{inspect(args)}")
-  
-  result = do_call_tool(tool_name, args, state)
-  
-  Logger.debug("MCP tool result: #{inspect(result)}")
-  
-  result
-end
-```
-
-## Next Steps
-
-1. **Read the [ExMCP Documentation](https://hexdocs.pm/ex_mcp)** for complete API reference
-2. **Check out [Examples](https://github.com/azmaveth/ex_mcp/tree/master/examples)** for more implementation patterns
-3. **Review the [Security Guide](../SECURITY.md)** for production deployment best practices
-4. **Join the Community** - contribute to the project or ask questions in Issues
-
----
-
-**Ready to make your Phoenix app AI-ready?** Start with the Quick Setup above and begin exposing your application's capabilities to AI models through the standardized MCP protocol.
+See [DSL guide](../DSL_GUIDE.md), [configuration](../CONFIGURATION.md),
+[API migration](../V2_API_MIGRATION.md) and [security](../SECURITY.md) for the
+remaining contracts. The [RC notes](V2_RELEASE_CANDIDATE.md) distinguish the
+tested installed/Phoenix consumers from continuous-soak and stable-release gates.

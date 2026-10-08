@@ -7,6 +7,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0-rc.2] — 2026-10-08
+
+### 2.0.0-rc.2 (unreleased)
+
+- Add explicit `Client.all_tools/2`, `all_resources/2`,
+  `all_resource_templates/2` and `all_prompts/2`. Collection follows opaque
+  cursors within one deadline and finite page/item/byte limits, rejects cycles
+  and malformed pages, and does not report partial lists as complete. Ordinary
+  listing methods retain their single-page Response and metadata.
+- Correct Client protocol-result typespecs to include the default Response
+  struct and explicit map format. Pagination requests retain their original
+  absolute deadline through multi-round request handling.
+- Disable protocol consolidation in test builds so test-only JSON encoders
+  take effect and the full suite can run with warnings treated as errors.
+
+- Support native BEAM descriptor/content keys in Response accessors without JSON
+  conversion or atom creation; preserve canonical string-key precedence and nulls.
+  Explicit resource extraction also accepts native callback text fields.
+- Consolidate public entrypoints in Client and Server. Add transport-aware Server
+  startup/child specs, bounded stop and statistics; route DSL startup through the
+  same constructor. Add explicit Client extraction helpers, scoped connectivity
+  probe, tagged status/bang inspection and ClientConfig connections. Preserve root
+  compatibility semantics and forward transport-specific ClientConfig options.
+- Ship agent usage rules in Hex archives and ExDoc, with downstream UsageRules
+  setup guidance and API-reference validation through the existing docs gate.
+- Preserve complete Response wire fields, extensions, pagination and false/null
+  presence in `to_raw/1`; remove unused `to_test_map/1`. Constructors emit `_meta`.
+- Read standard resource `contents`, retain nontext results and offer explicit
+  complete formats on facade conveniences. Normalized tool failures return a
+  ToolError retaining the complete result; forward documented request controls
+  and reject unsupported facade options.
+- Keep local timeout classification as `{:error, :timeout}` in both formats.
+  Runtime statistics return `{:ok, map} | {:error, reason}`; `stats!/1` provides
+  explicit value-or-raise inspection. Add advanced Runtime types/specifications.
+
+- Reject duplicate DSL parameters/arguments, repeated instructions or `use`
+  options, unknown options, stray instructions and contextually ignored metadata
+  at compilation with source diagnostics.
+- Remove implementation bridges from Client, DSL, Result and Runtime facades;
+  preserve documented constructors and explicitly document advanced Runtime
+  operations. Cross-module implementation owners remain internal modules.
+- Route top-level `disconnect/1` through bounded Client cleanup and propagate
+  failures; `ping/2` reports unconfirmed cleanup. Preserve already-stopped
+  idempotence and remove the inaccurate transport-fallback capability flag.
+- Keep ArborMCP on 2.x while ArborRPC, ArborACP and its optional adapter bundle
+  start independent 1.x release lines. Require ArborRPC `~> 1.0.0-rc.1`; update
+  package preparation, CI and installed-version checks for independent versions.
+- The original four `2.0.0-rc.1` packages were published on October 6. Existing
+  versions and tags are preserved; retirement follows replacement publication.
+
+- Compare output-ledger revision tokens during atomic updates to avoid repeated
+  equality checks over retained reply data. Preserve generation fencing,
+  lifetime and capacity accounting, deadlines and retry limits. Development
+  builds after RC1 require a cold runtime restart when upgrading or rolling back
+  because the internal ledger table layout changes.
+- Use OTP's JSON encoder for prepared protocol output, preserving plain-value
+  and UTF-8 validation, exact frame limits, retained-memory charges and binary
+  output/batch interfaces. JSON object member order is unspecified; consumers
+  should compare decoded objects rather than serialized key order.
+- Avoid repeated closure traversal for freshly checked, function-free output
+  metadata. Arbitrary scopes and metadata retain full accounting; charges are
+  recomputed for the current term rather than cached.
+- Preserve the ExMCP 1.x maintenance branch with backport and compatible
+  minor-release policy; document cold restart, cutover and rollback for v2 consumers.
+- Allow warnings-as-errors compilation in host applications using Ranch 2.x.
+  Runtime-owned Cowboy listeners still require Ranch 1.8.1.
+- Allow warnings-as-errors compilation when the optional Cowboy/Ranch stack is
+  absent. Guarded listener calls preserve the same version and ownership checks.
+- Allow compatible optional Bandit, Thousand Island and Ranch updates in host
+  applications. Standalone owned listeners still enforce their qualified
+  constructor versions; mounted host listeners use the host application’s graph.
+- The original candidate published `arbor_mcp` `2.0.0-rc.1` under `Arbor.MCP.*`. ACP moves to
+  `arbor_acp`, vendor adapters to optional `arbor_acp_adapters`, and shared
+  subprocess/framing support to `arbor_rpc`.
+- Route server transports through a supervised per-server Runtime with bounded
+  scheduling, admission, output, cancellation and shutdown.
+- Replace legacy HTTP endpoint wrappers with Runtime-backed `Arbor.MCP.HttpPlug`
+  mounts and optional standalone listeners. Retire the old `Server.Tools` family
+  and deprecated compatibility APIs.
+- Add the [v1-to-v2 migration guide](docs/guides/MIGRATING_V1_TO_V2.md) and
+  [RC testing notes](docs/guides/V2_RELEASE_CANDIDATE.md), including the documented
+  request-ID capacity, native build requirements and open stable-release gates.
+- Avoid redundant JSON validation and nil-control accounting work while retaining
+  lifetime and capacity guarantees. Fixed scheduling costs remain measurable.
+
+The following retained development notes were recorded before the package split.
+Their `ExMCP.*` names describe the original APIs; use the migration guide above
+for current owners and replacements. Published historical release sections are
+unchanged.
+
 ### Fixed
 
 - **Security:** `ExMCP.Authorization.ProtectedResourceMetadata.discover/2`

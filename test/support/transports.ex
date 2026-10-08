@@ -1,9 +1,9 @@
-defmodule ExMCP.Test.Support.Transports do
+defmodule Arbor.MCP.Test.Support.Transports do
   @moduledoc """
   Test support module for transport-related testing utilities.
 
   This module provides helpers for testing different transport mechanisms
-  used in ExMCP, including HTTP, stdio, and BEAM transports. It includes
+  used in Arbor.MCP, including HTTP, stdio, and BEAM transports. It includes
   mock transport implementations and utilities for testing transport behavior.
   """
 
@@ -45,7 +45,7 @@ defmodule ExMCP.Test.Support.Transports do
       :beam ->
         Map.merge(base_config, %{
           target_node: Keyword.get(opts, :target_node, node()),
-          module: Keyword.get(opts, :module, ExMCP.TestServer),
+          module: Keyword.get(opts, :module, Arbor.MCP.TestServer),
           function: Keyword.get(opts, :function, :handle_message)
         })
 
@@ -139,7 +139,7 @@ defmodule ExMCP.Test.Support.Transports do
   def mock_http_headers(opts \\ []) do
     base_headers = %{
       "content-type" => "application/json",
-      "user-agent" => "ExMCP-Test/1.0"
+      "user-agent" => "Arbor.MCP-Test/1.0"
     }
 
     auth_headers =
@@ -197,7 +197,7 @@ defmodule ExMCP.Test.Support.Transports do
       "jsonrpc" => "2.0",
       "method" => method,
       "params" => params,
-      "id" => ExMCP.Internal.Protocol.generate_id()
+      "id" => Arbor.MCP.Internal.Protocol.generate_id()
     }
   end
 
@@ -213,7 +213,7 @@ defmodule ExMCP.Test.Support.Transports do
   end
 end
 
-defmodule ExMCP.Test.Support.Transports.MockTransport do
+defmodule Arbor.MCP.Test.Support.Transports.MockTransport do
   @moduledoc false
   # Mock transport GenServer for testing
 
@@ -295,7 +295,7 @@ defmodule ExMCP.Test.Support.Transports.MockTransport do
   end
 end
 
-defmodule ExMCP.Test.Support.Transports.Http do
+defmodule Arbor.MCP.Test.Support.Transports.Http do
   @moduledoc """
   HTTP transport test helper with SecurityGuard integration.
 
@@ -305,7 +305,7 @@ defmodule ExMCP.Test.Support.Transports.Http do
 
   use GenServer
 
-  alias ExMCP.Transport.SecurityGuard
+  alias Arbor.MCP.Transport.SecurityGuard
 
   defstruct [:port, :server_pid, :security_guard, :requests, :responses]
 
@@ -431,7 +431,7 @@ defmodule ExMCP.Test.Support.Transports.Http do
         }
 
         config = %{
-          consent_handler: ExMCP.ConsentHandler.Test,
+          consent_handler: Arbor.MCP.ConsentHandler.Test,
           trusted_hosts: ["localhost", "127.0.0.1"]
         }
 
@@ -461,7 +461,7 @@ defmodule ExMCP.Test.Support.Transports.Http do
 
             {:reply, {:ok, response, received_command}, state}
 
-          {:error, %ExMCP.Transport.SecurityError{type: type}} ->
+          {:error, %Arbor.MCP.Transport.SecurityError{type: type}} ->
             # Security violation
             {:reply, {:error, type}, state}
         end
@@ -494,7 +494,7 @@ defmodule ExMCP.Test.Support.Transports.Http do
   end
 end
 
-defmodule ExMCP.Test.Support.Transports.Stdio do
+defmodule Arbor.MCP.Test.Support.Transports.Stdio do
   @moduledoc """
   Stdio transport test helper with SecurityGuard integration.
 
@@ -504,7 +504,7 @@ defmodule ExMCP.Test.Support.Transports.Stdio do
 
   use GenServer
 
-  alias ExMCP.Transport.SecurityGuard
+  alias Arbor.MCP.Transport.SecurityGuard
 
   defstruct [:security_guard, :requests, :responses]
 
@@ -608,7 +608,7 @@ defmodule ExMCP.Test.Support.Transports.Stdio do
         }
 
         config = %{
-          consent_handler: ExMCP.ConsentHandler.Test,
+          consent_handler: Arbor.MCP.ConsentHandler.Test,
           trusted_hosts: ["localhost", "127.0.0.1"]
         }
 
@@ -624,7 +624,7 @@ defmodule ExMCP.Test.Support.Transports.Stdio do
             received_command = Map.delete(command, :meta)
             {:reply, {:ok, response, received_command}, state}
 
-          {:error, %ExMCP.Transport.SecurityError{type: type}} ->
+          {:error, %Arbor.MCP.Transport.SecurityError{type: type}} ->
             # Security violation
             {:reply, {:error, type}, state}
         end
@@ -643,7 +643,7 @@ defmodule ExMCP.Test.Support.Transports.Stdio do
   end
 end
 
-defmodule ExMCP.Test.Support.Transports.Beam do
+defmodule Arbor.MCP.Test.Support.Transports.Beam do
   @moduledoc """
   BEAM transport test helper with SecurityGuard integration.
 
@@ -653,7 +653,7 @@ defmodule ExMCP.Test.Support.Transports.Beam do
 
   use GenServer
 
-  alias ExMCP.Transport.SecurityGuard
+  alias Arbor.MCP.Transport.SecurityGuard
 
   defstruct [:security_guard, :requests, :responses]
 
@@ -761,7 +761,7 @@ defmodule ExMCP.Test.Support.Transports.Beam do
         }
 
         config = %{
-          consent_handler: ExMCP.ConsentHandler.Test,
+          consent_handler: Arbor.MCP.ConsentHandler.Test,
           trusted_hosts: ["localhost", "127.0.0.1"]
         }
 
@@ -777,7 +777,7 @@ defmodule ExMCP.Test.Support.Transports.Beam do
             received_command = Map.delete(command, :meta)
             {:reply, {:ok, response, received_command}, state}
 
-          {:error, %ExMCP.Transport.SecurityError{type: type}} ->
+          {:error, %Arbor.MCP.Transport.SecurityError{type: type}} ->
             # Security violation
             {:reply, {:error, type}, state}
         end
@@ -808,7 +808,7 @@ defmodule ExMCP.Test.Support.Transports.Beam do
       }
 
       config = %{
-        consent_handler: ExMCP.ConsentHandler.Test,
+        consent_handler: Arbor.MCP.ConsentHandler.Test,
         trusted_hosts: ["localhost", "127.0.0.1"]
       }
 

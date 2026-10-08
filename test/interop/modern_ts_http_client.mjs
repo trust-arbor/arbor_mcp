@@ -1,4 +1,4 @@
-// MCP 2026-07-28 TypeScript SDK v2 client for ExMCP HTTP interop tests.
+// MCP 2026-07-28 TypeScript SDK v2 client for Arbor.MCP HTTP interop tests.
 import {
   Client,
   StreamableHTTPClientTransport,

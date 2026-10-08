@@ -1,4 +1,4 @@
-# ExMCP 1.0.0-rc.7
+# ArborMCP 1.0.0-rc.7
 
 > **Historical release record:** rc.7 was published on 2026-08-13. The
 > behavior-preserving rc.8 follow-up supersedes it as the active soak candidate.
@@ -37,15 +37,15 @@ the rc.7 delta note.
 ## Installation
 
 ```elixir
-{:ex_mcp, "~> 1.0.0-rc.7"}
+{:arbor_mcp, "~> 1.0.0-rc.7"}
 ```
 
 Pin the rollout policy when it must not change with a package upgrade:
 
 ```elixir
-config :ex_mcp, protocol_mode: :prefer_modern
+config :arbor_mcp, protocol_mode: :prefer_modern
 # Emergency rollback / legacy protocol era (not an exact rc.5 package rollback):
-# config :ex_mcp, protocol_mode: :legacy_only
+# config :arbor_mcp, protocol_mode: :legacy_only
 ```
 
 ## Security and dependencies
@@ -59,7 +59,7 @@ Cowlib 2.19.0, the newest compatible release, retains two upstream advisories:
 - `EEF-CVE-2026-43966` (medium) is mitigated because Plug rejects CR/LF/NUL in
   response-header values and Cowboy independently terminates invalid response
   headers before serialization.
-- `EEF-CVE-2026-43969` (low) affects `cow_cookie:cookie/1`, which ExMCP and its
+- `EEF-CVE-2026-43969` (low) affects `cow_cookie:cookie/1`, which ArborMCP and its
   Plug/Cowboy response path do not call.
 
 These acknowledgements are exact IDs in the Hex audit configuration. CI still

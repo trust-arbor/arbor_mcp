@@ -1,6 +1,6 @@
-# ExMCP 1.0.0-rc.6
+# ArborMCP 1.0.0-rc.6
 
-`1.0.0-rc.6` is the first published dual-era ExMCP release candidate and the
+`1.0.0-rc.6` is the first published dual-era ArborMCP release candidate and the
 modern-preferred soak candidate for stable 1.0. It implements MCP 2026-07-28
 while retaining every legacy revision and the complete rc.5 public API.
 
@@ -31,15 +31,15 @@ the [API diff](API_DIFF_RC5_TO_1_0.md) for the public compatibility audit.
 ## Installation
 
 ```elixir
-{:ex_mcp, "~> 1.0.0-rc.6"}
+{:arbor_mcp, "~> 1.0.0-rc.6"}
 ```
 
 Pin the rollout policy when it must not change with a package upgrade:
 
 ```elixir
-config :ex_mcp, protocol_mode: :prefer_modern
+config :arbor_mcp, protocol_mode: :prefer_modern
 # Emergency rollback / legacy protocol era (not an exact rc.5 package rollback):
-# config :ex_mcp, protocol_mode: :legacy_only
+# config :arbor_mcp, protocol_mode: :legacy_only
 ```
 
 ## Security and dependencies
@@ -53,7 +53,7 @@ Cowlib 2.19.0, the newest compatible release, retains two upstream advisories:
 - `EEF-CVE-2026-43966` (medium) is mitigated because Plug rejects CR/LF/NUL in
   response-header values and Cowboy independently terminates invalid response
   headers before serialization.
-- `EEF-CVE-2026-43969` (low) affects `cow_cookie:cookie/1`, which ExMCP and its
+- `EEF-CVE-2026-43969` (low) affects `cow_cookie:cookie/1`, which ArborMCP and its
   Plug/Cowboy response path do not call.
 
 These acknowledgements are exact IDs in the Hex audit configuration. CI still

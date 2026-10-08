@@ -1,30 +1,30 @@
 #!/usr/bin/env elixir
 
-# Basic MCP server using the modern ExMCP Handler + DSL API.
+# Basic MCP server using the modern Arbor.MCP Handler + DSL API.
 
 Mix.install([
-  {:ex_mcp, path: Path.expand("..", __DIR__)}
+  {:arbor_mcp, path: Path.expand("..", __DIR__)}
 ])
 
 defmodule BasicServer do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL, name: "basic-server", version: "1.0.0"
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, name: "basic-server", version: "1.0.0"
 
   tool "greet", "Greets a person by name" do
-    title "Greet"
-    param :name, :string, required: true, description: "Name of the person to greet"
+    title("Greet")
+    param(:name, :string, required: true, description: "Name of the person to greet")
 
     # Plain strings are normalized to text tool results
-    run fn %{name: name}, state ->
-      {:ok, "Hello, #{name}. Welcome to ExMCP.", state}
-    end
+    run(fn %{name: name}, state ->
+      {:ok, "Hello, #{name}. Welcome to Arbor.MCP.", state}
+    end)
   end
 
   resource "info://about", "Information about this MCP server" do
-    title "About This Server"
-    mime_type "text/plain"
+    title("About This Server")
+    mime_type("text/plain")
 
-    read fn %{uri: uri}, state ->
+    read(fn %{uri: uri}, state ->
       {:ok,
        %{
          uri: uri,
@@ -32,17 +32,17 @@ defmodule BasicServer do
          Basic MCP Server Example
 
          This server demonstrates a tool, resource, and prompt using the
-         modern ExMCP server DSL.
+         modern Arbor.MCP server DSL.
          """
        }, state}
-    end
+    end)
   end
 
   prompt "motivate", "Creates a short motivational prompt" do
-    title "Motivational Message"
-    arg :topic, description: "Topic for motivation"
+    title("Motivational Message")
+    arg(:topic, description: "Topic for motivation")
 
-    render fn args, state ->
+    render(fn args, state ->
       topic = Map.get(args, :topic, "your goals")
 
       {:ok,
@@ -54,7 +54,7 @@ defmodule BasicServer do
            }
          ]
        }, state}
-    end
+    end)
   end
 end
 

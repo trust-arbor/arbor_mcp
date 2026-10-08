@@ -1,15 +1,21 @@
-defmodule ExMCP.MixProject do
+defmodule Arbor.MCP.MixProject do
   use Mix.Project
 
-  @version "1.5.0"
+  @version "2.0.0-rc.2"
+  @rpc_requirement "~> 1.0.0-rc.1"
   @github_url "https://github.com/trust-arbor/arbor_mcp"
 
   def project do
     [
-      app: :ex_mcp,
+      app: :arbor_mcp,
+      name: "ArborMCP",
       version: @version,
       elixir: "~> 1.17",
+      build_path: System.get_env("ARBOR_V2_BUILD") || "_build",
+      lockfile: System.get_env("ARBOR_V2_LOCK") || "mix.lock",
       elixirc_paths: elixirc_paths(Mix.env()),
+      # Runtime tests define encoders for private/unsafe payload fixtures.
+      consolidate_protocols: Mix.env() != :test,
       test_ignore_filters: [~r"^test/conformance/(client|server)\.exs$"],
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -20,7 +26,7 @@ defmodule ExMCP.MixProject do
       homepage_url: @github_url,
       test_coverage: [tool: ExCoveralls],
       dialyzer: [
-        plt_add_apps: [:mix, :ex_unit],
+        plt_add_apps: [:mix, :ex_unit, :credo],
         ignore_warnings: ".dialyzer_ignore.exs",
         list_unused_filters: false,
         plt_local_path: "priv/plts",
@@ -34,13 +40,13 @@ defmodule ExMCP.MixProject do
       # #152, #166, #169), on the position that those encoders expect
       # RFC-valid input and Cowboy/Gun reject CR/LF at their own layer. The
       # advisory metadata is therefore correct and no Cowlib release will
-      # clear it. These exceptions stay for as long as ExMCP requires Cowboy,
-      # backed by: Plug/Cowboy response-header validation; ExMCP does not
-      # call cow_cookie:cookie/1; and the ExMCP/Plug/Cowboy server stack does
+      # clear it. These exceptions cover the optional Cowboy stack in this
+      # repository's development/test dependency set,
+      # backed by: Plug/Cowboy response-header validation; Arbor.MCP does not
+      # call cow_cookie:cookie/1; and the Arbor.MCP/Plug/Cowboy server stack does
       # not call cow_link:link/1. Those assumptions are locked by
-      # dependency_advisory_mitigation_test.exs. The exit is to make the HTTP
-      # server dependency optional (Cowboy optional, Bandit supported), which
-      # is a breaking change recorded in the 2.0 roadmap. Keep the
+      # dependency_advisory_mitigation_test.exs. Core consumers omit Cowboy and
+      # Cowlib; standalone hosts explicitly select Cowboy or Bandit. Keep the
       # exceptions exact so `mix hex.audit` still fails on every new advisory.
       hex: [
         ignore_advisories: [
@@ -57,7 +63,7 @@ defmodule ExMCP.MixProject do
       # Quick entry points for examples (see examples/README.md).
       # Individual .exs files do Mix.install and can be slow on first run.
       examples: [
-        "run -e 'IO.puts(\"ExMCP Examples — see examples/README.md\") ; IO.puts(\"Quick starts: elixir examples/utilities/*.exs or examples/getting_started/demo_client.exs\") ; IO.puts(\"Full demo: cd examples/getting_started && ./run_demo.sh\") ; IO.puts(\"Fast alias: mix examples.getting_started\")'"
+        "run -e 'IO.puts(\"Arbor.MCP Examples — see examples/README.md\") ; IO.puts(\"Quick starts: elixir examples/utilities/*.exs or examples/getting_started/demo_client.exs\") ; IO.puts(\"Full demo: cd examples/getting_started && ./run_demo.sh\") ; IO.puts(\"Fast alias: mix examples.getting_started\")'"
       ],
       # Fast (no re-Mix.install) version of the getting-started patterns.
       # See examples/getting_started/README.md and the main examples/README.md.
@@ -81,48 +87,83 @@ defmodule ExMCP.MixProject do
   def application do
     [
       extra_applications: [:logger, :crypto, :ssl, :inets],
-      mod: {ExMCP.Application, []}
+      mod: {Arbor.MCP.Application, []}
     ]
   end
 
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:jason, "~> 1.4"},
+      rpc_dep(),
+      external_dep(:jason, "~> 1.4"),
       # Security floor: 1.10.2 fixes EEF-CVE-2026-94194 (HTTP/1 transfer
       # coding), EEF-CVE-2026-91043 (HTTP/2 header bounds), and
       # EEF-CVE-2026-92103 (HTTP/2 frame bounds), and includes the earlier
       # EEF-CVE-2026-82672 chunk-size fix from 1.10.1.
-      {:mint, "~> 1.10 and >= 1.10.2"},
-      {:mint_web_socket, "~> 1.0"},
-      {:castore, "~> 1.0"},
-      {:telemetry, "~> 1.2"},
-      {:ex_doc, "~> 0.40", only: :dev, runtime: false},
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false},
-      {:excoveralls, "~> 0.18", only: :test},
-      {:git_hooks, "~> 0.7", only: [:dev], runtime: false},
-      {:plug_cowboy, "~> 2.7"},
+      external_dep(:mint, "~> 1.10 and >= 1.10.2"),
+      external_dep(:mint_web_socket, "~> 1.0"),
+      external_dep(:castore, "~> 1.0"),
+      external_dep(:telemetry, "~> 1.2"),
+      external_dep(:ex_doc, "~> 0.40", only: :dev, runtime: false),
+      external_dep(:credo, "~> 1.7", only: [:dev, :test], runtime: false),
+      external_dep(:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false),
+      external_dep(:sobelow, "~> 0.13", only: [:dev, :test], runtime: false),
+      external_dep(:excoveralls, "~> 0.18", only: :test),
+      external_dep(:git_hooks, "~> 0.7", only: [:dev], runtime: false),
+      external_dep(:plug_cowboy, "~> 2.7", optional: true),
+      # Host-managed listeners may resolve compatible backend releases. Owned
+      # startup separately checks its qualified Bandit/Thousand Island ABI.
+      # Keep Bandit 1.12.5's HTTP/2 validation/flow-control security floor.
+      external_dep(:bandit, "~> 1.12 and >= 1.12.5", optional: true),
+      external_dep(:thousand_island, "~> 1.0", optional: true),
       # Not used directly; declared so consumers resolve a cowlib that fixes
       # EEF-CVE-2026-43971 (Link header directive smuggling in cow_link),
       # which plug_cowboy's own requirements still allow.
-      {:cowlib, "~> 2.20"},
-      {:plug, "~> 1.16"},
-      {:fuse, "~> 2.4", optional: true},
+      external_dep(:cowlib, "~> 2.20", optional: true),
+      # Match Cowboy's supported Ranch families without constraining host-owned
+      # listeners to the separately qualified owned Ranch 1.8.1 constructor ABI.
+      external_dep(:ranch, ">= 1.8.1 and < 3.0.0", optional: true),
+      external_dep(:plug, "~> 1.16"),
+      external_dep(:fuse, "~> 2.4", optional: true),
       # MCP protocol support
-      {:ex_json_schema, "~> 0.10"},
-      {:html_entities, "~> 0.5", only: [:dev, :test]},
-      {:propcheck, "~> 1.4", only: :test},
-      {:benchee, "~> 1.0", only: [:dev, :test]},
-      {:bypass, "~> 2.0", only: :test},
-      {:jose, "~> 1.11"}
+      external_dep(:ex_json_schema, "~> 0.10"),
+      external_dep(:jsv, "~> 0.25.0"),
+      external_dep(:html_entities, "~> 0.5", only: [:dev, :test]),
+      external_dep(:propcheck, "~> 1.4", only: :test),
+      external_dep(:benchee, "~> 1.0", only: [:dev, :test]),
+      external_dep(:bypass, "~> 2.0", only: :test),
+      external_dep(:jose, "~> 1.11")
     ]
+  end
+
+  # Published packages resolve Arbor.RPC from Hex. Local cutover testing opts in
+  # to a checkout explicitly; no repository-relative staging path ships.
+  defp rpc_dep do
+    case System.get_env("ARBOR_RPC_PATH") do
+      nil -> {:arbor_rpc, @rpc_requirement}
+      path -> {:arbor_rpc, path: Path.expand(path), override: true}
+    end
+  end
+
+  # Reuse an existing dependency source cache during isolated split QA.
+  # Keep the declared versions and options when the override is absent.
+  defp external_dep(app, version, opts \\ []) do
+    case System.get_env("ARBOR_V2_DEPS") do
+      nil ->
+        {app, version, opts}
+
+      path ->
+        {app, version,
+         Keyword.merge(opts,
+           path: Path.join(Path.expand(path), Atom.to_string(app)),
+           override: true
+         )}
+    end
   end
 
   defp description do
     """
-    Elixir implementation of MCP and ACP. Build MCP clients/servers with tools, resources, prompts over stdio, HTTP/SSE, and BEAM. Control coding agents via ACP with adapters for Claude Code, Codex, and more.
+    Elixir MCP clients and servers with tools, resources and prompts over stdio, HTTP and BEAM, with supervised per-server runtimes.
     """
   end
 
@@ -131,22 +172,24 @@ defmodule ExMCP.MixProject do
       licenses: ["MIT"],
       links: %{
         "GitHub" => @github_url,
-        "Changelog" => "#{@github_url}/blob/master/CHANGELOG.md",
+        "Changelog" => "#{@github_url}/blob/v#{@version}/CHANGELOG.md",
         "MCP Spec" => "https://modelcontextprotocol.io",
-        "ACP Spec" => "https://agentclientprotocol.com"
+        "MCP Migration" => "#{@github_url}/blob/v#{@version}/docs/guides/MIGRATING_V1_TO_V2.md"
       },
-      # NOTE: `dev/` (repo-only mix tasks + ExMCP.SpecSync) is intentionally
+      # NOTE: `dev/` (repo-only mix tasks + Arbor.MCP.SpecSync) is intentionally
       # not listed, so it never ships to Hex.
       files: ~w(
           lib
           .formatter.exs
           mix.exs
           README.md
+          usage-rules.md
           LICENSE
           CHANGELOG.md
           docs/ACP_GUIDE.md
           docs/ARCHITECTURE.md
           docs/CONFIGURATION.md
+          docs/HTTP_LISTENERS.md
           docs/DEVELOPMENT.md
           docs/DSL_GUIDE.md
           docs/PROTOCOL_GUIDE.md
@@ -155,6 +198,26 @@ defmodule ExMCP.MixProject do
           docs/TROUBLESHOOTING.md
           docs/getting-started
           docs/guides
+          docs/V2_SCHEMA_DIALECT.md
+          docs/V2_CLIENT_CONNECTION_SCOPE.md
+          docs/V2_STDIO_OUTPUT_LIABILITY.md
+          docs/V2_RUNTIME_DIAGNOSTICS.md
+          docs/V2_ORDINARY_CLIENT_LIFETIME.md
+          docs/V2_CLIENT_DIAGNOSTICS.md
+          docs/V2_HTTP_GATEWAY_SLICE.md
+          docs/V2_HTTP_RUNTIME_CUTOVER.md
+          docs/V2_HTTP_REVERSE_SLICE.md
+          docs/V2_HTTP_SESSION_STREAM_SLICE.md
+          docs/V2_HTTP_CONTROL_CONVERGENCE_SLICE.md
+          docs/V2_HTTP_FUTURE_CONTROL_SLICE.md
+          docs/V2_HTTP_LISTENER_LIFETIME_CORE.md
+          docs/V2_PACKAGE_RELEASE.md
+          docs/V2_NATIVE_STORE_PRESSURE.md
+          docs/V2_DETS_LIFECYCLE.md
+          docs/V2_API_MIGRATION.md
+          docs/V2_DSL_API_REVIEW.md
+          docs/V2_NON_SYMBOL_MIGRATION.md
+          docs/RUNTIME_GUIDE.md
         )
     ]
   end
@@ -162,18 +225,18 @@ defmodule ExMCP.MixProject do
   # Specifies which paths to compile per environment.
   #
   # `dev/` holds repo-only tooling (the `mix test.suite` / `mix mcp.sync_spec`
-  # family and `ExMCP.SpecSync.*`). It is compiled for local development and
+  # family and `Arbor.MCP.SpecSync.*`). It is compiled for local development and
   # tests but is deliberately absent from `package.files`, so it never reaches
-  # consumers' `mix help` (audit L1). `ExMCP.Testing.*` stays under `lib/` as a
+  # consumers' `mix help` (audit L1). `Arbor.MCP.Testing.*` stays under `lib/` as a
   # documented, published test kit.
   defp elixirc_paths(:test),
     do: [
       "lib",
       "dev",
       "test/support",
-      "test/ex_mcp/compliance",
-      "test/ex_mcp/compliance/features",
-      "test/ex_mcp/compliance/handlers"
+      "test/arbor_mcp/compliance",
+      "test/arbor_mcp/compliance/features",
+      "test/arbor_mcp/compliance/handlers"
     ]
 
   defp elixirc_paths(:dev), do: ["lib", "dev"]
@@ -183,24 +246,47 @@ defmodule ExMCP.MixProject do
   defp docs do
     [
       main: "readme",
-      name: "ExMCP",
-      canonical: "https://hexdocs.pm/ex_mcp",
+      canonical: "https://hexdocs.pm/arbor_mcp",
       warnings_as_errors: true,
       skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
       extras: [
         "README.md",
+        {"usage-rules.md", title: "Agent usage rules"},
+        "docs/guides/MIGRATING_V1_TO_V2.md",
+        "docs/guides/V2_RELEASE_CANDIDATE.md",
+        "docs/getting-started/QUICKSTART.md",
         "docs/guides/USER_GUIDE.md",
         "docs/guides/PHOENIX_GUIDE.md",
         "docs/DSL_GUIDE.md",
+        "docs/V2_SCHEMA_DIALECT.md",
+        "docs/V2_CLIENT_CONNECTION_SCOPE.md",
+        "docs/V2_STDIO_OUTPUT_LIABILITY.md",
+        "docs/V2_RUNTIME_DIAGNOSTICS.md",
+        "docs/V2_ORDINARY_CLIENT_LIFETIME.md",
+        "docs/V2_CLIENT_DIAGNOSTICS.md",
+        "docs/V2_HTTP_GATEWAY_SLICE.md",
+        "docs/V2_HTTP_RUNTIME_CUTOVER.md",
+        "docs/V2_HTTP_REVERSE_SLICE.md",
+        "docs/V2_HTTP_SESSION_STREAM_SLICE.md",
+        "docs/V2_HTTP_CONTROL_CONVERGENCE_SLICE.md",
+        "docs/V2_HTTP_FUTURE_CONTROL_SLICE.md",
+        "docs/V2_HTTP_LISTENER_LIFETIME_CORE.md",
+        "docs/V2_PACKAGE_RELEASE.md",
+        "docs/V2_NATIVE_STORE_PRESSURE.md",
+        "docs/V2_DETS_LIFECYCLE.md",
+        "docs/V2_API_MIGRATION.md",
+        "docs/V2_DSL_API_REVIEW.md",
+        "docs/V2_NON_SYMBOL_MIGRATION.md",
         "docs/TRANSPORT_GUIDE.md",
         "docs/CONFIGURATION.md",
+        "docs/HTTP_LISTENERS.md",
+        "docs/RUNTIME_GUIDE.md",
         "docs/PROTOCOL_GUIDE.md",
         "docs/getting-started/MIGRATION.md",
         "docs/SECURITY.md",
         "docs/ARCHITECTURE.md",
         "docs/DEVELOPMENT.md",
         "docs/TROUBLESHOOTING.md",
-        "docs/ACP_GUIDE.md",
         "CHANGELOG.md"
       ],
       extra_section: "GUIDES",
@@ -208,75 +294,43 @@ defmodule ExMCP.MixProject do
       groups_for_extras: [
         Introduction: ~r/README/,
         Guides:
-          ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|TRANSPORT_GUIDE|PROTOCOL_GUIDE|ACP_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
+          ~r/QUICKSTART|RUNTIME_GUIDE|MIGRATING_V1_TO_V2|V2_RELEASE_CANDIDATE|USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|V2_SCHEMA_DIALECT|V2_CLIENT_CONNECTION_SCOPE|TRANSPORT_GUIDE|HTTP_LISTENERS|PROTOCOL_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
         Changelog: ~r/CHANGELOG/
       ],
       groups_for_modules: [
         "MCP Core": [
-          ExMCP,
-          ExMCP.Client,
-          ExMCP.Server,
-          ExMCP.Server.Handler,
-          ExMCP.Server.DSL,
-          ExMCP.Server.DSL.Result,
-          ExMCP.Server.MRTR.InputRequired,
-          ExMCP.HttpPlug,
-          ExMCP.Types,
-          ExMCP.Content,
-          ExMCP.Error,
-          ExMCP.Response
+          Arbor.MCP,
+          Arbor.MCP.Client,
+          Arbor.MCP.Server,
+          Arbor.MCP.Server.Handler,
+          Arbor.MCP.Server.DSL,
+          Arbor.MCP.Server.DSL.Result,
+          Arbor.MCP.Server.Result,
+          Arbor.MCP.Server.MRTR.InputRequired,
+          Arbor.MCP.HttpPlug,
+          Arbor.MCP.Types,
+          Arbor.MCP.Content,
+          Arbor.MCP.Error,
+          Arbor.MCP.Response
         ],
         "MCP Transports": [
-          ExMCP.Transport,
-          ExMCP.Transport.Stdio,
-          ExMCP.Transport.HTTP,
-          ExMCP.Transport.SSEClient,
-          ExMCP.Transport.Local
+          Arbor.MCP.Transport,
+          Arbor.MCP.Transport.Stdio,
+          Arbor.MCP.Transport.HTTP,
+          Arbor.MCP.Transport.SSEClient,
+          Arbor.MCP.Transport.Local
         ],
         Authorization: [
-          ExMCP.Authorization
-        ],
-        "Agent Client Protocol (ACP)": [
-          ExMCP.ACP,
-          ExMCP.ACP.Agent,
-          ExMCP.ACP.Agent.Handler,
-          ExMCP.ACP.Agent.Transport,
-          ExMCP.ACP.Agent.Transport.Memory,
-          ExMCP.ACP.Agent.Transport.Stdio,
-          ExMCP.ACP.Client,
-          ExMCP.ACP.Client.Handler,
-          ExMCP.ACP.Client.DefaultHandler,
-          ExMCP.ACP.Capabilities,
-          ExMCP.ACP.Protocol,
-          ExMCP.ACP.Types,
-          ExMCP.ACP.Registry,
-          ExMCP.ACP.Adapter,
-          ExMCP.ACP.AdapterEvents,
-          ExMCP.ACP.AdapterBridge,
-          ExMCP.ACP.AdapterTransport,
-          ExMCP.ACP.Adapters.ClaudeSDK,
-          ExMCP.ACP.Adapters.ClaudeSDK.SessionStore,
-          ExMCP.ACP.Adapters.Codex,
-          ExMCP.ACP.Adapters.Pi,
-          ExMCP.ACP.Adapters.ZCode
-        ],
-        "Deprecated (planned removal in 2.0)": [
-          ExMCP.Server.Tools,
-          ExMCP.Server.Tools.Simplified,
-          ExMCP.Server.Tools.Builder,
-          ExMCP.Server.Tools.Helpers,
-          ExMCP.Server.Tools.Registry,
-          ExMCP.Server.Tools.ResponseNormalizer,
-          ExMCP.Server.Tools.ASTValidator
+          Arbor.MCP.Authorization
         ]
       ],
       filter_modules: fn mod, _ ->
         # Hide pure internals and repo-only tooling from the sidebar.
-        # Deprecated Tools stay visible.
+        # Public replacement APIs remain visible.
         name = inspect(mod)
 
-        not String.starts_with?(name, "ExMCP.Internal.") and
-          not String.starts_with?(name, "ExMCP.SpecSync.") and
+        not String.starts_with?(name, "Arbor.MCP.Internal.") and
+          not String.starts_with?(name, "Arbor.MCP.SpecSync.") and
           not String.starts_with?(name, "Mix.Tasks.") and
           not String.contains?(name, ".Test.")
       end,

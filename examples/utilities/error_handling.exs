@@ -4,15 +4,15 @@
 # Demonstrates Response and Error helper patterns
 
 Mix.install([
-  {:ex_mcp, path: Path.expand("../..", __DIR__)}
+  {:arbor_mcp, path: Path.expand("../..", __DIR__)}
 ])
 
-alias ExMCP.Response
-alias ExMCP.Error
+alias Arbor.MCP.Response
+alias Arbor.MCP.Error
 
 IO.puts("""
 ==========================================
-ExMCP Error Handling Demo
+Arbor.MCP Error Handling Demo
 ==========================================
 """)
 
@@ -24,13 +24,15 @@ simple_err = Response.error("File not found", "file_reader")
 IO.inspect(simple_err, label: "Simple error")
 
 # Error with details
-detailed_err = Error.tool_error("Database connection failed", "db_tool",
-  data: %{
-    host: "localhost",
-    port: 5432,
-    error: "Connection refused"
-  }
-)
+detailed_err =
+  Error.tool_error("Database connection failed", "db_tool",
+    data: %{
+      host: "localhost",
+      port: 5432,
+      error: "Connection refused"
+    }
+  )
+
 IO.inspect(detailed_err, label: "Detailed error")
 
 # 2. Standard JSON-RPC Errors
@@ -68,24 +70,30 @@ end
 IO.puts("\n4. Converting Errors to Responses:\n")
 
 # Create an error
-tool_error = Error.tool_error("API rate limit exceeded", "weather_tool",
-  data: %{
-    limit: 100,
-    reset_at: "2024-01-20T15:00:00Z",
-    current_usage: 100
-  }
-)
+tool_error =
+  Error.tool_error("API rate limit exceeded", "weather_tool",
+    data: %{
+      limit: 100,
+      reset_at: "2024-01-20T15:00:00Z",
+      current_usage: 100
+    }
+  )
 
 # Option 1: Direct error response
 error_resp1 = Response.error("API rate limit exceeded", "weather_tool")
-IO.puts("Direct error response: #{ExMCP.Response.text_content(error_resp1)}")
+IO.puts("Direct error response: #{Arbor.MCP.Response.text_content(error_resp1)}")
 
 # Option 2: Error response with data (using JSON)
-error_resp2 = Response.json(%{
-  error: "API rate limit exceeded",
-  limit: 100,
-  reset_at: "2024-01-20T15:00:00Z"
-}, "weather_tool")
+error_resp2 =
+  Response.json(
+    %{
+      error: "API rate limit exceeded",
+      limit: 100,
+      reset_at: "2024-01-20T15:00:00Z"
+    },
+    "weather_tool"
+  )
+
 # Mark it as an error
 error_resp2 = %{error_resp2 | is_error: true}
 IO.puts("JSON error response marked as error: #{inspect(error_resp2.is_error)}")
@@ -97,20 +105,22 @@ defmodule ErrorPatterns do
   def safe_divide(_a, b) when b == 0 do
     Response.error("Division by zero", "calculator")
   end
-  
+
   def safe_divide(a, b) do
     Response.json(%{result: a / b}, "calculator")
   end
-  
+
   def handle_response(response) do
     if response.is_error do
-      IO.puts("Error: #{ExMCP.Response.text_content(response)}")
+      IO.puts("Error: #{Arbor.MCP.Response.text_content(response)}")
     else
-      data = ExMCP.Response.data_content(response)
+      data = Arbor.MCP.Response.data_content(response)
+
       if data && Map.has_key?(data, "result") do
         IO.puts("Success: Result = #{data["result"]}")
       else
-        text = ExMCP.Response.text_content(response)
+        text = Arbor.MCP.Response.text_content(response)
+
         if text do
           IO.puts("Success: #{text}")
         else

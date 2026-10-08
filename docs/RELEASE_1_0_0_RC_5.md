@@ -1,4 +1,4 @@
-# ExMCP 1.0.0-rc.5
+# ArborMCP 1.0.0-rc.5
 
 > **Historical release note:** This document describes rc.5 as it shipped.
 > MCP 2026-07-28 was released afterward, so rc.5 became the final
@@ -19,7 +19,7 @@ support for MCP `2024-11-05`, `2025-03-26`, `2025-06-18`, and `2025-11-25`.
 - Streamable-HTTP resource subscriptions are retained per client session,
   cleaned up by the SessionManager lifecycle, and broadcast through ETS-backed
   indexes without a singleton notification bottleneck.
-- `ExMCP.HttpPlug` now exposes `:handler_call_timeout` as a server-side Handler
+- `Arbor.MCP.HttpPlug` now exposes `:handler_call_timeout` as a server-side Handler
   deadline distinct from client request and SSE timeouts.
 - HTTP security and lifecycle fixes cover DNS rebinding, TLS option
   application, session-ID validation, SSE registry ownership, handler crash
@@ -52,9 +52,9 @@ support for MCP `2024-11-05`, `2025-03-26`, `2025-06-18`, and `2025-11-25`.
 
 ## Deprecations
 
-`ExMCP.Server.Tools` and the non-protocol image transformation stubs remain
+`Arbor.MCP.Server.Tools` and the non-protocol image transformation stubs remain
 available in rc.5 and throughout 1.x but are deprecated for removal in 2.0.0. New server code
-should use `ExMCP.Server.Handler` with `ExMCP.Server.DSL`.
+should use `Arbor.MCP.Server.Handler` with `Arbor.MCP.Server.DSL`.
 
 ## Verification
 
@@ -69,5 +69,5 @@ should use `ExMCP.Server.Handler` with `ExMCP.Server.DSL`.
 ## Install
 
 ```elixir
-{:ex_mcp, "~> 1.0.0-rc.5"}
+{:arbor_mcp, "~> 1.0.0-rc.5"}
 ```

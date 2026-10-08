@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Run the complete ExMCP getting started demo
+# Run the complete Arbor.MCP getting started demo
 
-echo "ExMCP Getting Started Demo"
+echo "Arbor.MCP Getting Started Demo"
 echo "=============================="
 echo ""
 echo "This demo will show the supported transport types:"

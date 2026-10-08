@@ -1,13 +1,13 @@
-# ExMCP Protocol Guide
+# ArborMCP Protocol Guide
 
 How-tos for MCP protocol features that sit beside tools, resources, and
 prompts: elicitation, sampling, roots, ping, progress, and cancellation.
 Each section shows the handler and the client call. This is not a spec
 reprint.
 
-MCP 2026-07-28 deprecated Roots and Sampling. ExMCP keeps both throughout
-1.x. New work should pass directories through tool parameters or resource
-URIs, and call an LLM provider API directly.
+MCP 2026-07-28 deprecated Roots and Sampling. ArborMCP retains their public
+APIs in 2.x for pinned legacy protocol revisions. New work should pass directories
+through tool parameters or resource URIs, and call an LLM provider API directly.
 
 ## Elicitation
 
@@ -17,10 +17,10 @@ the client for structured input. On MCP 2026-07-28 that pause is an
 matching client capability:
 
 ```elixir
-MyServer.start_link(transport: :beam, protocol_mode: :modern_only, mrtr: true)
+{:ok, server} = MyServer.start_link(transport: :beam, protocol_mode: :modern_only, mrtr: true)
 
 {:ok, client} =
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :beam,
     server: server,
     protocol_mode: :modern_only,
@@ -42,11 +42,11 @@ and returns `action` plus optional `content`.
 # Server
 @impl true
 def handle_call_tool("onboard", _args, state) do
-  case ExMCP.Server.Context.input_responses() do
+  case Arbor.MCP.Server.Context.input_responses() do
     nil ->
       requests = %{
         "profile" =>
-          ExMCP.Server.elicit(%{
+          Arbor.MCP.Server.elicit(%{
             message: "Choose a display name",
             requested_schema: %{
               "$schema" => "https://json-schema.org/draft/2020-12/schema",
@@ -82,11 +82,11 @@ def handle_elicitation_create(message, requested_schema, state) do
 end
 ```
 
-`ExMCP.Client.call_tool/3` retries the original method with the handler's
+`Arbor.MCP.Client.call_tool/3` retries the original method with the handler's
 response. You do not POST `elicitation/create` yourself on a modern
 connection. The raw
 `%{"method" => "elicitation/create", "params" => %{"message" => ...,
-"requestedSchema" => ...}}` map is equivalent to `ExMCP.Server.elicit/1`.
+"requestedSchema" => ...}}` map is equivalent to `Arbor.MCP.Server.elicit/1`.
 
 ### URL mode
 
@@ -97,7 +97,7 @@ URL mode sends the user to a page instead of a form. Advertise
 # Server
 requests = %{
   "login" =>
-    ExMCP.Server.elicit(%{
+    Arbor.MCP.Server.elicit(%{
       message: "Sign in to continue",
       mode: "url",
       url: "https://auth.example.com/login",
@@ -120,7 +120,7 @@ end
 If the handler only implements `handle_elicitation_create/3`, URL-mode
 requests still arrive there. The second argument is then a map with
 `"mode"`, `"url"`, and `"elicitationId"`. `handle_url_elicitation/3`
-remains for 1.x compatibility and does not receive the id.
+remains for compatibility in v2 and does not receive the id.
 
 ### Schema validation
 
@@ -133,7 +133,7 @@ before returning it:
 def handle_elicitation_create(_message, requested_schema, state) do
   content = collect_from_user(requested_schema)
 
-  case ExMCP.Content.SchemaValidator.validate_schema(content, requested_schema) do
+  case Arbor.MCP.Content.SchemaValidator.validate_schema(content, requested_schema) do
     :ok ->
       {:ok, %{action: "accept", content: content}, state}
 
@@ -143,7 +143,7 @@ def handle_elicitation_create(_message, requested_schema, state) do
 end
 ```
 
-`ExMCP.Content.SchemaValidator` is an experimental helper. Prefer keeping
+`Arbor.MCP.Content.SchemaValidator` is an experimental helper. Prefer keeping
 schemas small and local; remote `$ref` values are rejected unless you opt
 into the [JSON Schema resource policy](CONFIGURATION.md#json-schema-resource-policy).
 
@@ -164,8 +164,8 @@ still sees whatever the user accepts.
 }
 ```
 
-For automated tests only, `config :ex_mcp, elicitation_auto_accept: true`
-fills defaults through `ExMCP.Client.ElicitationHandler`. Do not enable that
+For automated tests only, `config :arbor_mcp, elicitation_auto_accept: true`
+fills defaults through `Arbor.MCP.Client.ElicitationHandler`. Do not enable that
 in production.
 
 ### Enum values
@@ -188,18 +188,18 @@ Constrain a string (or other) field with `enum`:
 ```
 
 The client should only accept one of those values. The same schema is what
-`ExMCP.Content.SchemaValidator.validate_schema/2` checks.
+`Arbor.MCP.Content.SchemaValidator.validate_schema/2` checks.
 
 ### Complete notification
 
 After a URL-mode flow finishes out of band, the client notifies the server
 with `notifications/elicitation/complete`. There is no dedicated wrapper;
-use `ExMCP.Client.notify/3` with the `elicitationId` from
+use `Arbor.MCP.Client.notify/3` with the `elicitationId` from
 `handle_url_elicitation/4`:
 
 ```elixir
 :ok =
-  ExMCP.Client.notify(client, "notifications/elicitation/complete", %{
+  Arbor.MCP.Client.notify(client, "notifications/elicitation/complete", %{
     "elicitationId" => elicitation_id
   })
 
@@ -213,14 +213,14 @@ end
 ## Sampling
 
 Sampling lets a server ask the **client** to call a model. MCP 2026-07-28
-deprecated it; ExMCP retains `ExMCP.Server.create_message/2` and
-`c:ExMCP.Client.Handler.handle_create_message/2` throughout 1.x. New code
-should call the LLM provider directly.
+deprecated it; ArborMCP retains `Arbor.MCP.Server.create_message/2` and
+`c:Arbor.MCP.Client.Handler.handle_create_message/2` in 2.x for pinned legacy
+protocol revisions. New code should call the LLM provider directly.
 
 ```elixir
 # Server (legacy server-to-client request, or your own MRTR wrapper)
 {:ok, result} =
-  ExMCP.Server.create_message(server, %{
+  Arbor.MCP.Server.create_message(server, %{
     "messages" => [
       %{"role" => "user", "content" => %{"type" => "text", "text" => "Summarize the diff"}}
     ],
@@ -270,7 +270,8 @@ The client must declare `%{"sampling" => %{}}`. The same
 ## Roots
 
 Roots are informational directory hints, not an authorization boundary.
-MCP 2026-07-28 deprecated them; ExMCP retains the callbacks throughout 1.x.
+MCP 2026-07-28 deprecated them; ArborMCP retains the callbacks in 2.x for
+pinned legacy protocol revisions.
 
 ```elixir
 # Client exposes roots the server may ask for
@@ -280,13 +281,13 @@ def handle_list_roots(state) do
 end
 
 # Server asks the connected client
-{:ok, %{roots: roots}} = ExMCP.Server.list_roots(server)
+{:ok, %{roots: roots}} = Arbor.MCP.Server.list_roots(server)
 
 # Client asks the server (only if the server implements handle_list_roots/1)
-{:ok, result} = ExMCP.Client.list_roots(client)
+{:ok, result} = Arbor.MCP.Client.list_roots(client)
 
 # Server publishes notifications/roots/list_changed
-:ok = ExMCP.Server.notify_roots_changed(server)
+:ok = Arbor.MCP.Server.notify_roots_changed(server)
 ```
 
 Prefer passing directories or files through tool parameters, resource URIs,
@@ -294,12 +295,12 @@ or server configuration.
 
 ## Protocol ping
 
-`ExMCP.Client.ping/2` is the protocol liveness check. It is not a tool
+`Arbor.MCP.Client.ping/2` is the protocol liveness check. It is not a tool
 named `"ping"`.
 
 ```elixir
-{:ok, _result} = ExMCP.Client.ping(client)
-{:ok, _result} = ExMCP.Client.ping(client, timeout: 2_000)
+{:ok, _result} = Arbor.MCP.Client.ping(client)
+{:ok, _result} = Arbor.MCP.Client.ping(client, timeout: 2_000)
 ```
 
 On a legacy connection this sends JSON-RPC `ping`. On a modern
@@ -307,7 +308,7 @@ On a legacy connection this sends JSON-RPC `ping`. On a modern
 also ping the connected client:
 
 ```elixir
-{:ok, _result} = ExMCP.Server.ping(server)
+{:ok, _result} = Arbor.MCP.Server.ping(server)
 
 # Client
 @impl true
@@ -322,7 +323,7 @@ server reports progress against that token.
 ```elixir
 # Client — token on the request
 {:ok, result} =
-  ExMCP.Client.call_tool(client, "import", %{}, progress_token: "job-42")
+  Arbor.MCP.Client.call_tool(client, "import", %{}, progress_token: "job-42")
 
 # Client — modern HTTP delivers events to the handler
 @impl true
@@ -334,9 +335,9 @@ end
 # Server — request-scoped, writes notifications/progress on the owning stream
 @impl true
 def handle_call_tool("import", _args, state) do
-  if ExMCP.Server.Context.progress_token() do
-    :ok = ExMCP.Server.Context.report_progress(25, 100, "Reading")
-    :ok = ExMCP.Server.Context.report_progress(100, 100, "Done")
+  if Arbor.MCP.Server.Context.progress_token() do
+    :ok = Arbor.MCP.Server.Context.report_progress(25, 100, "Reading")
+    :ok = Arbor.MCP.Server.Context.report_progress(100, 100, "Done")
   end
 
   {:ok, %{content: [%{type: "text", text: "imported"}]}, state}
@@ -347,11 +348,11 @@ On BEAM, stdio, and other non-stream helpers you can still publish by
 token:
 
 ```elixir
-:ok = ExMCP.Server.notify_progress(server, "job-42", 50)
-:ok = ExMCP.Server.notify_progress(server, "job-42", 50, 100)
+:ok = Arbor.MCP.Server.notify_progress(server, "job-42", 50)
+:ok = Arbor.MCP.Server.notify_progress(server, "job-42", 50, 100)
 ```
 
-`ExMCP.Client.call_tool/4` also accepts `:meta` and merges it with `:progress_token`.
+`Arbor.MCP.Client.call_tool/4` also accepts `:meta` and merges it with `:progress_token`.
 
 ## Cancellation
 
@@ -362,33 +363,33 @@ that request's POST response stream. Other transports send
 ```elixir
 task =
   Task.async(fn ->
-    ExMCP.Client.call_tool(client, "slow_import", %{})
+    Arbor.MCP.Client.call_tool(client, "slow_import", %{})
   end)
 
-[request_id | _] = ExMCP.Client.get_pending_requests(client)
-:ok = ExMCP.Client.send_cancelled(client, request_id, "User cancelled")
+[request_id | _] = Arbor.MCP.Client.get_pending_requests(client)
+:ok = Arbor.MCP.Client.send_cancelled(client, request_id, "User cancelled")
 ```
 
 A server can emit the same notification toward a client request:
 
 ```elixir
-:ok = ExMCP.Server.cancel_request(server, request_id, "superseded")
+:ok = Arbor.MCP.Server.cancel_request(server, request_id, "superseded")
 ```
 
 You cannot cancel `initialize`. `send_cancelled/3` returns
 `{:error, :cannot_cancel_initialize}` in that case.
 
 This is request cancellation, not the experimental Tasks extension
-(`ExMCP.Client.cancel_task/3`).
+(`Arbor.MCP.Client.cancel_task/3`).
 
 A long-running handler can check the current request between steps. The
-server MAY stop; ExMCP does not automatically abort the JSON-RPC request.
+server MAY stop; ArborMCP does not automatically abort the JSON-RPC request.
 
 ```elixir
 @impl true
 def handle_call_tool("slow_import", _args, state) do
   Enum.reduce_while(import_steps(), {:ok, state}, fn step, {:ok, state} ->
-    if ExMCP.Server.Context.cancelled?() do
+    if Arbor.MCP.Server.Context.cancelled?() do
       {:halt, {:error, "Import cancelled", state}}
     else
       {:cont, run_import_step(step, state)}
