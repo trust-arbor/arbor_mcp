@@ -1,0 +1,115 @@
+name: ExMCP maintenance latest
+
+on:
+  schedule:
+    - cron: '29 7 * * 1'
+  workflow_dispatch:
+    inputs:
+      maintenance_ref:
+        description: 'Maintenance branch or backport ref to qualify'
+        default: 'codex/maintenance-1.x'
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - '.github/workflows/ex-mcp-maintenance-latest.yml'
+
+permissions:
+  contents: read
+
+env:
+  MIX_ENV: test
+
+jobs:
+  test:
+    name: Latest stable / ${{ matrix.toolchain.track }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain:
+          - {track: 'Elixir 1.17 / OTP 27', elixir: '1.17', otp: '27', pinned_elixir: '1.17.3', pinned_otp: '27.0'}
+          - {track: 'Elixir 1.18 / OTP 27', elixir: '1.18', otp: '27', pinned_elixir: '1.18.5', pinned_otp: '27.3.4.18'}
+          - {track: 'Elixir 1.19 / OTP 28', elixir: '1.19', otp: '28', pinned_elixir: '1.19.6', pinned_otp: '28.5.0.7'}
+          - {track: 'Elixir 1.20 / OTP 29', elixir: '1.20', otp: '29', pinned_elixir: '1.20.4', pinned_otp: '29.1.1'}
+          # > 0 excludes prereleases; setup-beam's literal "latest" can include RCs.
+          - {track: 'Newest stable pair', elixir: '> 0', otp: '> 0', pinned_elixir: '1.20.4', pinned_otp: '29.1.1'}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        ref: ${{ inputs.maintenance_ref || 'codex/maintenance-1.x' }}
+        persist-credentials: false
+    - id: beam
+      uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
+      with:
+        otp-version: ${{ matrix.toolchain.otp }}
+        elixir-version: ${{ matrix.toolchain.elixir }}
+        version-type: loose
+    - name: Record resolved versions and compare the pinned lane
+      env:
+        RESOLVED_ELIXIR: ${{ steps.beam.outputs.elixir-version }}
+        RESOLVED_OTP: ${{ steps.beam.outputs.otp-version }}
+        PINNED_ELIXIR: ${{ matrix.toolchain.pinned_elixir }}
+        PINNED_OTP: ${{ matrix.toolchain.pinned_otp }}
+        MINIMUM_LANE: ${{ matrix.toolchain.pinned_elixir == '1.17.3' }}
+        TOOLCHAIN_LABEL: ${{ matrix.toolchain.track }}
+        PACKAGE: ex_mcp
+      run: |
+        elixir --version | tee beam-version.txt
+        python3 -B - <<'PY'
+        import json
+        import os
+        import pathlib
+        import re
+
+        def normalize(value):
+            value = re.sub(r"^(?:v|OTP-)", "", value)
+            value = re.sub(r"-otp-[0-9.]+$", "", value)
+            if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", value):
+                raise SystemExit("Expected an exact stable version, received " + repr(value))
+            return value
+
+        def parts(value):
+            return tuple(map(int, value.split("."))) + (0,) * (8 - len(value.split(".")))
+
+        actual = {name: normalize(os.environ["RESOLVED_" + name.upper()]) for name in ("elixir", "otp")}
+        pinned = {name: normalize(os.environ["PINNED_" + name.upper()]) for name in ("elixir", "otp")}
+        newer = [name for name in actual if parts(actual[name]) > parts(pinned[name])]
+        minimum = os.environ["MINIMUM_LANE"] == "true"
+        note = "The Elixir 1.17.3 / OTP 27.0 pin intentionally preserves the minimum; newer patches do not require raising that floor." if minimum else "Review newer stable releases and update the pinned matrix deliberately."
+        receipt = {"package": os.environ["PACKAGE"], "track": os.environ["TOOLCHAIN_LABEL"], "resolved": actual, "pinned": pinned, "newer": newer, "minimum_lane": minimum}
+        pathlib.Path("beam-toolchain.json").write_text(json.dumps(receipt, indent=2) + "\n")
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+            summary.write("### " + receipt["package"] + " / " + receipt["track"] + "\n\n")
+            summary.write("| Runtime | Resolved stable | Pinned CI |\n|---|---|---|\n")
+            for name in actual:
+                summary.write(f"| {name} | {actual[name]} | {pinned[name]} |\n")
+            summary.write("\n" + note + "\n\nVersion drift is advisory; compile and test failures remain visible.\n")
+        if newer:
+            detail = ", ".join(f"{name} {actual[name]} > {pinned[name]}" for name in newer)
+            print("::warning title=Newer stable BEAM release::" + detail + ". " + note)
+        PY
+    - name: Install and record dependencies
+      run: |
+        mix deps.get
+        mix deps | tee beam-deps.txt
+    - name: Compile dependencies
+      run: mix deps.compile
+    - name: Compile project without warnings
+      run: mix compile --warnings-as-errors --no-deps-check
+    - name: Run unit tests
+      run: mix test --exclude compliance
+    - name: Run integration-tagged tests
+      run: mix test.suite integration --include requires_bypass
+    - name: Preserve resolved toolchain and dependency evidence
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: beam-latest-${{ strategy.job-index }}
+        path: |
+          beam-*.txt
+          beam-toolchain.json
+          mix.lock
+        include-hidden-files: true
+        retention-days: 14
