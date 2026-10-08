@@ -181,6 +181,7 @@ defmodule Arbor.MCP.MixProject do
           .formatter.exs
           mix.exs
           README.md
+          usage-rules.md
           LICENSE
           CHANGELOG.md
           docs/ACP_GUIDE.md
@@ -248,6 +249,7 @@ defmodule Arbor.MCP.MixProject do
       skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
       extras: [
         "README.md",
+        {"usage-rules.md", title: "Agent usage rules"},
         "docs/guides/MIGRATING_V1_TO_V2.md",
         "docs/guides/V2_RELEASE_CANDIDATE.md",
         "docs/getting-started/QUICKSTART.md",

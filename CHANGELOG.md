@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 2.0.0-rc.2 (unreleased)
 
+- Ship agent usage rules in Hex archives and ExDoc, with downstream UsageRules
+  setup guidance and API-reference validation through the existing docs gate.
 - Preserve complete Response wire fields, extensions, pagination and false/null
   presence in `to_raw/1`; remove unused `to_test_map/1`. Constructors emit `_meta`.
 - Read standard resource `contents`, retain nontext results and offer explicit

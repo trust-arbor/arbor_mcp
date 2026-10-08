@@ -93,6 +93,22 @@ For v2 API documentation from the checkout, run `mix docs --warnings-as-errors`
 after fetching development dependencies. The original RC API docs are at [hexdocs.pm/arbor_mcp/2.0.0-rc.1](https://hexdocs.pm/arbor_mcp/2.0.0-rc.1/). Replacement RC documentation follows its publication. Repository-only release assessments
 remain separate from the consumer guides shipped in the source package.
 
+## AI agent guidance
+
+The package ships [usage rules](usage-rules.md) for supported APIs, result
+formats, lifecycle and DSL conventions. They are also an ExDoc guide.
+Downstream projects with [UsageRules](https://usage-rules.hexdocs.pm/readme.html)
+installed as optional development tooling can add this to their `mix.exs`
+project configuration:
+
+```elixir
+usage_rules: [file: "AGENTS.md", usage_rules: [:arbor_mcp]]
+```
+
+Then run `mix usage_rules.sync`. Add other Arbor packages you use to the list.
+UsageRules 1.2 requires Elixir 1.18 or newer; shipping these rules adds no
+dependency and preserves ArborMCP's Elixir 1.17 minimum.
+
 ## Reporting issues
 
 Report suspected vulnerabilities through the
