@@ -1,5 +1,25 @@
 # Migrating from ExMCP 1.x to ArborMCP 2.x and ArborACP 1.x
 
+The final facade boundary removes hidden Client parsing/request/startup helpers,
+DSL argument validators, Result normalizers, Runtime configured-startup/ingress
+hooks and RPC generic actor calls. They were implementation exports, rather than
+supported user operations. Use Client protocol/scoped-connection operations,
+Handler callbacks and Result constructors, Runtime's documented advanced
+operations, or RPC Subprocess/FramedStream operations. Internal modules are not
+application extension APIs.
+
+DSL declarations now fail on duplicate names/instructions/options, unknown
+options, stray instructions and metadata unsupported by that primitive. Keep
+one declaration per parameter/argument, one scalar instruction per block and
+only documented `use` options. Tool/prompt identifiers replace ignored `name`
+metadata; prompts do not accept `annotations`.
+
+`Arbor.MCP.disconnect/1` still returns `:ok` for a successful or already-stopped
+client, but now returns cleanup errors instead of suppressing them.
+`Arbor.MCP.ping/2` reports `{:error, {:cleanup_failed, reason, connectivity_result}}`
+if its temporary client's cleanup cannot be confirmed. Handle these results;
+process death alone does not certify physical IO cleanup.
+
 ExMCP 1.x splits into **ArborMCP** for MCP and **ArborACP** for ACP, with
 independently installable ArborRPC and optional ArborACP adapter packages.
 This guide covers the prepared ArborMCP `2.0.0-rc.2` and ArborACP, ArborRPC

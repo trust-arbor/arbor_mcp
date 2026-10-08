@@ -1,6 +1,8 @@
 defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
   use ExUnit.Case, async: false
 
+  alias Arbor.MCP.Server.Runtime.Internal.Ingress, as: RuntimeIngress
+
   alias Arbor.MCP.Server.{HandlerServer, Runtime}
   alias Arbor.MCP.Server.Runtime.{Admission, ByteBudget, Ref}
   alias Arbor.MCP.Transport.Test
@@ -83,11 +85,11 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
     assert {:ok, _route, held} = reserve(runtime, [notification()])
     assert {:error, :server_busy} = reserve(runtime, [notification(), nil, 42])
     assert %{reserved: 1, reserved_envelopes: 1, admitted_work: 1} = Runtime.stats(runtime)
-    assert :ok = Runtime.discard_ingress(runtime, held.token)
+    assert :ok = RuntimeIngress.discard_ingress(runtime, held.token)
     assert {:ok, _route, whole} = reserve(runtime, [notification(), nil, 42])
     assert %{reserved: 3, admitted_work: 3, admitted_envelopes: 1} = Runtime.stats(runtime)
-    assert :ok = Runtime.discard_ingress(runtime, whole.token)
-    assert :ok = Runtime.discard_ingress(runtime, whole.token)
+    assert :ok = RuntimeIngress.discard_ingress(runtime, whole.token)
+    assert :ok = RuntimeIngress.discard_ingress(runtime, whole.token)
     wait_for_empty(runtime)
   end
 
@@ -100,11 +102,17 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
         reservation
       end
 
-    for index <- [1, 3], do: Runtime.discard_ingress(runtime, Enum.at(reservations, index).token)
+    for index <- [1, 3],
+        do:
+          RuntimeIngress.discard_ingress(
+            runtime,
+            Enum.at(reservations, index).token
+          )
+
     assert {:ok, _route, batch} = reserve(runtime, [nil, 42])
     assert %{reserved: 5, reserved_envelopes: 4, admitted_work: 5} = Runtime.stats(runtime)
     assert {:error, :server_busy} = reserve(runtime, [notification()])
-    assert :ok = Runtime.discard_ingress(runtime, batch.token)
+    assert :ok = RuntimeIngress.discard_ingress(runtime, batch.token)
 
     for _index <- 1..2,
         do: assert({:ok, _route, _reservation} = reserve(runtime, [notification()]))
@@ -120,12 +128,14 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
     input = :erlang.external_size(%{"payload" => members}) + :erlang.external_size([])
     assert charged == measured.bytes
     assert charged > input
-    assert :ok = Runtime.discard_ingress(profile, measured.token)
+
+    assert :ok =
+             RuntimeIngress.discard_ingress(profile, measured.token)
 
     exact = start_runtime(max_queue: 2, max_pending_bytes: charged)
     assert {:ok, _route, accepted} = reserve(exact, members)
     assert Runtime.stats(exact).pending_bytes == charged
-    assert :ok = Runtime.discard_ingress(exact, accepted.token)
+    assert :ok = RuntimeIngress.discard_ingress(exact, accepted.token)
 
     rejected = start_runtime(max_queue: 2, max_pending_bytes: charged - 1)
     {:ok, route} = Admission.route(Ref.table(rejected))
@@ -137,7 +147,10 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
     assert {:messages, []} = Process.info(route.admission, :messages)
     :sys.resume(route.admission)
     assert {:ok, _route, smaller} = reserve(rejected, [nil, 42])
-    assert :ok = Runtime.discard_ingress(rejected, smaller.token)
+
+    assert :ok =
+             RuntimeIngress.discard_ingress(rejected, smaller.token)
+
     wait_for_empty(rejected)
   end
 
@@ -185,7 +198,7 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
     wait_for_empty(runtime)
     assert %{data: 0, outgoing: 0, incoming: 0} = ByteBudget.used(Ref.table(runtime))
     assert {:ok, _route, again} = reserve(runtime, List.duplicate(nil, 9))
-    assert :ok = Runtime.discard_ingress(runtime, again.token)
+    assert :ok = RuntimeIngress.discard_ingress(runtime, again.token)
   end
 
   test "owner handoff retains all permits after producer exit and reaps them on owner death" do
@@ -207,7 +220,15 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
         {:ok, route, reservation} =
           reserve(runtime, [nil, 42, notification()], owner: owner, reply_to: parent)
 
-        :ok = Runtime.publish_ingress(runtime, route, reservation, {:probe, :admitted}, owner)
+        :ok =
+          RuntimeIngress.publish_ingress(
+            runtime,
+            route,
+            reservation,
+            {:probe, :admitted},
+            owner
+          )
+
         send(parent, {:batch_published, self(), reservation.token})
 
         receive do
@@ -224,7 +245,7 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
     Process.exit(owner, :kill)
     wait_for_empty(runtime)
     assert {:ok, _route, again} = reserve(runtime, [nil, 42, notification()])
-    assert :ok = Runtime.discard_ingress(runtime, again.token)
+    assert :ok = RuntimeIngress.discard_ingress(runtime, again.token)
   end
 
   test "an unbound batch deadline frees every permit and byte without dispatch" do
@@ -236,9 +257,12 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
     assert %{reserved: 3} = Runtime.stats(runtime)
     wait_for_empty(runtime)
     refute_receive {:batch_incremented, _worker}, 20
-    assert :ok = Runtime.discard_ingress(runtime, reservation.token)
+
+    assert :ok =
+             RuntimeIngress.discard_ingress(runtime, reservation.token)
+
     assert {:ok, _route, again} = reserve(runtime, [nil, 42, notification()])
-    assert :ok = Runtime.discard_ingress(runtime, again.token)
+    assert :ok = RuntimeIngress.discard_ingress(runtime, again.token)
   end
 
   test "future member cancellation preserves order and holds the whole batch's credits until settlement" do
@@ -359,7 +383,7 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
   end
 
   defp reserve(runtime, members, opts \\ []) do
-    Runtime.reserve_ingress(
+    RuntimeIngress.reserve_ingress(
       runtime,
       members,
       Keyword.merge([owner: self(), reply_to: self()], opts)

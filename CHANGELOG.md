@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 2.0.0-rc.2 (unreleased)
 
+- Reject duplicate DSL parameters/arguments, repeated instructions or `use`
+  options, unknown options, stray instructions and contextually ignored metadata
+  at compilation with source diagnostics.
+- Remove implementation bridges from Client, DSL, Result and Runtime facades;
+  preserve documented constructors and explicitly document advanced Runtime
+  operations. Cross-module implementation owners remain internal modules.
+- Route top-level `disconnect/1` through bounded Client cleanup and propagate
+  failures; `ping/2` reports unconfirmed cleanup. Preserve already-stopped
+  idempotence and remove the inaccurate transport-fallback capability flag.
 - Keep ArborMCP on 2.x while ArborRPC, ArborACP and its optional adapter bundle
   start independent 1.x release lines. Require ArborRPC `~> 1.0.0-rc.1`; update
   package preparation, CI and installed-version checks for independent versions.

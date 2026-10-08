@@ -1,6 +1,8 @@
 defmodule Arbor.MCP.Server.RuntimeInitializationClaimTest do
   use ExUnit.Case, async: false
 
+  alias Arbor.MCP.Server.Runtime.Internal.Ingress, as: RuntimeIngress
+
   alias Arbor.MCP.Server.Runtime
 
   alias Arbor.MCP.Server.Runtime.{
@@ -293,10 +295,18 @@ defmodule Arbor.MCP.Server.RuntimeInitializationClaimTest do
     table = Ref.table(runtime_ref)
 
     {:ok, _route, envelope} =
-      Runtime.reserve_ingress(root, [first, second], scope: :claim_batch, owner: self())
+      RuntimeIngress.reserve_ingress(root, [first, second],
+        scope: :claim_batch,
+        owner: self()
+      )
 
     assert {:ok, token} =
-             Runtime.dispatch_reserved(root, envelope.token, first, retain_reservation: true)
+             RuntimeIngress.dispatch_reserved(
+               root,
+               envelope.token,
+               first,
+               retain_reservation: true
+             )
 
     assert_receive {:claimed, prior, {:ok, old_claim}, sessions, old_lease, _origin}, 1_000
     assert_receive {:deferred_callback, deferred}, 1_000
@@ -307,7 +317,7 @@ defmodule Arbor.MCP.Server.RuntimeInitializationClaimTest do
     assert_receive {:arbor_mcp_step_ready, ^token}, 1_000
 
     assert {:ok, ^token} =
-             Runtime.dispatch_reserved(root, token, second, retain_reservation: true)
+             RuntimeIngress.dispatch_reserved(root, token, second, retain_reservation: true)
 
     assert_receive {:claimed, current, {:ok, _claim}, _sessions, _lease, current_origin}, 1_000
     assert {:ok, current_row} = Admission.current(table, token)
@@ -327,7 +337,7 @@ defmodule Arbor.MCP.Server.RuntimeInitializationClaimTest do
     assert_receive {:completed, ^current, :ok}, 1_000
     assert {:ok, _response} = Runtime.await(token, 1_000)
     assert_receive {:arbor_mcp_step_ready, ^token}, 1_000
-    assert :ok = Runtime.discard_ingress(root, token)
+    assert :ok = RuntimeIngress.discard_ingress(root, token)
   end
 
   test "completed success keeps its original claim valid after callback exit and later member cancellation" do
@@ -336,10 +346,18 @@ defmodule Arbor.MCP.Server.RuntimeInitializationClaimTest do
     second = claim_request(7, "later")
 
     {:ok, _route, envelope} =
-      Runtime.reserve_ingress(root, [first, second], scope: :success_batch, owner: self())
+      RuntimeIngress.reserve_ingress(root, [first, second],
+        scope: :success_batch,
+        owner: self()
+      )
 
     assert {:ok, token} =
-             Runtime.dispatch_reserved(root, envelope.token, first, retain_reservation: true)
+             RuntimeIngress.dispatch_reserved(
+               root,
+               envelope.token,
+               first,
+               retain_reservation: true
+             )
 
     assert_receive {:claimed, prior, {:ok, claim}, sessions, lease, _origin}, 1_000
     monitor = Process.monitor(prior)
@@ -349,7 +367,7 @@ defmodule Arbor.MCP.Server.RuntimeInitializationClaimTest do
     assert_receive {:arbor_mcp_step_ready, ^token}, 1_000
 
     assert {:ok, ^token} =
-             Runtime.dispatch_reserved(root, token, second, retain_reservation: true)
+             RuntimeIngress.dispatch_reserved(root, token, second, retain_reservation: true)
 
     assert_receive {:claimed, current, {:ok, _later_claim}, _sessions, _lease, _origin}, 1_000
     assert :ok = Runtime.cancel(root, :success_batch, 7)
@@ -358,7 +376,7 @@ defmodule Arbor.MCP.Server.RuntimeInitializationClaimTest do
     assert {:ok, %{initialized: true}} = SessionManager.get_session(sessions, lease, [])
     send(current, :finish_without_initialization)
     assert_receive {:arbor_mcp_step_ready, ^token}, 1_000
-    assert :ok = Runtime.discard_ingress(root, token)
+    assert :ok = RuntimeIngress.discard_ingress(root, token)
   end
 
   defp claim_request(id, session_id, opts \\ []) do

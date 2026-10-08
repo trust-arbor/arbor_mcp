@@ -1,6 +1,8 @@
 defmodule Arbor.MCP.OperationalTelemetryTest do
   use ExUnit.Case, async: false
 
+  alias Arbor.MCP.Client.Internal.Request, as: ClientRequest
+
   alias Arbor.MCP.Client
   alias Arbor.MCP.Client.{EraCache, Subscription}
   alias Arbor.MCP.Server.{MRTR, ReplayCache, RequestContext, RequestState, Subscriptions}
@@ -307,7 +309,7 @@ defmodule Arbor.MCP.OperationalTelemetryTest do
     retry_client = start_supervised!({RetryClient, []}, id: make_ref())
 
     assert {:ok, %{"resultType" => "complete"}} =
-             Client.make_request(
+             ClientRequest.make_request(
                retry_client,
                "resources/read",
                %{"uri" => "secret://resource"},

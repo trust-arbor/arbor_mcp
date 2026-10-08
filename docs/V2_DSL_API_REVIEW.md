@@ -5,6 +5,37 @@ Reviewed October 7, 2026 against MCP `0812257`, ACP `7e299f8` and RPC
 source review and a proposed release disposition, not a Spark migration or a
 new compiled API freeze. Existing compatibility evidence retains its sources.
 
+## Implemented release changes
+
+The focused cleanup below is implemented for ArborMCP `2.0.0-rc.2` and
+ArborRPC `1.0.0-rc.1`. The findings later in this document describe the reviewed
+source before these corrections. Spark remains deferred; no dependency or
+prototype is included.
+
+- Invalid declarations now raise compile errors with source locations:
+  duplicate parameters/arguments, repeated scalar instructions, stray nested
+  instructions, unknown/duplicate `use` options and metadata ignored by its
+  declaration owner. Valid declaration syntax and callback contracts remain.
+- Twenty-one MCP facade signatures and two RPC generic-call signatures moved
+  to internal owners. Client request/connection helpers, DSL validators, result
+  normalization and Runtime ingress/startup no longer appear on public facades.
+  Cross-module implementation functions remain callable in internal modules;
+  those modules are not supported extension APIs.
+- Advanced Runtime admission, request, await, cancellation and statistics
+  operations remain supported and now have explicit function documentation.
+- Facade disconnect uses Client's bounded cleanup, reports cleanup errors and
+  remains idempotent after shutdown. Ping reports cleanup failure even after a
+  successful connectivity check. The facade no longer advertises fallback for
+  its first-transport-only connection behavior.
+- The dynamic tools example now owns its action-result handling and uses public
+  Result constructors rather than a framework normalization helper.
+
+The migration guide and machine-readable API plan record the exact removals.
+Compiled negative-export tests guard these boundaries. The full MCP suite
+passed with 5,420 tests, 20 doctests and 34 properties (207 existing exclusions);
+the RPC suite passed with 115 tests. These source checks do not replace the
+installed four-package checks, CI matrix, downstream testing or final soak.
+
 The package split and runtime/scheduler are implemented. I recommend a small
 DSL correctness and facade-boundary pass before the next candidate. Keep the
 current declaration syntax while evaluating Spark separately. No further

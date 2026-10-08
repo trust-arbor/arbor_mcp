@@ -25,6 +25,8 @@ defmodule Arbor.MCP.Client.NotificationListener.Worker do
 
   use GenServer
 
+  alias Arbor.MCP.Client.Internal.Request, as: ClientRequest
+
   alias Arbor.MCP.Internal.RequestParams
 
   @type uri :: String.t()
@@ -187,7 +189,7 @@ defmodule Arbor.MCP.Client.NotificationListener.Worker do
   end
 
   defp request(client, method, uri, timeout) do
-    Arbor.MCP.Client.make_request(
+    ClientRequest.make_request(
       client,
       method,
       RequestParams.uri(uri),

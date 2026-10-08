@@ -8,12 +8,14 @@ defmodule Arbor.MCP.Client.Operations.Tasks do
   `io.modelcontextprotocol/tasks` extension capability.
   """
 
+  alias Arbor.MCP.Client.Internal.Request, as: ClientRequest
+
   alias Arbor.MCP.Client.Types
 
   @doc "Reads the full current state of one task."
   @spec get(Types.client(), String.t(), Types.request_opts()) :: Types.mcp_response()
   def get(client, task_id, opts \\ []) do
-    Arbor.MCP.Client.make_request(
+    ClientRequest.make_request(
       client,
       "tasks/get",
       %{"taskId" => task_id},
@@ -27,13 +29,20 @@ defmodule Arbor.MCP.Client.Operations.Tasks do
           Types.mcp_response()
   def update(client, task_id, input_responses, opts \\ []) do
     params = %{"taskId" => task_id, "inputResponses" => input_responses}
-    Arbor.MCP.Client.make_request(client, "tasks/update", params, map_opts(opts), 5_000)
+
+    ClientRequest.make_request(
+      client,
+      "tasks/update",
+      params,
+      map_opts(opts),
+      5_000
+    )
   end
 
   @doc "Requests cooperative cancellation of one task."
   @spec cancel(Types.client(), String.t(), Types.request_opts()) :: Types.mcp_response()
   def cancel(client, task_id, opts \\ []) do
-    Arbor.MCP.Client.make_request(
+    ClientRequest.make_request(
       client,
       "tasks/cancel",
       %{"taskId" => task_id},

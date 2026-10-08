@@ -3,8 +3,7 @@ defmodule Arbor.MCP.Server.DSL.Result do
   Compatibility forwarding path for `Arbor.MCP.Server.Result`.
 
   Handler and DSL callbacks now use one complete-result implementation.
-  Existing direct calls through this module retain their constructor and
-  normalization signatures. New code uses `Arbor.MCP.Server.Result`; DSL
+  Existing direct calls through this module retain their constructor signatures. New code uses `Arbor.MCP.Server.Result`; DSL
   modules receive that module as `ToolResult` automatically.
   """
 
@@ -52,13 +51,4 @@ defmodule Arbor.MCP.Server.DSL.Result do
   Compatibility delegation to `Arbor.MCP.Server.Result.input_required/2`.
   """
   defdelegate input_required(input_requests, request_state), to: Result
-
-  @doc false
-  defdelegate normalize_tool(result, state), to: Result
-  @doc false
-  defdelegate normalize_tool_result(result), to: Result
-  @doc false
-  defdelegate normalize_resource(result, uri, mime_type, state), to: Result
-  @doc false
-  defdelegate normalize_prompt(result, state), to: Result
 end

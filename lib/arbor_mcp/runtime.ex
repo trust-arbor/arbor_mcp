@@ -101,7 +101,7 @@ defmodule Arbor.MCP.Server.Runtime do
 
   use Supervisor
 
-  alias Arbor.MCP.Server.HTTP.{Config, CowboyClaims}
+  alias Arbor.MCP.Server.HTTP.CowboyClaims
 
   alias Arbor.MCP.Server.Runtime.{
     Admission,
@@ -123,43 +123,7 @@ defmodule Arbor.MCP.Server.Runtime do
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts) do
     with {:ok, config, deadline} <- Initialization.configure(opts) do
-      start_configured(opts, config, deadline)
-    end
-  end
-
-  @doc false
-  def start_configured(opts, config, deadline) do
-    with {:ok, http} <- Config.acquire(config.http, deadline) do
-      start_owned_configured(opts, %{config | http: http}, deadline)
-    end
-  end
-
-  defp start_owned_configured(opts, config, deadline) do
-    result =
-      Initialization.start_supervisor(
-        __MODULE__,
-        fn -> {opts, config, deadline} end,
-        deadline,
-        opts[:name]
-      )
-
-    if Deadline.now() < deadline do
-      result
-    else
-      case result do
-        {:ok, pid} ->
-          Process.unlink(pid)
-
-          case ref(pid) do
-            {:ok, runtime} -> Initialization.abort_current(Ref.table(runtime))
-            _unavailable -> Process.exit(pid, :kill)
-          end
-
-        _failed ->
-          :ok
-      end
-
-      {:error, :runtime_init_timeout}
+      Initialization.start_configured(opts, config, deadline)
     end
   end
 
@@ -295,44 +259,6 @@ defmodule Arbor.MCP.Server.Runtime do
     ArgumentError -> {:error, :runtime_unavailable}
   end
 
-  @doc false
-  def reserve_ingress(server, message, opts) do
-    with {:ok, runtime} <- ref(server) do
-      opts = opts |> Keyword.put_new(:kind, :ingress) |> Keyword.put(:via_edge, true)
-      Admission.reserve(runtime, %{"payload" => message}, opts)
-    end
-  end
-
-  @doc false
-  def publish_ingress(server, route, reservation, payload, edge) do
-    with {:ok, runtime} <- ref(server),
-         do: Admission.publish(Ref.table(runtime), route, reservation, payload, edge)
-  end
-
-  @doc false
-  def dispatch_reserved(server, token, request, opts \\ []) do
-    with {:ok, runtime} <- ref(server),
-         {:ok, route} <- Admission.route(Ref.table(runtime)),
-         {:ok, _reservation} <- Admission.promote(Ref.table(runtime), token, request, opts) do
-      work_opts = [
-        runtime: runtime,
-        dispatch_opts: Keyword.get(opts, :dispatch_opts, []),
-        output: Keyword.get(opts, :output),
-        retain_reservation: Keyword.get(opts, :retain_reservation, false)
-      ]
-
-      send(route.scheduler, {:submit, route.generation, token, request, work_opts})
-      {:ok, token}
-    end
-  end
-
-  @doc false
-  def discard_ingress(server, token) do
-    with {:ok, runtime} <- ref(server) do
-      Admission.release(Ref.table(runtime), token)
-    end
-  end
-
   @spec stop(server(), term()) :: :ok | {:error, term()}
   def stop(server, reason \\ :normal) do
     started = Deadline.now()
@@ -408,7 +334,13 @@ defmodule Arbor.MCP.Server.Runtime do
     end
   end
 
-  @doc false
+  @doc """
+  Admits a request and returns its opaque token without waiting for completion.
+
+  Advanced callers own the reply target and its lifetime. Count/byte capacity,
+  request deadlines and output admission still apply. A later await timeout
+  does not cancel accepted work. Prefer `request/3` for a managed reply alias.
+  """
   def submit(server, request, opts \\ []) when is_map(request) do
     with {:ok, runtime} <- ref(server) do
       if Keyword.get(opts, :via_edge, false) do
@@ -441,7 +373,14 @@ defmodule Arbor.MCP.Server.Runtime do
     end
   end
 
-  @doc false
+  @doc """
+  Admits and waits using a temporary local reply alias and a runtime monitor.
+
+  `:await_timeout` bounds admission plus waiting from API entry; `:timeout`
+  governs the server operation. Wait expiry deactivates the alias but does not
+  cancel accepted work. Explicit cancellation is separate. See the module
+  documentation for finite-wait limits and delivery semantics.
+  """
   def request(server, request, opts \\ []) do
     await_timeout = Keyword.get(opts, :await_timeout, :infinity)
 
@@ -462,7 +401,12 @@ defmodule Arbor.MCP.Server.Runtime do
     end
   end
 
-  @doc false
+  @doc """
+  Waits for a token returned by `submit/3` in this process's mailbox.
+
+  Timeout retains delivery: the same token may be awaited again. This helper
+  does not monitor the runtime or cancel work; its caller owns those decisions.
+  """
   def await(token, timeout \\ :infinity) do
     receive do
       {:arbor_mcp_runtime, ^token, result} -> result
@@ -471,7 +415,12 @@ defmodule Arbor.MCP.Server.Runtime do
     end
   end
 
-  @doc false
+  @doc """
+  Requests cancellation of an admitted operation in its original scope.
+
+  `:direction` defaults to `:inbound`. Cancellation is cooperative and does
+  not undo committed handler state or prove that external effects stopped.
+  """
   def cancel(server, scope, request_id, opts \\ []) do
     with {:ok, runtime} <- ref(server),
          {:ok, route} <- Admission.route(Ref.table(runtime)) do
@@ -495,7 +444,7 @@ defmodule Arbor.MCP.Server.Runtime do
     :exit, _reason -> {:error, :runtime_unavailable}
   end
 
-  @doc false
+  @doc "Requests cancellation of operations currently admitted in a scope."
   def cancel_scope(server, scope) do
     with {:ok, runtime} <- ref(server) do
       Ref.table(runtime)
@@ -514,7 +463,7 @@ defmodule Arbor.MCP.Server.Runtime do
     ArgumentError -> {:error, :runtime_unavailable}
   end
 
-  @doc false
+  @doc "Returns current scheduler and admission diagnostics, not a transactional snapshot."
   def stats(server) do
     with {:ok, runtime} <- ref(server),
          {:ok, route} <- Admission.route(Ref.table(runtime)),
@@ -529,7 +478,7 @@ defmodule Arbor.MCP.Server.Runtime do
     :exit, _reason -> {:error, :runtime_unavailable}
   end
 
-  @doc false
+  @doc "Returns whether the current managed callback has been cancelled."
   def cancelled?, do: CallbackContext.cancelled?()
 
   defp request_with_alias(runtime, request, opts, monitor, reply_alias) do

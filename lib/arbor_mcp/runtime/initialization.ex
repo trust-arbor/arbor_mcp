@@ -6,11 +6,47 @@ defmodule Arbor.MCP.Server.Runtime.Initialization do
     Config,
     Deadline,
     OutputController,
+    Ref,
     ShutdownControl,
     ShutdownGuard
   }
 
   alias Arbor.MCP.Server.Stdio.OutputAuthority
+
+  def start_configured(opts, config, deadline) do
+    with {:ok, http} <- Arbor.MCP.Server.HTTP.Config.acquire(config.http, deadline) do
+      start_owned_configured(opts, %{config | http: http}, deadline)
+    end
+  end
+
+  defp start_owned_configured(opts, config, deadline) do
+    result =
+      start_supervisor(
+        Arbor.MCP.Server.Runtime,
+        fn -> {opts, config, deadline} end,
+        deadline,
+        opts[:name]
+      )
+
+    if Deadline.now() < deadline do
+      result
+    else
+      case result do
+        {:ok, pid} ->
+          Process.unlink(pid)
+
+          case Arbor.MCP.Server.Runtime.ref(pid) do
+            {:ok, runtime} -> abort_current(Ref.table(runtime))
+            _unavailable -> Process.exit(pid, :kill)
+          end
+
+        _failed ->
+          :ok
+      end
+
+      {:error, :runtime_init_timeout}
+    end
+  end
 
   @timer_limit 4_294_967_295
 

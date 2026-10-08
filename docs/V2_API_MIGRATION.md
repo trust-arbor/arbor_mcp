@@ -1,5 +1,24 @@
 # V2 API migration inventory
 
+The October 7 facade-boundary pass removes 21 additional callable signatures
+from MCP API modules and two generic RPC actor-call signatures. This is separate
+from the historical 102 accepted 1.x retirements and does not replace the frozen
+baseline. The exact signatures and negative export checks are recorded in
+`facade_boundary_cleanup` in the machine-readable plan.
+
+Client parsing/scoped startup/request execution, DSL argument validation,
+callback-result normalization and Runtime configured-startup/ingress hooks move
+to internal implementation owners. Client protocol operations, public Result
+constructors and required behavior callbacks remain. Runtime `request`,
+`submit`, `await`, cancellation and diagnostics are explicitly documented
+advanced APIs, with their existing ownership and deadline semantics.
+
+The facade shutdown and temporary `ping` cleanup now report real cleanup failures;
+already-stopped shutdown is idempotent. DSL diagnostics reject invalid/ignored
+declarations. See [the DSL/API review](V2_DSL_API_REVIEW.md) and the current
+[migration guide](guides/MIGRATING_V1_TO_V2.md). Current compiled qualification
+must accompany these changed sources; historical API5 evidence is preserved.
+
 Status: all 102 accepted callable retirements, the eight Tools modules and two
 legacy HTTP wrappers, and four type retirements are implemented in the reviewed
 source candidate.

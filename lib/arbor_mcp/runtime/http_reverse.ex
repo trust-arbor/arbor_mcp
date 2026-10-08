@@ -1,6 +1,8 @@
 defmodule Arbor.MCP.Server.Runtime.HTTPReverse do
   @moduledoc false
 
+  alias Arbor.MCP.Server.Runtime.Internal.Ingress, as: RuntimeIngress
+
   alias Arbor.MCP.Server.Context
   alias Arbor.MCP.Server.Runtime
 
@@ -268,7 +270,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverse do
 
     try do
       with {:ok, route, reservation} <-
-             Runtime.reserve_ingress(runtime, request,
+             RuntimeIngress.reserve_ingress(runtime, request,
                kind: :edge_control,
                direction: :outbound,
                owner: snapshot.gateway,
@@ -286,7 +288,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverse do
                ]
              ),
            :ok <-
-             Runtime.publish_ingress(
+             RuntimeIngress.publish_ingress(
                runtime,
                route,
                reservation,

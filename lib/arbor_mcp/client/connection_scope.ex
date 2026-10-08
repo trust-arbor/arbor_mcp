@@ -2,7 +2,8 @@ defmodule Arbor.MCP.Client.ConnectionScope do
   @moduledoc false
   import Kernel, except: [spawn_monitor: 1, spawn_link: 1]
 
-  alias Arbor.MCP.Client
+  alias Arbor.MCP.Client.Internal.Connection, as: ClientConnection
+
   alias Arbor.MCP.Client.ConnectionScope.{Observer, Ref}
   alias Arbor.MCP.Client.{Deadline, Lifetime}
 
@@ -15,7 +16,8 @@ defmodule Arbor.MCP.Client.ConnectionScope do
          deadline = Deadline.after_ms(establish),
          {:ok, cleanup} <- finite_option(opts, :cleanup_timeout, 1_000),
          {:ok, workers} <- finite_option(opts, :max_scope_workers, 256),
-         {:ok, client_opts} <- Client.connection_options(spec, opts),
+         {:ok, client_opts} <-
+           ClientConnection.connection_options(spec, opts),
          :ok <- validate_name(client_opts),
          token = make_ref(),
          {:ok, observer} <- Observer.start(self(), client_opts, deadline, cleanup, workers, token) do

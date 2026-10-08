@@ -56,14 +56,14 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 88f29575de423b94db17f7230a9763985124f34b
+        ref: e15665b9a9386d4052b5d1843ebba9094e28ab3a
         path: .arbor-v2/acp
         persist-credentials: false
     - name: Check out unpublished shared RPC
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: c4813349d090d147d11fc3090b06f10f20936da2
+        ref: 92fcb95b1e35cf67a4343804b45bc130e6a8b594
         path: .arbor-v2/rpc
         persist-credentials: false
     - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
@@ -138,7 +138,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: c4813349d090d147d11fc3090b06f10f20936da2
+        ref: 92fcb95b1e35cf67a4343804b45bc130e6a8b594
         path: .arbor-v2/rpc
         persist-credentials: false
     - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
@@ -250,7 +250,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: c4813349d090d147d11fc3090b06f10f20936da2
+        ref: 92fcb95b1e35cf67a4343804b45bc130e6a8b594
         path: .arbor-v2/rpc
         persist-credentials: false
 
@@ -335,7 +335,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: c4813349d090d147d11fc3090b06f10f20936da2
+        ref: 92fcb95b1e35cf67a4343804b45bc130e6a8b594
         path: .arbor-v2/rpc
         persist-credentials: false
 
@@ -390,7 +390,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: c4813349d090d147d11fc3090b06f10f20936da2
+        ref: 92fcb95b1e35cf67a4343804b45bc130e6a8b594
         path: .arbor-v2/rpc
         persist-credentials: false
 
@@ -436,7 +436,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: c4813349d090d147d11fc3090b06f10f20936da2
+        ref: 92fcb95b1e35cf67a4343804b45bc130e6a8b594
         path: .arbor-v2/rpc
         persist-credentials: false
 
@@ -515,7 +515,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: c4813349d090d147d11fc3090b06f10f20936da2
+        ref: 92fcb95b1e35cf67a4343804b45bc130e6a8b594
         path: .arbor-v2/rpc
         persist-credentials: false
 
@@ -575,7 +575,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: c4813349d090d147d11fc3090b06f10f20936da2
+        ref: 92fcb95b1e35cf67a4343804b45bc130e6a8b594
         path: .arbor-v2/rpc
         persist-credentials: false
 
@@ -630,7 +630,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: c4813349d090d147d11fc3090b06f10f20936da2
+        ref: 92fcb95b1e35cf67a4343804b45bc130e6a8b594
         path: .arbor-v2/rpc
         persist-credentials: false
 

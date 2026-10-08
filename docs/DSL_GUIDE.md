@@ -45,6 +45,21 @@ own private helpers, defaults and compiled validators. Including a component
 initializes only the host handler and starts one Runtime. Component callbacks
 must accept the host's state shape.
 
+## Declaration validation
+
+`use Arbor.MCP.Server.DSL` accepts `:name`, `:version`, `:server_info` and
+`:components`; unknown or repeated options fail compilation. Nested instructions
+must appear inside a primitive block. Parameter and prompt-argument names must
+be unique within that primitive, and scalar instructions such as `title`,
+`annotations` or `input_schema` may appear only once. Errors identify the source
+file and offending line.
+
+`name` supplies resource or resource-template metadata. Tool and prompt names
+come from their declaration identifiers. `annotations` applies to tools,
+resources and resource templates. Metadata with no meaning for a primitive is
+rejected rather than ignored. Existing declaration syntax, component ordering,
+host state, schema validation and explicit default/null/false semantics remain.
+
 ## Tools
 
 Tools declare input metadata and a `run` handler:

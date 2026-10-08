@@ -6,6 +6,8 @@ defmodule Arbor.MCP.Client.Operations.Tools do
   calling specific tools, and finding tools by name or pattern.
   """
 
+  alias Arbor.MCP.Client.Internal.Request, as: ClientRequest
+
   alias Arbor.MCP.Client.Types
   alias Arbor.MCP.Error
   alias Arbor.MCP.Internal.RequestParams
@@ -26,7 +28,7 @@ defmodule Arbor.MCP.Client.Operations.Tools do
   """
   @spec list_tools(Types.client(), Types.request_opts()) :: Types.mcp_response()
   def list_tools(client, opts \\ []) do
-    Arbor.MCP.Client.make_request(
+    ClientRequest.make_request(
       client,
       "tools/list",
       RequestParams.cursor_from_opts(opts),
@@ -109,7 +111,15 @@ defmodule Arbor.MCP.Client.Operations.Tools do
 
     # Add tool_name to opts for proper Response struct construction
     enhanced_opts = Keyword.put(opts, :tool_name, tool_name)
-    result = Arbor.MCP.Client.make_request(client, "tools/call", params, enhanced_opts, 30_000)
+
+    result =
+      ClientRequest.make_request(
+        client,
+        "tools/call",
+        params,
+        enhanced_opts,
+        30_000
+      )
 
     maybe_retry_header_mismatch(
       result,
@@ -235,7 +245,13 @@ defmodule Arbor.MCP.Client.Operations.Tools do
           |> Keyword.put(:timeout, remaining)
           |> Keyword.put(:retry_policy, false)
 
-        Arbor.MCP.Client.make_request(client, "tools/call", params, retry_opts, 30_000)
+        ClientRequest.make_request(
+          client,
+          "tools/call",
+          params,
+          retry_opts,
+          30_000
+        )
       else
         _refresh_or_timeout_error -> result
       end

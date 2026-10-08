@@ -47,6 +47,8 @@ defmodule Arbor.MCP.Server.HandlerServer do
   use GenServer
   require Logger
 
+  alias Arbor.MCP.Server.Runtime.Internal.Ingress, as: RuntimeIngress
+
   alias Arbor.MCP.Error.ProtocolError
   alias Arbor.MCP.Internal.{MessageValidator, VersionRegistry}
   alias Arbor.MCP.Protocol.ErrorCodes
@@ -226,7 +228,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
             end
 
           with {:ok, route, reservation} <-
-                 Runtime.reserve_ingress(runtime, message,
+                 RuntimeIngress.reserve_ingress(runtime, message,
                    owner: edge,
                    reply_to: edge,
                    scope: {:connection, connection},
@@ -238,7 +240,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
                    timeout: ingress_timeout(runtime, opts),
                    admission_deadline: Keyword.get(opts, :admission_deadline, :infinity)
                  ) do
-            Runtime.publish_ingress(
+            RuntimeIngress.publish_ingress(
               runtime,
               route,
               reservation,
@@ -381,7 +383,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
   @impl GenServer
   def handle_info({{:runtime_edge_reply, token}, result}, state) do
     Admission.terminal(Ref.table(state.runtime), token, {:ok, result})
-    Runtime.discard_ingress(state.runtime, token)
+    RuntimeIngress.discard_ingress(state.runtime, token)
     {:noreply, state}
   end
 
@@ -398,7 +400,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
     if connection == state.connection do
       accept_ingress(token, message, state)
     else
-      Runtime.discard_ingress(state.runtime, token)
+      RuntimeIngress.discard_ingress(state.runtime, token)
       {:noreply, state}
     end
   end
@@ -413,7 +415,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
         {:noreply, advance_ingress(token, state)}
 
       _ ->
-        Runtime.discard_ingress(state.runtime, token)
+        RuntimeIngress.discard_ingress(state.runtime, token)
         {:noreply, %{state | ingress: Map.delete(state.ingress, token)}}
     end
   end
@@ -500,7 +502,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
 
   def handle_info({:transport_message, message}, state) do
     # Raw Erlang send bypasses the supported ingress API's pre-mailbox bound.
-    case Runtime.reserve_ingress(state.runtime, message,
+    case RuntimeIngress.reserve_ingress(state.runtime, message,
            owner: self(),
            reply_to: self(),
            scope: {:connection, state.connection}
@@ -691,7 +693,12 @@ defmodule Arbor.MCP.Server.HandlerServer do
     do: process_edge_control(token, request["payload"], state)
 
   defp dispatch_published(token, {:custom, request, kind, opts}, state) do
-    case Runtime.dispatch_reserved(state.runtime, token, request, Keyword.put(opts, :kind, kind)) do
+    case RuntimeIngress.dispatch_reserved(
+           state.runtime,
+           token,
+           request,
+           Keyword.put(opts, :kind, kind)
+         ) do
       {:ok, _token} ->
         state
 
@@ -780,7 +787,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
               do: id
 
         state = Enum.reduce(expired, state, &drop_reverse/2)
-        Runtime.discard_ingress(state.runtime, token)
+        RuntimeIngress.discard_ingress(state.runtime, token)
         state
 
       {_ingress, _reservation} ->
@@ -824,11 +831,11 @@ defmodule Arbor.MCP.Server.HandlerServer do
   defp accept_ingress(token, message, state) do
     case decode_transport_message(message) do
       {:ok, %{"result" => _result} = response} ->
-        Runtime.discard_ingress(state.runtime, token)
+        RuntimeIngress.discard_ingress(state.runtime, token)
         handle_client_response(response, state)
 
       {:ok, %{"error" => _error} = response} ->
-        Runtime.discard_ingress(state.runtime, token)
+        RuntimeIngress.discard_ingress(state.runtime, token)
         handle_client_response(response, state)
 
       {:ok, requests} when is_list(requests) ->
@@ -838,14 +845,14 @@ defmodule Arbor.MCP.Server.HandlerServer do
         if request["method"] == "notifications/cancelled" do
           state = %{state | current_ingress: token}
           {_kind, state} = process_mcp_request(request, state)
-          Runtime.discard_ingress(state.runtime, token)
+          RuntimeIngress.discard_ingress(state.runtime, token)
           {:noreply, %{state | current_ingress: nil}}
         else
           enqueue_ingress(token, [request], false, state)
         end
 
       _invalid ->
-        Runtime.discard_ingress(state.runtime, token)
+        RuntimeIngress.discard_ingress(state.runtime, token)
         {:noreply, state}
     end
   end
@@ -1105,7 +1112,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
   defp do_finish_ingress(token, state) do
     :ets.delete(Ref.table(state.runtime), {:output_failure, token})
     :ets.delete(Ref.table(state.runtime), {:output_commit, token})
-    Runtime.discard_ingress(state.runtime, token)
+    RuntimeIngress.discard_ingress(state.runtime, token)
     state = %{state | ingress: Map.delete(state.ingress, token)}
 
     cond do
@@ -1690,7 +1697,10 @@ defmodule Arbor.MCP.Server.HandlerServer do
 
     token = state.current_ingress
 
-    case Runtime.dispatch_reserved(state.runtime, token, request,
+    case RuntimeIngress.dispatch_reserved(
+           state.runtime,
+           token,
+           request,
            dispatch_opts: dispatch_opts,
            output: %{
              edge: self(),

@@ -2548,5 +2548,141 @@
       ],
       "full_four_package_api_diff_complete": false
     }
+  },
+  "facade_boundary_cleanup": {
+    "status": "implemented_in_source; compiled qualification tracked separately",
+    "baseline_preserved": true,
+    "scope": "Implementation exports removed from public facades, separate from historical 102 retirements",
+    "removed_signatures": [
+      {
+        "module": "Arbor.MCP.Client",
+        "name": "connection_options",
+        "arity": 2
+      },
+      {
+        "module": "Arbor.MCP.Client",
+        "name": "start_scoped",
+        "arity": 3
+      },
+      {
+        "module": "Arbor.MCP.Client",
+        "name": "parse_connection_spec",
+        "arity": 1
+      },
+      {
+        "module": "Arbor.MCP.Client",
+        "name": "prepare_transport_config",
+        "arity": 1
+      },
+      {
+        "module": "Arbor.MCP.Client",
+        "name": "make_request",
+        "arity": 5
+      },
+      {
+        "module": "Arbor.MCP.Server.DSL",
+        "name": "prepare_tool_arguments",
+        "arity": 3
+      },
+      {
+        "module": "Arbor.MCP.Server.DSL",
+        "name": "validate_tool_response",
+        "arity": 2
+      },
+      {
+        "module": "Arbor.MCP.Server.Result",
+        "name": "normalize_tool",
+        "arity": 2
+      },
+      {
+        "module": "Arbor.MCP.Server.Result",
+        "name": "normalize_tool_result",
+        "arity": 1
+      },
+      {
+        "module": "Arbor.MCP.Server.Result",
+        "name": "normalize_resource",
+        "arity": 4
+      },
+      {
+        "module": "Arbor.MCP.Server.Result",
+        "name": "normalize_prompt",
+        "arity": 2
+      },
+      {
+        "module": "Arbor.MCP.Server.DSL.Result",
+        "name": "normalize_tool",
+        "arity": 2
+      },
+      {
+        "module": "Arbor.MCP.Server.DSL.Result",
+        "name": "normalize_tool_result",
+        "arity": 1
+      },
+      {
+        "module": "Arbor.MCP.Server.DSL.Result",
+        "name": "normalize_resource",
+        "arity": 4
+      },
+      {
+        "module": "Arbor.MCP.Server.DSL.Result",
+        "name": "normalize_prompt",
+        "arity": 2
+      },
+      {
+        "module": "Arbor.MCP.Server.Runtime",
+        "name": "start_configured",
+        "arity": 3
+      },
+      {
+        "module": "Arbor.MCP.Server.Runtime",
+        "name": "reserve_ingress",
+        "arity": 3
+      },
+      {
+        "module": "Arbor.MCP.Server.Runtime",
+        "name": "publish_ingress",
+        "arity": 5
+      },
+      {
+        "module": "Arbor.MCP.Server.Runtime",
+        "name": "dispatch_reserved",
+        "arity": 3
+      },
+      {
+        "module": "Arbor.MCP.Server.Runtime",
+        "name": "dispatch_reserved",
+        "arity": 4
+      },
+      {
+        "module": "Arbor.MCP.Server.Runtime",
+        "name": "discard_ingress",
+        "arity": 2
+      },
+      {
+        "module": "Arbor.RPC.Subprocess",
+        "name": "call",
+        "arity": 2
+      },
+      {
+        "module": "Arbor.RPC.Subprocess",
+        "name": "call",
+        "arity": 3
+      }
+    ],
+    "supported_runtime_operations": [
+      "submit/2,3",
+      "request/2,3",
+      "await/1,2",
+      "cancel/3,4",
+      "cancel_scope/2",
+      "stats/1",
+      "cancelled?/0"
+    ],
+    "negative_checks": [
+      "test/arbor_mcp/facade_boundary_test.exs",
+      "arbor_rpc:test/arbor_rpc/facade_boundary_test.exs"
+    ],
+    "spark": "deferred; no dependency or spike"
   }
 }

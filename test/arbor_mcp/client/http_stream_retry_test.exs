@@ -1,6 +1,8 @@
 defmodule Arbor.MCP.Client.HTTPStreamRetryTest do
   use ExUnit.Case, async: false
 
+  alias Arbor.MCP.Client.Internal.Request, as: ClientRequest
+
   alias Arbor.MCP.Client
   alias Arbor.MCP.Error
 
@@ -188,7 +190,7 @@ defmodule Arbor.MCP.Client.HTTPStreamRetryTest do
 
   defp request(client, method, opts \\ []) do
     opts = Keyword.put_new(opts, :format, :map)
-    Client.make_request(client, method, %{}, opts, 1_000)
+    ClientRequest.make_request(client, method, %{}, opts, 1_000)
   end
 
   defp broken(cause) do

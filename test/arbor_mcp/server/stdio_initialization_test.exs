@@ -1,6 +1,8 @@
 defmodule Arbor.MCP.Server.StdioInitializationTest do
   use ExUnit.Case, async: true
 
+  alias Arbor.MCP.Server.Runtime.Initialization, as: RuntimeInitialization
+
   alias Arbor.MCP.Server.Runtime
   alias Arbor.MCP.Server.Runtime.{Initialization, Ref}
   alias Arbor.MCP.Server.Stdio.{Dispatch, OutputAuthority, OutputLease, Supervisor}
@@ -120,7 +122,7 @@ defmodule Arbor.MCP.Server.StdioInitializationTest do
           |> Keyword.put(:stdio_output_lease, lease)
 
         result =
-          Runtime.start_configured(
+          RuntimeInitialization.start_configured(
             Keyword.put(opts, :edge, {HeldEdge, edge_opts}),
             config,
             deadline

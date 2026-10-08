@@ -212,6 +212,7 @@ defmodule Arbor.MCP.MixProject do
           docs/V2_NATIVE_STORE_PRESSURE.md
           docs/V2_DETS_LIFECYCLE.md
           docs/V2_API_MIGRATION.md
+          docs/V2_DSL_API_REVIEW.md
           docs/V2_NON_SYMBOL_MIGRATION.md
           docs/RUNTIME_GUIDE.md
         )
@@ -270,6 +271,7 @@ defmodule Arbor.MCP.MixProject do
         "docs/V2_NATIVE_STORE_PRESSURE.md",
         "docs/V2_DETS_LIFECYCLE.md",
         "docs/V2_API_MIGRATION.md",
+        "docs/V2_DSL_API_REVIEW.md",
         "docs/V2_NON_SYMBOL_MIGRATION.md",
         "docs/TRANSPORT_GUIDE.md",
         "docs/CONFIGURATION.md",

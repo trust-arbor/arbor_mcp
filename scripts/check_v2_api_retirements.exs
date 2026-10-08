@@ -22,6 +22,15 @@ defmodule Arbor.MCP.Release.APIRetirementAudit do
       end
 
     {remaining_types, removed_types} = Enum.split_with(types, &type_present?/1)
+    facade = Map.fetch!(plan, "facade_boundary_cleanup") |> Map.fetch!("removed_signatures")
+
+    remaining_facade =
+      Enum.filter(facade, fn entry ->
+        {_module, members} = exports(entry["module"])
+        MapSet.member?(members, {String.to_atom(entry["name"]), entry["arity"]})
+      end)
+
+    if remaining_facade != [], do: raise("Internal exports remain on public facades")
 
     report = %{
       "scope" => "MCP accepted API retirements only; not the full four-package API comparison",
@@ -34,6 +43,8 @@ defmodule Arbor.MCP.Release.APIRetirementAudit do
       "remaining_callables" => remaining,
       "remaining_modules" => remaining_modules,
       "remaining_types" => remaining_types,
+      "facade_boundary_removed_count" => length(facade),
+      "remaining_facade_exports" => remaining_facade,
       "complete" => remaining == [] and remaining_modules == [] and remaining_types == []
     }
 

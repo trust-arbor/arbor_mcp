@@ -6,6 +6,8 @@ defmodule Arbor.MCP.Client.Operations.Prompts do
   prompts and retrieving specific prompts with their arguments.
   """
 
+  alias Arbor.MCP.Client.Internal.Request, as: ClientRequest
+
   alias Arbor.MCP.Client.Types
   alias Arbor.MCP.Internal.RequestParams
 
@@ -25,7 +27,7 @@ defmodule Arbor.MCP.Client.Operations.Prompts do
   """
   @spec list_prompts(Types.client(), Types.request_opts()) :: Types.mcp_response()
   def list_prompts(client, opts \\ []) do
-    Arbor.MCP.Client.make_request(
+    ClientRequest.make_request(
       client,
       "prompts/list",
       RequestParams.cursor_from_opts(opts),
@@ -62,6 +64,6 @@ defmodule Arbor.MCP.Client.Operations.Prompts do
       |> RequestParams.named(arguments)
       |> RequestParams.with_opts_meta(opts)
 
-    Arbor.MCP.Client.make_request(client, "prompts/get", params, opts, 5_000)
+    ClientRequest.make_request(client, "prompts/get", params, opts, 5_000)
   end
 end

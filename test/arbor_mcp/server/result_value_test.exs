@@ -1,10 +1,12 @@
 defmodule Arbor.MCP.Server.ResultValueTest do
   use ExUnit.Case, async: true
 
+  alias Arbor.MCP.Server.Internal.DSLArguments
+
   alias Arbor.MCP.Content.SchemaPolicy
   alias Arbor.MCP.Response
   alias Arbor.MCP.Server
-  alias Arbor.MCP.Server.{DSL, HandlerServer, Result, Runtime}
+  alias Arbor.MCP.Server.{HandlerServer, Result, Runtime}
 
   defmodule Handler do
     use Arbor.MCP.Server.Handler
@@ -79,20 +81,46 @@ defmodule Arbor.MCP.Server.ResultValueTest do
     {:ok, array} = SchemaPolicy.compile(%{type: "array", items: %{type: "integer"}})
 
     assert {:ok, %{structuredContent: false}} =
-             DSL.validate_tool_response(%{structuredContent: false}, boolean)
+             DSLArguments.validate_tool_response(
+               %{structuredContent: false},
+               boolean
+             )
 
-    assert {:error, _} = DSL.validate_tool_response(%{"structuredContent" => nil}, boolean)
+    assert {:error, _} =
+             DSLArguments.validate_tool_response(
+               %{"structuredContent" => nil},
+               boolean
+             )
 
     assert {:ok, %{structuredContent: nil}} =
-             DSL.validate_tool_response(%{structuredContent: nil}, null)
+             DSLArguments.validate_tool_response(
+               %{structuredContent: nil},
+               null
+             )
 
-    assert {:error, _} = DSL.validate_tool_response(%{"structuredContent" => false}, null)
+    assert {:error, _} =
+             DSLArguments.validate_tool_response(
+               %{"structuredContent" => false},
+               null
+             )
 
     assert {:ok, %{structuredContent: []}} =
-             DSL.validate_tool_response(%{structuredContent: []}, array)
+             DSLArguments.validate_tool_response(
+               %{structuredContent: []},
+               array
+             )
 
-    assert {:error, _} = DSL.validate_tool_response(%{structuredContent: ["wrong"]}, array)
-    assert {:ok, %{content: []}} = DSL.validate_tool_response(%{content: []}, boolean)
+    assert {:error, _} =
+             DSLArguments.validate_tool_response(
+               %{structuredContent: ["wrong"]},
+               array
+             )
+
+    assert {:ok, %{content: []}} =
+             DSLArguments.validate_tool_response(
+               %{content: []},
+               boolean
+             )
   end
 
   test "schema checks cannot discard normalized collisions before the output guard" do
@@ -103,7 +131,7 @@ defmodule Arbor.MCP.Server.ResultValueTest do
           %{structuredContent: %{:value => 1, "value" => 2}}
         ] do
       assert_raise ArgumentError, "Conflicting normalized result keys", fn ->
-        DSL.validate_tool_response(response, schema)
+        DSLArguments.validate_tool_response(response, schema)
       end
     end
   end

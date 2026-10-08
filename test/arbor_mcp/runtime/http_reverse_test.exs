@@ -1,6 +1,8 @@
 defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
   use ExUnit.Case, async: false
   import Plug.Conn
+  alias Arbor.MCP.Server.Runtime.Internal.Ingress, as: RuntimeIngress
+
   alias Arbor.MCP.HttpPlug
   alias Arbor.MCP.Protocol.Elicitation
   alias Arbor.MCP.Server.Runtime
@@ -75,7 +77,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
       control = %{source: source, deadline: proof.deadline, request: request, reply: self()}
 
       {:ok, route, reservation} =
-        Runtime.reserve_ingress(proof.runtime, request,
+        RuntimeIngress.reserve_ingress(proof.runtime, request,
           kind: :edge_control,
           direction: :outbound,
           owner: proof.gateway,
@@ -93,7 +95,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
         )
 
       :ok =
-        Runtime.publish_ingress(
+        RuntimeIngress.publish_ingress(
           proof.runtime,
           route,
           reservation,
@@ -210,7 +212,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
       control = %{source: source, deadline: proof.deadline, request: request, reply: self()}
 
       {:ok, route, reservation} =
-        Runtime.reserve_ingress(proof.runtime, request,
+        RuntimeIngress.reserve_ingress(proof.runtime, request,
           kind: :edge_control,
           direction: :outbound,
           owner: proof.gateway,
@@ -228,7 +230,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
         )
 
       :ok =
-        Runtime.publish_ingress(
+        RuntimeIngress.publish_ingress(
           proof.runtime,
           route,
           reservation,

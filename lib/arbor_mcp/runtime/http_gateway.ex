@@ -1,6 +1,8 @@
 defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
   @moduledoc false
   use GenServer
+  alias Arbor.MCP.Server.Runtime.Internal.Ingress, as: RuntimeIngress
+
   alias Arbor.MCP.Internal.MessageValidator
   alias Arbor.MCP.Server.{RequestContext, SubscriptionListener, Subscriptions}
   alias Arbor.MCP.Server.Runtime
@@ -93,7 +95,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
 
       try do
         with {:ok, route, reservation} <-
-               Runtime.reserve_ingress(runtime, responses,
+               RuntimeIngress.reserve_ingress(runtime, responses,
                  kind: :edge_response,
                  owner: gateway,
                  caller: self(),
@@ -105,7 +107,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
                  dispatch_opts: [http: retained]
                ),
              :ok <-
-               Runtime.publish_ingress(
+               RuntimeIngress.publish_ingress(
                  runtime,
                  route,
                  reservation,
@@ -192,7 +194,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
 
   defp publish(runtime, proof, gateway, message, retained) do
     with {:ok, route, reservation} <-
-           Runtime.reserve_ingress(runtime, message,
+           RuntimeIngress.reserve_ingress(runtime, message,
              kind: if(response_only?(message), do: :edge_response, else: :ingress),
              owner: gateway,
              caller: self(),
@@ -207,7 +209,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
              batch?: is_list(message)
            ),
          :ok <-
-           Runtime.publish_ingress(
+           RuntimeIngress.publish_ingress(
              runtime,
              route,
              reservation,

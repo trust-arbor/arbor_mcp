@@ -6,6 +6,8 @@ defmodule Arbor.MCP.Client.Operations.Resources do
   resources, reading resource content, and managing resource subscriptions.
   """
 
+  alias Arbor.MCP.Client.Internal.Request, as: ClientRequest
+
   alias Arbor.MCP.Client.{Subscription, Types}
   alias Arbor.MCP.Internal.{RequestParams, VersionRegistry}
 
@@ -23,7 +25,7 @@ defmodule Arbor.MCP.Client.Operations.Resources do
   """
   @spec list_resources(Types.client(), Types.request_opts()) :: Types.mcp_response()
   def list_resources(client, opts \\ []) do
-    Arbor.MCP.Client.make_request(
+    ClientRequest.make_request(
       client,
       "resources/list",
       RequestParams.cursor_from_opts(opts),
@@ -51,7 +53,13 @@ defmodule Arbor.MCP.Client.Operations.Resources do
   """
   @spec read_resource(Types.client(), Types.uri(), Types.request_opts()) :: Types.mcp_response()
   def read_resource(client, uri, opts \\ []) do
-    Arbor.MCP.Client.make_request(client, "resources/read", RequestParams.uri(uri), opts, 10_000)
+    ClientRequest.make_request(
+      client,
+      "resources/read",
+      RequestParams.uri(uri),
+      opts,
+      10_000
+    )
   end
 
   @doc """
@@ -119,7 +127,7 @@ defmodule Arbor.MCP.Client.Operations.Resources do
   end
 
   defp subscribe_legacy(client, uri, opts) do
-    Arbor.MCP.Client.make_request(
+    ClientRequest.make_request(
       client,
       "resources/subscribe",
       RequestParams.uri(uri),
@@ -208,7 +216,7 @@ defmodule Arbor.MCP.Client.Operations.Resources do
   end
 
   defp unsubscribe_legacy(client, uri, opts) do
-    Arbor.MCP.Client.make_request(
+    ClientRequest.make_request(
       client,
       "resources/unsubscribe",
       RequestParams.uri(uri),

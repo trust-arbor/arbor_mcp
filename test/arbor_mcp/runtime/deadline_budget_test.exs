@@ -1,6 +1,8 @@
 defmodule Arbor.MCP.Server.Runtime.DeadlineBudgetTest do
   use ExUnit.Case, async: false
 
+  alias Arbor.MCP.Server.Runtime.Internal.Ingress, as: RuntimeIngress
+
   alias Arbor.MCP.Server.Runtime
   alias Arbor.MCP.Server.Runtime.{Admission, ByteBudget, Deadline, Ref}
 
@@ -124,16 +126,19 @@ defmodule Arbor.MCP.Server.Runtime.DeadlineBudgetTest do
     end
 
     assert {:error, :await_timeout} =
-             Runtime.reserve_ingress(runtime, [nil, 42],
+             RuntimeIngress.reserve_ingress(runtime, [nil, 42],
                owner: self(),
                reply_to: self(),
                admission_deadline: Deadline.now() - 1
              )
 
     assert %{reserved: 0, pending_bytes: 0} = Runtime.stats(runtime)
-    assert {:ok, _route, held} = Runtime.reserve_ingress(runtime, [nil, 42], [])
+
+    assert {:ok, _route, held} =
+             RuntimeIngress.reserve_ingress(runtime, [nil, 42], [])
+
     assert %{reserved: 2} = Runtime.stats(runtime)
-    assert :ok = Runtime.discard_ingress(runtime, held.token)
+    assert :ok = RuntimeIngress.discard_ingress(runtime, held.token)
     wait_for_empty(runtime)
   end
 

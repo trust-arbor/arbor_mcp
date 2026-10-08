@@ -2,6 +2,8 @@ defmodule Arbor.MCP.Client.ConnectionScope.Observer do
   @moduledoc false
   use GenServer
 
+  alias Arbor.MCP.Client.Internal.Connection, as: ClientConnection
+
   alias Arbor.MCP.Client
   alias Arbor.MCP.Client.ConnectionScope
   alias Arbor.MCP.Client.ConnectionScope.Ref
@@ -61,7 +63,7 @@ defmodule Arbor.MCP.Client.ConnectionScope.Observer do
     Process.flag(:trap_exit, true)
     ConnectionScope.watch_guardian(self(), observer)
     monitor = Process.monitor(observer)
-    result = Client.start_scoped(opts, scope, deadline)
+    result = ClientConnection.start_scoped(opts, scope, deadline)
     send(observer, {:native_result, self(), result})
     guardian_loop(observer, monitor, result)
   end

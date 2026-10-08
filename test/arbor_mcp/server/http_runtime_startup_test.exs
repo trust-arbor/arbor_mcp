@@ -1,6 +1,8 @@
 defmodule Arbor.MCP.Server.HTTPRuntimeStartupTest do
   use ExUnit.Case, async: false
 
+  alias Arbor.MCP.Server.Runtime.Initialization, as: RuntimeInitialization
+
   alias Arbor.MCP.Server.HTTP.Bandit.{Connection, ConnectionSlots, Options}
   alias Arbor.MCP.Server.HTTP.CowboyClaims
   alias Arbor.MCP.Server.Runtime.{Admission, Config, Deadline, Initialization, Ref, Services}
@@ -759,7 +761,7 @@ defmodule Arbor.MCP.Server.HTTPRuntimeStartupTest do
     {:ok, lease} = CowboyClaims.acquire(reference, deadline, authority)
 
     {:ok, root} =
-      Runtime.start_configured(
+      RuntimeInitialization.start_configured(
         [],
         %{config | http: Map.put(config.http, :lease, lease)},
         deadline
@@ -1070,7 +1072,7 @@ defmodule Arbor.MCP.Server.HTTPRuntimeStartupTest do
     {:ok, config} = Config.new(handler: Handler, transport: :http, http: [port: 0])
     {:ok, lease} = CowboyClaims.acquire(config.http.ranch_ref, deadline, authority)
     config = %{config | http: Map.put(config.http, :lease, lease)}
-    {:ok, root} = Runtime.start_configured([], config, deadline)
+    {:ok, root} = RuntimeInitialization.start_configured([], config, deadline)
     {:ok, %{listener: listener}} = Transport.http_listener(root)
     Process.unlink(root)
     monitor = Process.monitor(root)

@@ -70,7 +70,7 @@ defmodule Arbor.MCP.Server.StdioServer do
         |> Keyword.put(:stdio_output_lease, lease)
 
       result =
-        Runtime.start_configured(
+        Initialization.start_configured(
           Keyword.put(opts, :edge, {Supervisor, Keyword.merge(opts, stdio_opts)}),
           config,
           deadline

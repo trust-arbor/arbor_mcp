@@ -1,5 +1,7 @@
 defmodule Arbor.MCP.Server.Runtime.HTTPInvocationDeadlineTest do
   use ExUnit.Case, async: false
+  alias Arbor.MCP.Server.Runtime.Internal.Ingress, as: RuntimeIngress
+
   alias Arbor.MCP.Server.Runtime
   alias Arbor.MCP.Server.Runtime.{Admission, CallbackContext, Deadline, Ref}
 
@@ -51,21 +53,26 @@ defmodule Arbor.MCP.Server.Runtime.HTTPInvocationDeadlineTest do
     runtime = runtime()
 
     {:ok, _, reservation} =
-      Runtime.reserve_ingress(runtime, message(1), invocation_deadline: Deadline.now() + 20_000)
+      RuntimeIngress.reserve_ingress(runtime, message(1),
+        invocation_deadline: Deadline.now() + 20_000
+      )
 
     assert reservation.deadline <= Deadline.now() + 2_000
-    :ok = Runtime.discard_ingress(runtime, reservation.token)
-    {:ok, _, ordinary} = Runtime.reserve_ingress(runtime, message(1), [])
-    :ok = Runtime.discard_ingress(runtime, ordinary.token)
+    :ok = RuntimeIngress.discard_ingress(runtime, reservation.token)
+
+    {:ok, _, ordinary} =
+      RuntimeIngress.reserve_ingress(runtime, message(1), [])
+
+    :ok = RuntimeIngress.discard_ingress(runtime, ordinary.token)
     cutoff = Deadline.now() + 500
 
     {:ok, _, shortened} =
-      Runtime.reserve_ingress(runtime, message(1), invocation_deadline: cutoff)
+      RuntimeIngress.reserve_ingress(runtime, message(1), invocation_deadline: cutoff)
 
     assert shortened.deadline == cutoff
     assert shortened.admission_deadline == :infinity
     assert shortened.bytes == ordinary.bytes + :erlang.external_size(cutoff)
-    :ok = Runtime.discard_ingress(runtime, shortened.token)
+    :ok = RuntimeIngress.discard_ingress(runtime, shortened.token)
   end
 
   test "suspended confirmation cannot refresh the request-entry cutoff" do

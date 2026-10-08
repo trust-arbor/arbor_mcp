@@ -1,8 +1,9 @@
 defmodule Arbor.MCP.Content.SchemaReplacementTest do
   use ExUnit.Case, async: true
 
+  alias Arbor.MCP.Server.Internal.DSLArguments
+
   alias Arbor.MCP.Content.SchemaPolicy
-  alias Arbor.MCP.Server.DSL
 
   alias Arbor.MCP.Testing.SchemaEncoderProbe, as: EncoderProbe
 
@@ -218,8 +219,12 @@ defmodule Arbor.MCP.Content.SchemaReplacementTest do
 
   test "literal false remains meaningful at standalone output validation boundary" do
     response = %{content: [], structuredContent: %{value: 1}}
-    assert {:ok, ^response} = DSL.validate_tool_response(response, nil)
-    assert {:error, _} = DSL.validate_tool_response(response, false)
+
+    assert {:ok, ^response} =
+             DSLArguments.validate_tool_response(response, nil)
+
+    assert {:error, _} =
+             DSLArguments.validate_tool_response(response, false)
   end
 
   test "real DSL compiler rejects invalid input and output declarations before callbacks" do

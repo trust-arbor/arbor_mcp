@@ -1,6 +1,8 @@
 defmodule Arbor.MCP.Server.Runtime.InputByteCleanupTest do
   use ExUnit.Case, async: true
 
+  alias Arbor.MCP.Server.Runtime.Internal.Ingress, as: RuntimeIngress
+
   alias Arbor.MCP.Server.Runtime
   alias Arbor.MCP.Server.Runtime.{Admission, ByteBudget, Deadline, Ref}
 
@@ -37,7 +39,7 @@ defmodule Arbor.MCP.Server.Runtime.InputByteCleanupTest do
     assert_receive {:candidate_returned, ^producer, {:error, :admission_lost}}, 1_000
     empty(runtime)
     assert {:ok, _route, fresh} = reserve(runtime)
-    assert :ok = Runtime.discard_ingress(runtime, fresh.token)
+    assert :ok = RuntimeIngress.discard_ingress(runtime, fresh.token)
     empty(runtime)
   end
 
@@ -76,7 +78,7 @@ defmodule Arbor.MCP.Server.Runtime.InputByteCleanupTest do
 
     for kind <- [:ingress, :edge_control, :edge_response] do
       assert {:ok, _route, fresh} = reserve(runtime, kind: kind)
-      assert :ok = Runtime.discard_ingress(runtime, fresh.token)
+      assert :ok = RuntimeIngress.discard_ingress(runtime, fresh.token)
     end
 
     empty(runtime)
@@ -110,7 +112,7 @@ defmodule Arbor.MCP.Server.Runtime.InputByteCleanupTest do
     assert ByteBudget.candidate(table, held.token) == nil
     assert %{reserved: 1, confirmed: 1, pending_byte_cleanup: 0} = Runtime.stats(runtime)
     assert ByteBudget.used(table).data == held.bytes
-    assert :ok = Runtime.discard_ingress(runtime, held.token)
+    assert :ok = RuntimeIngress.discard_ingress(runtime, held.token)
     empty(runtime)
   end
 
@@ -125,7 +127,7 @@ defmodule Arbor.MCP.Server.Runtime.InputByteCleanupTest do
     :sys.resume(route.admission)
     empty(runtime)
     assert {:ok, _route, fresh} = reserve(runtime, members: [nil, 42, false])
-    assert :ok = Runtime.discard_ingress(runtime, fresh.token)
+    assert :ok = RuntimeIngress.discard_ingress(runtime, fresh.token)
     empty(runtime)
   end
 
@@ -142,7 +144,16 @@ defmodule Arbor.MCP.Server.Runtime.InputByteCleanupTest do
 
     on_exit(fn -> kill(owner) end)
     assert {:ok, held_route, held} = reserve(runtime, owner: owner, reply_to: parent)
-    assert :ok = Runtime.publish_ingress(runtime, held_route, held, {:probe, :held}, owner)
+
+    assert :ok =
+             RuntimeIngress.publish_ingress(
+               runtime,
+               held_route,
+               held,
+               {:probe, :held},
+               owner
+             )
+
     assert {:ok, _held, {:probe, :held}} = Admission.checkout(Ref.table(runtime), held.token)
     assert {:ok, _route, neighbor} = reserve(runtime)
     pause(route.admission)
@@ -155,25 +166,28 @@ defmodule Arbor.MCP.Server.Runtime.InputByteCleanupTest do
     wait_for(fn -> Runtime.stats(runtime).reserved == 1 end)
     assert {:ok, _neighbor} = Admission.current(Ref.table(runtime), neighbor.token)
     assert ByteBudget.used(Ref.table(runtime)).data == neighbor.bytes
-    assert :ok = Runtime.discard_ingress(runtime, neighbor.token)
+
+    assert :ok =
+             RuntimeIngress.discard_ingress(runtime, neighbor.token)
+
     empty(runtime)
   end
 
   test "duplicate old releases cannot delete freshly reused permits or their byte credit" do
     {runtime, _route} = runtime(max_queue: 0)
     assert {:ok, _route, old} = reserve(runtime)
-    assert :ok = Runtime.discard_ingress(runtime, old.token)
+    assert :ok = RuntimeIngress.discard_ingress(runtime, old.token)
     assert {:ok, _route, fresh} = reserve(runtime)
 
     for _repeat <- 1..20 do
       assert :ok = ByteBudget.release(Ref.table(runtime), old.token, deadline: past())
-      assert :ok = Runtime.discard_ingress(runtime, old.token)
+      assert :ok = RuntimeIngress.discard_ingress(runtime, old.token)
     end
 
     assert %{reserved: 1, admitted_work: 1, pending_bytes: bytes} = Runtime.stats(runtime)
     assert bytes == fresh.bytes
     assert {:ok, _fresh} = Admission.current(Ref.table(runtime), fresh.token)
-    assert :ok = Runtime.discard_ingress(runtime, fresh.token)
+    assert :ok = RuntimeIngress.discard_ingress(runtime, fresh.token)
     empty(runtime)
   end
 
@@ -206,7 +220,7 @@ defmodule Arbor.MCP.Server.Runtime.InputByteCleanupTest do
 
     assert %{reserved: 1, pending_bytes: bytes, pending_byte_cleanup: 0} = Runtime.stats(runtime)
     assert bytes == fresh.bytes
-    assert :ok = Runtime.discard_ingress(runtime, fresh.token)
+    assert :ok = RuntimeIngress.discard_ingress(runtime, fresh.token)
     empty(runtime)
   end
 
@@ -229,7 +243,7 @@ defmodule Arbor.MCP.Server.Runtime.InputByteCleanupTest do
     assert {:ok, _route, fresh} = reserve(runtime)
     assert :ok = ByteBudget.release(table, old.token, deadline: past())
     assert ByteBudget.used(table).data == fresh.bytes
-    assert :ok = Runtime.discard_ingress(runtime, fresh.token)
+    assert :ok = RuntimeIngress.discard_ingress(runtime, fresh.token)
     empty(runtime)
   end
 
@@ -263,7 +277,9 @@ defmodule Arbor.MCP.Server.Runtime.InputByteCleanupTest do
             for _round <- 1..10 do
               case reserve(runtime, kind: kind) do
                 {:ok, _route, held} ->
-                  :ok = Runtime.discard_ingress(runtime, held.token)
+                  :ok =
+                    RuntimeIngress.discard_ingress(runtime, held.token)
+
                   :accepted
 
                 {:error, reason} ->
@@ -296,7 +312,7 @@ defmodule Arbor.MCP.Server.Runtime.InputByteCleanupTest do
 
     for kind <- kinds do
       assert {:ok, _route, fresh} = reserve(runtime, kind: kind)
-      assert :ok = Runtime.discard_ingress(runtime, fresh.token)
+      assert :ok = RuntimeIngress.discard_ingress(runtime, fresh.token)
     end
 
     empty(runtime)
@@ -317,7 +333,12 @@ defmodule Arbor.MCP.Server.Runtime.InputByteCleanupTest do
 
   defp reserve(runtime, opts \\ []) do
     members = Keyword.get(opts, :members, [%{"one" => true}])
-    Runtime.reserve_ingress(runtime, members, Keyword.delete(opts, :members))
+
+    RuntimeIngress.reserve_ingress(
+      runtime,
+      members,
+      Keyword.delete(opts, :members)
+    )
   end
 
   defp candidate(runtime, opts \\ []) do

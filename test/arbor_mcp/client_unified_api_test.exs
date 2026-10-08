@@ -1,42 +1,50 @@
 defmodule Arbor.MCP.ClientUnifiedAPITest do
   use ExUnit.Case, async: true
 
+  alias Arbor.MCP.Client.Internal.Connection, as: ClientConnection
+
   alias Arbor.MCP.Client
 
   describe "URL parsing" do
     test "parses HTTP URLs" do
-      opts = Client.parse_connection_spec("http://localhost:8080/mcp")
+      opts =
+        ClientConnection.parse_connection_spec("http://localhost:8080/mcp")
+
       assert opts[:transport] == :http
       assert opts[:url] == "http://localhost:8080/mcp"
     end
 
     test "parses HTTPS URLs" do
-      opts = Client.parse_connection_spec("https://example.com/mcp")
+      opts = ClientConnection.parse_connection_spec("https://example.com/mcp")
       assert opts[:transport] == :http
       assert opts[:url] == "https://example.com/mcp"
     end
 
     test "parses stdio URLs" do
-      opts = Client.parse_connection_spec("stdio://my-server")
+      opts = ClientConnection.parse_connection_spec("stdio://my-server")
       assert opts[:transport] == :stdio
       assert opts[:command] == "my-server"
     end
 
     test "parses file URLs as stdio" do
-      opts = Client.parse_connection_spec("file:///usr/bin/mcp-server")
+      opts =
+        ClientConnection.parse_connection_spec("file:///usr/bin/mcp-server")
+
       assert opts[:transport] == :stdio
       assert opts[:command] == "/usr/bin/mcp-server"
     end
 
     test "handles transport specs" do
-      opts = Client.parse_connection_spec({:http, url: "http://localhost:8080"})
+      opts =
+        ClientConnection.parse_connection_spec({:http, url: "http://localhost:8080"})
+
       assert is_list(opts)
       assert opts[:transport] == :http
     end
 
     test "handles multiple transports" do
       opts =
-        Client.parse_connection_spec([
+        ClientConnection.parse_connection_spec([
           "http://primary.com/mcp",
           "stdio://fallback-server"
         ])
@@ -55,7 +63,10 @@ defmodule Arbor.MCP.ClientUnifiedAPITest do
       # Normalization failures must surface as {:error, _} rather than
       # escaping as an uncaught throw.
       assert {:error, {:invalid_transport_config, reason}} =
-               Client.parse_connection_spec([{:native, []}, "http://fallback.example/mcp"])
+               ClientConnection.parse_connection_spec([
+                 {:native, []},
+                 "http://fallback.example/mcp"
+               ])
 
       assert reason =~ "native"
     end
@@ -112,7 +123,12 @@ defmodule Arbor.MCP.ClientUnifiedAPITest do
 
   describe "transport configuration" do
     test "prepares single transport config" do
-      result = Client.prepare_transport_config(transport: :http, url: "http://example.com")
+      result =
+        ClientConnection.prepare_transport_config(
+          transport: :http,
+          url: "http://example.com"
+        )
+
       assert {:ok, config} = result
       assert config[:transports]
       assert length(config[:transports]) == 1
@@ -123,7 +139,7 @@ defmodule Arbor.MCP.ClientUnifiedAPITest do
 
     test "prepares multiple transport config" do
       result =
-        Client.prepare_transport_config(
+        ClientConnection.prepare_transport_config(
           transports: [
             {Arbor.MCP.Transport.HTTP, url: "http://example.com"},
             {Arbor.MCP.Transport.Stdio, command: "server"}
@@ -136,7 +152,7 @@ defmodule Arbor.MCP.ClientUnifiedAPITest do
     end
 
     test "returns error when no transport specified" do
-      result = Client.prepare_transport_config([])
+      result = ClientConnection.prepare_transport_config([])
       assert {:error, _message} = result
     end
   end

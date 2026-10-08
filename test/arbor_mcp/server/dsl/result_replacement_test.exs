@@ -1,6 +1,8 @@
 defmodule Arbor.MCP.Server.DSL.ResultReplacementTest do
   use ExUnit.Case, async: true
 
+  alias Arbor.MCP.Server.Internal.Result, as: CallbackResult
+
   alias Arbor.MCP.Server.DSL.Result
 
   defmodule PrivateReason do
@@ -81,7 +83,7 @@ defmodule Arbor.MCP.Server.DSL.ResultReplacementTest do
     ]
 
     assert Result.content(entries) == %{content: entries}
-    assert Result.normalize_tool_result(entries) == %{content: entries}
+    assert CallbackResult.normalize_tool_result(entries) == %{content: entries}
     assert Result.content([]) == %{content: []}
   end
 
@@ -224,26 +226,34 @@ defmodule Arbor.MCP.Server.DSL.ResultReplacementTest do
             "_meta" => %{"source" => "app"}
           }
         ] do
-      assert Result.normalize_tool_result(result) == result
+      assert CallbackResult.normalize_tool_result(result) == result
     end
   end
 
   test "complete results take precedence over shorthand text fields" do
     complete = %{text: "shorthand", content: [], structuredContent: %{ok: true}, isError: false}
-    assert Result.normalize_tool_result(complete) == complete
-    assert Result.normalize_tool_result(text: "shorthand") == Result.text("shorthand")
-    assert Result.normalize_tool_result(%{text: "shorthand"}) == Result.text("shorthand")
-    assert Result.normalize_tool_result(%{"text" => "shorthand"}) == Result.text("shorthand")
+    assert CallbackResult.normalize_tool_result(complete) == complete
+
+    assert CallbackResult.normalize_tool_result(text: "shorthand") ==
+             Result.text("shorthand")
+
+    assert CallbackResult.normalize_tool_result(%{text: "shorthand"}) ==
+             Result.text("shorthand")
+
+    assert CallbackResult.normalize_tool_result(%{"text" => "shorthand"}) ==
+             Result.text("shorthand")
   end
 
   test "legacy structuredOutput aliases normalize without overriding canonical content" do
-    assert Result.normalize_tool_result(%{structuredOutput: %{count: 1}}) ==
+    assert CallbackResult.normalize_tool_result(%{structuredOutput: %{count: 1}}) ==
              %{content: [], structuredContent: %{count: 1}}
 
-    assert Result.normalize_tool_result(%{"structuredOutput" => %{"count" => 1}}) ==
+    assert CallbackResult.normalize_tool_result(%{
+             "structuredOutput" => %{"count" => 1}
+           }) ==
              %{"content" => [], "structuredContent" => %{"count" => 1}}
 
-    assert Result.normalize_tool_result(%{
+    assert CallbackResult.normalize_tool_result(%{
              content: [],
              structuredContent: %{count: 2},
              structuredOutput: %{count: 1}
@@ -263,7 +273,9 @@ defmodule Arbor.MCP.Server.DSL.ResultReplacementTest do
           [%{} | :tail],
           %{content: "not a list"}
         ] do
-      assert_invalid(fn -> Result.normalize_tool({:ok, value, %{committed: true}}, %{}) end)
+      assert_invalid(fn ->
+        CallbackResult.normalize_tool({:ok, value, %{committed: true}}, %{})
+      end)
     end
 
     assert_invalid(fn -> ReplacementServer.handle_call_tool("unsupported", %{}, %{}) end)
@@ -273,13 +285,13 @@ defmodule Arbor.MCP.Server.DSL.ResultReplacementTest do
     opaque = %PrivateReason{secret: "credential-value"}
     result = Result.structured("done", %{nested: opaque, pid: self()})
     assert result.structuredContent.nested == opaque
-    assert Result.normalize_tool_result(result) == result
+    assert CallbackResult.normalize_tool_result(result) == result
     assert Result.content([%{type: "text", text: "done", _meta: %{opaque: opaque}}]).content != []
   end
 
   test "MRTR markers retain their existing distinct normalization path" do
     marker = Result.input_required(%{"form" => %{"message" => "more information"}}, %{step: 1})
-    assert Result.normalize_tool_result(marker) == marker
+    assert CallbackResult.normalize_tool_result(marker) == marker
   end
 
   test "real DSL inline handlers consume mixed constructors and retain state" do

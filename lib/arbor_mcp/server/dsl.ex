@@ -40,15 +40,19 @@ defmodule Arbor.MCP.Server.DSL do
   """
 
   alias Arbor.MCP.Content.SchemaPolicy
-  alias Arbor.MCP.Server.{DSL, ResultNormalizer}
   alias Arbor.MCP.Server.DSL.{Builder, Components}
+  alias Arbor.MCP.Server.Internal.DSLArguments
+  alias Arbor.MCP.Server.Internal.Result, as: CallbackResult
+  alias Arbor.MCP.Server.Result
 
   # DSL schemas are trusted application declarations compiled while the module
   # is loading. Give their worker enough scheduler headroom during parallel
   # builds without relaxing the tighter runtime policy default.
   @compile_time_schema_timeout_ms 5_000
+  @use_options [:name, :version, :server_info, :components]
 
   defmacro __using__(opts) do
+    assert_use_options!(opts, __CALLER__)
     components = Components.expand_modules(Keyword.get(opts, :components, []), __CALLER__)
     opts = Keyword.put(opts, :components, components)
     source = %{file: __CALLER__.file, line: __CALLER__.line}
@@ -200,68 +204,44 @@ defmodule Arbor.MCP.Server.DSL do
     end
   end
 
-  defmacro param(_name, _type, _opts \\ []), do: :ok
-  defmacro arg(_name, _opts \\ []), do: :ok
-  defmacro run(_handler), do: :ok
-  defmacro handle(_handler), do: :ok
-  defmacro read(_handler), do: :ok
-  defmacro render(_handler), do: :ok
-  defmacro title(_title), do: :ok
-  defmacro name(_name), do: :ok
-  defmacro description(_description), do: :ok
-  defmacro annotations(_annotations), do: :ok
-  defmacro icons(_icons), do: :ok
-  defmacro meta(_meta), do: :ok
-  defmacro execution(_execution), do: :ok
-  defmacro input_schema(_schema), do: :ok
-  defmacro output_schema(_schema), do: :ok
-  defmacro mime_type(_mime_type), do: :ok
-  defmacro size(_size), do: :ok
-
-  @doc false
-  def prepare_tool_arguments(arguments, params, input_schema) when is_map(arguments) do
-    json = ResultNormalizer.stringify_keys(arguments)
-
-    json =
-      Enum.reduce(params, json, fn param, acc ->
-        if param.has_default,
-          do: Map.put_new(acc, Atom.to_string(param.name), param.default),
-          else: acc
-      end)
-
-    case SchemaPolicy.validate_optional(Map.drop(json, ["_meta"]), input_schema) do
-      :ok -> {:ok, Builder.normalize_arguments(arguments, params)}
-      {:error, _diagnostics} -> invalid_tool_arguments()
-    end
-  rescue
-    ArgumentError -> invalid_tool_arguments()
-  end
-
-  def prepare_tool_arguments(_arguments, _params, _input_schema), do: invalid_tool_arguments()
-
-  defp invalid_tool_arguments,
-    do: {:error, Arbor.MCP.Error.protocol_error(-32602, "Invalid tool arguments")}
-
-  @doc false
-  def validate_tool_response(response, nil), do: {:ok, response}
-
-  def validate_tool_response(response, output_schema) do
-    normalized = ResultNormalizer.stringify_keys(response)
-
-    case Map.fetch(normalized, "structuredContent") do
-      :error ->
-        {:ok, response}
-
-      {:ok, data} ->
-        case validate_with_schema(data, output_schema) do
-          :ok ->
-            {:ok, response}
-
-          {:error, errors} ->
-            {:error, "Output validation failed: #{format_validation_errors(errors)}"}
-        end
-    end
-  end
+  # Primitive declarations consume nested instruction AST before expansion.
+  # Reaching one of these fallback macros is always a declaration error.
+  @spec param(term(), term()) :: no_return()
+  @spec param(term(), term(), term()) :: no_return()
+  defmacro param(_name, _type, _opts \\ []), do: invalid_instruction_context!(__CALLER__, :param)
+  @spec arg(term()) :: no_return()
+  @spec arg(term(), term()) :: no_return()
+  defmacro arg(_name, _opts \\ []), do: invalid_instruction_context!(__CALLER__, :arg)
+  @spec run(term()) :: no_return()
+  defmacro run(_handler), do: invalid_instruction_context!(__CALLER__, :run)
+  @spec handle(term()) :: no_return()
+  defmacro handle(_handler), do: invalid_instruction_context!(__CALLER__, :handle)
+  @spec read(term()) :: no_return()
+  defmacro read(_handler), do: invalid_instruction_context!(__CALLER__, :read)
+  @spec render(term()) :: no_return()
+  defmacro render(_handler), do: invalid_instruction_context!(__CALLER__, :render)
+  @spec title(term()) :: no_return()
+  defmacro title(_title), do: invalid_instruction_context!(__CALLER__, :title)
+  @spec name(term()) :: no_return()
+  defmacro name(_name), do: invalid_instruction_context!(__CALLER__, :name)
+  @spec description(term()) :: no_return()
+  defmacro description(_description), do: invalid_instruction_context!(__CALLER__, :description)
+  @spec annotations(term()) :: no_return()
+  defmacro annotations(_annotations), do: invalid_instruction_context!(__CALLER__, :annotations)
+  @spec icons(term()) :: no_return()
+  defmacro icons(_icons), do: invalid_instruction_context!(__CALLER__, :icons)
+  @spec meta(term()) :: no_return()
+  defmacro meta(_meta), do: invalid_instruction_context!(__CALLER__, :meta)
+  @spec execution(term()) :: no_return()
+  defmacro execution(_execution), do: invalid_instruction_context!(__CALLER__, :execution)
+  @spec input_schema(term()) :: no_return()
+  defmacro input_schema(_schema), do: invalid_instruction_context!(__CALLER__, :input_schema)
+  @spec output_schema(term()) :: no_return()
+  defmacro output_schema(_schema), do: invalid_instruction_context!(__CALLER__, :output_schema)
+  @spec mime_type(term()) :: no_return()
+  defmacro mime_type(_mime_type), do: invalid_instruction_context!(__CALLER__, :mime_type)
+  @spec size(term()) :: no_return()
+  defmacro size(_size), do: invalid_instruction_context!(__CALLER__, :size)
 
   @handler_keys [:run, :handle, :read, :render]
 
@@ -369,12 +349,14 @@ defmodule Arbor.MCP.Server.DSL do
   defp parse_instruction({:param, meta, args}, acc, env, kind) do
     assert_instruction_allowed!(env, meta, kind, :param)
     param = parse_param(args, env, meta)
+    assert_unique_parameter!(acc.params, param, env, meta, :param)
     Map.update!(acc, :params, &[param | &1])
   end
 
   defp parse_instruction({:arg, meta, args}, acc, env, kind) do
     assert_instruction_allowed!(env, meta, kind, :arg)
     arg = parse_prompt_arg(args, env, meta)
+    assert_unique_parameter!(acc.args, arg, env, meta, :arg)
     Map.update!(acc, :args, &[arg | &1])
   end
 
@@ -408,6 +390,10 @@ defmodule Arbor.MCP.Server.DSL do
               :size
             ] do
     assert_instruction_allowed!(env, meta, kind, instr)
+
+    if Map.has_key?(acc, instr),
+      do: compile_error!(env, meta, "Repeated `#{instr}` instruction; declare it only once.")
+
     Map.put(acc, instr, eval_ast!(value, env, Atom.to_string(instr), meta))
   end
 
@@ -479,8 +465,14 @@ defmodule Arbor.MCP.Server.DSL do
   defp assert_instruction_allowed!(env, meta, kind, instruction) do
     allowed? =
       cond do
-        instruction in [:title, :name, :description, :annotations, :icons, :meta] ->
+        instruction in [:title, :description, :icons, :meta] ->
           true
+
+        instruction == :name ->
+          kind in [:resource, :resource_template]
+
+        instruction == :annotations ->
+          kind in [:tool, :resource, :resource_template]
 
         instruction == :param ->
           kind in @param_allowed_kinds
@@ -512,6 +504,12 @@ defmodule Arbor.MCP.Server.DSL do
     do: "Use `param` in tool or resource_template declarations."
 
   defp instruction_context_hint(:arg), do: "Use `arg` in prompt declarations."
+
+  defp instruction_context_hint(:name),
+    do: "Use `name` for resources; tool and prompt names are their declaration identifiers."
+
+  defp instruction_context_hint(:annotations),
+    do: "Use `annotations` in tool, resource or resource_template declarations."
 
   defp instruction_context_hint(instr) when instr in [:run, :handle],
     do: "Use `run` in tool declarations."
@@ -663,6 +661,50 @@ defmodule Arbor.MCP.Server.DSL do
       description: message
   end
 
+  @spec invalid_instruction_context!(Macro.Env.t(), atom()) :: no_return()
+  defp invalid_instruction_context!(env, instruction),
+    do:
+      compile_error!(
+        env,
+        [],
+        "`#{instruction}` must appear inside an Arbor.MCP.Server.DSL primitive declaration."
+      )
+
+  defp assert_unique_parameter!(previous, parameter, env, meta, instruction) do
+    if Enum.any?(previous, &(&1.name == parameter.name)),
+      do:
+        compile_error!(
+          env,
+          meta,
+          "Duplicate #{instruction} name #{inspect(parameter.name)}; declare each name only once."
+        )
+  end
+
+  defp assert_use_options!(opts, env) do
+    unless is_list(opts) and Keyword.keyword?(opts),
+      do: compile_error!(env, [], "Arbor.MCP.Server.DSL options must be a keyword list.")
+
+    Enum.reduce(opts, [], fn {key, _value}, seen ->
+      unless key in @use_options,
+        do:
+          compile_error!(
+            env,
+            [],
+            "Unknown Arbor.MCP.Server.DSL option #{inspect(key)}. Supported options: #{inspect(@use_options)}."
+          )
+
+      if key in seen,
+        do:
+          compile_error!(
+            env,
+            [],
+            "Repeated Arbor.MCP.Server.DSL option #{inspect(key)}; declare it only once."
+          )
+
+      [key | seen]
+    end)
+  end
+
   defp line_from(meta) when is_list(meta), do: Keyword.get(meta, :line)
   defp line_from(_), do: nil
 
@@ -782,15 +824,15 @@ defmodule Arbor.MCP.Server.DSL do
 
   defp generate_local_tool_execution do
     quote do
-      case DSL.prepare_tool_arguments(arguments, params, input_schema) do
+      case DSLArguments.prepare_tool_arguments(arguments, params, input_schema) do
         {:ok, arguments} ->
           result = apply(__MODULE__, handler, [arguments, state])
 
-          case Result.normalize_tool(result, state) do
+          case CallbackResult.normalize_tool(result, state) do
             {:ok, response, new_state} ->
               validation =
                 response
-                |> DSL.validate_tool_response(output_schema)
+                |> DSLArguments.validate_tool_response(output_schema)
                 |> __ex_mcp_dsl_widen_validation__()
 
               case validation do
@@ -923,7 +965,7 @@ defmodule Arbor.MCP.Server.DSL do
           {handler, mime_type} ->
             params = %{uri: uri}
             result = apply(__MODULE__, handler, [params, state])
-            Result.normalize_resource(result, uri, mime_type, state)
+            CallbackResult.normalize_resource(result, uri, mime_type, state)
         end,
         quote do
           nil -> read_resource_template(uri, template_mapping, state)
@@ -961,7 +1003,7 @@ defmodule Arbor.MCP.Server.DSL do
                 |> Builder.normalize_arguments(params)
 
               result = apply(__MODULE__, handler, [variables, state])
-              Result.normalize_resource(result, uri, mime_type, state)
+              CallbackResult.normalize_resource(result, uri, mime_type, state)
 
             :error ->
               nil
@@ -1063,7 +1105,7 @@ defmodule Arbor.MCP.Server.DSL do
           {handler, args} ->
             arguments = Builder.normalize_arguments(arguments, args)
             result = apply(__MODULE__, handler, [arguments, state])
-            Result.normalize_prompt(result, state)
+            CallbackResult.normalize_prompt(result, state)
         end,
         quote do
           nil ->
@@ -1117,27 +1159,6 @@ defmodule Arbor.MCP.Server.DSL do
 
   defp validate_descriptor_schema!(_schema, kind),
     do: raise(ArgumentError, "invalid #{kind}_schema/1: Tool schema must be an object")
-
-  defp validate_with_schema(data, schema) do
-    case SchemaPolicy.validate_optional(data, schema) do
-      :ok ->
-        :ok
-
-      {:error, reason} when is_tuple(reason) or is_atom(reason) ->
-        {:error, [SchemaPolicy.format_error(reason)]}
-
-      {:error, errors} ->
-        {:error, errors}
-    end
-  end
-
-  defp format_validation_errors(errors) when is_list(errors) do
-    Enum.map_join(errors, ", ", fn
-      message when is_binary(message) -> message
-      {message, _path} when is_binary(message) -> message
-      _other -> "Invalid structured output"
-    end)
-  end
 
   defp maybe_add_callback(callbacks, true, callback), do: [callback | callbacks]
   defp maybe_add_callback(callbacks, false, _callback), do: callbacks

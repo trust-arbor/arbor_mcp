@@ -320,10 +320,10 @@ defmodule Arbor.MCP do
   This function provides a simplified interface to the MCP client with
   automatic connection configuration and transport selection.
 
-  A list of connection specs is still accepted throughout 1.x for
+  A list of connection specs is accepted for
   compatibility, but only the first spec is used. Remaining specs are
   ignored. This is not a failover. Multi-transport fallback is not
-  implemented in 1.x.
+  implemented by this facade.
 
   ## Options
 
@@ -383,15 +383,17 @@ defmodule Arbor.MCP do
   end
 
   @doc """
-  Disconnects from an MCP server.
+  Stops the client through its bounded ownership cleanup.
+
+  Already-stopped clients return `:ok`. A cleanup timeout or failure is
+  returned explicitly; client process death alone does not confirm physical IO cleanup.
   """
-  @spec disconnect(client()) :: :ok
+  @spec disconnect(client()) :: :ok | {:error, term()}
   def disconnect(client) do
-    # Gracefully stop the unified client
-    GenServer.stop(client, :normal)
-  catch
-    # Already stopped
-    :exit, _ -> :ok
+    case Client.stop(client) do
+      {:error, :client_not_alive} -> :ok
+      result -> result
+    end
   end
 
   @doc """
@@ -605,8 +607,10 @@ defmodule Arbor.MCP do
             error -> error
           end
 
-        disconnect(client)
-        result
+        case disconnect(client) do
+          :ok -> result
+          {:error, reason} -> {:error, {:cleanup_failed, reason, result}}
+        end
 
       error ->
         error
@@ -627,7 +631,6 @@ defmodule Arbor.MCP do
         :backward_compatibility,
         :dsl_syntax,
         :automatic_reconnection,
-        :transport_fallback,
         :type_safety
       ]
     }

@@ -1,5 +1,7 @@
 defmodule Arbor.MCP.Server.Runtime.AdmissionStepLifetimeTest do
   use ExUnit.Case, async: true
+  alias Arbor.MCP.Server.Runtime.Internal.Ingress, as: RuntimeIngress
+
   alias Arbor.MCP.Server.Runtime
   alias Arbor.MCP.Server.Runtime.{Admission, Ref}
 
@@ -27,7 +29,7 @@ defmodule Arbor.MCP.Server.Runtime.AdmissionStepLifetimeTest do
     ]
 
     {:ok, route, initial} =
-      Runtime.reserve_ingress(runtime, message,
+      RuntimeIngress.reserve_ingress(runtime, message,
         owner: owner,
         reply_to: self(),
         edge: owner,
@@ -35,7 +37,15 @@ defmodule Arbor.MCP.Server.Runtime.AdmissionStepLifetimeTest do
         batch?: true
       )
 
-    :ok = Runtime.publish_ingress(runtime, route, initial, message, owner)
+    :ok =
+      RuntimeIngress.publish_ingress(
+        runtime,
+        route,
+        initial,
+        message,
+        owner
+      )
+
     {:ok, _entry, ^message} = Admission.checkout(table, initial.token)
 
     for _iteration <- 1..30 do

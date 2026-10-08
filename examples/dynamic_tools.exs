@@ -249,8 +249,9 @@ defmodule Arbor.MCP.Examples.DynamicTools do
 
       case SchemaPolicy.validate(arguments, input, @schema_options) do
         :ok ->
-          {:ok, result, next} =
-            Result.normalize_tool(apply(module, function, [arguments, state]), state)
+          # Application actions return complete results built with the public
+          # constructors; they do not call framework normalization internals.
+          {:ok, result, next} = normalize_action(apply(module, function, [arguments, state]), state)
 
           validate_result(result, output, next)
 
@@ -261,6 +262,17 @@ defmodule Arbor.MCP.Examples.DynamicTools do
       {:error, input_error("Invalid dynamic tool arguments"), state}
     end
   end
+
+  defp normalize_action({:ok, result}, state), do: normalize_action({:ok, result, state}, state)
+
+  defp normalize_action({:ok, result, next}, _state) when is_map(result) and not is_struct(result),
+    do: {:ok, result, next}
+
+  defp normalize_action({:error, reason}, state), do: {:ok, Result.error(reason), state}
+  defp normalize_action({:error, reason, next}, _state), do: {:ok, Result.error(reason), next}
+
+  defp normalize_action(_result, _state),
+    do: raise(ArgumentError, "Dynamic tool actions must return a complete Result map")
 
   defp validate_result(result, nil, state), do: {:ok, result, state}
 
