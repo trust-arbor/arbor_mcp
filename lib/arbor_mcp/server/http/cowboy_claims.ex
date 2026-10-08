@@ -526,7 +526,8 @@ defmodule Arbor.MCP.Server.HTTP.CowboyClaims do
   defp positive_borrowed?(_reference, _result), do: false
 
   defp positive_borrowed_pid?(reference, pid) do
-    is_pid(pid) and Process.alive?(pid) and :ranch_server.get_listener_sup(reference) == pid
+    is_pid(pid) and Process.alive?(pid) and
+      :erlang.apply(:ranch_server, :get_listener_sup, [reference]) == pid
   rescue
     ArgumentError -> false
   end

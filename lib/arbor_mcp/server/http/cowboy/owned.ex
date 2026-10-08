@@ -34,7 +34,13 @@ defmodule Arbor.MCP.Server.HTTP.Cowboy.Owned do
   end
 
   defp child_shape? do
-    case :ranch.child_spec(:arbor_mcp_constructor_probe, :ranch_tcp, %{}, :cowboy_clear, %{}) do
+    case :erlang.apply(:ranch, :child_spec, [
+           :arbor_mcp_constructor_probe,
+           :ranch_tcp,
+           %{},
+           :cowboy_clear,
+           %{}
+         ]) do
       {{:ranch_listener_sup, :arbor_mcp_constructor_probe},
        {:ranch_listener_sup, :start_link, _arguments}, :permanent, :infinity, :supervisor,
        [:ranch_listener_sup]} ->
@@ -75,21 +81,23 @@ defmodule Arbor.MCP.Server.HTTP.Cowboy.Owned do
       |> CowboyClaims.tag_transport(opts.lease)
 
     :ok =
-      :ranch_server.set_new_listener_opts(
+      :erlang.apply(:ranch_server, :set_new_listener_opts, [
         ref,
         Map.get(trans_opts, :max_connections, 1024),
         trans_opts,
         proto_opts,
         [ref, transport, trans_opts, protocol, proto_opts]
-      )
+      ])
 
-    {:ok, {flags, children}} = :ranch_listener_sup.init({ref, transport, protocol})
+    {:ok, {flags, children}} =
+      :erlang.apply(:ranch_listener_sup, :init, [{ref, transport, protocol}])
+
     children = Enum.map(children, &owned_child(&1, opts))
     {:ok, {supervisor_flags(flags), children}}
   end
 
   defp init_role(%{role: :acceptors, arguments: arguments} = opts) do
-    {:ok, {flags, children}} = :ranch_acceptors_sup.init(arguments)
+    {:ok, {flags, children}} = :erlang.apply(:ranch_acceptors_sup, :init, [arguments])
     children = Enum.map(children, &owned_acceptor(&1, opts))
     {:ok, {supervisor_flags(flags), children}}
   end
