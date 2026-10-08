@@ -1,0 +1,125 @@
+# DSL and public API review before the release freeze
+
+Reviewed October 7, 2026 against MCP `0812257`, ACP `7e299f8` and RPC
+`d2a6fcf`, plus the independent-version/documentation preparation. This is a
+source review and a proposed release disposition, not a Spark migration or a
+new compiled API freeze. Existing compatibility evidence retains its sources.
+
+The package split and runtime/scheduler are implemented. I recommend a small
+DSL correctness and facade-boundary pass before the next candidate. Keep the
+current declaration syntax while evaluating Spark separately. No further
+performance experiment is required for this review.
+
+## Spark fit
+
+Spark is independent of Ash; its current repository manifest requires Elixir
+`~> 1.16` and does not depend on the Ash framework. Its production dependencies
+are optional tooling packages, so adopting Spark does not imply adding Ash's
+resource/database stack. These are facts about the reviewed manifest, not a
+measurement of our resulting dependency or compile footprint.
+[Manifest](https://github.com/ash-project/spark/blob/main/mix.exs).
+
+Spark supplies declarative sections/entities, option schemas, identifiers,
+compile-time transformers, persisted derived data, post-compilation verifiers,
+generated information accessors, documentation and editor/formatter integration.
+It can replace substantial parsing and validation infrastructure; it does not
+replace MCP schemas, handler dispatch, deadlines, ownership or the scheduler.
+[Tutorial](https://github.com/ash-project/spark/blob/main/documentation/tutorials/get-started-with-spark.md),
+[extension processing](https://github.com/ash-project/spark/blob/main/documentation/how_to/writing-extensions.md),
+[entities](https://github.com/ash-project/spark/blob/main/lib/spark/dsl/entity.ex).
+
+| Concern | Current ArborMCP DSL | Spark opportunity / required proof |
+| --- | --- | --- |
+| Declaration syntax | Four primitives with nested metadata and handlers | Entities can describe this structure; preserve existing syntax and callbacks |
+| Validation | Custom literal parser, instruction checks and ParamSchema | Replace generic option checks while keeping JSON Schema and wire semantics |
+| Composition | Reusable components retain their lexical handlers and receive host state | Prove ordering, aliases, nested components and single host initialization |
+| Introspection | Hidden component descriptors and generated callbacks | A stable Info API could decouple integrations from generated implementation names |
+| Developer tooling | Hand-maintained guides and macro imports | Generated DSL documentation, autocomplete and formatting are the strongest immediate benefits |
+| Runtime | Compiled Handler callbacks feed the existing Runtime | Generate the same callbacks; do not add a request-time interpreter |
+
+Our implementation is 1,724 lines across DSL and its helpers (1,172 in the main
+module). Some of that is MCP-specific callback generation and would remain.
+Replacing the framework is therefore more than swapping a parser dependency.
+In particular, Spark documents fragments as organization within one DSL rather
+than general cross-instance sharing; our reusable component contract needs an
+explicit extension/delegation design, not a mechanical fragment conversion.
+[Fragment guidance](https://github.com/ash-project/spark/blob/main/documentation/how_to/split-up-large-dsls.md).
+
+Recommendation: retain today's DSL for this release, fix its concrete boundary
+issues, and evaluate a Spark frontend against the same Handler/Result contracts.
+If that experiment preserves syntax, ordering, source diagnostics, lexical
+closures, host state, minimum/latest toolchains and installed releases, adopting
+it later can be an implementation change rather than a new public language.
+An optional server-DSL addon is also possible, especially if the wider Arbor
+family adopts Spark. No Spark dependency or performance benefit is claimed now.
+
+## DSL issues worth addressing before the freeze
+
+These follow from the parser and builder; they need focused reproductions and
+regression checks before code changes are promoted.
+
+| Issue | Source evidence | Recommended behavior |
+| --- | --- | --- |
+| Duplicate parameter/prompt-argument names | `parse_instructions/3` accumulates declarations; `Builder.schema_from_params/1` uses `Map.new/1` | Reject duplicates at declaration locations rather than silently collapsing properties |
+| Repeated scalar instructions | `parse_instruction/4` stores metadata with `Map.put/3` | Reject repeated title/schema/etc. unless an explicit merge/override contract is provided |
+| Stray nested instructions | `param`, `run`, `title` and other imported macros return `:ok` outside a declaration | Raise a useful compile error outside their valid block |
+| Unknown `use DSL` options | `__using__/1` reads selected options without a whitelist | Reject misspelled or unsupported options with file/line information |
+| Contextually meaningless metadata | `assert_instruction_allowed!/4` permits `name` for every primitive; tool/prompt builders do not consume it | Restrict instructions to owners that actually use them |
+
+Preserve existing no-coercion validation, explicit false/null/default semantics,
+compiled schemas, deterministic component order and host-owned state. Keep
+dynamic registration separate from static compile-time composition. Broad new
+DSL features are not needed merely to justify a major version.
+
+## Public API and facade findings
+
+The top-level `Arbor.MCP` parsing/content helpers are already `defp`.
+`Arbor.ACP` exposes only its three intended entry points: `start_client/1`,
+`start_agent/1` and `run_agent/1`. Required GenServer/Supervisor/behaviour
+callbacks and generated cross-module component callbacks legitimately need
+exports; they should not be treated as public convenience APIs.
+
+However, `@doc false` alone does not make an ordinary function private. The
+following implementation bridges remain exported on documented API modules:
+
+| Module | Helpers to move behind an internal module boundary |
+| --- | --- |
+| `Arbor.MCP.Client` | `connection_options/2`, `start_scoped/3` |
+| `Arbor.MCP.Server.DSL` | `prepare_tool_arguments/3`, `validate_tool_response/2` |
+| `Arbor.MCP.Server.Result` | `normalize_tool/2`, `normalize_tool_result/1`, `normalize_resource/4`, `normalize_prompt/2` |
+| `Arbor.MCP.Server.DSL.Result` | Hidden forwarding signatures for those normalizers |
+| `Arbor.RPC.Subprocess` | Generic actor `call/2,3`, used by FramedStream |
+
+Cross-module calls prevent simply changing these definitions to `defp`.
+Relocate them into explicitly internal modules and update framework callers;
+keep constructors and documented user operations on the facades. Record the
+removed facade exports in the API migration plan and add a negative export
+check so future helper extraction does not reintroduce them. A public result
+or protocol helper with an actual documented consumer contract must not be
+hidden merely because framework code also calls it.
+
+Two additional facade corrections merit release work:
+
+- `Arbor.MCP.disconnect/1` directly calls `GenServer.stop/2` and catches every
+  exit as `:ok`. `Arbor.MCP.Client.stop/2` instead uses bounded cleanup and
+  reports cleanup failure. Route facade shutdown through the owned Client
+  operation; define idempotent already-stopped behavior without hiding a real
+  cleanup failure. Review facade `ping/2`'s cleanup path at the same time.
+- `Arbor.MCP.info/0` advertises `:transport_fallback`, although `connect/2`
+  deliberately selects only the first item in a transport list. Remove the
+  inaccurate capability claim. Do not introduce implicit retry/failover of
+  operations with uncertain delivery as a release convenience.
+
+Use Client as the full protocol API, Server/Runtime for host operations,
+Handler for callbacks and Result for constructors. Keep top-level convenience
+functions' normalization explicit; they should not silently discard structured
+data when applications opt into complete protocol results. Review documented
+options, error/return types and examples alongside the export inventory.
+
+## Proposed release disposition
+
+Do the facade cleanup and focused DSL validation before publishing the final
+candidate. Keep Spark adoption open as a separate design choice, backed by a
+compatibility prototype rather than assumed parity. Then regenerate the API
+inventory, migration diff and exact source/archive qualification. Material
+runtime/API changes belong before the final 48-hour soak.

@@ -25,9 +25,12 @@ defmodule CombinedArchiveConsumer do
 
   def probe do
     {:ok, _} = Application.ensure_all_started(:combined_archive_consumer)
-    expected_version = System.fetch_env!("ARCHIVE_EXPECTED_VERSION")
 
     for app <- [:arbor_rpc, :arbor_mcp, :arbor_acp, :arbor_acp_adapters] do
+      expected_version =
+        System.get_env("ARCHIVE_EXPECTED_VERSION_#{String.upcase(Atom.to_string(app))}") ||
+          System.fetch_env!("ARCHIVE_EXPECTED_VERSION")
+
       ^expected_version = app |> Application.spec(:vsn) |> to_string()
     end
 

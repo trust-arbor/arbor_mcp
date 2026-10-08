@@ -17,31 +17,48 @@ projects =
       source = File.read!("mix.exs")
       [[_matched, literal]] = Regex.scan(~r/@version "([^"]+)"/, source)
       true = version == literal and version == metadata["version"]
-      true = version == System.fetch_env!("ARCHIVE_EXPECTED_VERSION")
+
+      expected_version =
+        System.get_env("ARCHIVE_EXPECTED_VERSION_#{String.upcase(Atom.to_string(app))}") ||
+          System.fetch_env!("ARCHIVE_EXPECTED_VERSION")
+
+      true = version == expected_version
       true = metadata["name"] == Atom.to_string(app)
       true = config[:app] == app
       false = Enum.any?(metadata["requirements"], &(Map.new(&1)["name"] == "ex_doc"))
 
-      prerelease? = Version.parse!(version).pre != []
-      requirement = if prerelease?, do: "~> #{version}", else: "~> 2.0"
-
       for dependency <- metadata["requirements"],
           dependency = Map.new(dependency),
           dependency["name"] in ["arbor_rpc", "arbor_acp"] do
-        true = dependency["requirement"] == requirement
-        true = dependency["optional"] == false
         dependency_app = String.to_atom(dependency["app"])
 
+        target_version =
+          System.get_env("ARCHIVE_EXPECTED_VERSION_#{String.upcase(dependency["app"])}") ||
+            System.fetch_env!("ARCHIVE_EXPECTED_VERSION")
+
+        target = Version.parse!(target_version)
+        prerelease? = target.pre != []
+
+        requirement =
+          if prerelease?, do: "~> #{target_version}", else: "~> #{target.major}.#{target.minor}"
+
+        true = dependency["requirement"] == requirement
+        true = dependency["optional"] == false
         declared = Enum.find(config[:deps], &(elem(&1, 0) == dependency_app))
         true = elem(declared, 1) == requirement
         options = if tuple_size(declared) == 3, do: elem(declared, 2), else: []
         false = Keyword.has_key?(options, :path)
-        true = Version.match?(version, requirement)
-        false = Version.match?("1.9.9", requirement)
-        false = Version.match?("3.0.0", requirement)
-        true = Version.match?("2.1.0", requirement) == not prerelease?
-        true = Version.match?("2.0.0-dev", requirement) == (version == "2.0.0-dev")
-        true = Version.match?("2.0.0-rc.999999", requirement) == prerelease?
+        true = Version.match?(target_version, requirement)
+        false = Version.match?("#{target.major + 1}.0.0", requirement)
+        false = Version.match?("#{target.major - 1}.9.9", requirement)
+
+        true =
+          Version.match?("#{target.major}.#{target.minor}.0-dev", requirement) ==
+            (target_version == "#{target.major}.#{target.minor}.0-dev")
+
+        true =
+          Version.match?("#{target.major}.#{target.minor}.0-rc.999999", requirement) ==
+            prerelease?
       end
 
       {:ex_doc, "~> 0.40", doc_options} = Enum.find(config[:deps], &(elem(&1, 0) == :ex_doc))
@@ -67,4 +84,4 @@ projects =
     end)
   end
 
-1 = projects |> Enum.uniq() |> length()
+true = projects != []

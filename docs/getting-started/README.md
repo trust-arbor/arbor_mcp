@@ -12,7 +12,7 @@ transports. ACP controllers, agents and optional vendor adapters live in
 [ArborACP](https://github.com/trust-arbor/arbor_acp).
 
 MCP `2026-07-28` is the latest stable revision and is available through
-`:prefer_modern` and `:modern_only`. The `2.0.0-rc.1` package split is prepared
+`:prefer_modern` and `:modern_only`. The `2.0.0-rc.2` package split is prepared
 but not yet published. See the [RC notes](../guides/V2_RELEASE_CANDIDATE.md) for
 qualification and known limits. New connections
 default to `:prefer_modern`; set `:legacy_only` to preserve the

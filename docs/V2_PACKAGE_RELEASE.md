@@ -1,55 +1,54 @@
-# Coordinated package preparation
+# Independent package preparation
 
-This is a source-preparation and installation policy, not a release approval.
-The current literal version is `2.0.0-rc.1`. No tags or packages are published
-by the preparation or archive-consumer scripts.
+This is a source-preparation and installation policy. The original four
+`2.0.0-rc.1` releases are published. The replacements below are prepared and
+unpublished; scripts do not publish packages or create tags.
 
 ## Versions, dependencies and tags
 
-| Source stage | Four literal versions | Internal dependency floor |
-|---|---|---|
-| Development | `2.0.0-dev` | `~> 2.0.0-dev` |
-| Release candidate | `2.0.0-rc.N` | `~> 2.0.0-rc.N` |
-| Stable | `2.0.0` | `~> 2.0` |
+| Package | Prepared candidate | First stable | Dependencies |
+| --- | --- | --- | --- |
+| ArborMCP | `2.0.0-rc.2` | `2.0.0` | RPC `~> 1.0.0-rc.1` |
+| ArborRPC | `1.0.0-rc.1` | `1.0.0` | None of the other Arbor packages |
+| ArborACP | `1.0.0-rc.1` | `1.0.0` | RPC `~> 1.0.0-rc.1` |
+| ArborACP adapters | `1.0.0-rc.1` | `1.0.0` | ACP and RPC `~> 1.0.0-rc.1` |
 
-Prerelease floors explicitly admit the coordinated prerelease and subsequent
-compatible releases. An RC floor excludes earlier development snapshots. Stable
-requirements exclude prereleases and preserve compatibility with later 2.x
-releases. Wrong major versions are rejected. External security floors and optional
-listener dependency requirements are preserved during version preparation.
-Optional transitive constraints do not necessarily select the host's listener
-versions: declare the qualified Ranch 1.8.1 or Bandit 1.12.5/Thousand Island 1.5.0
-host dependencies in [HTTP listeners](./HTTP_LISTENERS.md).
+A package's own version does not determine its dependency requirements. RC
+requirements explicitly include the tested dependency prerelease; stable
+requirements use the dependency's compatible major/minor line (`~> 1.0` for
+these first stable dependencies). Keep security floors and optional listener
+ranges intact. Runtime-owned constructors enforce their separately qualified
+versions; mounted listeners use the host application's graph.
 
-Publish `arbor_rpc` first, then `arbor_acp`, then `arbor_mcp`, then the optional
-`arbor_acp_adapters` bundle. MCP and RPC each use `v<version>` tags in their own
-repositories, `trust-arbor/arbor_mcp` and `trust-arbor/arbor_rpc`; both Mix projects
-live at their repository roots. The ACP workspace uses `arbor_acp-v<version>`
-and `arbor_acp_adapters-v<version>` at its coordinated source commit. ExDoc source
-links use the owning repository and tag, with a `packages/<app>/` prefix only
-for the two ACP projects. Until the tags exist, local development documentation
-has prospective source links.
+Publish RPC, then ACP, then MCP and Adapters. MCP/RPC use `v<version>` tags in
+their own repositories. ACP and Adapters use separate package-qualified tags
+(`arbor_acp-v<version>` and `arbor_acp_adapters-v<version>`) in the ACP workspace.
+Versions can diverge even though those two packages share a repository.
+ExDoc links follow each owning package's tag; prospective tags remain invalid
+until created. Preserve all old tags, archives and publication receipts.
 
-Versions must be literals in the shipped `mix.exs`. A release environment override
-alone is insufficient: installed source must retain the same version after that
-environment disappears. Prepare separate reviewable source copies:
+Versions and dependency requirements are literals in shipped `mix.exs` files.
+Prepare separate reviewable copies with explicit versions for each package:
 
 ```sh
 python3 scripts/prepare_release.py \
   --mcp-source /path/to/arbor_mcp \
   --acp-source /path/to/arbor_acp \
   --rpc-source /path/to/arbor_rpc \
-  --version 2.0.0-rc.1 \
+  --mcp-version 2.0.0-rc.2 \
+  --rpc-version 1.0.0-rc.1 \
+  --acp-version 1.0.0-rc.1 \
+  --adapters-version 1.0.0-rc.1 \
   --output /path/to/new-release-preparation
 ```
 
-The script rejects overlapping input/output trees, existing output destinations
-and unsupported versions. It records source checksums, input commits, prepared
-Mix checksums, tags and dependency order. It changes literal versions and
-internal requirements in the copies, and updates the package README version marker. It does not author release notes, waive
-qualification gates or create Git commits/tags. Review and apply those literal
-changes to the final repositories; final tagged commits and rebuilt archives must
-agree before publication.
+The script rejects overlapping trees, existing output directories and malformed
+versions. It records input commits/checksums, independent versions, dependency
+requirements, tags and publication order. Review release notes and apply the
+literal changes before building final archives. Preparation creates no commits,
+tags, publications or release qualification. Once replacements are published
+and verified, retire the superseded candidates with replacement messages;
+retirement preserves existing lockfile resolution and downloads.
 
 ## Standalone documentation and source archives
 
@@ -89,7 +88,10 @@ Run the four-package consumer against one archive per package:
 
 ```sh
 python3 scripts/check_archive_consumer.py /path/to/four-archives \
-  --expected-version 2.0.0-rc.1 --report /path/to/qualification.json
+  --expected-package-version arbor_mcp=2.0.0-rc.2 \
+  --expected-package-version arbor_rpc=1.0.0-rc.1 \
+  --expected-package-version arbor_acp=1.0.0-rc.1 \
+  --expected-package-version arbor_acp_adapters=1.0.0-rc.1 --report /path/to/qualification.json
 ```
 
 It verifies Hex checksums, exact shipped source hashes, metadata/literal version
@@ -97,7 +99,9 @@ agreement, internal version policy and documentation tags before installation.
 It then compiles the archives, checks installed `.app` versions and package
 boundaries, exercises MCP/ACP and native cleanup, and repeats the probes in a
 compiler-free assembled release. `--metadata-only` performs just the first phase.
-`--expected-version` validates; it never selects a package version. Offline local
+`--expected-package-version APP=VERSION` validates each package independently;
+it never changes a literal. The legacy `--expected-version` asserts one uniform
+version and is unsuitable for this release graph. Offline local
 qualification may explicitly set `ARCHIVE_CONSUMER_EXTERNAL_DEPS` to independent
 external source copies; CI must also qualify normal Hex resolution.
 
@@ -109,7 +113,7 @@ MCP and RPC commits. To associate those two archives with their exact sources:
 python3 scripts/check_archive_source_selection.py \
   --archives /path/to/mcp-and-rpc-archives \
   --mcp-source /path/to/arbor_mcp --rpc-source /path/to/arbor_rpc \
-  --version 2.0.0-rc.1 --output /path/to/source-selection.json
+  --version 2.0.0-rc.2 --rpc-version 1.0.0-rc.1 --output /path/to/source-selection.json
 ```
 
 RC publication enables downstream migration testing before stable qualification

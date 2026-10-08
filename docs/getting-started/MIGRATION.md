@@ -2,7 +2,7 @@
 
 For the current package split and Runtime APIs, start with the
 [v1-to-v2 migration guide](../guides/MIGRATING_V1_TO_V2.md). ArborMCP RC1 is
-unpublished; its [RC notes](../guides/V2_RELEASE_CANDIDATE.md) describe the
+published; the corrected independent-version replacements are pending. its [RC notes](../guides/V2_RELEASE_CANDIDATE.md) describe the
 current testing scope and limits.
 
 The record below preserves the ExMCP 0.x and 1.x migrations, including the

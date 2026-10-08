@@ -1,6 +1,6 @@
 # ArborMCP Quick Start Guide
 
-This guide shows a minimal MCP server and client in the `2.0.0-rc.1` checkout.
+This guide shows a minimal MCP server and client in the `2.0.0-rc.2` checkout.
 Publication is pending; see the [RC notes](../guides/V2_RELEASE_CANDIDATE.md)
 for qualification and known limits, and the
 [v1-to-v2 guide](../guides/MIGRATING_V1_TO_V2.md) when upgrading ExMCP.
@@ -9,12 +9,12 @@ for qualification and known limits, and the
 
 ## Installation
 
-After RC publication, add `{:arbor_mcp, "== 2.0.0-rc.1"}` to your dependencies.
+After RC publication, add `{:arbor_mcp, "== 2.0.0-rc.2"}` to your dependencies.
 Until then, use a local checkout:
 
 ```sh
 git clone --branch codex/v2-migration https://github.com/trust-arbor/arbor_mcp.git
-git clone --branch main https://github.com/trust-arbor/arbor_rpc.git
+git clone --branch codex/independent-package-versions https://github.com/trust-arbor/arbor_rpc.git
 ```
 
 The MCP default `master` branch is still ExMCP 1.x. In a separate consumer

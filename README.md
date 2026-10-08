@@ -2,7 +2,7 @@
 
 ArborMCP provides Elixir clients and servers for the [Model Context Protocol](https://modelcontextprotocol.io/), with stdio, Streamable HTTP and BEAM-local transports. Its Hex package is `arbor_mcp`; its Elixir module namespace is `Arbor.MCP.*`.
 
-**Version 2 release candidate preparation.** This checkout is the MCP part of the library split, prepared as `arbor_mcp` `2.0.0-rc.1`. The released 1.x package remains [`ex_mcp`](https://hex.pm/packages/ex_mcp); `arbor_mcp` 2.0 has not been released. The supervised Runtime and accepted API cleanup are implemented; final package and release qualification remain in progress. See the [release assessment](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/V2_RELEASE_ASSESSMENT.md) for the qualified source checkpoints and open gates. Historical 1.x test counts and performance results are not v2 qualification evidence.
+**Version 2 release candidate preparation.** The original `2.0.0-rc.1` is published on Hex. This checkout prepares its replacement `2.0.0-rc.2` with ArborRPC on its independent 1.x line; the replacement is not published yet. The released 1.x package remains [`ex_mcp`](https://hex.pm/packages/ex_mcp); `arbor_mcp` 2.0 has not been released. The supervised Runtime and accepted API cleanup are implemented; final package and release qualification remain in progress. See the [release assessment](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/V2_RELEASE_ASSESSMENT.md) for the qualified source checkpoints and open gates. Historical 1.x test counts and performance results are not v2 qualification evidence.
 
 ExMCP 1.x remains maintained on [`codex/maintenance-1.x`](https://github.com/trust-arbor/arbor_mcp/tree/codex/maintenance-1.x), with backported fixes and compatible minor releases. Migration to v2 is optional; see the [maintenance policy](https://github.com/trust-arbor/arbor_mcp/blob/codex/maintenance-1.x/docs/MAINTENANCE_POLICY.md).
 
@@ -16,21 +16,20 @@ For downstream RC testing after publication, use an exact dependency pin:
 
 ```elixir
 defp deps do
-  [{:arbor_mcp, "== 2.0.0-rc.1"}]
+  [{:arbor_mcp, "== 2.0.0-rc.2"}]
 end
 ```
 
 This pulls in shared ArborRPC. Add ArborACP or the optional adapter bundle only
-when your application uses them. RC publication is still pending; the local
+when your application uses them. Replacement RC publication is still pending; the local
 checkout setup below works without treating the candidate as a published package.
 
 The MCP migration branch is `codex/v2-migration`; the default `master` branch
-still contains ExMCP 1.x. ArborRPC is a separate repository on `main`. Until
-the coordinated RC packages are published, select both source checkouts explicitly:
+still contains ExMCP 1.x. ArborRPC is a separate repository on `main`. To test the prepared replacement before publication, select both source checkouts explicitly:
 
 ```sh
 git clone --branch codex/v2-migration https://github.com/trust-arbor/arbor_mcp.git
-git clone --branch main https://github.com/trust-arbor/arbor_rpc.git
+git clone --branch codex/independent-package-versions https://github.com/trust-arbor/arbor_rpc.git
 cd arbor_mcp
 export ARBOR_RPC_PATH="$(pwd)/../arbor_rpc"
 mix deps.get
@@ -38,7 +37,7 @@ mix compile
 mix test
 ```
 
-`ARBOR_RPC_PATH` is a local development override. Without it, the package declares a normal Hex dependency with an explicit development/RC prerelease floor; stable releases retain the `~> 2.0` major-compatible range. See the [package release guide](docs/V2_PACKAGE_RELEASE.md). For isolated split QA, `ARBOR_V2_DEPS` can point to an existing directory of dependency sources; `ARBOR_V2_BUILD` and `ARBOR_V2_LOCK` select separate build and lock paths. Release checks must also run without those overrides using the packaged artifacts.
+`ARBOR_RPC_PATH` is a local development override. Without it, the package declares a normal Hex dependency with an explicit development/RC prerelease floor; stable ArborRPC requirements retain the `~> 1.0` compatible range. See the [package release guide](docs/V2_PACKAGE_RELEASE.md). For isolated split QA, `ARBOR_V2_DEPS` can point to an existing directory of dependency sources; `ARBOR_V2_BUILD` and `ARBOR_V2_LOCK` select separate build and lock paths. Release checks must also run without those overrides using the packaged artifacts.
 
 The supported minimum is Elixir 1.17 with Erlang/OTP 27. Protocol output uses OTP's JSON encoder. The CI matrix checks multiple Elixir/OTP versions; passing CI and the release gates are required before publishing 2.0.
 
@@ -91,8 +90,7 @@ HTTP applications mount `Arbor.MCP.HttpPlug` with an explicit Runtime inside an 
 Published 1.x API documentation is available at [hexdocs.pm/ex_mcp](https://hexdocs.pm/ex_mcp). It describes the previous package and namespace. The v2 migration guide is available in this checkout and is included in the package and ExDoc documentation.
 
 For v2 API documentation from the checkout, run `mix docs --warnings-as-errors`
-after fetching development dependencies. Published ArborMCP HexDocs will be
-linked once RC publication is complete. Repository-only release assessments
+after fetching development dependencies. The original RC API docs are at [hexdocs.pm/arbor_mcp/2.0.0-rc.1](https://hexdocs.pm/arbor_mcp/2.0.0-rc.1/). Replacement RC documentation follows its publication. Repository-only release assessments
 remain separate from the consumer guides shipped in the source package.
 
 ## Reporting issues

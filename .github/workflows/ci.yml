@@ -56,14 +56,14 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_acp
-        ref: 7e299f847365369b545ff026c6e0c707e1459b90
+        ref: 88f29575de423b94db17f7230a9763985124f34b
         path: .arbor-v2/acp
         persist-credentials: false
     - name: Check out unpublished shared RPC
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: d2a6fcfb77ff8d2184f6c6e049eeb85423f852df
+        ref: c4813349d090d147d11fc3090b06f10f20936da2
         path: .arbor-v2/rpc
         persist-credentials: false
     - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
@@ -71,19 +71,18 @@ jobs:
         otp-version: ${{ matrix.toolchain.otp }}
         elixir-version: ${{ matrix.toolchain.elixir }}
         version-type: strict
-    - name: Read the coordinated source version
+    - name: Read independent package source versions
       run: |
         python3 -B - <<'PYVERSION'
         import os, pathlib, re
         paths = [pathlib.Path("mix.exs"), pathlib.Path(".arbor-v2/rpc/mix.exs"), pathlib.Path(".arbor-v2/acp/packages/arbor_acp/mix.exs"), pathlib.Path(".arbor-v2/acp/packages/arbor_acp_adapters/mix.exs")]
-        versions = [re.findall(r'@version "([^"]+)"', path.read_text()) for path in paths]
-        if any(len(version) != 1 for version in versions) or len({version[0] for version in versions}) != 1:
-            raise SystemExit("Package source versions must match")
-        version = versions[0][0]
-        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version):
-            raise SystemExit("Invalid package version")
+        packages = ['arbor_mcp', 'arbor_rpc', 'arbor_acp', 'arbor_acp_adapters']
         with open(os.environ["GITHUB_ENV"], "a") as output:
-            output.write("ARCHIVE_EXPECTED_VERSION=" + version + "\n")
+            for package, path in zip(packages, paths):
+                versions = re.findall(r'@version "([^\"]+)"', path.read_text())
+                if len(versions) != 1 or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", versions[0]):
+                    raise SystemExit("Invalid package source version: " + package)
+                output.write("ARCHIVE_EXPECTED_VERSION_" + package.upper() + "=" + versions[0] + "\n")
         PYVERSION
     - name: Check consumer formatting
       if: matrix.toolchain.elixir == '1.17.3'
@@ -92,21 +91,23 @@ jobs:
       run: |
         mkdir -p archive-consumer-input
         mix deps.get --only prod
-        env -u ARBOR_RPC_PATH mix hex.build --output "archive-consumer-input/arbor_mcp-$ARCHIVE_EXPECTED_VERSION.tar"
+        env -u ARBOR_RPC_PATH mix hex.build --output "archive-consumer-input/arbor_mcp-$ARCHIVE_EXPECTED_VERSION_ARBOR_MCP.tar"
         (
           cd .arbor-v2/rpc
           mix deps.get --only prod
-          mix hex.build --output "$GITHUB_WORKSPACE/archive-consumer-input/arbor_rpc-$ARCHIVE_EXPECTED_VERSION.tar"
+          mix hex.build --output "$GITHUB_WORKSPACE/archive-consumer-input/arbor_rpc-$ARCHIVE_EXPECTED_VERSION_ARBOR_RPC.tar"
         )
         for package in arbor_acp arbor_acp_adapters; do
+          version_variable="ARCHIVE_EXPECTED_VERSION_${package^^}"
+          package_version="${!version_variable}"
           (
             cd ".arbor-v2/acp/packages/$package"
             ARBOR_V2_LOCAL=1 mix deps.get --only prod
-            env -u ARBOR_RPC_PATH ARBOR_V2_LOCAL=0 mix hex.build --output "$GITHUB_WORKSPACE/archive-consumer-input/$package-$ARCHIVE_EXPECTED_VERSION.tar"
+            env -u ARBOR_RPC_PATH ARBOR_V2_LOCAL=0 mix hex.build --output "$GITHUB_WORKSPACE/archive-consumer-input/$package-$package_version.tar"
           )
         done
     - name: Install archives and probe a compiler-free release
-      run: python3 scripts/check_archive_consumer.py archive-consumer-input --expected-version "$ARCHIVE_EXPECTED_VERSION"
+      run: python3 scripts/check_archive_consumer.py archive-consumer-input
     - name: Preserve qualified source archives
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
@@ -137,7 +138,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: d2a6fcfb77ff8d2184f6c6e049eeb85423f852df
+        ref: c4813349d090d147d11fc3090b06f10f20936da2
         path: .arbor-v2/rpc
         persist-credentials: false
     - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
@@ -145,19 +146,18 @@ jobs:
         otp-version: ${{ matrix.toolchain.otp }}
         elixir-version: ${{ matrix.toolchain.elixir }}
         version-type: strict
-    - name: Read the coordinated source version
+    - name: Read independent package source versions
       run: |
         python3 -B - <<'PYVERSION'
         import os, pathlib, re
         paths = [pathlib.Path("mix.exs"), pathlib.Path(".arbor-v2/rpc/mix.exs")]
-        versions = [re.findall(r'@version "([^"]+)"', path.read_text()) for path in paths]
-        if any(len(version) != 1 for version in versions) or len({version[0] for version in versions}) != 1:
-            raise SystemExit("Package source versions must match")
-        version = versions[0][0]
-        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version):
-            raise SystemExit("Invalid package version")
+        packages = ['arbor_mcp', 'arbor_rpc']
         with open(os.environ["GITHUB_ENV"], "a") as output:
-            output.write("ARCHIVE_EXPECTED_VERSION=" + version + "\n")
+            for package, path in zip(packages, paths):
+                versions = re.findall(r'@version "([^\"]+)"', path.read_text())
+                if len(versions) != 1 or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", versions[0]):
+                    raise SystemExit("Invalid package source version: " + package)
+                output.write("ARCHIVE_EXPECTED_VERSION_" + package.upper() + "=" + versions[0] + "\n")
         PYVERSION
     - name: Check HTTP consumer formatting
       if: matrix.toolchain.elixir == '1.17.3'
@@ -166,24 +166,24 @@ jobs:
       run: |
         mkdir -p listener-archive-input
         mix deps.get --only prod
-        env -u ARBOR_RPC_PATH mix hex.build --output "listener-archive-input/arbor_mcp-$ARCHIVE_EXPECTED_VERSION.tar"
+        env -u ARBOR_RPC_PATH mix hex.build --output "listener-archive-input/arbor_mcp-$ARCHIVE_EXPECTED_VERSION_ARBOR_MCP.tar"
         (
           cd .arbor-v2/rpc
           mix deps.get --only prod
-          mix hex.build --output "$GITHUB_WORKSPACE/listener-archive-input/arbor_rpc-$ARCHIVE_EXPECTED_VERSION.tar"
+          mix hex.build --output "$GITHUB_WORKSPACE/listener-archive-input/arbor_rpc-$ARCHIVE_EXPECTED_VERSION_ARBOR_RPC.tar"
         )
     - name: Match every shipped source file to its commit
       run: >
         python3 -B scripts/check_archive_source_selection.py
         --archives listener-archive-input
         --mcp-source . --rpc-source .arbor-v2/rpc
-        --version "$ARCHIVE_EXPECTED_VERSION" --output listener-archive-input/source-selection.json
+        --version "$ARCHIVE_EXPECTED_VERSION_ARBOR_MCP" --rpc-version "$ARCHIVE_EXPECTED_VERSION_ARBOR_RPC" --output listener-archive-input/source-selection.json
     - name: Resolve the selected HTTP backend and probe installed and compiler-free applications
       run: >
         python3 -B scripts/check_listener_archive_consumer.py
         --archives listener-archive-input
         --workspace "$RUNNER_TEMP/listener-archive-consumer"
-        --expected-version "$ARCHIVE_EXPECTED_VERSION" --adapter ${{ matrix.adapter }}
+        --expected-version "$ARCHIVE_EXPECTED_VERSION_ARBOR_MCP" --expected-rpc-version "$ARCHIVE_EXPECTED_VERSION_ARBOR_RPC" --adapter ${{ matrix.adapter }}
         --selection-manifest listener-archive-input/source-selection.json
     - name: Probe host-owned Cowboy installed and compiler-free applications
       if: matrix.adapter == 'cowboy' && matrix.toolchain.elixir == '1.19.6'
@@ -191,7 +191,7 @@ jobs:
         python3 -B scripts/check_listener_archive_consumer.py
         --archives listener-archive-input
         --workspace "$RUNNER_TEMP/listener-archive-consumer-host"
-        --expected-version "$ARCHIVE_EXPECTED_VERSION" --adapter cowboy --ownership host
+        --expected-version "$ARCHIVE_EXPECTED_VERSION_ARBOR_MCP" --expected-rpc-version "$ARCHIVE_EXPECTED_VERSION_ARBOR_RPC" --adapter cowboy --ownership host
         --selection-manifest listener-archive-input/source-selection.json
     - name: Preserve HTTP archive qualification receipts
       if: always()
@@ -250,7 +250,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: d2a6fcfb77ff8d2184f6c6e049eeb85423f852df
+        ref: c4813349d090d147d11fc3090b06f10f20936da2
         path: .arbor-v2/rpc
         persist-credentials: false
 
@@ -335,7 +335,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: d2a6fcfb77ff8d2184f6c6e049eeb85423f852df
+        ref: c4813349d090d147d11fc3090b06f10f20936da2
         path: .arbor-v2/rpc
         persist-credentials: false
 
@@ -390,7 +390,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: d2a6fcfb77ff8d2184f6c6e049eeb85423f852df
+        ref: c4813349d090d147d11fc3090b06f10f20936da2
         path: .arbor-v2/rpc
         persist-credentials: false
 
@@ -436,7 +436,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: d2a6fcfb77ff8d2184f6c6e049eeb85423f852df
+        ref: c4813349d090d147d11fc3090b06f10f20936da2
         path: .arbor-v2/rpc
         persist-credentials: false
 
@@ -515,7 +515,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: d2a6fcfb77ff8d2184f6c6e049eeb85423f852df
+        ref: c4813349d090d147d11fc3090b06f10f20936da2
         path: .arbor-v2/rpc
         persist-credentials: false
 
@@ -575,7 +575,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: d2a6fcfb77ff8d2184f6c6e049eeb85423f852df
+        ref: c4813349d090d147d11fc3090b06f10f20936da2
         path: .arbor-v2/rpc
         persist-credentials: false
 
@@ -630,7 +630,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: d2a6fcfb77ff8d2184f6c6e049eeb85423f852df
+        ref: c4813349d090d147d11fc3090b06f10f20936da2
         path: .arbor-v2/rpc
         persist-credentials: false
 

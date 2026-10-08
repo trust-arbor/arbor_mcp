@@ -23,7 +23,8 @@ def main():
     parser.add_argument("--archives", type=Path, required=True)
     parser.add_argument("--mcp-source", type=Path, required=True)
     parser.add_argument("--rpc-source", type=Path, required=True)
-    parser.add_argument("--version", required=True)
+    parser.add_argument("--version", required=True, help="MCP version")
+    parser.add_argument("--rpc-version", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.output.exists():
@@ -39,7 +40,8 @@ def main():
     spec = importlib.util.spec_from_file_location("archive_checker", checker_path)
     checker = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(checker)
-    evidence = {"version": args.version, "source_commits": commits, "archives": {},
+    versions_by_package = {"arbor_mcp": args.version, "arbor_rpc": args.rpc_version}
+    evidence = {"version": args.version, "versions": versions_by_package, "source_commits": commits, "archives": {},
                 "source_commit_match_verified": True, "final_release_qualified": False,
                 "checker_sha256": digest_bytes(checker_path.read_bytes())}
     with tempfile.TemporaryDirectory(prefix="arbor-source-selection-") as temporary:
@@ -52,7 +54,7 @@ def main():
             destination.mkdir()
             receipt = checker.unpack(candidates[0], destination)
             versions = re.findall(r'@version "([^"]+)"', (destination / "mix.exs").read_text())
-            if versions != [args.version]:
+            if versions != [versions_by_package[package]]:
                 raise ValueError(f"Archive source version does not match selection: {package}")
             for name, expected in receipt["source_sha256"].items():
                 try:

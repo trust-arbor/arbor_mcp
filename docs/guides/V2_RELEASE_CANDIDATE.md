@@ -1,12 +1,22 @@
 # Testing the ArborMCP and ArborACP v2 release candidate
 
-`2.0.0-rc.1` is the coordinated candidate for ArborMCP (`arbor_mcp`), ArborACP (`arbor_acp`),
-ArborACP adapters (`arbor_acp_adapters`) and ArborRPC (`arbor_rpc`). It is intended
-for downstream migration and
-compatibility testing. Stable `2.0.0` qualification remains in progress.
+The original four `2.0.0-rc.1` packages are published on Hex. This checkout
+prepares independent replacement versions:
 
-The four RC1 packages are published on Hex. Start with the
-[v1-to-v2 migration guide](MIGRATING_V1_TO_V2.md).
+| Package | Prepared replacement | First stable target |
+| --- | --- | --- |
+| ArborMCP (`arbor_mcp`) | `2.0.0-rc.2` | `2.0.0` |
+| ArborRPC (`arbor_rpc`) | `1.0.0-rc.1` | `1.0.0` |
+| ArborACP (`arbor_acp`) | `1.0.0-rc.1` | `1.0.0` |
+| ArborACP adapters (`arbor_acp_adapters`) | `1.0.0-rc.1` | `1.0.0` |
+
+The replacements are not published yet. Installation examples below apply after
+publication; use reviewed source checkouts to test the prepared graph now.
+Existing tags and archives stay intact. Retire superseded versions only after
+replacement publication and verified installation. Retirement preserves existing
+downloads and lockfile resolution. Start with the
+[v1-to-v2 migration guide](MIGRATING_V1_TO_V2.md). Stable qualification and the
+final continuous 48-hour soak remain incomplete.
 
 ## Install the packages your application uses
 
@@ -16,11 +26,11 @@ needed for protocol output encoding and is independent of the Elixir version.
 For an MCP application, replace `ex_mcp` with:
 
 ```elixir
-{:arbor_mcp, "== 2.0.0-rc.1"}
+{:arbor_mcp, "== 2.0.0-rc.2"}
 ```
 
-ACP applications use `{:arbor_acp, "== 2.0.0-rc.1"}`. Add
-`{:arbor_acp_adapters, "== 2.0.0-rc.1"}` when using the bundled vendor adapters.
+ACP applications use `{:arbor_acp, "== 1.0.0-rc.1"}`. Add
+`{:arbor_acp_adapters, "== 1.0.0-rc.1"}` when using the bundled vendor adapters.
 `arbor_rpc` is transitive; declare it directly if your code calls `Arbor.RPC.*`.
 Exact versions make a downstream RC report reproducible. Commit the resulting
 lockfile, and use normal Hex resolution without the local package path overrides.
@@ -31,7 +41,9 @@ Development builds after RC1 use revision tokens for atomic output-ledger
 updates. This changes the internal ledger table layout: drain and stop live MCP
 runtimes before loading the new code, then start fresh runtimes. Use the same
 cold-restart procedure when rolling back. This development change still needs
-final-source CI, downstream performance qualification and a new candidate soak.
+fresh package/consumer qualification and a new candidate soak. Supported and
+latest MCP CI passed at `0812257`; changed version/dependency metadata needs its
+own archive evidence.
 
 The package split, `Arbor.MCP.*` / `Arbor.ACP.*` namespaces, optional adapter
 bundle and full server runtime/scheduler redesign are included. The candidate
@@ -75,9 +87,9 @@ The stable 48-hour qualification remains open.
   256 KiB BEAM echo at 928.5 µs versus 13.5 µs. Four paired rounds use the same
   runner and Elixir 1.19.5 / OTP 28.4.1 toolchain. These are sequential checked
   round trips, not saturated throughput or application latency promises.
-  Investigation of repeated memory accounting, JSON preparation and real
-  application workloads remains open; completing the measurement does not
-  accept those costs for stable release.
+  Profiling and targeted comparisons have been completed; further performance
+  optimization is deferred in favor of library and integration testing. The
+  measured costs still require a stable-release decision.
 - **Output optimization:** a separate four-pair comparison of the same v2 source
   with the accounting and OTP JSON changes reduced median BEAM ping from
   359.5 to 304 µs and 256 KiB echo from 930 to 769 µs. Large echo improved in

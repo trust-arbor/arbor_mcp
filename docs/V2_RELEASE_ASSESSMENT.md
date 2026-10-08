@@ -1,62 +1,35 @@
 # ArborMCP v2 Release Assessment
 
-- **Reviewed:** 2026-10-06; historical checkpoint evidence below is preserved
+- **Reviewed:** 2026-10-07; historical checkpoint evidence below is preserved
 - **Released baseline:** `v1.5.0`
 - **Initial integrated audit baseline:** `e4d2fc3`; later qualified v2 checkpoints are recorded below
 - **Status:** Accepted v2 scope implemented; audit fixes and final release qualification in progress
 - **Release target:** Friday 2026-10-09, subject to release gates and RC soak
 - **Canonical plan:** [V2_ROADMAP.md](./V2_ROADMAP.md)
 
-## Current assessment — October 6, 2026
+## Current assessment — October 7, 2026
 
-The core roadmap is implemented, including the package split, standalone RPC
-repository, optional adapters/listeners, Runtime/scheduler, shared dispatch,
-scoped services/stores, Result/DSL/lifecycle APIs and accepted retirements. The
-migration and operator guides describe these contracts. There is no outstanding
-major architectural feature implied by the older remaining-work tables below.
+All four original `2.0.0-rc.1` packages are published and their archive
+checksums were verified. Current source prepares MCP `2.0.0-rc.2` and RPC,
+ACP and Adapters `1.0.0-rc.1`, with independent 1.x dependency requirements.
+The replacements are not yet published. Preserve existing versions and tags;
+retirement follows verified replacement installation.
 
-The October 6 follow-ups qualify HTTP optional dependency ranges separately from
-owned-listener versions, enforce Claude `max_bytes`, and complete the package
-documentation review. MCP `0d831a7` passes all 22 supported CI jobs; ACP
-`991fc41` passes its package and latest-BEAM workflows; RPC `d2a6fcf` passes all
-nine package jobs, including macOS native installation and assembled release.
-All four source archives pass a combined consumer with normal Hex resolution;
-Cowboy-owned, Bandit-owned and host-owned Cowboy consumers also pass installed
-and assembled-release checks. These results belong to those source selections.
+The accepted package split and runtime/scheduler scope is implemented. Optional
+HTTP dependency ranges, Claude file limits and ZCode settings fixes passed their
+recorded checks. Supported/latest MCP CI passed at `0812257`; ACP and RPC retain
+their own recorded source selections. Prior receipts do not qualify new metadata.
 
-The later ZCode settings/correlation fixes at ACP `7e299f8` pass package and
-latest-BEAM CI. MCP `e4cb5f6`, including the assertion-helper correction, passes
-22 supported CI jobs and five latest-BEAM jobs. All four refreshed source
-archives pass combined normal-resolution installed and assembled-release checks.
-Credential-free lifecycle smoke passes for Claude 2.1.289, Codex 0.160.1,
-Pi 1.0.2 and ZCode 0.16.9 after correcting the isolated ZCode fixture's built-in
-provider path. Lifecycle smoke does not establish model-turn compatibility.
-Detailed performance investigation includes fresh paired MCP BEAM measurements
-and isolated AVWE/Arbor application integrations. Historical timing results do
-not establish acceptance of those costs or a measurement of subsequent changes.
+Further performance investigation is deferred at the user's request. Adopted
+encoder/accounting and revision-token changes remain; mixed experimental changes
+are not promoted. Document measured performance costs for the stable decision.
+DSL/Spark and public API review is now open before the release freeze.
 
-The next MCP change combines fresh function-free metadata charging with OTP's
-JSON encoder. An isolated four-pair comparison against the same unmodified v2
-source measured median BEAM ping at 359.5 → 304 µs and 256 KiB echo at
-930 → 769 µs. The 52 existing output tests, 22 public smoke scenarios and all
-eight timing VMs pass; separate encoder compatibility checks pass 3,306 cases
-on both OTP 27 and 28. Object key order may differ, while decoded values and
-frame lengths match. Full final-source CI, real-application measurements and
-performance acceptance remain open. This improvement does not establish v1
-performance parity or remove the runtime's ownership and lifetime work.
-
-RC1 is unpublished and no continuous soak is active. The refreshed Hex account
-check succeeds; registry installation and publication are still pending. Final
-source/archive associations, applicable conformance and pinned SDK/CLI evidence, performance disposition and stable
-release checks must remain explicit. Existing passing receipts keep their
-original source identities. The
-[current release plan](V2_RELEASE_PLAN.md#current-release-status--october-6-2026)
-is the active gate list; dated checkpoints below retain their historical
-conclusions and counts.
-
-ExMCP 1.x remains maintained on `codex/maintenance-1.x` from `3914a927`, under
-the [maintenance policy](MAINTENANCE_POLICY.md). V2 qualification does not
-qualify a backport or promise conversion of live 1.x process state.
+Remaining gates are final metadata/source/archive association, applicable CI,
+conformance/SDK/CLI and dependency-contract checks, real downstream integrations,
+long-lived peer capacity policy, registry installation and the final candidate's
+continuous 48-hour soak. No qualifying soak is active; stable qualification is
+incomplete. See [RC notes](guides/V2_RELEASE_CANDIDATE.md) for consumer limits.
 
 ## Historical release conclusion — October 5
 

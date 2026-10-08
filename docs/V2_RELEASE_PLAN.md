@@ -12,40 +12,36 @@ October 9 is a target subject to every gate below. It does not waive scope,
 qualification or soak. A missed implementation gate or a material RC fix moves
 the release date; it does not turn the full redesign into a later minor release.
 
-## Current release status — October 6, 2026
+## Current release status — October 7, 2026
 
-Implementation of the accepted v2 roadmap is complete. Earlier dated sequences
-and checkpoints below retain the source and evidence they describe. The prior
-standalone-repository selection passed 63 selected CI jobs; current follow-up
-changes must establish their own result and source/archive association.
+All four original `2.0.0-rc.1` packages are published and their archive
+checksums were verified. Current source prepares MCP `2.0.0-rc.2` and RPC,
+ACP and Adapters `1.0.0-rc.1`, with independent 1.x dependency requirements.
+The replacements are not yet published. Preserve existing versions and tags;
+retirement follows verified replacement installation.
 
-The remaining work is to:
+The accepted package split and runtime/scheduler scope is implemented. Optional
+HTTP dependency ranges, Claude file limits and ZCode settings fixes passed their
+recorded checks. Supported/latest MCP CI passed at `0812257`; ACP and RPC retain
+their own recorded source selections. Prior receipts do not qualify new metadata.
 
-1. Qualify the output-accounting and OTP JSON optimizations on the final source.
-   The ZCode settings/correlation correction and latest-BEAM assertion-helper fix
-   now pass updated CI and four-package archive checks, as recorded in the
-   current release assessment. Earlier passing selections remain separate evidence.
-2. Complete the requested performance investigation for MCP and ACP, including
-   MCP BEAM paths, and record the workload budgets or accepted costs.
-3. Close applicable final-source conformance, pinned SDK/credential-free CLI,
-   dependency-contract and packaged-consumer evidence. For first RC1, the lowest
-   and newest supported package versions may coincide; a compiler/OTP matrix is
-   a separate claim from a dependency-version matrix.
-4. Publish the coordinated RC in dependency order and verify clean registry-based
-   installation. The refreshed Hex account check succeeds; RC1 is currently
-   unpublished, and that check is not publication proof.
-5. Complete the accepted stable-release qualification, including the continuous
-   run, final metadata/source/archive binding, tags and publication. No soak is
-   currently active, and prior unsuccessful attempts remain failed evidence.
+Further performance investigation is deferred at the user's request. Adopted
+encoder/accounting and revision-token changes remain; mixed experimental changes
+are not promoted. Document measured performance costs for the stable decision.
+The [DSL/Spark and public API review](V2_DSL_API_REVIEW.md) records remaining
+facade bridges, shutdown/fallback inconsistencies and DSL validation proposals
+before the release freeze. Those API changes are not yet implemented.
 
-RC publication for downstream testing and stable promotion are separate steps.
-Neither the October 9 target nor a green earlier CI selection waives an open
-gate. [RC notes](guides/V2_RELEASE_CANDIDATE.md) describe the candidate's limits.
+Remaining gates are final metadata/source/archive association, applicable CI,
+conformance/SDK/CLI and dependency-contract checks, real downstream integrations,
+long-lived peer capacity policy, registry installation and the final candidate's
+continuous 48-hour soak. No qualifying soak is active; stable qualification is
+incomplete. See [RC notes](guides/V2_RELEASE_CANDIDATE.md) for consumer limits.
 
-The preserved `codex/maintenance-1.x` branch starts at `3914a927`; compatible
-1.x fixes use that implementation's own checks under the
-[maintenance policy](MAINTENANCE_POLICY.md). The v2 release does not end 1.x
-maintenance or authorize wholesale architectural backports.
+Use this sequence: correct versions and documentation; review DSL/public APIs;
+qualify the exact final graph; publish and verify replacement RCs in dependency
+order; complete the continuous soak; then decide stable promotion. The October 9
+target remains subject to every gate. ExMCP 1.x maintenance continues independently.
 
 ## Workstreams and accountable owners
 

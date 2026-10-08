@@ -39,7 +39,7 @@ files, tests, documentation and release tag. Vendor modules remain under
 second adapter namespace is needed. The ACP repository can have workspace
 scripts for coordinated checks; its root must not become an extra published
 application merely to hold those scripts. The ACP workspace uses package-qualified
-release tags such as `arbor_acp-v2.0.0` and `arbor_acp_adapters-v2.0.0`.
+release tags such as `arbor_acp-v1.0.0` and `arbor_acp_adapters-v1.0.0`.
 MCP and RPC each use `v<version>` in their separate repositories. The exact initial
 package versions remain a release decision.
 

@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Version 2 release candidate
+### 2.0.0-rc.2 (unreleased)
+
+- Keep ArborMCP on 2.x while ArborRPC, ArborACP and its optional adapter bundle
+  start independent 1.x release lines. Require ArborRPC `~> 1.0.0-rc.1`; update
+  package preparation, CI and installed-version checks for independent versions.
+- The original four `2.0.0-rc.1` packages were published on October 6. Existing
+  versions and tags are preserved; retirement follows replacement publication.
 
 - Compare output-ledger revision tokens during atomic updates to avoid repeated
   equality checks over retained reply data. Preserve generation fencing,
@@ -28,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Allow compatible optional Bandit, Thousand Island and Ranch updates in host
   applications. Standalone owned listeners still enforce their qualified
   constructor versions; mounted host listeners use the host application’s graph.
-- Prepare `arbor_mcp` `2.0.0-rc.1` under `Arbor.MCP.*`. ACP moves to
+- The original candidate published `arbor_mcp` `2.0.0-rc.1` under `Arbor.MCP.*`. ACP moves to
   `arbor_acp`, vendor adapters to optional `arbor_acp_adapters`, and shared
   subprocess/framing support to `arbor_rpc`.
 - Route server transports through a supervised per-server Runtime with bounded

@@ -1,9 +1,10 @@
-# Migrating from ExMCP 1.x to ArborMCP and ArborACP 2.x
+# Migrating from ExMCP 1.x to ArborMCP 2.x and ArborACP 1.x
 
 ExMCP 1.x splits into **ArborMCP** for MCP and **ArborACP** for ACP, with
 independently installable ArborRPC and optional ArborACP adapter packages.
-This guide covers the coordinated `2.0.0-rc.1` APIs at MCP
-`eac1ddfa` and ACP/RPC/adapters `03cd82a9`.
+This guide covers the prepared ArborMCP `2.0.0-rc.2` and ArborACP, ArborRPC
+and adapter `1.0.0-rc.1` combination. Library versions are independent; ACP
+protocol versions are a separate upstream concern.
 
 | Library name | Hex package / OTP application | Elixir module namespace |
 | --- | --- | --- |
@@ -16,8 +17,9 @@ Library names in prose use ArborMCP, ArborACP and ArborRPC. Code uses the dotted
 namespaces above; dependency and application configuration uses the lowercase
 package names.
 
-**RC status:** publication is pending. The dependency examples below apply once
-RC1 is published. Continuous 48-hour qualification is still incomplete: the
+**RC status:** the original four `2.0.0-rc.1` packages are published. Their
+replacement versions above are prepared but unpublished; the dependency examples
+below apply after replacement publication. Continuous 48-hour qualification is still incomplete: the
 latest continuous harness attempt reached the documented request-ID capacity of
 a persistent test/BEAM peer. That finite limit remains the intended API
 contract. An RC is for downstream testing; it does not establish stable
@@ -31,7 +33,7 @@ pin so downstream test results are reproducible:
 ```elixir
 defp deps do
   [
-    {:arbor_mcp, "== 2.0.0-rc.1"}
+    {:arbor_mcp, "== 2.0.0-rc.2"}
   ]
 end
 ```
@@ -40,16 +42,17 @@ Choose additional packages by ownership:
 
 | What your application uses | Direct dependency |
 | --- | --- |
-| MCP clients, handlers, tools, resources or prompts | `{:arbor_mcp, "== 2.0.0-rc.1"}` |
-| Native ACP agents/controllers or the generic adapter contract | `{:arbor_acp, "== 2.0.0-rc.1"}` |
-| Built-in Claude, Codex, Pi or ZCode adapters | `{:arbor_acp_adapters, "== 2.0.0-rc.1"}` |
-| Shared JSON-RPC/framing/subprocess APIs called directly | `{:arbor_rpc, "== 2.0.0-rc.1"}` |
+| MCP clients, handlers, tools, resources or prompts | `{:arbor_mcp, "== 2.0.0-rc.2"}` |
+| Native ACP agents/controllers or the generic adapter contract | `{:arbor_acp, "== 1.0.0-rc.1"}` |
+| Built-in Claude, Codex, Pi or ZCode adapters | `{:arbor_acp_adapters, "== 1.0.0-rc.1"}` |
+| Shared JSON-RPC/framing/subprocess APIs called directly | `{:arbor_rpc, "== 1.0.0-rc.1"}` |
 
 MCP and ACP each bring in `arbor_rpc`; neither brings in the other protocol.
 The adapter bundle brings in ACP and RPC. Native ACP users do not need the
 bundle, and vendor CLI executables remain separate prerequisites. Add a direct
 RPC dependency only when your code uses its API. A compatible prerelease range
-is `~> 2.0.0-rc.1`; an ordinary stable-only constraint does not select this RC.
+is `~> 2.0.0-rc.2` for MCP or `~> 1.0.0-rc.1` for the new packages;
+an ordinary stable-only constraint does not select these RCs.
 
 For a normal Hex consumer, unset development overrides such as
 `ARBOR_RPC_PATH` and `ARBOR_V2_LOCAL`; do not copy isolated QA build/cache
@@ -117,7 +120,7 @@ For an agent that speaks ACP natively, replace the old MCP-owned ACP facade:
 Arbor.ACP.Client.disconnect(client)
 ```
 
-Library version `2.0.0-rc.1` and the MCP wire revision are separate identifiers.
+ArborMCP version `2.0.0-rc.2` and the MCP wire revision are separate identifiers.
 The latest stable wire revision in this source is `2026-07-28`.
 `:prefer_modern` permits evidence-based legacy fallback; `:modern_only` and
 `:legacy_only` select an era explicitly. Retained legacy Roots, Sampling and

@@ -28,7 +28,7 @@ Clone MCP's `codex/v2-migration` branch and the separate ArborRPC `main`
 checkout as described in the [Quickstart](../getting-started/QUICKSTART.md).
 MCP's default `master` branch still contains 1.x code.
 
-After publication, use `{:arbor_mcp, "== 2.0.0-rc.1"}` for reproducible RC tests.
+After publication, use `{:arbor_mcp, "== 2.0.0-rc.2"}` for reproducible RC tests.
 MCP brings in ArborRPC; it does not install ACP or vendor adapters. Source
 installation requires a C17 compiler on qualified macOS/Linux platforms even
 for HTTP or BEAM use. An assembled release includes the built helper and needs

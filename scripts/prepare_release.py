@@ -33,23 +33,23 @@ def copy_source(source, destination):
     return copied
 
 
-def rewrite(project, version, requirement):
+def rewrite(project, version, requirements):
     path = project / "mix.exs"
     source = path.read_text()
     source, count = re.subn(r'@version "[^"]+"', f'@version "{version}"', source)
     if count != 1:
         raise ValueError(f"Expected one literal @version: {path}")
-    if "@internal_requirement" in source:
+    for dependency, requirement in requirements.items():
         source, count = re.subn(
-            r'@internal_requirement "[^"]+"', f'@internal_requirement "{requirement}"', source
+            rf'@{dependency}_requirement "[^"]+"', f'@{dependency}_requirement "{requirement}"', source
         )
         if count != 1:
-            raise ValueError(f"Expected one literal internal requirement: {path}")
+            raise ValueError(f"Expected one literal {dependency} requirement: {path}")
     path.write_text(source)
     readme = project / "README.md"
     if readme.exists():
         text = readme.read_text()
-        text = re.sub(r"Version `2\.0\.0(?:-dev|-rc\.[1-9][0-9]*)?`", f"Version `{version}`", text, count=1)
+        text = re.sub(r"Version `[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?`", f"Version `{version}`", text, count=1)
         readme.write_text(text)
 
 
@@ -58,13 +58,22 @@ def main():
     parser.add_argument("--mcp-source", type=Path, required=True)
     parser.add_argument("--acp-source", type=Path, required=True)
     parser.add_argument("--rpc-source", type=Path, required=True)
-    parser.add_argument("--version", required=True)
+    for package in ("mcp", "rpc", "acp", "adapters"):
+        parser.add_argument(f"--{package}-version", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    if not re.fullmatch(r"2\.0\.0(?:-dev|-rc\.[1-9][0-9]*)?", args.version):
-        parser.error("Expected coordinated 2.0.0-dev, 2.0.0-rc.N, or 2.0.0")
-    # Prerelease inclusion is explicit. Stable keeps normal major compatibility.
-    requirement = f"~> {args.version}" if "-" in args.version else "~> 2.0"
+    versions = {"arbor_mcp": args.mcp_version, "arbor_rpc": args.rpc_version,
+                "arbor_acp": args.acp_version, "arbor_acp_adapters": args.adapters_version}
+    for package, version in versions.items():
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version):
+            parser.error(f"Invalid {package} version: {version}")
+    # Requirements follow the dependency's version, independently of its consumer.
+    def floor(version):
+        return f"~> {version}" if "-" in version else "~> " + ".".join(version.split(".")[:2])
+
+    requirements = {"arbor_mcp": {"rpc": floor(args.rpc_version)},
+                    "arbor_rpc": {}, "arbor_acp": {"rpc": floor(args.rpc_version)},
+                    "arbor_acp_adapters": {"rpc": floor(args.rpc_version), "acp": floor(args.acp_version)}}
     output = args.output.resolve()
     sources = {"arbor_mcp": args.mcp_source.resolve(), "arbor_acp": args.acp_source.resolve(),
                "arbor_rpc": args.rpc_source.resolve()}
@@ -79,13 +88,13 @@ def main():
         **{app: output / "arbor_acp/packages" / app
            for app in ("arbor_acp", "arbor_acp_adapters")},
     }
-    for project in projects.values():
-        rewrite(project, args.version, requirement)
-    tags = {app: (f"v{args.version}" if app in ("arbor_mcp", "arbor_rpc") else f"{app}-v{args.version}")
+    for app, project in projects.items():
+        rewrite(project, versions[app], requirements[app])
+    tags = {app: (f"v{versions[app]}" if app in ("arbor_mcp", "arbor_rpc") else f"{app}-v{versions[app]}")
             for app in projects}
     manifest = {
-        "version": args.version,
-        "internal_requirement": requirement,
+        "versions": versions,
+        "dependency_requirements": requirements,
         "tags": tags,
         "release_order": [["arbor_rpc"], ["arbor_mcp", "arbor_acp"], ["arbor_acp_adapters"]],
         "source_inputs": {name: {"commit": subprocess.check_output(

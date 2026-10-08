@@ -1,8 +1,8 @@
-# ArborMCP and ArborACP 2.0 Roadmap
+# ArborMCP v2 and ArborACP v1 Roadmap
 
 - **Status:** Accepted v2 implementation complete; audit fixes and release qualification in progress
-- **Target:** ArborMCP and ArborACP v2 release, Friday 2026-10-09, after qualification and RC soak
-- **Last updated:** 2026-10-06
+- **Target:** ArborMCP 2.0 / ArborACP 1.0 release, Friday 2026-10-09, after qualification and RC soak
+- **Last updated:** 2026-10-07
 - **Related release work:** [`RELEASE_1_0_0.md`](./RELEASE_1_0_0.md),
   [`API_DIFF_RC5_TO_1_0.md`](./API_DIFF_RC5_TO_1_0.md),
   [`POST_1_0_MAINTENANCE_PLAN.md`](./POST_1_0_MAINTENANCE_PLAN.md),
@@ -17,7 +17,7 @@
 
 ---
 
-## Current scope and release status — October 6, 2026
+## Current scope and release status — October 7, 2026
 
 The accepted architectural scope is implemented: independent MCP, ACP and RPC
 projects; the optional adapter bundle and HTTP listeners; per-server Runtime
@@ -26,21 +26,31 @@ results; DSL constraints/composition; `with_connection`; API retirements and
 migration guidance. The delivery phases and dated decisions below preserve the
 planning history, not a list of features still awaiting implementation.
 
-The current audit follow-up separates optional HTTP dependency ranges from the
-versions qualified for Runtime-owned listeners and corrects Claude adapter
-`max_bytes` handling. These fixes are in progress and have not yet passed final
-qualification. The earlier standalone-repository selection passed 63 CI jobs;
-that result does not qualify later changes. Detailed performance investigation
-is also pending for both MCP and ACP, including MCP BEAM workloads and their
-lifecycle/capacity costs.
+All four original `2.0.0-rc.1` packages are published and their archive
+checksums were verified. Current source prepares MCP `2.0.0-rc.2` and RPC,
+ACP and Adapters `1.0.0-rc.1`, with independent 1.x dependency requirements.
+The replacements are not yet published. Preserve existing versions and tags;
+retirement follows verified replacement installation.
 
-RC1 remains unpublished, no continuous soak is active, and stable qualification
-is incomplete. The refreshed Hex account check succeeds; actual registry
-installation and publication remain pending. Release evidence must identify its
-exact source and artifacts. See the
-[release plan](V2_RELEASE_PLAN.md#current-release-status--october-6-2026) for the
-remaining sequence and [RC notes](guides/V2_RELEASE_CANDIDATE.md) for consumer
-limits.
+The accepted package split and runtime/scheduler scope is implemented. Optional
+HTTP dependency ranges, Claude file limits and ZCode settings fixes passed their
+recorded checks. Supported/latest MCP CI passed at `0812257`; ACP and RPC retain
+their own recorded source selections. Prior receipts do not qualify new metadata.
+
+Further performance investigation is deferred at the user's request. Adopted
+encoder/accounting and revision-token changes remain; mixed experimental changes
+are not promoted. Document measured performance costs for the stable decision.
+The [DSL/Spark and public API review](V2_DSL_API_REVIEW.md) records remaining
+facade bridges, shutdown/fallback inconsistencies and DSL validation proposals
+before the release freeze. Those API changes are not yet implemented.
+
+Remaining gates are final metadata/source/archive association, applicable CI,
+conformance/SDK/CLI and dependency-contract checks, real downstream integrations,
+long-lived peer capacity policy, registry installation and the final candidate's
+continuous 48-hour soak. No qualifying soak is active; stable qualification is
+incomplete. See [RC notes](guides/V2_RELEASE_CANDIDATE.md) for consumer limits.
+
+See the [release plan](V2_RELEASE_PLAN.md#current-release-status--october-7-2026).
 
 ExMCP 1.x remains maintained on `codex/maintenance-1.x`, preserved from
 `3914a927`. Compatible fixes require their own 1.x qualification; the v2 split,

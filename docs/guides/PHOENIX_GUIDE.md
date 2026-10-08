@@ -23,7 +23,7 @@ separate ArborRPC `main` checkout. The [Quickstart](../getting-started/QUICKSTAR
 shows the clone and path setup.
 
 After publication, replace the path dependency with
-`{:arbor_mcp, "== 2.0.0-rc.1"}` and remove the local RPC override. Source
+`{:arbor_mcp, "== 2.0.0-rc.2"}` and remove the local RPC override. Source
 installation still requires C17 even though Phoenix owns the listener.
 
 Use your host application's HTTP adapter. A mounted plug does not require an

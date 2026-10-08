@@ -27,7 +27,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archives", type=Path, required=True)
     parser.add_argument("--workspace", type=Path, required=True)
-    parser.add_argument("--expected-version", required=True)
+    parser.add_argument("--expected-version", required=True, help="MCP version")
+    parser.add_argument("--expected-rpc-version", required=True)
     parser.add_argument("--adapter", choices=("cowboy", "bandit"), required=True)
     parser.add_argument("--ownership", choices=("owned", "host"), default="owned",
                         help="host probes a mounted Runtime on Ranch 2.2.0; owned retains exact constructor constraints")
@@ -57,6 +58,7 @@ def main():
         "adapter": args.adapter,
         "ownership": args.ownership,
         "expected_version": args.expected_version,
+        "expected_versions": {"arbor_mcp": args.expected_version, "arbor_rpc": args.expected_rpc_version},
         "qualified": False,
         "final_release_qualified": False,
         "metadata_only": args.metadata_only,
@@ -78,7 +80,8 @@ def main():
         env.pop(key, None)
     env.update(MIX_ENV="prod", LISTENER_ARCHIVE_ADAPTER=args.adapter,
                LISTENER_ARCHIVE_OWNERSHIP=args.ownership,
-               ARCHIVE_EXPECTED_VERSION=args.expected_version)
+               ARCHIVE_EXPECTED_VERSION_ARBOR_MCP=args.expected_version,
+               ARCHIVE_EXPECTED_VERSION_ARBOR_RPC=args.expected_rpc_version)
 
     def run(name, argv, timeout=180, extra=None):
         log = logs / f"{len(evidence['steps']):02}-{name}.log"
@@ -87,7 +90,7 @@ def main():
         step = {"name": name, "argv": [str(arg) for arg in argv], "cwd": str(consumer),
                 "log": str(log), "environment": {key: command_env[key] for key in
                 ("MIX_ENV", "LISTENER_ARCHIVE_ADAPTER", "LISTENER_ARCHIVE_OWNERSHIP",
-                 "ARCHIVE_EXPECTED_VERSION", "LISTENER_ARCHIVE_REPORT")
+                 "ARCHIVE_EXPECTED_VERSION_ARBOR_MCP", "ARCHIVE_EXPECTED_VERSION_ARBOR_RPC", "LISTENER_ARCHIVE_REPORT")
                 if key in command_env}}
         try:
             with log.open("wb") as output:
@@ -128,7 +131,7 @@ def main():
         if args.selection_manifest is not None:
             selected_path = args.selection_manifest.resolve(strict=True)
             selection = json.loads(selected_path.read_text())
-            if selection["version"] != args.expected_version:
+            if selection["versions"] != evidence["expected_versions"]:
                 raise ValueError("Source selection version does not match expected version")
             for owner in ("arbor_mcp", "arbor_rpc"):
                 if not re.fullmatch(r"[0-9a-f]{40}", selection["source_commits"][owner]):

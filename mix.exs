@@ -1,8 +1,8 @@
 defmodule Arbor.MCP.MixProject do
   use Mix.Project
 
-  @version "2.0.0-rc.1"
-  @internal_requirement "~> 2.0.0-rc.1"
+  @version "2.0.0-rc.2"
+  @rpc_requirement "~> 1.0.0-rc.1"
   @github_url "https://github.com/trust-arbor/arbor_mcp"
 
   def project do
@@ -138,7 +138,7 @@ defmodule Arbor.MCP.MixProject do
   # to a checkout explicitly; no repository-relative staging path ships.
   defp rpc_dep do
     case System.get_env("ARBOR_RPC_PATH") do
-      nil -> {:arbor_rpc, @internal_requirement}
+      nil -> {:arbor_rpc, @rpc_requirement}
       path -> {:arbor_rpc, path: Path.expand(path), override: true}
     end
   end

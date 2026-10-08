@@ -4,13 +4,13 @@
 - **Baseline:** ExMCP `1.0.0`
 - **Scope:** behavior-preserving modularization, functional-core extraction,
   dependency cleanup, and Hex source-package cleanup
-- **Last updated:** 2026-10-06
+- **Last updated:** 2026-10-07
 
 This is a repository-maintenance document, not user-facing package
 documentation. It records cleanup that is valuable but too invasive to mix
 into the final 1.0 release-candidate cycle.
 
-## Current maintenance disposition — October 6, 2026
+## Current maintenance disposition — October 7, 2026
 
 ExMCP 1.x remains maintained on `codex/maintenance-1.x`, preserved from
 `3914a927`. Its package/module/configuration identities and compatibility
@@ -25,14 +25,29 @@ missing. Unselected adapter modularization or extraction proposals remain
 follow-up work unless separately accepted. Public middleware, a general dialect
 framework and database/event-sourcing requirements were not added to v2 scope.
 
-Current audit fixes address optional HTTP range versus owned-listener
-qualification and Claude `max_bytes`; their qualification is pending. Detailed
-MCP/ACP performance investigation, including MCP BEAM paths, is also pending.
-The earlier 63 passing CI jobs do not qualify these later changes. RC1 is
-unpublished and no soak is active. The refreshed Hex account check succeeds;
-registry installation and publication remain pending. Follow the
-[current release plan](V2_RELEASE_PLAN.md#current-release-status--october-6-2026)
-for release gates rather than the historical execution order below.
+All four original `2.0.0-rc.1` packages are published and their archive
+checksums were verified. Current source prepares MCP `2.0.0-rc.2` and RPC,
+ACP and Adapters `1.0.0-rc.1`, with independent 1.x dependency requirements.
+The replacements are not yet published. Preserve existing versions and tags;
+retirement follows verified replacement installation.
+
+The accepted package split and runtime/scheduler scope is implemented. Optional
+HTTP dependency ranges, Claude file limits and ZCode settings fixes passed their
+recorded checks. Supported/latest MCP CI passed at `0812257`; ACP and RPC retain
+their own recorded source selections. Prior receipts do not qualify new metadata.
+
+Further performance investigation is deferred at the user's request. Adopted
+encoder/accounting and revision-token changes remain; mixed experimental changes
+are not promoted. Document measured performance costs for the stable decision.
+DSL/Spark and public API review is now open before the release freeze.
+
+Remaining gates are final metadata/source/archive association, applicable CI,
+conformance/SDK/CLI and dependency-contract checks, real downstream integrations,
+long-lived peer capacity policy, registry installation and the final candidate's
+continuous 48-hour soak. No qualifying soak is active; stable qualification is
+incomplete. See [RC notes](guides/V2_RELEASE_CANDIDATE.md) for consumer limits.
+
+Follow the [current release plan](V2_RELEASE_PLAN.md#current-release-status--october-7-2026); historical execution order below is preserved.
 
 ## Goals and constraints
 

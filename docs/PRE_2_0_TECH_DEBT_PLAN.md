@@ -14,18 +14,36 @@
 This completed rc.5 debt plan remains ExMCP 1.x release history. Its checked
 tracks and then-deferred items do not describe the current v2 backlog. The
 accepted ArborMCP/ArborACP roadmap implementation is complete; the
-[current roadmap](V2_ROADMAP.md#current-scope-and-release-status--october-6-2026)
-and [release plan](V2_RELEASE_PLAN.md#current-release-status--october-6-2026)
+[current roadmap](V2_ROADMAP.md#current-scope-and-release-status--october-7-2026)
+and [release plan](V2_RELEASE_PLAN.md#current-release-status--october-7-2026)
 separate implemented scope from audit fixes and outstanding qualification.
 
 ExMCP 1.x is maintained on `codex/maintenance-1.x` from `3914a927`; preserve
 its contracts and qualify compatible fixes independently under the
 [maintenance policy](MAINTENANCE_POLICY.md). No v2 API removal or Runtime redesign
-is implied for that branch. RC1 remains unpublished and no continuous soak is
-active. Current HTTP-range and Claude `max_bytes` fixes and MCP/ACP performance
-investigation including MCP BEAM paths remain pending; historical passed gates
-do not qualify them. The refreshed Hex account check succeeds; registry
-installation and publication remain pending.
+is implied for that branch.
+
+All four original `2.0.0-rc.1` packages are published and their archive
+checksums were verified. Current source prepares MCP `2.0.0-rc.2` and RPC,
+ACP and Adapters `1.0.0-rc.1`, with independent 1.x dependency requirements.
+The replacements are not yet published. Preserve existing versions and tags;
+retirement follows verified replacement installation.
+
+The accepted package split and runtime/scheduler scope is implemented. Optional
+HTTP dependency ranges, Claude file limits and ZCode settings fixes passed their
+recorded checks. Supported/latest MCP CI passed at `0812257`; ACP and RPC retain
+their own recorded source selections. Prior receipts do not qualify new metadata.
+
+Further performance investigation is deferred at the user's request. Adopted
+encoder/accounting and revision-token changes remain; mixed experimental changes
+are not promoted. Document measured performance costs for the stable decision.
+DSL/Spark and public API review is now open before the release freeze.
+
+Remaining gates are final metadata/source/archive association, applicable CI,
+conformance/SDK/CLI and dependency-contract checks, real downstream integrations,
+long-lived peer capacity policy, registry installation and the final candidate's
+continuous 48-hour soak. No qualifying soak is active; stable qualification is
+incomplete. See [RC notes](guides/V2_RELEASE_CANDIDATE.md) for consumer limits.
 
 ---
 

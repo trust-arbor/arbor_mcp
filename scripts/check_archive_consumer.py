@@ -51,7 +51,8 @@ def unpack(archive, destination):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archives", type=Path)
-    parser.add_argument("--expected-version")
+    parser.add_argument("--expected-version", help="Legacy uniform-version assertion")
+    parser.add_argument("--expected-package-version", action="append", default=[], metavar="APP=VERSION")
     parser.add_argument("--report", type=Path)
     parser.add_argument("--metadata-only", action="store_true")
     args = parser.parse_args()
@@ -78,14 +79,24 @@ def main():
             destination = consumer / "packages" / package
             destination.mkdir(parents=True)
             evidence["packages"][package] = unpack(archives[0], destination)
-        if not args.expected_version:
+        expected_versions = {}
+        for value in args.expected_package_version:
+            app, separator, version = value.partition("=")
+            if not separator or app not in evidence["packages"] or app in expected_versions:
+                raise ValueError(f"Invalid or duplicate package version assertion: {value}")
+            expected_versions[app] = version
+        for app in evidence["packages"]:
             versions = re.findall(
-                r'@version "([^"]+)"', (consumer / "packages/arbor_rpc/mix.exs").read_text()
+                r'@version "([^"]+)"', (consumer / "packages" / app / "mix.exs").read_text()
             )
             if len(versions) != 1:
-                raise ValueError("Expected one literal RPC source version")
-            env["ARCHIVE_EXPECTED_VERSION"] = versions[0]
-            evidence["expected_version"] = versions[0]
+                raise ValueError(f"Expected one literal source version: {app}")
+            expected = expected_versions.get(app) or args.expected_version or env.get(
+                "ARCHIVE_EXPECTED_VERSION_" + app.upper()
+            ) or versions[0]
+            expected_versions[app] = expected
+            env["ARCHIVE_EXPECTED_VERSION_" + app.upper()] = expected
+        evidence["expected_versions"] = expected_versions
         env["ARCHIVE_INSTALL_REPORT"] = str(consumer / "installed-checks.json")
         projects = [str(consumer / "packages" / app) for app in evidence["packages"]]
         subprocess.run(

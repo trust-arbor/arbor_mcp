@@ -14,10 +14,14 @@ defmodule ListenerArchiveConsumer do
 
   def probe do
     {:ok, _apps} = Application.ensure_all_started(:listener_archive_consumer)
-    expected = System.fetch_env!("ARCHIVE_EXPECTED_VERSION")
 
-    for app <- [:arbor_rpc, :arbor_mcp],
-        do: ^expected = app |> Application.spec(:vsn) |> to_string()
+    for app <- [:arbor_rpc, :arbor_mcp] do
+      expected =
+        System.get_env("ARCHIVE_EXPECTED_VERSION_#{String.upcase(Atom.to_string(app))}") ||
+          System.fetch_env!("ARCHIVE_EXPECTED_VERSION")
+
+      ^expected = app |> Application.spec(:vsn) |> to_string()
+    end
 
     backend = backend()
     ownership = ownership()
