@@ -251,7 +251,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseWireTest do
     assert same.admission == route.admission and same.generation == route.generation
     assert Process.alive?(route.admission) and Process.alive?(gateway)
     assert ByteBudget.used(table).incoming == 0
-    assert Runtime.stats(runtime).response_bytes == 0
+    assert Runtime.stats!(runtime).response_bytes == 0
   end
 
   defp host do
@@ -443,7 +443,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseWireTest do
   defp settled(runtime),
     do:
       wait(fn ->
-        Runtime.stats(runtime).reserved == 0 and
+        Runtime.stats!(runtime).reserved == 0 and
           (HTTPWriterProxy.domain(runtime) |> elem(1) |> HTTPWriterRegistry.stats()).frames == 0
       end)
 

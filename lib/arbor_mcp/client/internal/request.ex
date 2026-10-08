@@ -34,6 +34,17 @@ defmodule Arbor.MCP.Client.Internal.Request do
   @spec make_request(Arbor.MCP.Client.t(), String.t(), map(), keyword(), pos_integer()) ::
           {:ok, any()} | {:error, any()}
   def make_request(client, method, params, opts, default_timeout) do
+    case Keyword.get(opts, :format, :struct) do
+      format when format in [:map, :struct] -> :ok
+      _invalid -> raise ArgumentError, "format must be :map or :struct"
+    end
+
+    case Keyword.fetch(opts, :timeout) do
+      :error -> :ok
+      {:ok, timeout} when is_integer(timeout) and timeout >= 0 and timeout <= 4_294_967_295 -> :ok
+      _invalid -> raise ArgumentError, "timeout must be a finite non-negative millisecond value"
+    end
+
     stream_retry_mode = Keyword.get(opts, :http_stream_retry, :at_least_once)
 
     case validate_http_stream_retry_mode(client, stream_retry_mode) do
@@ -568,22 +579,8 @@ defmodule Arbor.MCP.Client.Internal.Request do
     {:error, :not_connected}
   end
 
-  defp handle_request_result({:error, :timeout}, opts) do
-    case Keyword.get(opts, :format, :struct) do
-      :map ->
-        # Return timeout as atom when format is :map
-        {:error, :timeout}
-
-      _ ->
-        # Convert timeout to proper Arbor.MCP.Error
-        {:error,
-         %Error.ProtocolError{
-           code: -32603,
-           message: "Request timeout",
-           data: nil
-         }}
-    end
-  end
+  # A local wait expiry is not a JSON-RPC error returned by the peer.
+  defp handle_request_result({:error, :timeout}, _opts), do: {:error, :timeout}
 
   defp handle_request_result(error, _opts), do: error
 end

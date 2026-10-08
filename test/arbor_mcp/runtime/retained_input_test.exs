@@ -60,7 +60,7 @@ defmodule Arbor.MCP.Server.RuntimeRetainedInputTest do
     assert_receive {:retained, worker, 128, ^shape}, 1_000
     send(producer, :retire)
     assert_receive {:DOWN, ^monitor, :process, ^producer, :normal}, 1_000
-    assert Runtime.stats(runtime).pending_bytes < 1_024
+    assert Runtime.stats!(runtime).pending_bytes < 1_024
     assert {:ok, reservation} = Admission.current(Ref.table(runtime), token)
     assert :binary.referenced_byte_size(reservation.request_id) == 128
     assert :binary.referenced_byte_size(elem(reservation.key, 2)) == 128
@@ -92,7 +92,7 @@ defmodule Arbor.MCP.Server.RuntimeRetainedInputTest do
 
     assert :erlang.external_size(request) < 1_024
     assert {:error, :request_too_large} = Runtime.submit(runtime, request)
-    assert Runtime.stats(runtime).reserved == 0
+    assert Runtime.stats!(runtime).reserved == 0
     assert :binary.referenced_byte_size(function.()) == 16_777_216
     refute_receive {:retained, _, _, _}
 

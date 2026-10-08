@@ -44,7 +44,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPInvocationDeadlineTest do
     assert {:error, :handler_timeout} =
              Runtime.submit(runtime, message(1), invocation_deadline: Deadline.now() - 1)
 
-    assert %{reserved: 0, pending_bytes: 0} = Runtime.stats(runtime)
+    assert %{reserved: 0, pending_bytes: 0} = Runtime.stats!(runtime)
     assert :ets.match_object(Ref.table(runtime), {{:cleanup, :_}, :_}) == []
     refute_receive {:http_callback, _, _}, 10
   end
@@ -100,7 +100,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPInvocationDeadlineTest do
              :ets.match_object(Ref.table(runtime), {{:slot, :_}, :_, :_})
 
     :sys.resume(route.admission)
-    wait(fn -> match?(%{reserved: 0, pending_bytes: 0}, Runtime.stats(runtime)) end)
+    wait(fn -> match?(%{reserved: 0, pending_bytes: 0}, Runtime.stats!(runtime)) end)
     refute_receive {:http_callback, 1, _}, 10
   end
 

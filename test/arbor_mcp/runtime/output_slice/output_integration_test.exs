@@ -222,7 +222,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputIntegrationTest do
     assert Server.call(root, :read) == 0
 
     eventually(fn ->
-      Runtime.stats(root).reserved == 0 and OutputController.stats(table(root)).frames == 0
+      Runtime.stats!(root).reserved == 0 and OutputController.stats(table(root)).frames == 0
     end)
   end
 
@@ -328,7 +328,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputIntegrationTest do
     refute_receive {:transport_message, _second}, 20
 
     eventually(fn ->
-      OutputController.stats(table(root)).frames == 0 and Runtime.stats(root).reserved == 0
+      OutputController.stats(table(root)).frames == 0 and Runtime.stats!(root).reserved == 0
     end)
   end
 
@@ -403,7 +403,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputIntegrationTest do
     :erlang.resume_process(controller)
     assert Runtime.await(token, 1_000) == {:error, :output_expired}
     assert Server.call(root, :read) == 1
-    eventually(fn -> Runtime.stats(root).reserved == 0 end)
+    eventually(fn -> Runtime.stats!(root).reserved == 0 end)
     assert :ets.match_object(table(root), {{:output_commit, :_}, :_}) == []
   end
 
@@ -421,7 +421,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputIntegrationTest do
     assert Server.call(root, :read) == 1
 
     eventually(fn ->
-      Runtime.stats(root).reserved == 0 and OutputController.stats(table(root)).frames == 0
+      Runtime.stats!(root).reserved == 0 and OutputController.stats(table(root)).frames == 0
     end)
   end
 

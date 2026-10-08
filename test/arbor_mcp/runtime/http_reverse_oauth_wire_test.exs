@@ -499,7 +499,7 @@ defmodule Arbor.MCP.Qualification.HTTPReverseOAuthWireTest do
              opened.proof
 
     assert :atomics.get(opened.proof.phase, 1) == 0
-    assert match?(%{active: 1, response_bytes: 0}, Runtime.stats(host.runtime))
+    assert match?(%{active: 1, response_bytes: 0}, Runtime.stats!(host.runtime))
     assert {:ok, ^stats} = SessionManager.get_stats(host.sessions, [])
     refute_receive {:wire_server_reverse_result, _result}, 0
   end
@@ -526,7 +526,7 @@ defmodule Arbor.MCP.Qualification.HTTPReverseOAuthWireTest do
 
   defp settled(host, deadline) do
     case Runtime.stats(host.runtime) do
-      %{reserved: 0, response_bytes: 0} ->
+      {:ok, %{reserved: 0, response_bytes: 0}} ->
         :ok
 
       _ ->

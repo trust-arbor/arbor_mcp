@@ -2668,6 +2668,13 @@
         "module": "Arbor.RPC.Subprocess",
         "name": "call",
         "arity": 3
+      },
+      {
+        "module": "Arbor.MCP.Response",
+        "name": "to_test_map",
+        "arity": 1,
+        "kind": "function",
+        "reason": "Unused test-only map view; use complete Response.to_raw/1 or explicit application projection."
       }
     ],
     "supported_runtime_operations": [
@@ -2683,6 +2690,7 @@
       "test/arbor_mcp/facade_boundary_test.exs",
       "arbor_rpc:test/arbor_rpc/facade_boundary_test.exs"
     ],
-    "spark": "deferred; no dependency or spike"
+    "spark": "deferred; no dependency or spike",
+    "additional_cleanup": "Public API consistency review removes the unused Response.to_test_map/1 helper."
   }
 }

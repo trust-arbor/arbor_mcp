@@ -48,7 +48,7 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
              admitted_work: 3,
              admitted_envelopes: 1,
              confirmed_work: 3
-           } = Runtime.stats(runtime)
+           } = Runtime.stats!(runtime)
 
     assert {:error, {:transport_error, :server_busy}} =
              Test.send_message(tool(2, "inc"), transport)
@@ -71,7 +71,7 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
              Test.send_message([tool(1, "inc"), notification(), nil], transport)
 
     assert %{reserved: 0, reserved_envelopes: 0, admitted_work: 0, pending_bytes: 0} =
-             Runtime.stats(root)
+             Runtime.stats!(root)
 
     refute_receive {:batch_incremented, _worker}, 20
     assert {:ok, _transport} = Test.send_message([tool(1, "inc"), tool(2, "inc")], transport)
@@ -84,10 +84,10 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
     runtime = start_runtime(max_queue: 2)
     assert {:ok, _route, held} = reserve(runtime, [notification()])
     assert {:error, :server_busy} = reserve(runtime, [notification(), nil, 42])
-    assert %{reserved: 1, reserved_envelopes: 1, admitted_work: 1} = Runtime.stats(runtime)
+    assert %{reserved: 1, reserved_envelopes: 1, admitted_work: 1} = Runtime.stats!(runtime)
     assert :ok = RuntimeIngress.discard_ingress(runtime, held.token)
     assert {:ok, _route, whole} = reserve(runtime, [notification(), nil, 42])
-    assert %{reserved: 3, admitted_work: 3, admitted_envelopes: 1} = Runtime.stats(runtime)
+    assert %{reserved: 3, admitted_work: 3, admitted_envelopes: 1} = Runtime.stats!(runtime)
     assert :ok = RuntimeIngress.discard_ingress(runtime, whole.token)
     assert :ok = RuntimeIngress.discard_ingress(runtime, whole.token)
     wait_for_empty(runtime)
@@ -110,21 +110,21 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
           )
 
     assert {:ok, _route, batch} = reserve(runtime, [nil, 42])
-    assert %{reserved: 5, reserved_envelopes: 4, admitted_work: 5} = Runtime.stats(runtime)
+    assert %{reserved: 5, reserved_envelopes: 4, admitted_work: 5} = Runtime.stats!(runtime)
     assert {:error, :server_busy} = reserve(runtime, [notification()])
     assert :ok = RuntimeIngress.discard_ingress(runtime, batch.token)
 
     for _index <- 1..2,
         do: assert({:ok, _route, _reservation} = reserve(runtime, [notification()]))
 
-    assert %{reserved: 5, reserved_envelopes: 5} = Runtime.stats(runtime)
+    assert %{reserved: 5, reserved_envelopes: 5} = Runtime.stats!(runtime)
   end
 
   test "input is charged once plus batch permit metadata with exact byte-edge rollback" do
     members = [nil, 42, notification()]
     profile = start_runtime(max_queue: 2)
     assert {:ok, _route, measured} = reserve(profile, members)
-    charged = Runtime.stats(profile).pending_bytes
+    charged = Runtime.stats!(profile).pending_bytes
     input = :erlang.external_size(%{"payload" => members}) + :erlang.external_size([])
     assert charged == measured.bytes
     assert charged > input
@@ -134,7 +134,7 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
 
     exact = start_runtime(max_queue: 2, max_pending_bytes: charged)
     assert {:ok, _route, accepted} = reserve(exact, members)
-    assert Runtime.stats(exact).pending_bytes == charged
+    assert Runtime.stats!(exact).pending_bytes == charged
     assert :ok = RuntimeIngress.discard_ingress(exact, accepted.token)
 
     rejected = start_runtime(max_queue: 2, max_pending_bytes: charged - 1)
@@ -241,7 +241,7 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
     monitor = Process.monitor(producer)
     send(producer, :stop)
     assert_receive {:DOWN, ^monitor, :process, ^producer, :normal}
-    assert %{reserved: 3, admitted_envelopes: 1} = Runtime.stats(runtime)
+    assert %{reserved: 3, admitted_envelopes: 1} = Runtime.stats!(runtime)
     Process.exit(owner, :kill)
     wait_for_empty(runtime)
     assert {:ok, _route, again} = reserve(runtime, [nil, 42, notification()])
@@ -254,7 +254,7 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
     assert {:ok, _route, reservation} =
              reserve(runtime, [nil, notification(), tool(1, "inc")], timeout: 30)
 
-    assert %{reserved: 3} = Runtime.stats(runtime)
+    assert %{reserved: 3} = Runtime.stats!(runtime)
     wait_for_empty(runtime)
     refute_receive {:batch_incremented, _worker}, 20
 
@@ -273,7 +273,7 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
 
     assert_receive {:batch_holding, worker}
     assert {:ok, _transport} = Test.send_message(cancel(2), transport)
-    assert %{reserved: 3, admitted_work: 3} = Runtime.stats(root)
+    assert %{reserved: 3, admitted_work: 3} = Runtime.stats!(root)
     send(worker, :release)
     assert_receive {:transport_message, response}
 
@@ -308,7 +308,7 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
     :sys.suspend(edge)
     on_exit(fn -> resume(edge) end)
     assert {:ok, _transport} = Test.send_message([notification(), notification()], transport)
-    assert %{admitted_work: 2, admitted_envelopes: 1} = Runtime.stats(root)
+    assert %{admitted_work: 2, admitted_envelopes: 1} = Runtime.stats!(root)
 
     assert {:error, {:transport_error, :server_busy}} =
              Test.send_message(tool(1, "inc"), transport)
@@ -326,7 +326,7 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
     :sys.suspend(edge)
     on_exit(fn -> resume(edge) end)
     assert {:ok, _transport} = Test.send_message([nil, 42], transport)
-    assert %{admitted_work: 2, admitted_envelopes: 1} = Runtime.stats(root)
+    assert %{admitted_work: 2, admitted_envelopes: 1} = Runtime.stats!(root)
     :sys.resume(edge)
     assert_receive {:transport_message, response}
 
@@ -345,7 +345,7 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
     :sys.suspend(edge)
     on_exit(fn -> resume(edge) end)
     assert {:ok, _transport} = Test.send_message([], transport)
-    assert %{admitted_work: 1, admitted_envelopes: 1} = Runtime.stats(root)
+    assert %{admitted_work: 1, admitted_envelopes: 1} = Runtime.stats!(root)
     :sys.resume(edge)
     assert_receive {:transport_message, response}
     assert %{"id" => nil, "error" => %{"code" => -32600}} = decode(response)
@@ -418,7 +418,7 @@ defmodule Arbor.MCP.Server.Runtime.BatchAdmissionTest do
       wait_for(fn ->
         match?(
           %{reserved: 0, pending_bytes: 0, admitted_work: 0, admitted_envelopes: 0},
-          Runtime.stats(runtime)
+          Runtime.stats!(runtime)
         )
       end)
 

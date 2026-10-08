@@ -73,7 +73,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     {effect, wire} = checkout(target)
     assert %{"id" => 7, "error" => %{"message" => "Request cancelled"}} = Jason.decode!(wire)
     :ok = complete(target, effect)
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
     {:ok, route} = Admission.route(Ref.table(runtime))
     assert :sys.get_state(route.admission).monitors == %{}
     assert {:ok, %{"result" => 0}} = Runtime.request(runtime, %{request(8) | "method" => "read"})
@@ -105,7 +105,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     send(worker, :finish)
     {effect, _wire} = checkout(running)
     :ok = complete(running, effect)
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
   end
 
   test "duplicate future-ID markers coalesce and fail the aggregate without replaying earlier state" do
@@ -133,7 +133,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
 
     assert marker_deadline > System.monotonic_time(:millisecond)
 
-    assert Runtime.stats(runtime).reserved == 2
+    assert Runtime.stats!(runtime).reserved == 2
     assert Process.alive?(worker)
     send(worker, :finish)
     {effect, wire} = checkout(target)
@@ -144,7 +144,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     assert %{"id" => 7, "error" => %{"message" => "Request cancelled"}} = Jason.decode!(wire)
     :ok = complete(target, effect)
     refute_receive {:cancel_callback, 7, _}, 5
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
     output_settled(runtime)
     refute :ets.member(table, {:http_wire_cancel, token, 7})
     assert {:ok, %{"result" => 1}} = Runtime.request(runtime, %{request(8) | "method" => "read"})
@@ -159,7 +159,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     assert %{"id" => 7, "error" => %{"message" => "Request cancelled"}} = Jason.decode!(wire)
     :ok = complete(target, effect)
     refute_receive {:cancel_callback, 7, _}, 5
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
     output_settled(runtime)
     assert {:ok, %{"result" => 0}} = Runtime.request(runtime, %{request(8) | "method" => "read"})
   end
@@ -189,7 +189,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     refute :ets.member(table, {:http_wire_cancel, token, 7})
     :ok = complete(target, effect)
     refute_receive {:cancel_callback, 7, _}, 5
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
     output_settled(runtime)
     assert {:ok, %{"result" => 0}} = Runtime.request(runtime, %{request(8) | "method" => "read"})
   end
@@ -214,7 +214,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     {effect, wire} = checkout(target)
     assert [%{"id" => 1, "result" => 0}, %{"id" => 7, "result" => 1}] = Jason.decode!(wire)
     :ok = complete(target, effect)
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
     refute :ets.member(table, {:http_wire_cancel, token, 7})
   end
 
@@ -232,7 +232,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     assert %{"id" => "7", "error" => %{"message" => "Request cancelled"}} = Jason.decode!(wire)
     :ok = complete(target, effect)
     refute_receive {:cancel_callback, "7", _}, 5
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
 
     protected = binding(runtime, lease)
 
@@ -248,7 +248,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     {effect, wire} = checkout(protected)
     assert [%{"id" => 2, "result" => 1}, %{"id" => 3, "result" => 2}] = Jason.decode!(wire)
     :ok = complete(protected, effect)
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
   end
 
   test "a stored marker cannot survive same-ID session epoch replacement" do
@@ -275,7 +275,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     refute :ets.member(table, {:http_wire_cancel, token, 7})
     send(first_worker, :finish)
     wait(fn -> not Process.alive?(first_worker) end)
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
     refute_receive {:cancel_callback, 7, _}, 5
     assert {:ok, %{"result" => 0}} = Runtime.request(runtime, %{request(8) | "method" => "read"})
   end
@@ -301,7 +301,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
 
     refute HTTPCancellation.cancelled_member?(table, token, 7)
     wait(fn -> not Process.alive?(first_worker) end)
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
     fresh = binding(runtime, lease(runtime))
     {:ok, _fresh_token} = submit(runtime, fresh, request(7))
     assert_receive {:cancel_callback, 7, fresh_worker}
@@ -309,7 +309,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     {effect, wire} = checkout(fresh)
     assert %{"id" => 7, "result" => 0} = Jason.decode!(wire)
     :ok = complete(fresh, effect)
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
   end
 
   test "uncertain expired marker admission holds its source permit until the real acknowledgement" do
@@ -360,7 +360,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
       :sys.resume(route.admission)
     end
 
-    wait(fn -> Runtime.stats(runtime).reserved == 2 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 2 end)
     refute :ets.member(table, {:http_wire_cancel, token, 7})
     send(first_worker, :finish)
     assert_receive {:cancel_callback, 7, second_worker}
@@ -368,7 +368,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     {effect, wire} = checkout(target)
     assert [%{"id" => 1, "result" => 0}, %{"id" => 7, "result" => 1}] = Jason.decode!(wire)
     :ok = complete(target, effect)
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
   end
 
   test "Scheduler death retires an uncertain old-generation control without reusing live credit" do
@@ -413,7 +413,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     end)
 
     wait(fn -> not Process.alive?(first_worker) end)
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
     wait(fn -> :sys.get_state(gateway).jobs == %{} end)
     assert {:ok, %{"result" => 0}} = Runtime.request(runtime, %{request(8) | "method" => "read"})
   end
@@ -446,13 +446,13 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
       :sys.resume(route.scheduler)
     end
 
-    wait(fn -> Runtime.stats(runtime).reserved == 1 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 1 end)
     assert Process.alive?(worker)
     send(worker, :finish)
     {effect, wire} = checkout(target)
     assert Jason.decode!(wire)["result"] == 0
     :ok = complete(target, effect)
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
   end
 
   test "initialize remains protected from a current same-session cancellation" do
@@ -466,7 +466,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     send(worker, :finish)
     {effect, _wire} = checkout(target)
     :ok = complete(target, effect)
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
   end
 
   test "modern sessionless controls require the same trusted principal tenant and endpoint" do
@@ -491,7 +491,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     {effect, wire} = checkout(target)
     assert Jason.decode!(wire)["error"]["message"] == "Request cancelled"
     :ok = complete(target, effect)
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
   end
 
   test "anonymous modern cross-POST cancellation is an advisory no-op" do
@@ -505,7 +505,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     {effect, wire} = checkout(target)
     assert Jason.decode!(wire)["result"] == 0
     :ok = complete(target, effect)
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
   end
 
   test "trusted modern controls cannot cross a runtime lifetime" do
@@ -520,8 +520,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     send(worker, :finish)
     {effect, _wire} = checkout(target)
     :ok = complete(target, effect)
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
-    assert Runtime.stats(other_runtime).reserved == 0
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
+    assert Runtime.stats!(other_runtime).reserved == 0
   end
 
   test "an originating anonymous socket death still cancels its own modern work" do
@@ -531,7 +531,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     assert_receive {:cancel_callback, 7, worker}
     send(Process.get({:cancel_socket, target}), :close)
     wait(fn -> not Process.alive?(worker) end)
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
     assert {:ok, %{"result" => 0}} = Runtime.request(runtime, %{request(8) | "method" => "read"})
   end
 
@@ -556,7 +556,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     assert Process.alive?(worker)
     send(worker, :finish)
     wait(fn -> not Process.alive?(worker) end)
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
     assert {:ok, %{"result" => 0}} = Runtime.request(runtime, %{request(8) | "method" => "read"})
   end
 
@@ -649,7 +649,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
     assert %{"id" => 7, "error" => %{"message" => "Request cancelled"}} = Jason.decode!(wire)
     :ok = complete(target, effect)
     refute_receive {:cancel_callback, 7, _}, 5
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
     output_settled(runtime)
     assert {:ok, %{"result" => 1}} = Runtime.request(runtime, %{request(8) | "method" => "read"})
   end

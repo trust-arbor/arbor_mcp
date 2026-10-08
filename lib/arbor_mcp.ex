@@ -261,7 +261,7 @@ defmodule Arbor.MCP do
   @doc """
   Convenience function to start an MCP server.
 
-  This is equivalent to `Arbor.MCP.Server.HandlerServer.start_link/1` but provides a simpler
+  This starts a process linked to the caller, equivalent to `Arbor.MCP.Server.HandlerServer.start_link/1` but provides a simpler
   entry point for common use cases.
 
   ## Examples
@@ -311,7 +311,7 @@ defmodule Arbor.MCP do
 
   # Convenience Functions
 
-  @type client :: pid()
+  @type client :: Client.t()
   @type connection_spec :: String.t() | {atom(), keyword()} | [any()] | Arbor.MCP.ClientConfig.t()
 
   @doc """
@@ -401,15 +401,21 @@ defmodule Arbor.MCP do
 
   Returns `{:ok, tools}` where `tools` is a list of tool definitions with
   their schemas and descriptions, or `{:error, reason}` if the request fails
-  or the client is dead/unresponsive.
+  or the client is dead/unresponsive. `format: :map` or `:struct` returns the
+  complete page, retaining its cursor and metadata. `:cursor` and supported
+  Client request controls are forwarded.
   """
-  @spec tools(client(), keyword()) :: {:ok, [map()]} | {:error, any()}
+  @spec tools(client(), keyword()) :: {:ok, [map()] | map() | Response.t()} | {:error, any()}
   def tools(client, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 5_000)
+    opts = facade_options!(opts, [:cursor])
+    full_result? = Keyword.has_key?(opts, :format)
+    request_opts = opts |> Keyword.put_new(:timeout, 5_000) |> Keyword.put_new(:format, :map)
 
-    case Client.list_tools(client, timeout: timeout, format: :map) do
+    case Client.list_tools(client, request_opts) do
+      {:ok, result} when full_result? ->
+        {:ok, result}
+
       {:ok, result} when is_map(result) ->
-        # Extract tools list from the result map (string or atom keys)
         {:ok, Map.get(result, "tools") || Map.get(result, :tools) || []}
 
       {:error, reason} ->
@@ -425,12 +431,19 @@ defmodule Arbor.MCP do
   Returns `{:ok, result}` on success or `{:error, reason}` if the request
   fails or the client is dead/unresponsive. With `normalize: true` (the
   default) `result` is the extracted text content; with `normalize: false`
-  it is the raw response.
+  it is the complete Response struct. `format: :map` returns the wire result map;
+  `format: :struct` returns the complete struct. Either format disables implicit
+  text extraction. Normalized tool failures return `{:error, ToolError}` with
+  the full result retained in its reason.
 
   ## Options
 
   - `:timeout` - Request timeout in milliseconds (default: 30_000)
-  - `:normalize` - Whether to normalize the response (default: true)
+  - `:normalize` - Extract text (default: true unless `:format` is supplied)
+  - `:format` - Complete `:map` or `:struct` result
+  - Request controls from `Arbor.MCP.Client.call_tool/4`, including progress,
+    metadata, retry policy and idempotency keys, are forwarded unchanged.
+    Unknown options raise `ArgumentError`.
 
   ## Examples
 
@@ -442,15 +455,21 @@ defmodule Arbor.MCP do
   """
   @spec call(client(), String.t(), map(), keyword()) :: {:ok, any()} | {:error, any()}
   def call(client, tool_name, args \\ %{}, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 30_000)
-    normalize = Keyword.get(opts, :normalize, true)
+    opts = call_options!(opts)
+    normalize = Keyword.get(opts, :normalize, not Keyword.has_key?(opts, :format))
+    request_opts = opts |> Keyword.delete(:normalize) |> Keyword.put_new(:timeout, 30_000)
 
-    case Client.call_tool(client, tool_name, args, timeout) do
+    case Client.call_tool(client, tool_name, args, request_opts) do
       {:ok, result} ->
-        if normalize do
-          {:ok, extract_tool_result_content(result)}
-        else
-          {:ok, result}
+        cond do
+          normalize and tool_error?(result) ->
+            {:error, %Error.ToolError{tool_name: tool_name, reason: result}}
+
+          normalize ->
+            {:ok, extract_tool_result_content(result)}
+
+          true ->
+            {:ok, result}
         end
 
       {:error, reason} ->
@@ -464,15 +483,21 @@ defmodule Arbor.MCP do
   Lists available resources from the connected server.
 
   Returns `{:ok, resources}` on success, or `{:error, reason}` if the
-  request fails or the client is dead/unresponsive.
+  request fails or the client is dead/unresponsive. `format: :map` or `:struct`
+  returns the complete page, retaining its cursor and metadata. `:cursor` and
+  supported Client request controls are forwarded.
   """
-  @spec resources(client(), keyword()) :: {:ok, [map()]} | {:error, any()}
+  @spec resources(client(), keyword()) :: {:ok, [map()] | map() | Response.t()} | {:error, any()}
   def resources(client, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 5_000)
+    opts = facade_options!(opts, [:cursor])
+    full_result? = Keyword.has_key?(opts, :format)
+    request_opts = opts |> Keyword.put_new(:timeout, 5_000) |> Keyword.put_new(:format, :map)
 
-    case Client.list_resources(client, timeout: timeout, format: :map) do
+    case Client.list_resources(client, request_opts) do
+      {:ok, result} when full_result? ->
+        {:ok, result}
+
       {:ok, result} when is_map(result) ->
-        # Extract resources list from the result map (string or atom keys)
         {:ok, Map.get(result, "resources") || Map.get(result, :resources) || []}
 
       {:error, reason} ->
@@ -491,7 +516,11 @@ defmodule Arbor.MCP do
   ## Options
 
   - `:timeout` - Request timeout in milliseconds (default: 10_000)
-  - `:parse_json` - Automatically parse JSON content (default: false)
+  - `:parse_json` - Parse extracted text as JSON (default: false)
+  - `:format` - Return the complete `:map` or `:struct` result. Cannot be
+    combined with `parse_json: true`. The default extracts text from `contents`;
+    nontext-only resources retain the complete result.
+  - Supported Client request controls are forwarded. Unknown options raise.
 
   ## Examples
 
@@ -503,10 +532,22 @@ defmodule Arbor.MCP do
   """
   @spec read(client(), String.t(), keyword()) :: {:ok, any()} | {:error, any()}
   def read(client, uri, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 10_000)
+    opts = facade_options!(opts, [:parse_json])
     parse_json = Keyword.get(opts, :parse_json, false)
+    full_result? = Keyword.has_key?(opts, :format)
+    if not is_boolean(parse_json), do: raise(ArgumentError, "parse_json must be a boolean")
 
-    case Client.read_resource(client, uri, timeout: timeout, format: :map) do
+    if parse_json and full_result?,
+      do: raise(ArgumentError, "parse_json cannot be combined with format")
+
+    request_opts =
+      opts
+      |> Keyword.delete(:parse_json)
+      |> Keyword.put_new(:timeout, 10_000)
+      |> Keyword.put_new(:format, :map)
+
+    case Client.read_resource(client, uri, request_opts) do
+      {:ok, result} when full_result? -> {:ok, result}
       {:ok, response} -> {:ok, process_read_response(response, parse_json)}
       {:error, reason} -> {:error, reason}
     end
@@ -524,26 +565,60 @@ defmodule Arbor.MCP do
     end
   end
 
-  defp extract_resource_content(response) when is_map(response) do
-    # Try to extract content from the response map
-    case response do
-      %{"content" => [%{"type" => "text", "text" => text} | _]} ->
-        text
+  defp extract_resource_content(%{"contents" => contents} = response) when is_list(contents) do
+    texts = for %{"text" => text} <- contents, is_binary(text), do: text
+    if texts == [], do: response, else: Enum.join(texts, "\n")
+  end
 
-      %{"content" => content} when is_list(content) ->
-        # Extract and join all text content
-        Enum.map_join(
-          Enum.filter(content, &(is_map(&1) and Map.get(&1, "type") == "text")),
-          "\n",
-          &Map.get(&1, "text")
-        )
+  defp extract_resource_content(%{"content" => content} = response) when is_list(content) do
+    texts = for %{"type" => "text", "text" => text} <- content, is_binary(text), do: text
+    if texts == [], do: response, else: Enum.join(texts, "\n")
+  end
 
-      %{"text" => text} when is_binary(text) ->
-        text
+  defp extract_resource_content(%{"text" => text}) when is_binary(text), do: text
+  defp extract_resource_content(response), do: response
 
-      _ ->
-        nil
-    end
+  defp tool_error?(%Response{is_error: true}), do: true
+  defp tool_error?(%{"isError" => true}), do: true
+  defp tool_error?(_result), do: false
+
+  defp facade_options!(opts, extra_keys) do
+    Keyword.validate!(
+      opts,
+      extra_keys ++
+        [
+          :timeout,
+          :format,
+          :http_stream_retry,
+          :http_stream_retry_delay,
+          :retry_safe,
+          :retry_policy,
+          :max_mrtr_rounds,
+          :max_input_requests,
+          :max_mrtr_bytes,
+          :request_id,
+          :server_info
+        ]
+    )
+  end
+
+  defp call_options!(opts) do
+    opts =
+      facade_options!(opts, [
+        :normalize,
+        :progress_token,
+        :meta,
+        :idempotency_key,
+        :idempotency_key_path
+      ])
+
+    if Keyword.has_key?(opts, :normalize) and not is_boolean(Keyword.fetch!(opts, :normalize)),
+      do: raise(ArgumentError, "normalize must be a boolean")
+
+    if Keyword.get(opts, :normalize, false) and Keyword.has_key?(opts, :format),
+      do: raise(ArgumentError, "format requires normalize: false")
+
+    opts
   end
 
   defp parse_json_content(content) do

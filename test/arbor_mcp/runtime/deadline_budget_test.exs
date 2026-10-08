@@ -75,7 +75,7 @@ defmodule Arbor.MCP.Server.Runtime.DeadlineBudgetTest do
     assert_receive {:deadline_callback, 1, worker}, 200
     # A refreshed 350 ms receive timeout would miss this allowance.
     assert_receive {:deadline_returned, ^caller, {:error, :await_timeout}}, 180
-    assert %{active: 1, reserved: 1} = Runtime.stats(runtime)
+    assert %{active: 1, reserved: 1} = Runtime.stats!(runtime)
     send(worker, :mutate)
     wait_for_empty(runtime)
     inspect_caller(caller)
@@ -93,7 +93,7 @@ defmodule Arbor.MCP.Server.Runtime.DeadlineBudgetTest do
                Runtime.request(runtime, message(1, "read"), await_timeout: wait)
     end
 
-    assert %{reserved: 0, pending_bytes: 0} = Runtime.stats(runtime)
+    assert %{reserved: 0, pending_bytes: 0} = Runtime.stats!(runtime)
     refute_receive {:deadline_callback, 1, _worker}, 20
   end
 
@@ -132,12 +132,12 @@ defmodule Arbor.MCP.Server.Runtime.DeadlineBudgetTest do
                admission_deadline: Deadline.now() - 1
              )
 
-    assert %{reserved: 0, pending_bytes: 0} = Runtime.stats(runtime)
+    assert %{reserved: 0, pending_bytes: 0} = Runtime.stats!(runtime)
 
     assert {:ok, _route, held} =
              RuntimeIngress.reserve_ingress(runtime, [nil, 42], [])
 
-    assert %{reserved: 2} = Runtime.stats(runtime)
+    assert %{reserved: 2} = Runtime.stats!(runtime)
     assert :ok = RuntimeIngress.discard_ingress(runtime, held.token)
     wait_for_empty(runtime)
   end
@@ -213,7 +213,7 @@ defmodule Arbor.MCP.Server.Runtime.DeadlineBudgetTest do
   defp slots(runtime), do: :ets.match_object(Ref.table(runtime), {{:slot, :_}, :_, :_})
 
   defp wait_for_empty(runtime),
-    do: wait_for(fn -> match?(%{reserved: 0, pending_bytes: 0}, Runtime.stats(runtime)) end)
+    do: wait_for(fn -> match?(%{reserved: 0, pending_bytes: 0}, Runtime.stats!(runtime)) end)
 
   defp wait_for(fun, attempts \\ 100)
   defp wait_for(_fun, 0), do: flunk("deadline test did not reach its expected state")

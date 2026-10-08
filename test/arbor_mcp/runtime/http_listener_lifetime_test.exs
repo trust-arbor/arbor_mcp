@@ -40,7 +40,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPListenerLifetimeTest do
     assert :ok = call(socket, fn -> HTTPWriterRegistry.complete(effect, :ok) end)
     eventually(fn -> HTTPWriterRegistry.stats(domain).frames == 0 end)
     assert {:ok, %{deadline: ^same}} = HTTPListenerBinding.validate(listener, runtime)
-    assert Runtime.stats(runtime).reserved == 0
+    assert Runtime.stats!(runtime).reserved == 0
   end
 
   test "shortening is captured once and neither establishing again nor IO renews it" do
@@ -109,7 +109,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPListenerLifetimeTest do
     end
 
     assert HTTPWriterRegistry.stats(domain).frames == 0
-    assert Runtime.stats(runtime).reserved == 0
+    assert Runtime.stats!(runtime).reserved == 0
   end
 
   test "listener establishment remains inside the configured aggregate writer metadata budget" do
@@ -129,7 +129,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPListenerLifetimeTest do
     assert {:ok, _proof} = HTTPWriterBinding.validate(fresh, limited)
     assert HTTPWriterRegistry.stats(limited_domain).writer_metadata_bytes <= used + 32
     assert HTTPWriterRegistry.stats(limited_domain).frames == 0
-    assert Runtime.stats(limited).reserved == 0
+    assert Runtime.stats!(limited).reserved == 0
   end
 
   test "listener cohort replacement cannot reuse held IO credit or kill a borrowed socket" do

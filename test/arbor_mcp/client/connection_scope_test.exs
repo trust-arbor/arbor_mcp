@@ -181,7 +181,7 @@ defmodule Arbor.MCP.Client.ConnectionScopeTest do
     assert {:ok, {:ok, _tools}} =
              Client.with_connection({:beam, server: runtime}, &Client.list_tools/1)
 
-    assert is_map(Runtime.stats(runtime))
+    assert is_map(Runtime.stats!(runtime))
   end
 
   test "exceptions and exit reasons survive finite cleanup with original callback frame" do

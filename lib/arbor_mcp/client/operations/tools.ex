@@ -101,8 +101,6 @@ defmodule Arbor.MCP.Client.Operations.Tools do
 
   defp do_call_tool(client, tool_name, arguments, opts) do
     started_at = System.monotonic_time(:millisecond)
-    timeout = Keyword.get(opts, :timeout, 30_000)
-    deadline = started_at + timeout
 
     params =
       tool_name
@@ -120,6 +118,8 @@ defmodule Arbor.MCP.Client.Operations.Tools do
         enhanced_opts,
         30_000
       )
+
+    deadline = started_at + Keyword.get(opts, :timeout, 30_000)
 
     maybe_retry_header_mismatch(
       result,

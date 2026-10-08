@@ -234,7 +234,8 @@ defmodule Arbor.MCP.ResponseTest do
                    "annotations" => %{"meta" => true}
                  }
                ],
-               "meta" => %{"timestamp" => "2024-01-01"}
+               "_meta" => %{"timestamp" => "2024-01-01"},
+               "isError" => false
              }
     end
 
@@ -245,12 +246,12 @@ defmodule Arbor.MCP.ResponseTest do
       assert raw["isError"] == true
     end
 
-    test "excludes nil and false values" do
+    test "omits absent optional fields and retains explicit false" do
       response = Response.text("Hello")
       raw = Response.to_raw(response)
 
       refute Map.has_key?(raw, "meta")
-      refute Map.has_key?(raw, "isError")
+      assert raw["isError"] == false
     end
   end
 end

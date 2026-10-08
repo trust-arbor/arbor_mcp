@@ -53,7 +53,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayTest do
       {effect, wire} = checkout(binding)
       assert Jason.decode!(wire)["result"] == expected
       assert :ok = HTTPWriterRegistry.complete(effect, :ok)
-      wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
+      wait(fn -> match?(%{reserved: 0}, Runtime.stats!(runtime)) end)
       assert :ok = HTTPWriterRegistry.retire(binding)
       acknowledge(binding)
       refute_receive {:arbor_mcp_runtime, ^token, _}, 5
@@ -72,9 +72,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayTest do
     {:ok, {domain, _}} = HTTPWriterBinding.address(binding)
     assert %{in_flight: 1, frames: 1, bytes: charged} = HTTPWriterRegistry.stats(domain)
     assert charged > byte_size(wire)
-    assert %{reserved: 2} = Runtime.stats(runtime)
+    assert %{reserved: 2} = Runtime.stats!(runtime)
     assert :ok = HTTPWriterRegistry.complete(effect, :ok)
-    wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
+    wait(fn -> match?(%{reserved: 0}, Runtime.stats!(runtime)) end)
   end
 
   test "invalid legacy members retain work permits and preserve notification omission and ordering" do
@@ -87,9 +87,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayTest do
     assert [%{"id" => nil, "error" => %{"code" => -32600}}, %{"id" => 2, "result" => 1}] =
              Jason.decode!(wire)
 
-    assert %{reserved: 3} = Runtime.stats(runtime)
+    assert %{reserved: 3} = Runtime.stats!(runtime)
     :ok = HTTPWriterRegistry.complete(effect, :ok)
-    wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
+    wait(fn -> match?(%{reserved: 0}, Runtime.stats!(runtime)) end)
   end
 
   test "later failed batch member never authorizes a partial array or retries prior committed state" do
@@ -104,7 +104,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayTest do
     {:ok, gateway} = HTTPGateway.address(runtime)
     send(gateway, {:arbor_mcp_runtime, token, {:error, :handler_crash}})
     :ok = HTTPWriterRegistry.complete(effect, :ok)
-    wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
+    wait(fn -> match?(%{reserved: 0}, Runtime.stats!(runtime)) end)
     assert {:ok, %{"result" => 1}} = Runtime.request(runtime, message(3))
     assert :empty = HTTPWriterRegistry.checkout(binding)
   end
@@ -116,7 +116,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayTest do
     {effect, wire} = checkout(binding)
     assert %{"id" => 3, "error" => %{"code" => -32603}} = Jason.decode!(wire)
     :ok = HTTPWriterRegistry.complete(effect, :ok)
-    wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
+    wait(fn -> match?(%{reserved: 0}, Runtime.stats!(runtime)) end)
     assert {:ok, %{"result" => 2}} = Runtime.request(runtime, message(4))
   end
 
@@ -126,9 +126,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayTest do
     {:ok, _token} = HTTPGateway.submit(runtime, binding, message(1), format: :sse)
     {effect, wire} = checkout(binding)
     assert wire == "data: {\"id\":1,\"jsonrpc\":\"2.0\",\"result\":0}\r\n\r\n"
-    assert %{reserved: 1} = Runtime.stats(runtime)
+    assert %{reserved: 1} = Runtime.stats!(runtime)
     assert :ok = HTTPWriterRegistry.complete(effect, :ok)
-    wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
+    wait(fn -> match?(%{reserved: 0}, Runtime.stats!(runtime)) end)
   end
 
   test "202 IO is admitted before notification effects and normal socket return keeps accepted work" do
@@ -148,9 +148,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayTest do
     assert_receive {:gateway_callback, nil, worker}
     assert_receive :accepted_202
     assert_receive {:DOWN, ^monitor, :process, ^socket, :normal}
-    assert %{reserved: 1} = Runtime.stats(runtime)
+    assert %{reserved: 1} = Runtime.stats!(runtime)
     send(worker, :finish)
-    wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
+    wait(fn -> match?(%{reserved: 0}, Runtime.stats!(runtime)) end)
     assert {:ok, %{"result" => 1}} = Runtime.request(runtime, message(2))
   end
 
@@ -170,12 +170,12 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayTest do
     wait(fn -> match?(%{jobs: 0}, OutputController.stats(Ref.table(runtime))) end)
     assert %{in_flight: 1, frames: 1} = HTTPWriterRegistry.stats(domain)
     # Logical input may already expire; physical IO capacity cannot be reused.
-    assert %{reserved: reserved} = Runtime.stats(runtime)
+    assert %{reserved: reserved} = Runtime.stats!(runtime)
     assert reserved in [0, 1]
     assert map_size(:sys.get_state(gateway).jobs) == 1
     assert Process.alive?(self())
     assert {:error, :http_write_uncertain} = HTTPWriterRegistry.complete(effect, :ok)
-    wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
+    wait(fn -> match?(%{reserved: 0}, Runtime.stats!(runtime)) end)
     wait(fn -> match?(%{frames: 0}, HTTPWriterRegistry.stats(domain)) end)
     wait(fn -> map_size(:sys.get_state(gateway).jobs) == 0 end)
     assert [] = :ets.lookup(Ref.table(runtime), {:output_failure, token})
@@ -191,14 +191,14 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayTest do
     assert_receive {:gateway_callback, nil, first}
     assert_receive :accepted_array_202
     assert_receive {:DOWN, ^monitor, :process, ^socket, :normal}
-    assert %{reserved: 2} = Runtime.stats(runtime)
+    assert %{reserved: 2} = Runtime.stats!(runtime)
 
     send(first, :finish)
     assert_receive {:gateway_callback, nil, second}
     assert first != second
-    assert %{reserved: 2} = Runtime.stats(runtime)
+    assert %{reserved: 2} = Runtime.stats!(runtime)
     send(second, :finish)
-    wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
+    wait(fn -> match?(%{reserved: 0}, Runtime.stats!(runtime)) end)
     assert {:ok, %{"result" => 2}} = Runtime.request(runtime, message(20))
     refute_receive :http_handler_init, 5
     {:ok, domain} = HTTPWriterProxy.domain(runtime)
@@ -212,7 +212,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayTest do
     assert_receive :accepted_array_202
     assert_receive {:DOWN, ^monitor, :process, ^socket, :normal}
     wait(fn -> not Process.alive?(first) end)
-    wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
+    wait(fn -> match?(%{reserved: 0}, Runtime.stats!(runtime)) end)
     refute_receive {:gateway_callback, nil, _later}, 10
     assert {:ok, %{"result" => 0}} = Runtime.request(runtime, message(21))
   end
@@ -253,7 +253,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayTest do
     assert_receive {:gateway_callback, 1, worker}
     send(socket, :close)
     wait(fn -> not Process.alive?(worker) end)
-    wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
+    wait(fn -> match?(%{reserved: 0}, Runtime.stats!(runtime)) end)
     assert {:ok, %{"result" => 0}} = Runtime.request(runtime, message(2))
   end
 
@@ -265,7 +265,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayTest do
     {:error, :http_output_busy} =
       HTTPGateway.submit(runtime, binding, %{"jsonrpc" => "2.0", "method" => "read"})
 
-    assert %{reserved: 0} = Runtime.stats(runtime)
+    assert %{reserved: 0} = Runtime.stats!(runtime)
     refute_receive {:gateway_callback, nil, _}, 10
     :ok = HTTPWriterRegistry.release(held)
   end

@@ -812,7 +812,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPNotificationsTest do
   defp assert_no_io_credit(runtime) do
     {:ok, domain} = HTTPWriterProxy.domain(runtime)
     assert %{frames: 0, bytes: 0} = HTTPWriterRegistry.stats(domain)
-    assert match?(%{reserved: 0, response_bytes: 0}, Runtime.stats(runtime))
+    assert match?(%{reserved: 0, response_bytes: 0}, Runtime.stats!(runtime))
   end
 
   defp settled(runtime, attempts \\ 200)
@@ -821,7 +821,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPNotificationsTest do
   defp settled(runtime, attempts) do
     {:ok, domain} = HTTPWriterProxy.domain(runtime)
 
-    if Runtime.stats(runtime).reserved == 0 and HTTPWriterRegistry.stats(domain).frames == 0 do
+    if Runtime.stats!(runtime).reserved == 0 and HTTPWriterRegistry.stats(domain).frames == 0 do
       :ok
     else
       Process.sleep(5)

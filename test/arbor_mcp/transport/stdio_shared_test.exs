@@ -9,13 +9,13 @@ defmodule Arbor.MCP.Transport.StdioSharedTest do
   test "per-frame limits exclude LF and multiple frames drain with zero timeout" do
     state = start("printf '{}\\n{}\\n'; exec sleep 10", max_frame_bytes: 2)
 
-    TestHelpers.wait_until(fn -> Subprocess.stats(state.subprocess).queued == 2 end,
+    TestHelpers.wait_until(fn -> Subprocess.stats!(state.subprocess).queued == 2 end,
       timeout: 1_000
     )
 
     assert {:ok, "{}", state} = Stdio.receive_message(state, 0)
     assert {:ok, "{}", _state} = Stdio.receive_message(state, 0)
-    assert Subprocess.stats(state.subprocess).frames == 0
+    assert Subprocess.stats!(state.subprocess).frames == 0
   end
 
   test "banners, blank lines, BOM and CRLF preserve a fragmented unicode JSON frame" do
@@ -57,7 +57,7 @@ defmodule Arbor.MCP.Transport.StdioSharedTest do
   test "zero timeout skips already buffered banners without waiting for more input" do
     state = start("printf 'banner\\n\\n{}\\n'; exec sleep 10")
 
-    TestHelpers.wait_until(fn -> Subprocess.stats(state.subprocess).queued == 3 end,
+    TestHelpers.wait_until(fn -> Subprocess.stats!(state.subprocess).queued == 3 end,
       timeout: 1_000
     )
 
@@ -72,11 +72,11 @@ defmodule Arbor.MCP.Transport.StdioSharedTest do
 
     assert_receive {:arbor_rpc, ^generation, {:frame, one, "{}"}}, 1_000
     refute_receive {:arbor_rpc, ^generation, {:frame, _two, _bytes}}, 20
-    assert %{inflight: 1, frames: 2} = Subprocess.stats(state.subprocess)
+    assert %{inflight: 1, frames: 2} = Subprocess.stats!(state.subprocess)
     assert :ok = Stdio.ack(state, one)
     assert_receive {:arbor_rpc, ^generation, {:frame, two, "{}"}}, 1_000
     assert :ok = Stdio.ack(state, two)
-    assert %{inflight: 0, frames: 0} = Subprocess.stats(state.subprocess)
+    assert %{inflight: 0, frames: 0} = Subprocess.stats!(state.subprocess)
   end
 
   test "old generations are ignored and era cache identities belong to child generations" do

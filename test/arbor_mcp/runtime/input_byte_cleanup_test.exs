@@ -110,7 +110,7 @@ defmodule Arbor.MCP.Server.Runtime.InputByteCleanupTest do
     assert_receive {:candidate_returned, ^producer, {:ok, _route, held}}, 1_000
     wait_for(fn -> ByteBudget.pending(table) == [] end)
     assert ByteBudget.candidate(table, held.token) == nil
-    assert %{reserved: 1, confirmed: 1, pending_byte_cleanup: 0} = Runtime.stats(runtime)
+    assert %{reserved: 1, confirmed: 1, pending_byte_cleanup: 0} = Runtime.stats!(runtime)
     assert ByteBudget.used(table).data == held.bytes
     assert :ok = RuntimeIngress.discard_ingress(runtime, held.token)
     empty(runtime)
@@ -163,7 +163,7 @@ defmodule Arbor.MCP.Server.Runtime.InputByteCleanupTest do
              ByteBudget.release(Ref.table(runtime), held.token, deadline: past())
 
     :sys.resume(route.admission)
-    wait_for(fn -> Runtime.stats(runtime).reserved == 1 end)
+    wait_for(fn -> Runtime.stats!(runtime).reserved == 1 end)
     assert {:ok, _neighbor} = Admission.current(Ref.table(runtime), neighbor.token)
     assert ByteBudget.used(Ref.table(runtime)).data == neighbor.bytes
 
@@ -184,7 +184,7 @@ defmodule Arbor.MCP.Server.Runtime.InputByteCleanupTest do
       assert :ok = RuntimeIngress.discard_ingress(runtime, old.token)
     end
 
-    assert %{reserved: 1, admitted_work: 1, pending_bytes: bytes} = Runtime.stats(runtime)
+    assert %{reserved: 1, admitted_work: 1, pending_bytes: bytes} = Runtime.stats!(runtime)
     assert bytes == fresh.bytes
     assert {:ok, _fresh} = Admission.current(Ref.table(runtime), fresh.token)
     assert :ok = RuntimeIngress.discard_ingress(runtime, fresh.token)
@@ -218,7 +218,7 @@ defmodule Arbor.MCP.Server.Runtime.InputByteCleanupTest do
     for {_producer, old} <- held,
         do: assert(:ok == ByteBudget.release(table, old.token, deadline: past()))
 
-    assert %{reserved: 1, pending_bytes: bytes, pending_byte_cleanup: 0} = Runtime.stats(runtime)
+    assert %{reserved: 1, pending_bytes: bytes, pending_byte_cleanup: 0} = Runtime.stats!(runtime)
     assert bytes == fresh.bytes
     assert :ok = RuntimeIngress.discard_ingress(runtime, fresh.token)
     empty(runtime)
@@ -391,7 +391,7 @@ defmodule Arbor.MCP.Server.Runtime.InputByteCleanupTest do
     do:
       wait_for(fn ->
         case Runtime.stats(runtime) do
-          %{reserved: 0, pending_bytes: 0, pending_byte_cleanup: 0} -> true
+          {:ok, %{reserved: 0, pending_bytes: 0, pending_byte_cleanup: 0}} -> true
           _state -> false
         end
       end)

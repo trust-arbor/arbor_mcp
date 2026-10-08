@@ -21,7 +21,7 @@ defmodule Arbor.MCP.Client.StdioLifecycleTest do
     assert :ok = Subprocess.write(transport.subprocess, "banner\nbanner\n")
 
     TestHelpers.wait_until(fn ->
-      match?(%{frames: 2, inflight: 1}, Subprocess.stats(transport.subprocess))
+      match?(%{frames: 2, inflight: 1}, Subprocess.stats!(transport.subprocess))
     end)
 
     {:messages, messages} = Process.info(client, :messages)
@@ -30,7 +30,7 @@ defmodule Arbor.MCP.Client.StdioLifecycleTest do
     :ok = :sys.resume(client)
 
     TestHelpers.wait_until(fn ->
-      match?(%{frames: 0, inflight: 0}, Subprocess.stats(transport.subprocess))
+      match?(%{frames: 0, inflight: 0}, Subprocess.stats!(transport.subprocess))
     end)
 
     assert {:ok, %{connection_status: :ready}} = Client.get_status(client)

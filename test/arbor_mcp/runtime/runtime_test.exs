@@ -158,13 +158,13 @@ defmodule Arbor.MCP.Server.RuntimeTest do
 
     assert {:ok, second} = Runtime.submit(runtime, message(2, "inc"))
     assert {:ok, third} = Runtime.submit(runtime, message(3, "inc"))
-    wait_for(fn -> Runtime.stats(runtime).queued == 2 end)
+    wait_for(fn -> Runtime.stats!(runtime).queued == 2 end)
     refute_receive {:started, :serial, 2, _, _}, 20
     send(callback, :release)
     assert {:ok, %{"result" => 0}} = Runtime.await(first, 1_000)
     assert {:ok, %{"result" => 1}} = Runtime.await(second, 1_000)
     assert {:ok, %{"result" => 2}} = Runtime.await(third, 1_000)
-    wait_for(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(runtime).reserved == 0 end)
   end
 
   test "blocked callback keeps cancellation responsive and cannot commit after cancellation" do
@@ -213,7 +213,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     assert {:ok, active} = Runtime.submit(runtime, message(1, "hold"))
     assert_receive {:started, :bounded, 1, worker, 0}
     assert {:ok, queued} = Runtime.submit(runtime, message(2, "inc"))
-    wait_for(fn -> Runtime.stats(runtime).queued == 1 end)
+    wait_for(fn -> Runtime.stats!(runtime).queued == 1 end)
 
     parent = self()
 
@@ -228,7 +228,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
       |> Enum.to_list()
 
     assert Enum.all?(results, &(&1 == {:ok, {:error, :server_busy}}))
-    assert %{active: 1, queued: 1, reserved: 2, confirmed: 2} = Runtime.stats(runtime)
+    assert %{active: 1, queued: 1, reserved: 2, confirmed: 2} = Runtime.stats!(runtime)
     {:ok, route} = Admission.route(Ref.table(runtime))
     assert {:message_queue_len, 0} = Process.info(route.scheduler, :message_queue_len)
 
@@ -249,10 +249,10 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     assert {:ok, token} = Runtime.submit(runtime, held)
     assert_receive {:started, :bytes, 1, worker, 0}
     assert {:error, :server_busy} = Runtime.submit(runtime, following)
-    assert Runtime.stats(runtime).pending_bytes == input_bytes(held)
+    assert Runtime.stats!(runtime).pending_bytes == input_bytes(held)
     send(worker, :release)
     assert {:ok, _} = Runtime.await(token, 1_000)
-    wait_for(fn -> Runtime.stats(runtime).pending_bytes == 0 end)
+    wait_for(fn -> Runtime.stats!(runtime).pending_bytes == 0 end)
     assert {:ok, %{"result" => 1}} = Runtime.request(runtime, following)
   end
 
@@ -266,7 +266,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
              Runtime.await(queued, 1_000)
 
     refute_receive {:started, :queued_timeout, 2, _, _}, 20
-    assert Runtime.stats(runtime).reserved == 1
+    assert Runtime.stats!(runtime).reserved == 1
     send(worker, :release)
     assert {:ok, _} = Runtime.await(held, 1_000)
   end
@@ -297,13 +297,13 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     assert {:ok, second} = Runtime.submit(runtime, message(2, "hold"))
     assert_receive {:started, :stateless, 1, one, 0}
     assert_receive {:started, :stateless, 2, two, 0}
-    assert %{active: 2} = Runtime.stats(runtime)
+    assert %{active: 2} = Runtime.stats!(runtime)
     assert {:error, :server_busy} = Runtime.submit(runtime, message(3, "read"))
     send(two, :release)
     assert {:ok, _} = Runtime.await(second, 1_000)
     send(one, :release)
     assert {:ok, _} = Runtime.await(first, 1_000)
-    wait_for(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(runtime).reserved == 0 end)
 
     assert {:error, %{"error" => %{"data" => %{"type" => "invalid_handler_state"}}}} =
              Runtime.request(runtime, message(4, "inc"))
@@ -349,7 +349,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     assert_receive {:initialized, :restart, old_scheduler}
     assert {:ok, token} = Runtime.submit(runtime, message(1, "hold"))
     assert_receive {:started, :restart, 1, worker, 0}
-    old_generation = Runtime.stats(runtime).generation
+    old_generation = Runtime.stats!(runtime).generation
     worker_monitor = Process.monitor(worker)
     Process.exit(old_scheduler, :kill)
     assert {:error, :runtime_restarted} = Runtime.await(token, 1_000)
@@ -360,7 +360,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
 
     wait_for(fn ->
       case Runtime.stats(runtime) do
-        %{generation: generation} -> generation != old_generation
+        {:ok, %{generation: generation}} -> generation != old_generation
         _ -> false
       end
     end)
@@ -380,7 +380,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     assert :ok = Runtime.cancel(runtime, scope, 1)
     send(worker, :mutate)
     assert {:error, %{"error" => %{"code" => -32001}}} = Runtime.await(token, 1_000)
-    wait_for(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(runtime).reserved == 0 end)
     assert {:ok, %{"result" => 0}} = Runtime.request(runtime, message(2, "read"))
     refute_receive {:arbor_mcp_runtime, ^token, _}, 30
   end
@@ -421,7 +421,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     assert {:ok, held} = Runtime.submit(runtime, message(1, "hold"))
     assert_receive {:started, :admission_restart, 1, worker, 0}
     assert {:ok, queued} = Runtime.submit(runtime, message(2, "inc"))
-    old_generation = Runtime.stats(runtime).generation
+    old_generation = Runtime.stats!(runtime).generation
     {:ok, route} = Admission.route(Ref.table(runtime))
     Process.exit(route.admission, :kill)
     assert {:error, :runtime_restarted} = Runtime.await(held, 1_000)
@@ -429,7 +429,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
 
     wait_for(fn ->
       case Runtime.stats(runtime) do
-        %{generation: generation} -> generation != old_generation
+        {:ok, %{generation: generation}} -> generation != old_generation
         _ -> false
       end
     end)
@@ -523,7 +523,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     Process.exit(producer, :kill)
     assert_receive {:DOWN, ^monitor, :process, ^producer, :killed}
     :sys.resume(route.admission)
-    wait_for(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(runtime).reserved == 0 end)
     assert ByteBudget.candidate(Ref.table(runtime), token) == nil
     assert %{data: 0, outgoing: 0, incoming: 0} = ByteBudget.used(Ref.table(runtime))
     refute_receive {:started, :metadata_handoff, _, _, _}, 20
@@ -568,7 +568,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     Process.exit(producer, :kill)
     assert_receive {:DOWN, ^monitor, :process, ^producer, :killed}
     :sys.resume(route.admission)
-    wait_for(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(runtime).reserved == 0 end)
     assert %{data: 0, outgoing: 0, incoming: 0} = ByteBudget.used(Ref.table(runtime))
     refute_receive {:started, :candidate_bytes, _, _, _}, 20
     assert {:ok, %{"result" => 1}} = Runtime.request(runtime, message(100, "inc"))
@@ -591,14 +591,14 @@ defmodule Arbor.MCP.Server.RuntimeTest do
       end)
 
     assert_receive {:reserved, token}
-    assert Runtime.stats(runtime).reserved == 1
+    assert Runtime.stats!(runtime).reserved == 1
     Process.exit(producer, :kill)
 
     assert {:error, %{"error" => %{"data" => %{"type" => "producer_down"}}}} =
              Runtime.await(token, 1_000)
 
-    wait_for(fn -> Runtime.stats(runtime).reserved == 0 end)
-    assert Runtime.stats(runtime).pending_bytes == 0
+    wait_for(fn -> Runtime.stats!(runtime).reserved == 0 end)
+    assert Runtime.stats!(runtime).pending_bytes == 0
     assert {:ok, %{"result" => 1}} = Runtime.request(runtime, message(2, "inc"))
     refute_receive {:started, :producer, 1, _, _}, 20
   end
@@ -674,7 +674,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     {:ok, _route, reservation} = Admission.reserve(runtime, message(1, "inc"), scope: scope)
     assert :ok = Runtime.cancel(runtime, scope, 1)
     assert {:error, %{"error" => %{"code" => -32001}}} = Runtime.await(reservation.token, 1_000)
-    assert Runtime.stats(runtime).reserved == 0
+    assert Runtime.stats!(runtime).reserved == 0
     assert {:ok, %{"result" => 1}} = Runtime.request(runtime, message(2, "inc"))
     refute_receive {:started, :before_handoff, 1, _, _}, 20
   end
@@ -692,7 +692,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
                scope: {:session, String.duplicate("s", 500)}
              )
 
-    assert %{reserved: 0, pending_bytes: 0} = Runtime.stats(runtime)
+    assert %{reserved: 0, pending_bytes: 0} = Runtime.stats!(runtime)
     refute_receive {:started, :context_bytes, 1, _, _}, 20
   end
 
@@ -768,7 +768,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     assert_receive {:started, :finite_wait, 1, worker, 0}
     assert_receive {:wait_returned, ^caller, {:error, :await_timeout}}
     send(worker, :mutate)
-    wait_for(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(runtime).reserved == 0 end)
     send(caller, :inspect_mailbox)
     assert_receive {:caller_mailbox, {:messages, []}}
     assert {:ok, %{"result" => 900}} = Runtime.request(runtime, message(2, "read"))
@@ -779,7 +779,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     assert {:ok, token} = Runtime.submit(runtime, message(1, "hold"))
     assert_receive {:started, :retry_wait, 1, worker, 0}
     assert {:error, :await_timeout} = Runtime.await(token, 1)
-    assert %{active: 1, reserved: 1} = Runtime.stats(runtime)
+    assert %{active: 1, reserved: 1} = Runtime.stats!(runtime)
     send(worker, :release)
     assert {:ok, %{"result" => 0}} = Runtime.await(token, 1_000)
     refute_receive {:arbor_mcp_runtime, ^token, _}, 20
@@ -791,7 +791,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     monitor = Process.monitor(owner)
     assert_receive {:DOWN, ^monitor, :process, ^owner, _}
     assert {:error, :owner_down} = Runtime.submit(runtime, message(1, "inc"), owner: owner)
-    assert %{reserved: 0, pending_bytes: 0} = Runtime.stats(runtime)
+    assert %{reserved: 0, pending_bytes: 0} = Runtime.stats!(runtime)
     refute_receive {:started, :dead_owner, 1, _, _}, 20
     assert {:ok, %{"result" => 0}} = Runtime.request(runtime, message(2, "read"))
   end
@@ -818,7 +818,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
              Runtime.await(token, 1_000)
 
     refute_receive {:started, :owner_before_bind, 1, _, _}, 20
-    assert %{reserved: 0, pending_bytes: 0} = Runtime.stats(runtime)
+    assert %{reserved: 0, pending_bytes: 0} = Runtime.stats!(runtime)
   end
 
   test "reference resolution never sends supervisor protocol messages to an unrelated server" do
@@ -850,7 +850,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     state = :sys.get_state(route.scheduler)
     retained = state.work[token].opts
     assert :erlang.external_size(retained) < 1_000
-    assert Runtime.stats(runtime).pending_bytes < 200
+    assert Runtime.stats!(runtime).pending_bytes < 200
     send(worker, :release)
     assert {:ok, _} = Runtime.await(token, 1_000)
   end
@@ -951,7 +951,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     assert {:error, :invalid_await_timeout} =
              Runtime.request(runtime, message(1, "inc"), await_timeout: -1)
 
-    assert %{reserved: 0, pending_bytes: 0} = Runtime.stats(runtime)
+    assert %{reserved: 0, pending_bytes: 0} = Runtime.stats!(runtime)
     refute_receive {:started, :invalid_wait, 1, _, _}, 20
   end
 
@@ -1018,7 +1018,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
   test "nonlocal owners and reply targets are rejected without admission or handler side effects" do
     runtime = start_runtime(label: :remote_owners)
     {:ok, route} = Admission.route(Ref.table(runtime))
-    generation = Runtime.stats(runtime).generation
+    generation = Runtime.stats!(runtime).generation
     remote = remote_pid()
     assert node(remote) != node()
 
@@ -1031,7 +1031,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     assert {:error, :invalid_reply_target} =
              Runtime.submit(runtime, message(4, "inc"), reply_to: :invalid)
 
-    assert %{reserved: 0, pending_bytes: 0, generation: ^generation} = Runtime.stats(runtime)
+    assert %{reserved: 0, pending_bytes: 0, generation: ^generation} = Runtime.stats!(runtime)
     assert Process.alive?(route.admission)
     refute_receive {:started, :remote_owners, _, _, _}, 20
     assert {:ok, %{"result" => 1}} = Runtime.request(runtime, message(5, "inc"))
@@ -1040,14 +1040,14 @@ defmodule Arbor.MCP.Server.RuntimeTest do
   test "an ordinary reference reply target cannot crash admission or roll back committed state" do
     runtime = start_runtime(label: :invalid_delivery, max_queue: 0)
     {:ok, route} = Admission.route(Ref.table(runtime))
-    generation = Runtime.stats(runtime).generation
+    generation = Runtime.stats!(runtime).generation
 
     assert {:ok, token} =
              Runtime.submit(runtime, message(1, "inc"), reply_to: make_ref())
 
     assert_receive {:started, :invalid_delivery, 1, _worker, 0}
-    wait_for(fn -> Runtime.stats(runtime).reserved == 0 end)
-    assert %{pending_bytes: 0, generation: ^generation} = Runtime.stats(runtime)
+    wait_for(fn -> Runtime.stats!(runtime).reserved == 0 end)
+    assert %{pending_bytes: 0, generation: ^generation} = Runtime.stats!(runtime)
     assert Process.alive?(route.admission)
     assert Process.alive?(route.scheduler)
     assert {:error, :await_timeout} = Runtime.await(token, 0)
@@ -1056,14 +1056,14 @@ defmodule Arbor.MCP.Server.RuntimeTest do
 
   test "deactivating an asynchronous reply alias discards delivery and releases the work budget" do
     runtime = start_runtime(label: :inactive_delivery, max_queue: 0)
-    generation = Runtime.stats(runtime).generation
+    generation = Runtime.stats!(runtime).generation
     reply_alias = :erlang.alias()
     assert {:ok, token} = Runtime.submit(runtime, message(1, "hold"), reply_to: reply_alias)
     assert_receive {:started, :inactive_delivery, 1, worker, 0}
     assert :erlang.unalias(reply_alias)
     send(worker, :mutate)
-    wait_for(fn -> Runtime.stats(runtime).reserved == 0 end)
-    assert %{pending_bytes: 0, generation: ^generation} = Runtime.stats(runtime)
+    wait_for(fn -> Runtime.stats!(runtime).reserved == 0 end)
+    assert %{pending_bytes: 0, generation: ^generation} = Runtime.stats!(runtime)
     assert {:error, :await_timeout} = Runtime.await(token, 0)
     assert {:ok, %{"result" => 900}} = Runtime.request(runtime, message(2, "read"))
   end
@@ -1071,7 +1071,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
   test "admission restart survives outstanding invalid and deactivated alias destinations" do
     runtime = start_runtime(label: :restart_delivery)
     {:ok, route} = Admission.route(Ref.table(runtime))
-    old_generation = Runtime.stats(runtime).generation
+    old_generation = Runtime.stats!(runtime).generation
 
     assert {:ok, _invalid_token} =
              Runtime.submit(runtime, message(1, "hold"), reply_to: make_ref())
@@ -1089,8 +1089,11 @@ defmodule Arbor.MCP.Server.RuntimeTest do
 
     wait_for(fn ->
       case Runtime.stats(runtime) do
-        %{generation: generation, reserved: 0, pending_bytes: 0} -> generation != old_generation
-        _ -> false
+        {:ok, %{generation: generation, reserved: 0, pending_bytes: 0}} ->
+          generation != old_generation
+
+        _ ->
+          false
       end
     end)
 

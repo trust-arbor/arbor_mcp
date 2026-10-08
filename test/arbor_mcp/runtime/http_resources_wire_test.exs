@@ -287,7 +287,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPResourcesWireTest do
   defp settled(runtime),
     do:
       wait(fn ->
-        Runtime.stats(runtime).reserved == 0 and
+        Runtime.stats!(runtime).reserved == 0 and
           (HTTPWriterProxy.domain(runtime) |> elem(1) |> HTTPWriterRegistry.stats()).frames == 0
       end)
 

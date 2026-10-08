@@ -25,7 +25,7 @@ defmodule Arbor.MCP.StructuredResponseIntegrationTest do
       raw = Response.to_raw(response)
 
       assert raw["content"] == [%{"type" => "text", "text" => "Test message"}]
-      refute Map.has_key?(raw, "isError")
+      assert raw["isError"] == false
     end
 
     test "error responses are properly structured" do

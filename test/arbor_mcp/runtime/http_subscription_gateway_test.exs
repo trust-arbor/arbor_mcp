@@ -47,7 +47,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPSubscriptionGatewayTest do
     ack(socket, binding, listener, pid, :notification)
     settle_response(source)
     refute_receive :subscription_handler_init, 5
-    eventually(fn -> Runtime.stats(runtime).reserved == 0 end)
+    eventually(fn -> Runtime.stats!(runtime).reserved == 0 end)
   end
 
   test "a cancelled callback cannot publish its queued loan or commit state" do
@@ -468,7 +468,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPSubscriptionGatewayTest do
     assert :ok = call(socket, fn -> HTTPWriterRegistry.retire(binding) end)
     eventually(fn -> HTTPWriterRegistry.stats(domain(binding)).frames == 0 end)
     eventually(fn -> HTTPWriterRegistry.stats(domain(binding)).bindings == active end)
-    eventually(fn -> Runtime.stats(runtime).reserved == 0 end)
+    eventually(fn -> Runtime.stats!(runtime).reserved == 0 end)
   end
 
   defp runtime(extra \\ []) do

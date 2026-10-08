@@ -212,7 +212,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     assert_receive {:cancel_probe, ^callback, true}
     assert Task.await(request).response["error"]["code"] == -32001
     assert Server.call(root, :read) == 0
-    wait_for(fn -> Runtime.stats(root).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(root).reserved == 0 end)
 
     next =
       tool(17, "inc")
@@ -235,7 +235,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
 
     assert :ok = Server.cast(root, {:add, 10})
     call = Task.async(fn -> Server.call(root, {:add, 100}) end)
-    wait_for(fn -> Runtime.stats(root).queued == 2 end)
+    wait_for(fn -> Runtime.stats!(root).queued == 2 end)
     assert Server.get_pending_requests(root) == [1]
     send(callback, :release)
     assert_receive {:transport_message, response}
@@ -284,13 +284,13 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     assert {:error, {:transport_error, :server_busy}} =
              Test.send_message(tool(2, "inc"), transport)
 
-    assert %{reserved: 1} = Runtime.stats(root)
+    assert %{reserved: 1} = Runtime.stats!(root)
     {:messages, messages} = Process.info(edge, :messages)
     assert [:runtime_ingress_ready] = messages
     :sys.resume(edge)
     assert_receive {:transport_message, response}
     assert response_map(response)["result"]["structuredContent"]["count"] == 1
-    wait_for(fn -> Runtime.stats(root).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(root).reserved == 0 end)
     assert Server.call(root, :read) == 1
   end
 
@@ -305,13 +305,13 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
       put_in(tool(2, "inc"), ["params", "arguments"], %{"payload" => String.duplicate("x", 300)})
 
     assert {:error, {:transport_error, :server_busy}} = Test.send_message(large, transport)
-    assert %{reserved: 1, pending_bytes: bytes} = Runtime.stats(root)
+    assert %{reserved: 1, pending_bytes: bytes} = Runtime.stats!(root)
     {:messages, messages} = Process.info(edge, :messages)
     assert length(messages) == 1
     assert bytes <= 300
     :sys.resume(edge)
     assert_receive {:transport_message, _response}, 1_000
-    wait_for(fn -> Runtime.stats(root).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(root).reserved == 0 end)
     assert Server.call(root, :read) == 1
   end
 
@@ -332,7 +332,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     assert %{"id" => 2, "result" => %{"structuredContent" => %{"count" => 1}}} =
              response_map(accepted)
 
-    wait_for(fn -> Runtime.stats(root).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(root).reserved == 0 end)
     assert Server.call(root, :read) == 1
     {:ok, runtime} = Runtime.ref(root)
 
@@ -349,19 +349,19 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     assert :ok = Server.notify_progress(root, "one", 1)
     assert {:error, :server_busy} = Server.notify_progress(root, "two", 2)
     # The stats call fences the asynchronous coalesced wake in admission.
-    assert %{reserved: 1, control_bytes: bytes} = Runtime.stats(root)
+    assert %{reserved: 1, control_bytes: bytes} = Runtime.stats!(root)
     {:messages, messages} = Process.info(edge, :messages)
     assert [:runtime_ingress_ready] = messages
     assert bytes <= 200
     :sys.resume(edge)
     assert_receive {:transport_message, progress}
     assert response_map(progress)["params"]["progressToken"] == "one"
-    wait_for(fn -> Runtime.stats(root).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(root).reserved == 0 end)
 
     assert {:error, :server_busy} =
              Server.send_log_message(root, :info, String.duplicate("x", 200), nil)
 
-    assert %{pending_bytes: 0, control_bytes: 0} = Runtime.stats(root)
+    assert %{pending_bytes: 0, control_bytes: 0} = Runtime.stats!(root)
   end
 
   test "a callback waiting on reverse RPC accepts its response when callback admission is full" do
@@ -370,7 +370,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     assert_receive {:transport_message, encoded_request}
     request = response_map(encoded_request)
     assert request["method"] == "roots/list"
-    assert %{reserved: 2, active: 1} = Runtime.stats(root)
+    assert %{reserved: 2, active: 1} = Runtime.stats!(root)
 
     assert {:ok, _transport} =
              Test.send_message(
@@ -383,8 +383,8 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     assert %{"id" => 1, "result" => %{"structuredContent" => %{"roots" => []}}} =
              response_map(encoded_response)
 
-    wait_for(fn -> Runtime.stats(root).reserved == 0 end)
-    assert %{pending_bytes: 0, control_bytes: 0} = Runtime.stats(root)
+    wait_for(fn -> Runtime.stats!(root).reserved == 0 end)
+    assert %{pending_bytes: 0, control_bytes: 0} = Runtime.stats!(root)
   end
 
   test "two runtimes reuse an ID and cancellation stays scoped even under full admission" do
@@ -404,7 +404,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     send(worker_two, :release)
     assert_receive {:transport_message, encoded_response}
     assert response_map(encoded_response)["result"]["structuredContent"]["count"] == 1
-    wait_for(fn -> Runtime.stats(one).reserved == 0 and Runtime.stats(two).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(one).reserved == 0 and Runtime.stats!(two).reserved == 0 end)
     assert Server.call(one, :read) == 0
     assert Server.call(two, :read) == 1
   end
@@ -422,7 +422,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     assert_receive {:transport_message, responses}
     assert Enum.map(responses, & &1["id"]) == [1, 2]
     assert Enum.map(responses, & &1["result"]["structuredContent"]["count"]) == [1, 2]
-    wait_for(fn -> Runtime.stats(root).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(root).reserved == 0 end)
     assert Server.call(root, :read) == 2
   end
 
@@ -491,7 +491,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     assert %{"id" => 1, "result" => %{"structuredContent" => %{"cancelled" => false}}} =
              response_map(encoded_response)
 
-    wait_for(fn -> Runtime.stats(root).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(root).reserved == 0 end)
 
     assert MapSet.member?(
              Server.call(root, :cancellations),
@@ -533,7 +533,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     assert [second] = response_map(encoded_second)
     assert second["id"] == 2
     assert second["result"]["structuredContent"]["count"] == 2
-    wait_for(fn -> Runtime.stats(root).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(root).reserved == 0 end)
   end
 
   test "a held batch stays ahead of later custom state changes and RPC envelopes" do
@@ -553,7 +553,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     assert %{"id" => 3, "result" => %{"structuredContent" => %{"count" => 13}}} =
              response_map(encoded_later)
 
-    wait_for(fn -> Runtime.stats(root).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(root).reserved == 0 end)
   end
 
   test "cancelling a future batch ID does not cancel its currently running member" do
@@ -568,7 +568,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     assert [first, second] = response_map(encoded_batch)
     assert %{"id" => 1, "result" => %{"structuredContent" => %{"count" => 1}}} = first
     assert %{"id" => 2, "error" => %{"code" => -32001}} = second
-    wait_for(fn -> Runtime.stats(root).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(root).reserved == 0 end)
     assert Server.call(root, :read) == 1
   end
 
@@ -593,7 +593,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
              {2, -32001}
            ]
 
-    wait_for(fn -> Runtime.stats(root).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(root).reserved == 0 end)
     assert Server.call(root, :read) == 0
   end
 
@@ -608,13 +608,13 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     assert_receive {:progress_accepted, :ok}
     # Callback execution has ended, but the stateful slot remains occupied until
     # the edge accepts and hands off its charged output.
-    wait_for(fn -> Runtime.stats(root).active == 1 end)
+    wait_for(fn -> Runtime.stats!(root).active == 1 end)
     :sys.resume(edge)
     assert_receive {:transport_message, progress}
     assert response_map(progress)["method"] == "notifications/progress"
     assert_receive {:transport_message, response}
     assert response_map(response)["result"]["structuredContent"]["count"] == 1
-    wait_for(fn -> Runtime.stats(root).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(root).reserved == 0 end)
   end
 
   test "an expired callback cannot issue controls before its queued deadline is processed" do
@@ -638,7 +638,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     assert %{"id" => 1, "error" => %{"data" => %{"type" => "handler_timeout"}}} =
              response_map(timeout)
 
-    wait_for(fn -> Runtime.stats(root).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(root).reserved == 0 end)
     assert Server.call(root, :read) == 0
   end
 
@@ -667,7 +667,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     assert %{"id" => 1, "result" => %{"structuredContent" => %{"count" => 1}}} =
              response_map(encoded_response)
 
-    wait_for(fn -> Runtime.stats(root).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(root).reserved == 0 end)
     refute_receive {:peer_message, ^peer, _retired_control}, 30
   end
 
@@ -677,7 +677,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     {:ok, runtime} = Runtime.ref(root)
     assert {:ok, _transport} = Test.send_message(tool(1, "inc"), transport)
     assert_receive {:transport_message, _response}
-    wait_for(fn -> Runtime.stats(root).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(root).reserved == 0 end)
     {:ok, edge} = Runtime.edge(root)
     Process.exit(edge, :kill)
 
@@ -741,7 +741,7 @@ defmodule Arbor.MCP.Server.HandlerServerRuntimeTest do
     assert_receive {:transport_message, response}
     assert %{"id" => nil, "error" => %{"code" => -32600}} = response_map(response)
     refute_receive {:incremented, _callback}, 20
-    wait_for(fn -> Runtime.stats(root).reserved == 0 end)
+    wait_for(fn -> Runtime.stats!(root).reserved == 0 end)
     assert Server.call(root, :read) == 0
   end
 

@@ -8,6 +8,15 @@ candidate; HTTP reverse and Runtime-only mounts are integrated. API5 compiled
 graph and selected consumer checks pass for their exact source; final changed-source
 and RC gates remain open.
 
+## Replacement-candidate API consistency changes
+
+The October 8 pass changes operational return shapes, timeout classification,
+facade option forwarding and complete-response conversion. These behaviors
+cannot be inferred from export presence. See the
+[public operation migration contracts](guides/MIGRATING_V1_TO_V2.md#public-operation-contracts-in-the-replacement-candidate)
+for before/after guidance, including ACP status/setters/shutdown and Runtime/RPC
+statistics. Existing checkpoint evidence below retains its original source.
+
 ## Source checkpoints and evidence boundaries
 
 | Checkpoint | What it establishes |

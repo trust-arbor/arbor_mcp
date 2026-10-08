@@ -305,7 +305,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseOAuthTest do
     assert {:ok, %{metadata: ^metadata, initialized: true}} =
              SessionManager.get_session(sessions, lease, [])
 
-    eventually(fn -> match?(%{reserved: 0}, Runtime.stats(host.runtime)) end)
+    eventually(fn -> match?(%{reserved: 0}, Runtime.stats!(host.runtime)) end)
     %{id: id, sessions: sessions, lease: lease}
   end
 
@@ -362,7 +362,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseOAuthTest do
     {:ok, gateway} = HTTPGateway.address(host.runtime)
     assert :sys.get_state(gateway).reverse.pending[opened.control] == opened.proof
     assert :atomics.get(opened.proof.phase, 1) == 0
-    assert match?(%{active: 1, response_bytes: 0}, Runtime.stats(host.runtime))
+    assert match?(%{active: 1, response_bytes: 0}, Runtime.stats!(host.runtime))
     assert {:ok, opened.stats} == SessionManager.get_stats(session.sessions, [])
     refute_receive {:oauth_reverse_result, _result}, 0
   end
@@ -378,7 +378,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseOAuthTest do
              "result" => %{"content" => []}
            }
 
-    eventually(fn -> match?(%{reserved: 0, response_bytes: 0}, Runtime.stats(host.runtime)) end)
+    eventually(fn -> match?(%{reserved: 0, response_bytes: 0}, Runtime.stats!(host.runtime)) end)
 
     assert {:ok, %{events: [%{data: request}]}} =
              SessionManager.replay_page(session.sessions, session.lease, nil, [])

@@ -178,7 +178,7 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthorityTest do
 
     try do
       before_stop = %{
-        runtime: Runtime.stats(runtime),
+        runtime: Runtime.stats!(runtime),
         output: OutputController.stats(table),
         authority: stats(authority)
       }
@@ -246,7 +246,7 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthorityTest do
       eventually(fn ->
         match?(%{frames: 0, bytes: 0}, stats(ref)) and
           OutputController.stats(Ref.table(runtime)).frames == 0 and
-          match?(%{active: 0, queued: 0, reserved: 0, confirmed: 0}, Runtime.stats(runtime))
+          match?(%{active: 0, queued: 0, reserved: 0, confirmed: 0}, Runtime.stats!(runtime))
       end)
 
       monitor = Process.monitor(output)
@@ -627,17 +627,17 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthorityTest do
       # replacement exercised here requires the whole request to be idle.
       eventually(fn ->
         stats(ref).frames == 0 and OutputController.stats(Ref.table(runtime)).frames == 0 and
-          match?(%{active: 0, queued: 0, reserved: 0, confirmed: 0}, Runtime.stats(runtime))
+          match?(%{active: 0, queued: 0, reserved: 0, confirmed: 0}, Runtime.stats!(runtime))
       end)
 
       Enum.each(2..4, fn id ->
-        old_generation = Runtime.stats(runtime).generation
+        old_generation = Runtime.stats!(runtime).generation
         Process.exit(child(runtime, unquote(kind)), :kill)
         assert_receive {:initialized, _}, 1_000
 
         eventually(fn ->
           match?(
-            %{generation: generation} when generation != old_generation,
+            {:ok, %{generation: generation}} when generation != old_generation,
             Runtime.stats(runtime)
           )
         end)
@@ -650,7 +650,7 @@ defmodule Arbor.MCP.Server.Stdio.OutputAuthorityTest do
 
         eventually(fn ->
           stats(ref).frames == 0 and OutputController.stats(Ref.table(runtime)).frames == 0 and
-            match?(%{active: 0, queued: 0, reserved: 0, confirmed: 0}, Runtime.stats(runtime))
+            match?(%{active: 0, queued: 0, reserved: 0, confirmed: 0}, Runtime.stats!(runtime))
         end)
 
         assert stats(ref).monitors <= 4

@@ -68,7 +68,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayDeadlineTest do
     assert :ok = HTTPWriterRegistry.complete(effect, :ok)
     wait(fn -> match?(%{frames: 0}, HTTPWriterRegistry.stats(domain)) end)
     assert :empty = HTTPWriterRegistry.checkout(binding)
-    wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
+    wait(fn -> match?(%{reserved: 0}, Runtime.stats!(runtime)) end)
     assert {:ok, %{"result" => 0}} = Runtime.request(runtime, message(8))
     refute_receive :http_handler_init, 5
   end

@@ -330,7 +330,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPConvergenceWireTest do
     {:ok, domain} = HTTPWriterProxy.domain(runtime)
 
     wait(fn ->
-      Runtime.stats(runtime).reserved == 0 and HTTPWriterRegistry.stats(domain).frames == 0
+      Runtime.stats!(runtime).reserved == 0 and HTTPWriterRegistry.stats(domain).frames == 0
     end)
   end
 

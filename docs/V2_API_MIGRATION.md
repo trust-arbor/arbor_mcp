@@ -1,10 +1,13 @@
 # V2 API migration inventory
 
-The October 7 facade-boundary pass removes 21 additional callable signatures
+The October 7–8 facade-boundary passes remove 22 additional callable signatures
 from MCP API modules and two generic RPC actor-call signatures. This is separate
 from the historical 102 accepted 1.x retirements and does not replace the frozen
 baseline. The exact signatures and negative export checks are recorded in
-`facade_boundary_cleanup` in the machine-readable plan.
+`facade_boundary_cleanup` in the machine-readable plan. The October 8 pass
+also removes the unused `Response.to_test_map/1` view; use `to_raw/1` or an
+application projection. Return-shape and option changes are documented in the
+[migration guide](guides/MIGRATING_V1_TO_V2.md#public-operation-contracts-in-the-replacement-candidate).
 
 Client parsing/scoped startup/request execution, DSL argument validation,
 callback-result normalization and Runtime configured-startup/ingress hooks move

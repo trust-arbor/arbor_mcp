@@ -66,7 +66,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayBorrowedIOTest do
     assert %{frames: 1, in_flight: 1} = HTTPWriterRegistry.stats(domain)
     assert map_size(:sys.get_state(gateway).jobs) == 1
     assert {:error, :http_write_uncertain} = HTTPWriterRegistry.complete(effect, :ok)
-    wait(fn -> match?(%{reserved: 0}, Runtime.stats(runtime)) end)
+    wait(fn -> match?(%{reserved: 0}, Runtime.stats!(runtime)) end)
     wait(fn -> map_size(:sys.get_state(gateway).jobs) == 0 end)
     assert {:ok, %{"result" => 0}} = Runtime.request(runtime, message(2))
     assert %{frames: 0, in_flight: 0} = HTTPWriterRegistry.stats(domain)

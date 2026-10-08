@@ -245,9 +245,7 @@ defmodule Arbor.MCP.Server.RuntimeCharacterizationTest do
         assert_receive {:blocked, snapshot}, 2_000
         refute snapshot.pid == server
 
-        assert {:error, %Arbor.MCP.Error.ProtocolError{} = error} = Task.await(task, 2_000)
-        assert error.code == -32603
-        assert error.message == "Request timeout"
+        assert {:error, :timeout} = Task.await(task, 2_000)
 
         # A client wait timeout leaves accepted server work running until
         # its independent runtime deadline or an explicit cancellation.

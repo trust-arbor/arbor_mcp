@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 2.0.0-rc.2 (unreleased)
 
+- Preserve complete Response wire fields, extensions, pagination and false/null
+  presence in `to_raw/1`; remove unused `to_test_map/1`. Constructors emit `_meta`.
+- Read standard resource `contents`, retain nontext results and offer explicit
+  complete formats on facade conveniences. Normalized tool failures return a
+  ToolError retaining the complete result; forward documented request controls
+  and reject unsupported facade options.
+- Keep local timeout classification as `{:error, :timeout}` in both formats.
+  Runtime statistics return `{:ok, map} | {:error, reason}`; `stats!/1` provides
+  explicit value-or-raise inspection. Add advanced Runtime types/specifications.
+
 - Reject duplicate DSL parameters/arguments, repeated instructions or `use`
   options, unknown options, stray instructions and contextually ignored metadata
   at compilation with source diagnostics.

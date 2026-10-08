@@ -36,6 +36,15 @@ passed with 5,420 tests, 20 doctests and 34 properties (207 existing exclusions)
 the RPC suite passed with 115 tests. These source checks do not replace the
 installed four-package checks, CI matrix, downstream testing or final soak.
 
+The October 8 API consistency pass also corrects resource `contents` extraction,
+complete response conversion, facade request-control forwarding and normalized
+tool-error handling. Operational status/statistics now use tagged successes;
+explicit bang variants provide value-or-raise inspection. ACP setters accept
+caller timeout options, and Client gains bounded stop with cleanup receipts.
+The migration guide records these behavioral changes. The unused Response
+`to_test_map/1` is the additional removal, bringing the facade cleanup to 24
+signatures across MCP and RPC. Spark and further performance work remain deferred.
+
 The package split and runtime/scheduler are implemented. I recommend a small
 DSL correctness and facade-boundary pass before the next candidate. Keep the
 current declaration syntax while evaluating Spark separately. No further

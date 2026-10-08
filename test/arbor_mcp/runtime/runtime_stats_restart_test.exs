@@ -106,7 +106,7 @@ defmodule Arbor.MCP.Server.RuntimeStatsRestartTest do
     assert {:ok, ^runtime} = Runtime.ref(root)
 
     assert %{active: 0, queued: 0, reserved: 0, generation: recovered_generation} =
-             Runtime.stats(runtime)
+             Runtime.stats!(runtime)
 
     refute recovered_generation == route.generation
 
@@ -118,8 +118,9 @@ defmodule Arbor.MCP.Server.RuntimeStatsRestartTest do
     {_root, runtime} = start_runtime()
 
     assert %{active: 0, queued: 0, reserved: 0, pending_bytes: 0, generation: generation} =
-             Runtime.stats(runtime)
+             Runtime.stats!(runtime)
 
+    assert {:ok, %{generation: ^generation}} = Runtime.stats(runtime)
     assert is_reference(generation)
   end
 

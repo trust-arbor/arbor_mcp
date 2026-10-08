@@ -85,6 +85,7 @@ defmodule CombinedArchiveConsumer do
       ])
 
     {:ok, child} = Arbor.RPC.Subprocess.open(["/bin/sleep", "30"], process_group: true)
+    {:ok, %{frames: 0}} = Arbor.RPC.Subprocess.stats(child)
     :ok = Arbor.RPC.Subprocess.close(child)
 
     {:ok, %{direct_child: :reaped, targeted_group: :absent}} =
@@ -102,6 +103,9 @@ defmodule CombinedArchiveConsumer do
     {:ok, client} = Arbor.ACP.Client.start_link(transport_mod: Memory, peer: peer, role: :client)
 
     try do
+      {:ok, %{reserved: 0}} = Runtime.stats(runtime)
+      {:ok, :ready} = Arbor.ACP.Client.status(client)
+      {:ok, :ready} = Arbor.ACP.Agent.status(agent)
       {:ok, %{"result" => 1}} = Runtime.request(runtime, request(1))
 
       {:ok, %{"sessionId" => "consumer-session"}} =
@@ -120,6 +124,9 @@ defmodule CombinedArchiveConsumer do
 
       try do
         :ok = Arbor.ACP.Client.disconnect(client)
+        {:ok, :disconnected} = Arbor.ACP.Client.status(client)
+        :ok = Arbor.ACP.Client.stop(client)
+        false = Process.alive?(client)
         {:ok, %{"result" => 1}} = Runtime.request(sibling, request(3))
       after
         Runtime.stop(sibling)

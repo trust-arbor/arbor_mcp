@@ -160,7 +160,7 @@ defmodule Arbor.MCP.Runtime.HTTPDeadWriterReceiptTest do
     assert {:error, :invalid_http_writer} = HTTPWriteTicket.record_return(effect, 1)
     refute_receive {:list_callback, _, _}, 30
     assert :ok = GenServer.call(next, :retire)
-    wait(fn -> Runtime.stats(runtime).reserved == 0 and stats(runtime).frames == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 and stats(runtime).frames == 0 end)
     assert :ok = Runtime.stop(runtime)
   end
 
@@ -230,7 +230,7 @@ defmodule Arbor.MCP.Runtime.HTTPDeadWriterReceiptTest do
     assert {:exit, _reason} = Task.await(call, 1_000)
     wait(fn -> stats(runtime).frames == 0 end)
     assert HTTPWriteTicket.receipt(effect) == 1
-    wait(fn -> Runtime.stats(runtime).reserved == 0 end)
+    wait(fn -> Runtime.stats!(runtime).reserved == 0 end)
     assert :ok = Runtime.stop(runtime)
   end
 

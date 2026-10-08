@@ -68,6 +68,11 @@ defmodule Arbor.MCP.FacadeBoundaryTest do
     end
   end
 
+  test "test-only Response conversion is absent" do
+    Code.ensure_loaded!(Arbor.MCP.Response)
+    refute function_exported?(Arbor.MCP.Response, :to_test_map, 1)
+  end
+
   test "implementation bridges are absent from public facades" do
     for {module, signatures} <- [
           {Client,

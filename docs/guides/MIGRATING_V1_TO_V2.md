@@ -146,6 +146,63 @@ The latest stable wire revision in this source is `2026-07-28`.
 `:legacy_only` select an era explicitly. Retained legacy Roots, Sampling and
 protocol Logging APIs still serve pinned legacy revisions.
 
+## Public operation contracts in the replacement candidate
+
+Canonical MCP Client operations return `{:ok, %Arbor.MCP.Response{}}` by default,
+or `{:ok, wire_map}` with `format: :map`. A tool result with `isError: true`
+is still a successfully delivered protocol result at this layer. Inspect
+`Response.error?/1` and choose an explicit projection such as
+`Response.text_content/1`, `all_text_content/1` or `structured_content/1`.
+`Response.to_raw/1` preserves decoded response fields, pagination, structured
+values, metadata, content extensions and false/null field presence. Locally
+constructed responses use canonical `_meta` and `structuredContent` keys and
+retain `isError: false`. The unused `Response.to_test_map/1` export is removed;
+use `to_raw/1` or an application-owned projection.
+
+The top-level convenience APIs keep text/list extraction by default.
+`Arbor.MCP.read/3` recognizes standard resource `contents`; text entries are
+joined with newlines, and a nontext-only result is returned intact rather than
+`nil`. `parse_json: true` parses extracted text. Supply `format: :map` or
+`:struct` to `read/3`, `tools/2`, `resources/2` or `call/4` for a complete result,
+including cursors. Format selection cannot be combined with `parse_json: true`
+or `normalize: true`. `call/4` with `normalize: false` returns a complete
+Response struct by default; it never meant a raw map. Normalized tool failures
+now return `{:error, %Arbor.MCP.Error.ToolError{reason: full_result}}`.
+
+The facade forwards the documented request controls, including tool progress,
+metadata and idempotency keys, instead of discarding them. Unsupported facade
+options raise `ArgumentError`. MCP request timeouts must be finite non-negative
+milliseconds; a local timeout returns `{:error, :timeout}` in either response
+format. A server JSON-RPC error remains a protocol error.
+
+Operational inspection uses tagged success consistently:
+
+```elixir
+{:ok, status} = Arbor.ACP.Client.status(client, timeout: 1_000)
+{:ok, status} = Arbor.ACP.Agent.status(agent, timeout: 1_000)
+{:ok, statistics} = Arbor.MCP.Server.Runtime.stats(runtime)
+{:ok, statistics} = Arbor.RPC.Subprocess.stats(handle)
+```
+
+Each also has a `status!` or `stats!` counterpart for explicit value-or-raise
+inspection. Pure constructors, predicates and response accessors keep bare
+values. Handle operational failure with the tagged API.
+
+ACP setters accept a final keyword list: `set_mode/4`, `set_model/4` and
+`set_config_option/5`, with `timeout: 30_000` by default. Existing shorter
+arities remain available. Caller timeout returns `{:error, :timeout}`; it does
+not certify cancellation or extend the separately bounded pending-request
+lifetime. `Client.cancel/2` and `cancel_request/2` return `:ok` when queued,
+without confirming that the remote agent has acted.
+
+ACP `Client.disconnect/1` closes the transport and retains the client process.
+Use `Client.stop(client, :normal, timeout: 5_000)` to clean up and wait for
+termination. The one finite caller budget covers both phases; known cleanup
+failure remains an error even if the process exits. Already-stopped clients
+return `:ok`. `Agent.stop/2` also accepts a finite timeout. Start functions
+return linked OTP processes; supervise long-lived clients/agents and apply the
+parent's restart policy deliberately.
+
 ## 4. Initialize each server once under a Runtime
 
 Replace the retired Tools DSL with a handler plus the current DSL:

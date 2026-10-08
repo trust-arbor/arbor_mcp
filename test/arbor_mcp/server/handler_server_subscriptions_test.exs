@@ -196,7 +196,7 @@ defmodule Arbor.MCP.Server.HandlerServerSubscriptionsTest do
     on_exit(fn -> if Process.alive?(edge), do: :sys.resume(edge) end)
     send_request(server, listen_request(91, %{"toolsListChanged" => true}))
     Process.sleep(60)
-    assert %{reserved: 1} = Runtime.stats(server)
+    assert %{reserved: 1} = Runtime.stats!(server)
     assert Subscriptions.entries(service: registry) == []
     :sys.resume(edge)
     assert_receive {:transport_message, encoded_error}, 1_000
@@ -204,7 +204,7 @@ defmodule Arbor.MCP.Server.HandlerServerSubscriptionsTest do
     assert %{"id" => 91, "error" => %{"data" => %{"type" => "handler_timeout"}}} =
              Jason.decode!(encoded_error)
 
-    assert_eventually(fn -> Runtime.stats(server).reserved == 0 end)
+    assert_eventually(fn -> Runtime.stats!(server).reserved == 0 end)
     assert Subscriptions.entries(service: registry) == []
     refute_receive {:transport_message, _late_ack}, 30
   end

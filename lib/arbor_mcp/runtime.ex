@@ -118,6 +118,18 @@ defmodule Arbor.MCP.Server.Runtime do
     ShutdownGuard
   }
 
+  @type token :: reference()
+  @type request_options :: [
+          {:timeout, non_neg_integer()}
+          | {:await_timeout, timeout()}
+          | {:scope, term()}
+          | {:request_id, term()}
+          | {:reply_to, pid() | reference()}
+          | {:kind, :call | :cast}
+          | {:dispatch_opts, keyword()}
+          | {:via_edge, boolean()}
+        ]
+
   @type server :: pid() | atom() | {:global, term()} | {:via, module(), term()} | Ref.t()
 
   @spec start_link(keyword()) :: Supervisor.on_start()
@@ -341,6 +353,7 @@ defmodule Arbor.MCP.Server.Runtime do
   request deadlines and output admission still apply. A later await timeout
   does not cancel accepted work. Prefer `request/3` for a managed reply alias.
   """
+  @spec submit(server(), map(), request_options()) :: {:ok, token()} | {:error, term()}
   def submit(server, request, opts \\ []) when is_map(request) do
     with {:ok, runtime} <- ref(server) do
       if Keyword.get(opts, :via_edge, false) do
@@ -381,6 +394,7 @@ defmodule Arbor.MCP.Server.Runtime do
   cancel accepted work. Explicit cancellation is separate. See the module
   documentation for finite-wait limits and delivery semantics.
   """
+  @spec request(server(), map(), request_options()) :: term()
   def request(server, request, opts \\ []) do
     await_timeout = Keyword.get(opts, :await_timeout, :infinity)
 
@@ -407,6 +421,7 @@ defmodule Arbor.MCP.Server.Runtime do
   Timeout retains delivery: the same token may be awaited again. This helper
   does not monitor the runtime or cancel work; its caller owns those decisions.
   """
+  @spec await(token(), timeout()) :: term()
   def await(token, timeout \\ :infinity) do
     receive do
       {:arbor_mcp_runtime, ^token, result} -> result
@@ -421,6 +436,7 @@ defmodule Arbor.MCP.Server.Runtime do
   `:direction` defaults to `:inbound`. Cancellation is cooperative and does
   not undo committed handler state or prove that external effects stopped.
   """
+  @spec cancel(server(), term(), term(), keyword()) :: :ok | {:error, term()}
   def cancel(server, scope, request_id, opts \\ []) do
     with {:ok, runtime} <- ref(server),
          {:ok, route} <- Admission.route(Ref.table(runtime)) do
@@ -445,6 +461,7 @@ defmodule Arbor.MCP.Server.Runtime do
   end
 
   @doc "Requests cancellation of operations currently admitted in a scope."
+  @spec cancel_scope(server(), term()) :: :ok | {:error, term()}
   def cancel_scope(server, scope) do
     with {:ok, runtime} <- ref(server) do
       Ref.table(runtime)
@@ -464,12 +481,13 @@ defmodule Arbor.MCP.Server.Runtime do
   end
 
   @doc "Returns current scheduler and admission diagnostics, not a transactional snapshot."
+  @spec stats(server()) :: {:ok, map()} | {:error, term()}
   def stats(server) do
     with {:ok, runtime} <- ref(server),
          {:ok, route} <- Admission.route(Ref.table(runtime)),
          scheduler when is_map(scheduler) <- GenServer.call(route.scheduler, :stats),
          admission when is_map(admission) <- Admission.stats(Ref.table(runtime)) do
-      Map.merge(scheduler, admission)
+      {:ok, Map.merge(scheduler, admission)}
     else
       {:error, _reason} = error -> error
       _invalid_stats -> {:error, :runtime_unavailable}
@@ -478,7 +496,20 @@ defmodule Arbor.MCP.Server.Runtime do
     :exit, _reason -> {:error, :runtime_unavailable}
   end
 
+  @doc "Returns scheduler/admission diagnostics, raising if the runtime is unavailable."
+  @spec stats!(server()) :: map()
+  def stats!(server) do
+    case stats(server) do
+      {:ok, value} ->
+        value
+
+      {:error, reason} ->
+        raise RuntimeError, "runtime statistics unavailable: #{inspect(reason)}"
+    end
+  end
+
   @doc "Returns whether the current managed callback has been cancelled."
+  @spec cancelled?() :: boolean()
   def cancelled?, do: CallbackContext.cancelled?()
 
   defp request_with_alias(runtime, request, opts, monitor, reply_alias) do

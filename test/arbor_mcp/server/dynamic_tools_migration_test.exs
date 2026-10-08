@@ -256,7 +256,7 @@ defmodule Arbor.MCP.Server.DynamicToolsMigrationTest do
     assert_receive {:dynamic_holding, _worker, scope}
     assert scope == {:connection, transport.connection}
     mutation = Task.async(fn -> register(root, definition("after")) end)
-    wait_for(fn -> Runtime.stats(root).queued == 1 end)
+    wait_for(fn -> Runtime.stats!(root).queued == 1 end)
     assert {:ok, _} = Test.send_message(cancel(1), transport)
     assert_receive {:dynamic_cancelled, true}
     assert_receive {:transport_message, response}

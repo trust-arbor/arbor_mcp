@@ -830,7 +830,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPResourcesTest do
   defp settled(runtime, attempts) do
     {:ok, domain} = HTTPWriterProxy.domain(runtime)
 
-    if Runtime.stats(runtime).reserved == 0 and HTTPWriterRegistry.stats(domain).frames == 0,
+    if Runtime.stats!(runtime).reserved == 0 and HTTPWriterRegistry.stats(domain).frames == 0,
       do: :ok,
       else:
         (

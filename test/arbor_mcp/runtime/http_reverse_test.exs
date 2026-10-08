@@ -260,11 +260,11 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
     caller = Task.async(fn -> post(opts, id, tool(2, "ping")) end)
     assert_receive {:reverse_worker, _worker}
     request = reverse_request(sessions, lease)
-    assert Runtime.stats(runtime).active == 1
+    assert Runtime.stats!(runtime).active == 1
     assert %{status: 202} = post(opts, id, response(request["id"], %{"answer" => 7}))
     assert_receive {:reverse_result, {:ok, %{"answer" => 7}}}
     assert %{status: 200} = Task.await(caller)
-    eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
+    eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
   end
 
   test "a paused callback retains the response byte permit until its actual checkout and ACK" do
@@ -278,14 +278,14 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
 
     try do
       assert %{status: 202} = post(opts, id, response(request["id"], %{"held" => true}))
-      assert Runtime.stats(runtime).response_bytes > 0
-      held_bytes = Runtime.stats(runtime).response_bytes
+      assert Runtime.stats!(runtime).response_bytes > 0
+      held_bytes = Runtime.stats!(runtime).response_bytes
 
       assert_raise HttpPlug.RuntimeWriter.AdmissionError, fn ->
         post(opts, id, response(request["id"], %{"duplicate" => true}))
       end
 
-      assert Runtime.stats(runtime).response_bytes == held_bytes
+      assert Runtime.stats!(runtime).response_bytes == held_bytes
       assert Process.alive?(worker)
       refute_receive {:reverse_result, _result}, 20
     after
@@ -294,8 +294,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
 
     assert_receive {:reverse_result, {:ok, %{"held" => true}}}
     assert %{status: 200} = Task.await(caller)
-    eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
-    assert Runtime.stats(runtime).response_bytes == 0
+    eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
+    assert Runtime.stats!(runtime).response_bytes == 0
   end
 
   test "actual producer death releases an unread response without repeating its durable request" do
@@ -307,15 +307,15 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
     request = reverse_request(sessions, lease)
     true = :erlang.suspend_process(worker)
     assert %{status: 202} = post(opts, id, response(request["id"], %{"discarded" => true}))
-    assert Runtime.stats(runtime).response_bytes > 0
+    assert Runtime.stats!(runtime).response_bytes > 0
     monitor = Process.monitor(worker)
     Process.exit(worker, :kill)
     assert_receive {:DOWN, ^monitor, :process, ^worker, :killed}
     assert %{status: 200} = conn = Task.await(caller)
     assert is_map(Jason.decode!(conn.resp_body)["error"])
     refute_receive {:reverse_result, _value}, 20
-    eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
-    assert Runtime.stats(runtime).response_bytes == 0
+    eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
+    assert Runtime.stats!(runtime).response_bytes == 0
     assert {:ok, %{events: [event]}} = SessionManager.replay_page(sessions, lease, nil, [])
     assert event.data["id"] == request["id"]
   end
@@ -326,7 +326,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
     live_get(runtime, lease)
     assert %{status: 200} = post(opts, id, tool(2, "short_ping"))
     assert_receive {:reverse_result, {:error, :timeout}}
-    eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
+    eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
 
     assert {:ok, %{events: [%{data: %{"method" => "ping"}}]}} =
              SessionManager.replay_page(sessions, lease, nil, [])
@@ -377,7 +377,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
     assert %{status: 202} = post(opts, id, response(next["id"], %{"new" => true}))
     assert_receive {:reverse_result, {:ok, %{"new" => true}}}
     assert %{status: 200} = Task.await(caller)
-    eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
+    eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
   end
 
   test "the same response ID from a different session cannot settle the original callback" do
@@ -393,7 +393,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
     assert %{status: 202} = post(opts, id, response(request["id"], %{"right" => true}))
     assert_receive {:reverse_result, {:ok, %{"right" => true}}}
     assert %{status: 200} = Task.await(caller)
-    eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
+    eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
   end
 
   test "mixed response preflight settles the callback before ordered normal-member admission" do
@@ -414,7 +414,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
     assert [%{"id" => 3, "result" => %{"structuredContent" => %{"calls" => 1}}}] =
              Jason.decode!(conn.resp_body)
 
-    eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
+    eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
   end
 
   test "checked-out result credit survives generation reset until the actual Task ACK" do
@@ -574,7 +574,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
       assert %{status: 202} = post(opts, id, response(request["id"], %{"action" => "accept"}))
       assert_receive {:reverse_result, {:ok, %{"action" => "accept"}}}
       assert %{status: 200} = Task.await(caller)
-      eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
+      eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
     end
   end
 
@@ -585,7 +585,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
     invalid = put_in(tool(2, "reverse"), ["params", "arguments"], %{"control" => "invalid"})
     assert %{status: 200} = post(opts, id, invalid)
     assert_receive {:reverse_result, {:error, :invalid_elicitation_params}}
-    eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
+    eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
 
     invalid =
       put_in(tool(3, "reverse"), ["params", "arguments"], %{
@@ -660,7 +660,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
 
     send(worker, :ack_loan)
     assert %{status: 200} = Task.await(caller)
-    eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
+    eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
   end
 
   test "an entered response prefix is not replayed when the normal lane expires" do
@@ -683,7 +683,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
     send(worker, :ack_loan)
     assert %{status: 200} = Task.await(caller)
     HTTPWriterRegistry.retire(binding, :test_complete)
-    eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
+    eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
     assert {:ok, %{events: [_one_effect]}} = SessionManager.replay_page(sessions, lease, nil, [])
   end
 
@@ -703,7 +703,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
     true = :erlang.resume_process(worker)
     assert_receive {:reverse_result, {:error, :reverse_request_retired}}
     assert %{status: 200} = Task.await(caller)
-    eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
+    eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
     assert ByteBudget.response_consumers(table) == []
   end
 
@@ -721,7 +721,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
 
     assert_receive {:reverse_result, {:error, ^error}}
     assert %{status: 200} = Task.await(caller)
-    eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
+    eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
   end
 
   test "null and unsolicited response IDs are ignored under charged202 acceptance" do
@@ -738,7 +738,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
     ]
 
     assert %{status: 202} = post(opts, id, members)
-    eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
+    eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
     assert {:ok, %{events: []}} = SessionManager.replay_page(sessions, lease, nil, [])
     assert ByteBudget.used(Ref.table(runtime)).incoming == 0
   end
@@ -762,7 +762,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
 
     assert %{status: 400} = rejected = post(opts, id, malformed)
     assert Jason.decode!(rejected.resp_body)["error"]["code"] == -32600
-    assert Runtime.stats(runtime).reserved == 0
+    assert Runtime.stats!(runtime).reserved == 0
   end
 
   test "mixed normal notifications run only after their response prefix releases work capacity" do
@@ -786,7 +786,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
     assert_receive {:reverse_result, {:ok, %{}}}
     assert_receive {:normal_notification, _worker}
     assert %{status: 200} = Task.await(caller)
-    eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
+    eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
   end
 
   test "mixed invalid members retain normal relative order and aggregate omission of responses" do
@@ -808,7 +808,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
              %{"id" => nil, "error" => %{"code" => -32600}}
            ] = Jason.decode!(conn.resp_body)
 
-    eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
+    eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
   end
 
   test "nested response arrays consume normal member capacity and return ordered invalid errors" do
@@ -821,8 +821,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
     caller = Task.async(fn -> post(opts, id, [nested, tool(8, "peek")]) end)
 
     try do
-      eventually(fn -> if Runtime.stats(runtime).admitted_work == 2, do: :ok end)
-      assert Runtime.stats(runtime).response_bytes == 0
+      eventually(fn -> if Runtime.stats!(runtime).admitted_work == 2, do: :ok end)
+      assert Runtime.stats!(runtime).response_bytes == 0
       assert ByteBudget.used(Ref.table(runtime)).incoming == 0
     after
       :sys.resume(gateway)
@@ -839,7 +839,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
     assert same.admission == route.admission and same.generation == route.generation
     assert Process.alive?(route.admission)
     assert Process.alive?(gateway)
-    eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
+    eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
   end
 
   test "a response prefix cannot make a multi-member normal array consume one work slot" do
@@ -862,7 +862,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
     assert_receive {:reverse_result, {:ok, %{}}}
     assert %{status: 200} = Task.await(caller)
     HTTPWriterRegistry.retire(binding, :test_complete)
-    eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
+    eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
   end
 
   test "pinned elicitation validation rejects nested non-JSON instance data safely" do
@@ -899,7 +899,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
       end
 
       assert ByteBudget.used(table) == before_claims
-      assert Runtime.stats(runtime).reserved == 0
+      assert Runtime.stats!(runtime).reserved == 0
       assert {:messages, messages} = Process.info(gateway, :messages)
       refute Enum.any?(messages, &match?(:runtime_ingress_ready, &1))
     after
@@ -972,7 +972,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
     [id] = get_resp_header(conn, "mcp-session-id")
     {:ok, sessions} = Runtime.service(runtime, :sessions)
     {:ok, lease} = SessionManager.ensure_session(sessions, id, %{}, [])
-    eventually(fn -> if Runtime.stats(runtime).reserved == 0, do: :ok end)
+    eventually(fn -> if Runtime.stats!(runtime).reserved == 0, do: :ok end)
     {id, sessions, lease}
   end
 

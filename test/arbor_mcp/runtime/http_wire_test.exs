@@ -192,7 +192,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWireTest do
     do:
       wait(fn ->
         match?(%{frames: 0, bytes: 0}, domain_stats(runtime)) and
-          match?(%{reserved: 0}, Runtime.stats(runtime))
+          match?(%{reserved: 0}, Runtime.stats!(runtime))
       end)
 
   defp wait(fun, attempts \\ 200)

@@ -421,14 +421,14 @@ defmodule Arbor.MCP.Server.Runtime.HTTPProtocolHeaderCompatibilityTest do
 
   defp settled(runtime, 0) do
     {:ok, domain} = HTTPWriterProxy.domain(runtime)
-    assert Runtime.stats(runtime).reserved == 0
+    assert Runtime.stats!(runtime).reserved == 0
     assert HTTPWriterRegistry.stats(domain).frames == 0
   end
 
   defp settled(runtime, attempts) do
     {:ok, domain} = HTTPWriterProxy.domain(runtime)
 
-    if Runtime.stats(runtime).reserved == 0 and HTTPWriterRegistry.stats(domain).frames == 0 do
+    if Runtime.stats!(runtime).reserved == 0 and HTTPWriterRegistry.stats(domain).frames == 0 do
       :ok
     else
       Process.sleep(5)

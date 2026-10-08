@@ -133,7 +133,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPMountedTest do
     assert conn.status == 400
     refute_receive :unsafe_parsed_encoder_called, 5
     refute_receive {:mounted_context, _}, 5
-    assert %{reserved: 0} = Runtime.stats(runtime)
+    assert %{reserved: 0} = Runtime.stats!(runtime)
   end
 
   test "mounted legacy GET and DELETE cannot fall back to process-global session state" do
@@ -256,7 +256,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPMountedTest do
 
     assert_raise Arbor.MCP.HttpPlug.RuntimeWriter.AdmissionError, fn -> post(modern(4), opts) end
     refute_receive {:mounted_context, _}, 5
-    assert %{reserved: 0} = Runtime.stats(runtime)
+    assert %{reserved: 0} = Runtime.stats!(runtime)
   end
 
   defp runtime(extra \\ []) do

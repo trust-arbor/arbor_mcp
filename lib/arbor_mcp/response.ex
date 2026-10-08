@@ -58,8 +58,6 @@ defmodule Arbor.MCP.Response do
   - Protection against atom exhaustion attacks
   """
 
-  alias Arbor.MCP.Internal.MapBuilder
-
   defstruct [
     :content,
     :meta,
@@ -88,7 +86,35 @@ defmodule Arbor.MCP.Response do
     # Prompt get response
     :description,
     # Completion field (extracted from structuredOutput for direct access)
-    :completion
+    :completion,
+    # Wire presence and extensions preserve nulls/omissions without retaining a second payload.
+    :wire_keys,
+    :content_keys,
+    :extra_fields
+  ]
+
+  @wire_fields [
+    "content",
+    "_meta",
+    "meta",
+    "isError",
+    "is_error",
+    "resultType",
+    "ttlMs",
+    "cacheScope",
+    "structuredContent",
+    "structuredOutput",
+    "resourceLinks",
+    "tools",
+    "resources",
+    "prompts",
+    "messages",
+    "roots",
+    "resourceTemplates",
+    "nextCursor",
+    "contents",
+    "description",
+    "completion"
   ]
 
   @type t :: %__MODULE__{
@@ -119,7 +145,10 @@ defmodule Arbor.MCP.Response do
           # Prompt get response
           description: String.t() | nil,
           # Completion field (extracted from structuredOutput for direct access)
-          completion: map() | nil
+          completion: map() | nil,
+          wire_keys: [String.t()] | nil,
+          content_keys: [[String.t()]] | nil,
+          extra_fields: map() | nil
         }
 
   @type content_item :: %{
@@ -163,11 +192,11 @@ defmodule Arbor.MCP.Response do
 
     %__MODULE__{
       content: content,
-      meta: Map.get(raw_response, "_meta") || Map.get(raw_response, "meta"),
+      meta: Map.get(raw_response, "_meta", Map.get(raw_response, "meta")),
       tool_name: Keyword.get(opts, :tool_name),
       request_id: Keyword.get(opts, :request_id),
       server_info: Keyword.get(opts, :server_info),
-      is_error: Map.get(raw_response, "is_error", Map.get(raw_response, "isError", false)),
+      is_error: Map.get(raw_response, "isError", Map.get(raw_response, "is_error", false)),
       resultType: Map.get(raw_response, "resultType"),
       ttlMs: Map.get(raw_response, "ttlMs"),
       cacheScope: Map.get(raw_response, "cacheScope"),
@@ -188,7 +217,10 @@ defmodule Arbor.MCP.Response do
       # Prompt get response
       description: Map.get(raw_response, "description"),
       # Completion field (extracted from structuredOutput or direct)
-      completion: extract_completion(raw_response)
+      completion: extract_completion(raw_response),
+      wire_keys: Map.keys(raw_response),
+      content_keys: content_keys(Map.get(raw_response, "content", [])),
+      extra_fields: wire_extensions(raw_response)
     }
   end
 
@@ -410,54 +442,115 @@ defmodule Arbor.MCP.Response do
   def from_map(map) when is_map(map), do: from_raw_response(map)
 
   @doc """
-  Converts the response back to raw MCP format.
+  Converts retained response fields back to string-keyed MCP format.
+
+  Responses decoded from wire maps preserve field presence, explicit false/null,
+  content extensions and top-level extensions. Locally constructed responses
+  emit their populated fields using modern `structuredContent` and `_meta` keys.
+  Application-only fields such as `tool_name` are not sent to the peer.
   """
   @spec to_raw(t()) :: map()
   def to_raw(%__MODULE__{} = response) do
-    content = Enum.map(response.content, &content_item_to_raw/1)
+    fields = [
+      {"content", raw_content(response.content, response.content_keys)},
+      {"_meta", response.meta},
+      {"meta", response.meta},
+      {"isError", response.is_error},
+      {"is_error", response.is_error},
+      {"resultType", response.resultType},
+      {"ttlMs", response.ttlMs},
+      {"cacheScope", response.cacheScope},
+      {"structuredContent", response.structuredOutput},
+      {"structuredOutput", response.structuredOutput},
+      {"resourceLinks", raw_items(response.resourceLinks)},
+      {"tools", raw_items(response.tools)},
+      {"resources", raw_items(response.resources)},
+      {"prompts", raw_items(response.prompts)},
+      {"messages", raw_messages(response.messages)},
+      {"roots", raw_items(response.roots)},
+      {"resourceTemplates", raw_items(response.resourceTemplates)},
+      {"nextCursor", response.nextCursor},
+      {"contents", raw_items(response.contents)},
+      {"description", response.description},
+      {"completion", raw_item(response.completion)}
+    ]
 
-    base = %{"content" => content}
-
-    base
-    |> MapBuilder.put_if_truthy("meta", response.meta)
-    |> MapBuilder.put_if_truthy("isError", response.is_error)
+    Enum.reduce(fields, response.extra_fields || %{}, fn {key, value}, acc ->
+      if wire_field?(response.wire_keys, key, value) and not Map.has_key?(acc, key),
+        do: Map.put(acc, key, value),
+        else: acc
+    end)
   end
 
-  @doc """
-  Converts the response to a map that excludes nil pagination fields.
+  defp wire_extensions(raw) do
+    aliases = [
+      {"_meta", "meta"},
+      {"isError", "is_error"},
+      {"structuredContent", "structuredOutput"}
+    ]
 
-  This is useful for tests that expect `Map.has_key?/2` to return false
-  for pagination fields when they are not present in the original response.
-  """
-  @spec to_test_map(t()) :: map()
-  def to_test_map(%__MODULE__{} = response) do
-    base = %{
-      content: response.content,
-      meta: response.meta,
-      tool_name: response.tool_name,
-      request_id: response.request_id,
-      server_info: response.server_info,
-      is_error: response.is_error,
-      structuredOutput: response.structuredOutput,
-      resourceLinks: response.resourceLinks,
-      tools: response.tools,
-      resources: response.resources,
-      prompts: response.prompts,
-      messages: response.messages,
-      roots: response.roots,
-      resourceTemplates: response.resourceTemplates,
-      contents: response.contents,
-      description: response.description,
-      completion: response.completion
-    }
-
-    # Only include nextCursor if it's not nil
-    if response.nextCursor do
-      Map.put(base, :nextCursor, response.nextCursor)
-    else
-      base
-    end
+    Enum.reduce(aliases, Map.drop(raw, @wire_fields), fn {canonical, legacy}, extensions ->
+      if Map.has_key?(raw, canonical) and Map.has_key?(raw, legacy),
+        do: Map.put(extensions, legacy, raw[legacy]),
+        else: extensions
+    end)
   end
+
+  defp wire_field?(nil, key, value),
+    do: not is_nil(value) and key not in ["meta", "is_error", "structuredOutput"]
+
+  defp wire_field?(keys, key, _value), do: key in keys
+
+  defp content_keys(content) when is_list(content),
+    do: Enum.map(content, fn item -> if is_map(item), do: Map.keys(item), else: [] end)
+
+  defp content_keys(_content), do: []
+
+  defp raw_content(nil, _keys), do: nil
+  defp raw_content(content, nil), do: Enum.map(content, &content_item_to_raw/1)
+
+  defp raw_content([], _keys), do: []
+
+  defp raw_content([item | content], [keys | rest]) do
+    [content_item_to_raw(item, keys) | raw_content(content, rest)]
+  end
+
+  defp raw_content(content, []), do: Enum.map(content, &content_item_to_raw/1)
+
+  defp raw_items(items) when is_list(items), do: Enum.map(items, &raw_item/1)
+  defp raw_items(items), do: items
+
+  defp raw_item(item) when is_map(item) do
+    Map.reject(item, fn {key, _value} ->
+      is_atom(key) and
+        (Map.has_key?(item, Atom.to_string(key)) or
+           (key == :mime_type and Map.has_key?(item, "mimeType")) or
+           (key == :uri_template and Map.has_key?(item, "uriTemplate")))
+    end)
+  end
+
+  defp raw_item(item), do: item
+
+  defp raw_messages(nil), do: nil
+  defp raw_messages(messages) when is_list(messages), do: Enum.map(messages, &raw_message/1)
+  defp raw_messages(other), do: other
+
+  defp raw_message(%{role: role, content: content} = message) do
+    message
+    |> Map.drop([:role, :content])
+    |> Map.put("role", role)
+    |> Map.put("content", raw_message_content(content))
+  end
+
+  defp raw_message(message), do: message
+
+  defp raw_message_content(content) when is_list(content),
+    do: Enum.map(content, &raw_message_content/1)
+
+  defp raw_message_content(%{type: type, text: text} = content),
+    do: content |> Map.drop([:type, :text]) |> Map.put("type", type) |> Map.put("text", text)
+
+  defp raw_message_content(content), do: content
 
   # Private helper functions
 
@@ -486,27 +579,34 @@ defmodule Arbor.MCP.Response do
   end
 
   # Normalize message for struct-like access while preserving content structure
-  defp normalize_message_for_struct_access(%{role: role, content: content}) do
+  defp normalize_message_for_struct_access(%{role: role, content: content} = message) do
     # Already has atom keys
-    %{role: role, content: normalize_content_for_struct_access(content)}
+    message_with_content(role, content, message)
   end
 
-  defp normalize_message_for_struct_access(%{"role" => role, "content" => content}) do
+  defp normalize_message_for_struct_access(%{"role" => role, "content" => content} = message) do
     # Convert string keys to atom keys and normalize content
-    %{role: role, content: normalize_content_for_struct_access(content)}
+    message_with_content(role, content, message)
   end
 
   defp normalize_message_for_struct_access(message), do: message
 
-  # Normalize content structure for struct-like access (preserve type and text fields)
-  defp normalize_content_for_struct_access(%{type: type, text: text}) do
-    # Already has atom keys
-    %{type: type, text: text}
+  defp message_with_content(role, content, message) do
+    message
+    |> Map.drop(["role", "content"])
+    |> Map.put(:role, role)
+    |> Map.put(:content, normalize_content_for_struct_access(content))
   end
 
-  defp normalize_content_for_struct_access(%{"type" => type, "text" => text}) do
+  # Normalize content structure for struct-like access (preserve type and text fields)
+  defp normalize_content_for_struct_access(%{type: type, text: text} = content) do
+    # Already has atom keys
+    content |> Map.drop(["type", "text"]) |> Map.put(:type, type) |> Map.put(:text, text)
+  end
+
+  defp normalize_content_for_struct_access(%{"type" => type, "text" => text} = content) do
     # Convert to atom keys for struct-like access
-    %{type: type, text: text}
+    content |> Map.drop(["type", "text"]) |> Map.put(:type, type) |> Map.put(:text, text)
   end
 
   defp normalize_content_for_struct_access(content), do: content
@@ -518,12 +618,12 @@ defmodule Arbor.MCP.Response do
   defp normalize_content(_), do: []
 
   defp normalize_content_item(%{"type" => type} = item) do
-    %{
+    Map.merge(Map.drop(item, ["type", "text", "data", "annotations"]), %{
       type: type,
       text: Map.get(item, "text"),
       data: Map.get(item, "data"),
       annotations: Map.get(item, "annotations")
-    }
+    })
   end
 
   defp normalize_content_item(item) when is_map(item) do
@@ -538,14 +638,25 @@ defmodule Arbor.MCP.Response do
 
   defp normalize_content_item(_), do: nil
 
-  defp content_item_to_raw(%{type: type} = item) do
-    base = %{"type" => type}
+  defp content_item_to_raw(item), do: content_item_to_raw(item, nil)
 
-    base
-    |> MapBuilder.put_if_truthy("text", item.text)
-    |> MapBuilder.put_if_truthy("data", item.data)
-    |> MapBuilder.put_if_truthy("annotations", item.annotations)
+  defp content_item_to_raw(%{type: type} = item, keys) do
+    fields = [
+      {"type", type},
+      {"text", item.text},
+      {"data", item.data},
+      {"annotations", item.annotations}
+    ]
+
+    Enum.reduce(fields, Map.drop(item, [:type, :text, :data, :annotations]), fn {key, value},
+                                                                                acc ->
+      if (keys && key in keys) || (is_nil(keys) && not is_nil(value)),
+        do: Map.put(acc, key, value),
+        else: acc
+    end)
   end
+
+  defp content_item_to_raw(item, _keys), do: item
 
   # Note: Protocol data is kept as strings to maintain compatibility with MCP
   # and avoid atom exhaustion issues. Use accessor functions for convenience.

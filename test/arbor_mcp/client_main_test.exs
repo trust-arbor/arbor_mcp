@@ -363,7 +363,7 @@ defmodule Arbor.MCP.ClientMainTest do
       {:ok, client} = start_legacy_client(transport: MockTransport, timeout_mode: true)
 
       # The GenServer.call should time out because the mock transport never replies.
-      assert {:error, %Arbor.MCP.Error.ProtocolError{code: -32603, message: "Request timeout"}} =
+      assert {:error, :timeout} =
                Client.list_tools(client, timeout: 10)
     end
 
