@@ -68,7 +68,8 @@ defmodule CombinedArchiveConsumer do
 
       try do
         {:ok, %Response{tools: [_tool]}} = Client.tools(client)
-        {:ok, [%{"name" => "echo"}]} = Client.tool_definitions(client)
+        {:ok, [definition]} = Client.tool_definitions(client)
+        "echo" = Response.tool_name(definition)
         {:ok, %Response{}} = Client.call(client, "echo", %{"message" => "complete"})
         {:ok, "content"} = Client.call_content(client, "echo", %{"message" => "content"})
         {:ok, _status} = Client.status(client)
