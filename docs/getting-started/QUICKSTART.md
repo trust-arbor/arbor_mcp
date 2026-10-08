@@ -161,7 +161,7 @@ BEAM-local MCP uses the configured protocol mode. New connections default to
 `:legacy_only` retains the initialize handshake. The transport simply passes
 MCP-shaped maps/lists as Elixir terms between local processes.
 
-> **Note for raw handlers:** If you are not using the DSL, start with `Arbor.MCP.Server.HandlerServer.start_link(handler: YourHandler, transport: :beam)` (or `Arbor.MCP.start_server/1`). DSL modules automatically provide `start_link/1`.
+> **Note for raw handlers:** If you are not using the DSL, start with `Arbor.MCP.Server.start_link(handler: YourHandler, transport: :beam)`. DSL modules automatically provide `start_link/1` through the same constructor. Supervise `{Arbor.MCP.Server, handler: YourHandler, transport: :beam}`; inspect with `Server.stats/1` and shut down with `Server.stop/2`.
 
 For a fast compiled DSL/client example, use `mix examples.getting_started` from
 the repository root. This alias uses `:test`; the standalone demo exercises

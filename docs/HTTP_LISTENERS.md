@@ -37,6 +37,7 @@ cutoff. An owned listener failure retires this runtime instance; its parent may
 restart the endpoint with a fresh reference and handler state. The parent must
 terminate/remove its child when the endpoint should remain stopped.
 
+Canonical `Arbor.MCP.Server.start_link(handler: MyHandler, transport: :http, ...)`,
 DSL `MyServer.start_link(transport: :http, ...)` and
 `Server.Transport.start_server/4` return the same runtime root. The positional
 `server_info` and `tools` compatibility arguments do not create another handler;

@@ -18,8 +18,9 @@ defmodule Arbor.MCP.Server do
         end
       end
 
-  Use `Arbor.MCP.Server.HandlerServer.start_link/1` when you need a transport-aware
-  process for a handler module. It returns a runtime supervisor; these helpers
+  Use `Arbor.MCP.Server.start_link/1` with `handler: MyServer` for startup,
+  or supervise `{Arbor.MCP.Server, handler: MyServer, transport: :beam}`.
+  The constructor returns a runtime supervisor; these helpers
   accept that supervisor, its registered name or its opaque runtime reference.
   Runtime-backed helpers return `{:error, :server_busy}` when their admission
   lane is full. Controls issued inside a callback carry its invocation scope,
@@ -48,10 +49,76 @@ defmodule Arbor.MCP.Server do
   > directly; and use stderr or OpenTelemetry for operational logs.
   """
 
-  alias Arbor.MCP.Server.Runtime
-  alias Arbor.MCP.Server.Runtime.{Admission, CallbackContext, HTTPNotifications, HTTPReverse, Ref}
+  alias Arbor.MCP.Server.{HandlerServer, Runtime, StdioServer}
+
+  alias Arbor.MCP.Server.Runtime.{
+    Admission,
+    CallbackContext,
+    Diagnostics,
+    HTTPNotifications,
+    HTTPReverse,
+    Ref
+  }
 
   @type server :: Runtime.server()
+
+  @doc """
+  Starts a linked MCP runtime using a handler and an explicit transport.
+
+  `handler: MyHandler` is required. `:transport` defaults to `:beam`; supported
+  transports are `:beam`, `:test`, `:stdio` and `:http`. Plain Handler and DSL
+  modules share this constructor; generated `MyHandler.start_link/1` delegates
+  here. Every transport returns the runtime supervisor PID.
+
+  Runtime startup/shutdown budgets and transport options are passed through.
+  Standalone HTTP selects an installed backend and owns its listener. Mounting
+  HttpPlug in a host uses a separate runtime and borrows the host's listener.
+  Stdio borrows its IO devices. See the Runtime and HTTP listener guides.
+  """
+  @spec start_link(keyword()) :: Supervisor.on_start()
+  def start_link(opts) do
+    transport = Keyword.get(opts, :transport, :beam)
+    opts = Keyword.put(opts, :transport, transport)
+
+    case transport do
+      type when type in [:beam, :test] -> HandlerServer.start_link(opts)
+      :stdio -> StdioServer.start_link(opts)
+      :http -> Runtime.start_link(opts)
+      type -> {:error, {:unsupported_transport, type}}
+    end
+  end
+
+  @doc "Returns the supervisor child specification for `start_link/1`."
+  @spec child_spec(keyword()) :: Supervisor.child_spec()
+  def child_spec(opts) do
+    Diagnostics.child_spec(%{
+      id: Keyword.get(opts, :id, __MODULE__),
+      start: {__MODULE__, :start_link, [opts]},
+      type: :supervisor,
+      restart: :permanent,
+      shutdown: Keyword.get(opts, :shutdown_timeout_ms, 5_000)
+    })
+  end
+
+  @doc """
+  Stops a runtime through its bounded ownership cleanup.
+
+  Accepts its supervisor PID, registered name or opaque Runtime reference.
+  The configured overall shutdown budget is captured once by Runtime.stop/2;
+  cleanup errors remain errors. Borrowed host listeners and IO devices survive.
+  A parent supervisor still applies its restart policy: remove a managed child
+  through its parent when the endpoint should remain stopped.
+  """
+  @spec stop(Arbor.MCP.Server.Runtime.server(), term()) :: :ok | {:error, term()}
+  def stop(server, reason \\ :normal), do: Runtime.stop(server, reason)
+
+  @doc "Returns tagged runtime statistics; the runtime reference stays opaque."
+  @spec stats(Arbor.MCP.Server.Runtime.server()) :: {:ok, map()} | {:error, term()}
+  def stats(server), do: Runtime.stats(server)
+
+  @doc "Returns runtime statistics or raises when the runtime is unavailable."
+  @spec stats!(Arbor.MCP.Server.Runtime.server()) :: map()
+  def stats!(server), do: Runtime.stats!(server)
 
   @doc """
   Sends a log message through the server.

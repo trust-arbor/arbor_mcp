@@ -8,7 +8,7 @@ defmodule Arbor.MCP.Client do
   ## Features
 
   - Simple connection with URL strings or transport specs
-  - Automatic transport fallback via TransportManager
+  - Explicit URL, transport-spec or ClientConfig connections
   - Automatic reconnection with exponential backoff after unexpected
     transport closure (see `start_link/1`)
   - Server notification delivery in both protocol eras: `listen/3` on MCP
@@ -29,11 +29,12 @@ defmodule Arbor.MCP.Client do
       )
 
       # List and call tools
-      {:ok, %{"tools" => tools}} = Arbor.MCP.Client.list_tools(client)
+      {:ok, %Arbor.MCP.Response{tools: tools}} = Arbor.MCP.Client.list_tools(client)
       {:ok, result} = Arbor.MCP.Client.call_tool(client, "weather", %{location: "NYC"})
   """
 
   alias Arbor.MCP.Client.Internal.Connection, as: ClientConnection
+  alias Arbor.MCP.Client.Internal.Convenience
   alias Arbor.MCP.Client.Internal.Request, as: ClientRequest
 
   alias Arbor.MCP.Error
@@ -153,7 +154,11 @@ defmodule Arbor.MCP.Client do
   ]
 
   @type t :: GenServer.server()
-  @type connection_spec :: String.t() | {atom(), keyword()} | [{atom(), keyword()}]
+  @type connection_spec ::
+          String.t()
+          | {atom(), keyword()}
+          | [String.t() | {atom(), keyword()}]
+          | Arbor.MCP.ClientConfig.t()
 
   # Public API
 
@@ -340,7 +345,7 @@ defmodule Arbor.MCP.Client do
       # Transport spec
       {:ok, client} = Arbor.MCP.Client.connect({:stdio, command: "mcp-server"})
 
-      # Multiple transports with fallback
+      # A transport list currently selects only the first transport
       {:ok, client} = Arbor.MCP.Client.connect([
         "http://localhost:8080/mcp",
         "stdio://mcp-server"
@@ -397,6 +402,84 @@ defmodule Arbor.MCP.Client do
   def with_connection(spec, opts, callback), do: ConnectionScope.run(spec, opts, callback)
 
   @doc """
+  Checks connectivity using a temporary, owned connection.
+
+  Unlike `ping/2`, this opens a new connection and completes initialization;
+  it does not send a protocol ping on an existing client. Returns `:ok` only
+  after scoped cleanup succeeds. The server and host listener remain borrowed.
+  `:establish_timeout` (default 12_000 ms) and `:cleanup_timeout` (default
+  1_000 ms) are finite budgets from `with_connection/3`.
+  """
+  @spec probe(connection_spec(), keyword()) :: :ok | {:error, term()}
+  def probe(spec, opts \\ []) do
+    case with_connection(spec, opts, fn client ->
+           case status(client) do
+             {:ok, _status} -> :ok
+             error -> error
+           end
+         end) do
+      {:ok, result} -> result
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @doc """
+  Lists tool definitions, extracting the list from its response page.
+
+  This explicit convenience drops pagination/metadata by default. Use
+  `list_tools/2` (or the `tools/2` alias) for a complete Response, or supply
+  `format: :map`/`:struct` here to retain the complete page. Request controls
+  and `:cursor` are forwarded; unsupported options raise `ArgumentError`.
+  """
+  @spec tool_definitions(t(), keyword()) ::
+          {:ok, [map()] | map() | Arbor.MCP.Response.t()} | {:error, term()}
+  def tool_definitions(client, opts \\ []),
+    do: Convenience.tools(client, opts)
+
+  @doc """
+  Calls a tool and extracts content explicitly.
+
+  Text is extracted by default. A tool result with `isError: true` returns
+  `{:error, %Arbor.MCP.Error.ToolError{}}` retaining the full result in its
+  reason. `call_tool/4` and the `call/4` alias instead preserve a complete
+  Response and a delivered tool error remains `{:ok, response}` there.
+
+  `normalize: false` or an explicit `format: :map`/`:struct` preserves the
+  complete result. Do not combine a format with `normalize: true`. Request
+  controls, progress and idempotency options are forwarded unchanged;
+  unsupported options raise `ArgumentError`.
+  """
+  @spec call_content(t(), String.t(), map(), keyword()) :: {:ok, term()} | {:error, term()}
+  def call_content(client, name, arguments \\ %{}, opts \\ []),
+    do: Convenience.call(client, name, arguments, opts)
+
+  @doc """
+  Lists resource definitions, extracting the list from its response page.
+
+  Pagination/metadata are omitted by default. Prefer `list_resources/2` or
+  select an explicit `format: :map`/`:struct` to preserve the complete page.
+  Request controls and `:cursor` are forwarded; unsupported options raise.
+  """
+  @spec resource_definitions(t(), keyword()) ::
+          {:ok, [map()] | map() | Arbor.MCP.Response.t()} | {:error, term()}
+  def resource_definitions(client, opts \\ []),
+    do: Convenience.resources(client, opts)
+
+  @doc """
+  Reads a resource and extracts its content explicitly.
+
+  Joins text entries in `contents` with newlines; nontext-only resources
+  retain the complete decoded result. `parse_json: true` parses extracted
+  text when valid JSON. An explicit `format: :map`/`:struct` preserves the
+  complete result and cannot be combined with parsing. Prefer
+  `read_resource/3` for a complete Response. The default timeout is 10_000 ms;
+  supported request controls are forwarded and unsupported options raise.
+  """
+  @spec read_content(t(), String.t(), keyword()) :: {:ok, term()} | {:error, term()}
+  def read_content(client, uri, opts \\ []),
+    do: Convenience.read(client, uri, opts)
+
+  @doc """
   Lists available tools from the server.
 
   ## Options
@@ -418,9 +501,11 @@ defmodule Arbor.MCP.Client do
   end
 
   @doc """
-  Convenience alias for list_tools/2.
+  Alias for list_tools/2, retaining the complete response page by default.
+
+  Use `tool_definitions/2` when list extraction is intended.
   """
-  @spec tools(t(), keyword()) :: {:ok, %{String.t() => [map()]}} | {:error, any()}
+  @spec tools(t(), keyword()) :: {:ok, Arbor.MCP.Response.t() | map()} | {:error, term()}
   def tools(client, opts \\ []), do: Tools.tools(client, opts)
 
   @doc """
@@ -488,7 +573,10 @@ defmodule Arbor.MCP.Client do
   end
 
   @doc """
-  Convenience alias for call_tool/4.
+  Alias for call_tool/4, retaining the complete response by default.
+
+  Use `call_content/4` when content extraction and tool-error normalization
+  are intended. This alias never adopts the legacy root facade's extraction.
   """
   @spec call(t(), String.t(), map(), keyword()) :: {:ok, any()} | {:error, any()}
   def call(client, tool_name, args \\ %{}, opts \\ []) do
@@ -786,6 +874,29 @@ defmodule Arbor.MCP.Client do
 
   def get_prompt(client, prompt_name, arguments, opts) when is_list(opts) do
     Prompts.get_prompt(client, prompt_name, arguments, opts)
+  end
+
+  @doc """
+  Returns tagged client status, including timeout or unavailable errors.
+
+  Accepts `:timeout` (default 5_000 ms). `get_status/1,2` remain compatibility
+  entrypoints. This operation does not open a connection or send a wire ping.
+  """
+  @spec status(t(), keyword()) :: {:ok, map()} | {:error, term()}
+  def status(client, opts \\ []) do
+    opts = Keyword.validate!(opts, [:timeout])
+    get_status(client, opts)
+  catch
+    :exit, _reason -> {:error, :client_not_alive}
+  end
+
+  @doc "Returns client status or raises when status cannot be obtained."
+  @spec status!(t(), keyword()) :: map()
+  def status!(client, opts \\ []) do
+    case status(client, opts) do
+      {:ok, value} -> value
+      {:error, reason} -> raise RuntimeError, "MCP status unavailable: #{inspect(reason)}"
+    end
   end
 
   @doc """

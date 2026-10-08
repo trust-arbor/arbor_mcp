@@ -23,6 +23,16 @@ defmodule CombinedArchiveConsumer do
       do: {:reply, %{"stopReason" => "end_turn"}, state}
   end
 
+  defmodule RoleHandler do
+    use Arbor.MCP.Server.Handler
+    use Arbor.MCP.Server.DSL, name: "archive-role-probe", version: "1"
+
+    tool "echo", "Echo text" do
+      param(:message, :string, required: true)
+      run(fn %{message: message}, state -> {:ok, ToolResult.text(message), state} end)
+    end
+  end
+
   def probe do
     {:ok, _} = Application.ensure_all_started(:combined_archive_consumer)
 
@@ -41,9 +51,36 @@ defmodule CombinedArchiveConsumer do
     nil = System.find_executable("cc")
     verify_installed_helper()
     verify_independent_lifetimes()
+    verify_role_entrypoints()
     record_installation()
 
     IO.puts("Four archive apps, MCP/ACP lifetimes and compiler-free native ownership pass")
+  end
+
+  defp verify_role_entrypoints do
+    alias Arbor.MCP.{Client, Response, Server}
+    {:ok, server} = Server.start_link(handler: RoleHandler, transport: :beam)
+
+    try do
+      :ok = Client.probe({:beam, server: server}, protocol_mode: :legacy_only)
+      true = Process.alive?(server)
+      {:ok, client} = Client.connect({:beam, server: server}, protocol_mode: :legacy_only)
+
+      try do
+        {:ok, %Response{tools: [_tool]}} = Client.tools(client)
+        {:ok, [%{"name" => "echo"}]} = Client.tool_definitions(client)
+        {:ok, %Response{}} = Client.call(client, "echo", %{"message" => "complete"})
+        {:ok, "content"} = Client.call_content(client, "echo", %{"message" => "content"})
+        {:ok, _status} = Client.status(client)
+        {:ok, _stats} = Server.stats(server)
+        :ok = Client.disconnect(client)
+        true = Process.alive?(client)
+      after
+        :ok = Client.stop(client)
+      end
+    after
+      :ok = Server.stop(server)
+    end
   end
 
   defp verify_package_boundaries do

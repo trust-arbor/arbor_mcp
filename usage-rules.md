@@ -10,8 +10,17 @@ are separate.
 
 ## Choose the owning package and API
 
-- Use `Arbor.MCP.Client` for protocol operations and `Arbor.MCP` for convenience
-  calls. Use `Arbor.MCP.Server.Handler` with `Arbor.MCP.Server.DSL` for servers.
+- Use `Arbor.MCP.Client` for connection, protocol operations and explicit client
+  conveniences. Use `Arbor.MCP.Server` for startup, supervision, shutdown,
+  statistics and server controls. Define callbacks with `Server.Handler` and
+  optionally `Server.DSL`; those modules define behavior rather than lifecycle.
+- Start plain handlers with `Arbor.MCP.Server.start_link/1`, passing `handler:`
+  and `transport:`. Generated DSL startup delegates to the same constructor.
+  Supervise `{Arbor.MCP.Server, handler: MyHandler, transport: :beam}` or your
+  DSL module. Startup returns a linked runtime supervisor for every transport;
+  the canonical transport default is `:beam`. Select HTTP and stdio explicitly.
+- Root client operations remain compatibility wrappers. Their names can hide
+  different results/lifetimes; use the role modules in new code.
 - ACP clients and agents belong to `arbor_acp` (`Arbor.ACP.*`); built-in vendor
   adapters belong to the optional `arbor_acp_adapters` package. Shared subprocess
   and framing operations belong to `arbor_rpc` (`Arbor.RPC.*`). Declare a direct
@@ -31,12 +40,15 @@ are separate.
   `Arbor.MCP.Response.structured_content/1`.
   `Arbor.MCP.Response.to_raw/1` preserves decoded fields, metadata, extensions,
   cursors and false/null presence. Compare decoded JSON rather than member order.
-- Convenience `Arbor.MCP.call/4`, `Arbor.MCP.read/3`, `Arbor.MCP.tools/2` and
-  `Arbor.MCP.resources/2` extract text or lists by default. Select `format: :map`
+- Explicit `Arbor.MCP.Client.call_content/4`, `read_content/3`,
+  `tool_definitions/2` and `resource_definitions/2` extract content or lists.
+  Client `call/4` and `tools/2` remain full-response protocol aliases. Root
+  `Arbor.MCP.call/4`, `read/3`, `tools/2` and `resources/2` keep their original
+  extraction behavior as compatibility wrappers. Select `format: :map`
   or `:struct` for a complete result, especially when paginating.
   `normalize: false` on `call/4` returns a complete Response struct by default.
   A normalized tool failure returns a ToolError retaining the full result.
-- Resource responses use `contents`. `read/3` joins text entries with newlines
+- Resource responses use `contents`. `Client.read_content/3` joins text entries with newlines
   and retains nontext-only results; `parse_json: true` parses extracted text.
   Do not combine an explicit format with `normalize: true` or `parse_json: true`.
   Unsupported facade options raise `ArgumentError`.
@@ -46,11 +58,19 @@ are separate.
 - Supervise long-lived clients and servers. Handle tagged operational errors;
   a local request timeout is `{:error, :timeout}`, distinct from a server's
   JSON-RPC error. Request timeouts are finite non-negative milliseconds.
-- Use `Arbor.MCP.Client.stop/1` or `Arbor.MCP.disconnect/1` for client cleanup
-  and retain any cleanup error. A caller timeout alone does not prove remote
-  cancellation, completion or cleanup. Do not retry side effects blindly.
-- `Arbor.MCP.Server.Runtime.stats/1` returns a tagged result;
-  `Arbor.MCP.Server.Runtime.stats!/1` explicitly returns a value or raises.
+- `Arbor.MCP.Client.disconnect/1` closes the transport and retains the client
+  process; `Client.stop/1,2` terminates it through bounded cleanup. The legacy
+  root `Arbor.MCP.disconnect/1` also terminates it. Retain cleanup errors.
+- `Arbor.MCP.Client.ping/2` pings an existing connection (or discovers on the
+  modern wire revision); `Client.probe/2` initializes a temporary owned client
+  and reports success only after scoped cleanup. The server/listener stay borrowed.
+- Inspect with tagged `Arbor.MCP.Client.status/2` and `Arbor.MCP.Server.stats/1`;
+  their bang variants return a value or raise. Stop a server with `Server.stop/2`.
+  A supervisor still applies its child restart policy. A caller timeout alone
+  does not prove remote cancellation, completion or cleanup. Do not retry side
+  effects blindly.
+- Advanced admission, request, await and cancellation APIs remain in
+  `Arbor.MCP.Server.Runtime`; ordinary lifecycle and statistics use `Server`.
   Pure constructors and response accessors keep their documented bare values.
 - Mount `Arbor.MCP.HttpPlug` with an explicit per-server Runtime in Plug/Phoenix.
   The host owns its listener. Standalone owned listeners require a separately

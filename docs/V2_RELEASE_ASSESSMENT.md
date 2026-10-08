@@ -1,13 +1,32 @@
 # ArborMCP v2 Release Assessment
 
-- **Reviewed:** 2026-10-07; historical checkpoint evidence below is preserved
+- **Reviewed:** 2026-10-08; historical checkpoint evidence below is preserved
 - **Released baseline:** `v1.5.0`
 - **Initial integrated audit baseline:** `e4d2fc3`; later qualified v2 checkpoints are recorded below
 - **Status:** Accepted v2 scope implemented; audit fixes and final release qualification in progress
 - **Release target:** Friday 2026-10-09, subject to release gates and RC soak
 - **Canonical plan:** [V2_ROADMAP.md](./V2_ROADMAP.md)
 
-## Current assessment — October 7, 2026
+## Current API follow-up — October 8, 2026
+
+Client and Server are the canonical MCP entrypoints. Explicit Client extraction
+helpers preserve complete-response defaults on protocol operations, while root
+wrappers retain their compatibility behavior. Plain and DSL handlers share
+transport-aware Server startup and supervisor child specs; ordinary stop and
+statistics forward to Runtime's existing bounded ownership path. Client status
+and scoped connectivity probes have distinct, documented semantics. ACP keeps
+Client/Agent roles and now supports the matching Agent stop reason/options form.
+The usage rules, quickstarts and migration table reflect these entrypoints.
+
+Current-source MCP validation passes 5,434 tests, 20 doctests and 34 properties
+(208 existing exclusions); 106 focused tests including HTTP pass on minimum and
+current toolchains. Core ACP passes 370 tests (7 existing exclusions) on both.
+Final strict docs, archive/installed-consumer and exact-head CI receipts for this
+follow-up are separate from the earlier source checkpoints below. These API
+checks do not publish the replacement candidates or satisfy the continuous soak,
+real downstream/vendor testing or final release gates.
+
+## Previous assessment — October 7, 2026
 
 All four original `2.0.0-rc.1` packages are published and their archive
 checksums were verified. Current source prepares MCP `2.0.0-rc.2` and RPC,

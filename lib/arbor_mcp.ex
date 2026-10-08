@@ -8,12 +8,12 @@ defmodule Arbor.MCP do
 
   ## Public API
 
-  ArborMCP provides a clean, focused public API. Only use these modules in your applications:
+  ArborMCP provides a clean, focused public API. Start with these modules in your applications:
 
   ### Core Modules
-  - `Arbor.MCP` - This module (convenience functions and metadata)
+  - `Arbor.MCP` - Package metadata and compatibility/startup shorthand
   - `Arbor.MCP.Client` - MCP client implementation
-  - `Arbor.MCP.Server` - MCP server helper functions
+  - `Arbor.MCP.Server` - MCP server lifecycle and controls
   - `Arbor.MCP.Server.Handler` - Callback behaviour for MCP servers
   - `Arbor.MCP.Server.DSL` - Declarative tool/resource/prompt definitions
   - `Arbor.MCP.Server.Result` - Complete results shared by Handler and DSL callbacks
@@ -42,7 +42,7 @@ defmodule Arbor.MCP do
 
   > #### Stability {: .info}
   >
-  > **Stable for 1.0:** Client, Server Handler/DSL, documented transports, HttpPlug,
+  > **Public v2 API:** Client, Server lifecycle and Handler/DSL, documented transports, HttpPlug,
   > Types, Content builders and Authorization entry points. ACP is a separate package.
   >
   > **May change in minors:** experimental content transformers and anything marked
@@ -58,14 +58,14 @@ defmodule Arbor.MCP do
   ### Start a Client
 
       # Connect to stdio server
-      {:ok, client} = Arbor.MCP.start_client(
+      {:ok, client} = Arbor.MCP.Client.start_link(
         transport: :stdio,
         command: ["python", "mcp-server.py"],
         protocol_mode: :prefer_modern
       )
 
       # Connect with HTTP
-      {:ok, client} = Arbor.MCP.start_client(
+      {:ok, client} = Arbor.MCP.Client.start_link(
         transport: :http,
         url: "https://api.example.com",
         protocol_mode: :prefer_modern
@@ -73,7 +73,7 @@ defmodule Arbor.MCP do
 
   ### Start a Server
 
-      {:ok, server} = Arbor.MCP.start_server(
+      {:ok, server} = Arbor.MCP.Server.start_link(
         handler: MyApp.MCPHandler,
         transport: :stdio,
         protocol_mode: :prefer_modern
@@ -83,7 +83,7 @@ defmodule Arbor.MCP do
 
       {:ok, server} = MyServer.start_link(transport: :beam)
 
-      {:ok, client} = Arbor.MCP.start_client(
+      {:ok, client} = Arbor.MCP.Client.start_link(
         transport: :beam,
         server: server,
         protocol_mode: :prefer_modern
@@ -136,7 +136,7 @@ defmodule Arbor.MCP do
   ### Basic Client Usage
 
       {:ok, client} =
-        Arbor.MCP.start_client(
+        Arbor.MCP.Client.start_link(
           transport: :stdio,
           command: ["mcp-server"],
           protocol_mode: :prefer_modern
@@ -196,7 +196,7 @@ defmodule Arbor.MCP do
       end
 
       {:ok, server} =
-        Arbor.MCP.start_server(
+        Arbor.MCP.Server.start_link(
           handler: MyHandler,
           transport: :stdio,
           protocol_mode: :prefer_modern
@@ -219,7 +219,7 @@ defmodule Arbor.MCP do
         MyService.start_link(transport: :beam, protocol_mode: :prefer_modern)
 
       {:ok, client} =
-        Arbor.MCP.start_client(
+        Arbor.MCP.Client.start_link(
           transport: :beam,
           server: server,
           protocol_mode: :prefer_modern
@@ -228,7 +228,7 @@ defmodule Arbor.MCP do
   """
 
   alias Arbor.MCP.Client
-  alias Arbor.MCP.Error
+  alias Arbor.MCP.Client.Internal.Convenience
   alias Arbor.MCP.Internal.VersionRegistry
   alias Arbor.MCP.Response
 
@@ -261,8 +261,9 @@ defmodule Arbor.MCP do
   @doc """
   Convenience function to start an MCP server.
 
-  This starts a process linked to the caller, equivalent to `Arbor.MCP.Server.HandlerServer.start_link/1` but provides a simpler
-  entry point for common use cases.
+  Shorthand for `Arbor.MCP.Server.start_link/1`, retaining the legacy `:test`
+  transport default. Select `:beam`, `:stdio` or `:http` explicitly. The returned
+  process is a linked runtime supervisor.
 
   ## Examples
 
@@ -274,7 +275,7 @@ defmodule Arbor.MCP do
   """
   @spec start_server(keyword()) :: {:ok, pid()} | {:error, term()}
   def start_server(opts) do
-    Arbor.MCP.Server.HandlerServer.start_link(opts)
+    opts |> Keyword.put_new(:transport, :test) |> Arbor.MCP.Server.start_link()
   end
 
   @doc """
@@ -315,7 +316,9 @@ defmodule Arbor.MCP do
   @type connection_spec :: String.t() | {atom(), keyword()} | [any()] | Arbor.MCP.ClientConfig.t()
 
   @doc """
-  Connects to an MCP server using the unified client implementation.
+  Compatibility connection wrapper. Prefer `Arbor.MCP.Client.connect/2` in new code.
+
+  This wrapper retains its original command-string parsing and first-spec-only behavior.
 
   This function provides a simplified interface to the MCP client with
   automatic connection configuration and transport selection.
@@ -353,51 +356,22 @@ defmodule Arbor.MCP do
       {:ok, client} = Arbor.MCP.connect(config)
   """
   @spec connect(connection_spec(), keyword()) :: {:ok, client()} | {:error, any()}
-  def connect(connection_spec, opts \\ [])
-
-  def connect(%Arbor.MCP.ClientConfig{} = config, opts) do
-    # ClientConfig provided - convert to client options and connect
-    client_opts = Arbor.MCP.ClientConfig.to_client_opts(config)
-
-    # Merge any additional opts (ignore deprecated client_type option)
-    final_opts = Keyword.merge(client_opts, Keyword.drop(opts, [:client_type]))
-
-    Client.start_link(final_opts)
-  end
-
-  def connect(connection_spec, opts) when is_list(connection_spec) do
-    # 1.x compatibility: a list is accepted but only the first spec is used.
-    # This is not a failover.
-    case List.first(connection_spec) do
-      nil -> {:error, :no_connections_specified}
-      first_spec -> connect(first_spec, opts)
-    end
-  end
-
-  def connect(connection_spec, opts) do
-    # Convert connection spec to unified Client format (ignore deprecated client_type)
-    client_opts =
-      normalize_connection_for_client(connection_spec, Keyword.drop(opts, [:client_type]))
-
-    Client.start_link(client_opts)
-  end
+  def connect(connection_spec, opts \\ []), do: Convenience.connect(connection_spec, opts)
 
   @doc """
-  Stops the client through its bounded ownership cleanup.
+  Compatibility shutdown wrapper; this stops the client process.
+
+  Prefer `Arbor.MCP.Client.stop/1` for termination.
+  `Arbor.MCP.Client.disconnect/1` closes the transport and retains the process.
 
   Already-stopped clients return `:ok`. A cleanup timeout or failure is
   returned explicitly; client process death alone does not confirm physical IO cleanup.
   """
   @spec disconnect(client()) :: :ok | {:error, term()}
-  def disconnect(client) do
-    case Client.stop(client) do
-      {:error, :client_not_alive} -> :ok
-      result -> result
-    end
-  end
+  def disconnect(client), do: Convenience.disconnect(client)
 
   @doc """
-  Lists available tools from the connected server.
+  Compatibility wrapper for `Arbor.MCP.Client.tool_definitions/2`.
 
   Returns `{:ok, tools}` where `tools` is a list of tool definitions with
   their schemas and descriptions, or `{:error, reason}` if the request fails
@@ -406,27 +380,12 @@ defmodule Arbor.MCP do
   Client request controls are forwarded.
   """
   @spec tools(client(), keyword()) :: {:ok, [map()] | map() | Response.t()} | {:error, any()}
-  def tools(client, opts \\ []) do
-    opts = facade_options!(opts, [:cursor])
-    full_result? = Keyword.has_key?(opts, :format)
-    request_opts = opts |> Keyword.put_new(:timeout, 5_000) |> Keyword.put_new(:format, :map)
-
-    case Client.list_tools(client, request_opts) do
-      {:ok, result} when full_result? ->
-        {:ok, result}
-
-      {:ok, result} when is_map(result) ->
-        {:ok, Map.get(result, "tools") || Map.get(result, :tools) || []}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  catch
-    :exit, _reason -> {:error, Error.connection_error("Client not responding")}
-  end
+  def tools(client, opts \\ []), do: Client.tool_definitions(client, opts)
 
   @doc """
-  Calls a tool on the connected server.
+  Compatibility wrapper for `Arbor.MCP.Client.call_content/4`.
+
+  `Arbor.MCP.Client.call/4` and `call_tool/4` preserve the complete response.
 
   Returns `{:ok, result}` on success or `{:error, reason}` if the request
   fails or the client is dead/unresponsive. With `normalize: true` (the
@@ -454,33 +413,11 @@ defmodule Arbor.MCP do
       {:ok, result} = Arbor.MCP.call(client, "slow_tool", %{data: "..."}, timeout: 60_000)
   """
   @spec call(client(), String.t(), map(), keyword()) :: {:ok, any()} | {:error, any()}
-  def call(client, tool_name, args \\ %{}, opts \\ []) do
-    opts = call_options!(opts)
-    normalize = Keyword.get(opts, :normalize, not Keyword.has_key?(opts, :format))
-    request_opts = opts |> Keyword.delete(:normalize) |> Keyword.put_new(:timeout, 30_000)
-
-    case Client.call_tool(client, tool_name, args, request_opts) do
-      {:ok, result} ->
-        cond do
-          normalize and tool_error?(result) ->
-            {:error, %Error.ToolError{tool_name: tool_name, reason: result}}
-
-          normalize ->
-            {:ok, extract_tool_result_content(result)}
-
-          true ->
-            {:ok, result}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  catch
-    :exit, _reason -> {:error, Error.connection_error("Client not responding")}
-  end
+  def call(client, tool_name, args \\ %{}, opts \\ []),
+    do: Client.call_content(client, tool_name, args, opts)
 
   @doc """
-  Lists available resources from the connected server.
+  Compatibility wrapper for `Arbor.MCP.Client.resource_definitions/2`.
 
   Returns `{:ok, resources}` on success, or `{:error, reason}` if the
   request fails or the client is dead/unresponsive. `format: :map` or `:struct`
@@ -488,27 +425,10 @@ defmodule Arbor.MCP do
   supported Client request controls are forwarded.
   """
   @spec resources(client(), keyword()) :: {:ok, [map()] | map() | Response.t()} | {:error, any()}
-  def resources(client, opts \\ []) do
-    opts = facade_options!(opts, [:cursor])
-    full_result? = Keyword.has_key?(opts, :format)
-    request_opts = opts |> Keyword.put_new(:timeout, 5_000) |> Keyword.put_new(:format, :map)
-
-    case Client.list_resources(client, request_opts) do
-      {:ok, result} when full_result? ->
-        {:ok, result}
-
-      {:ok, result} when is_map(result) ->
-        {:ok, Map.get(result, "resources") || Map.get(result, :resources) || []}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  catch
-    :exit, _reason -> {:error, Error.connection_error("Client not responding")}
-  end
+  def resources(client, opts \\ []), do: Client.resource_definitions(client, opts)
 
   @doc """
-  Reads a resource from the connected server.
+  Compatibility wrapper for `Arbor.MCP.Client.read_content/3`.
 
   Returns `{:ok, content}` on success, or `{:error, reason}` if the request
   fails or the client is dead/unresponsive.
@@ -531,166 +451,24 @@ defmodule Arbor.MCP do
       {:ok, data} = Arbor.MCP.read(client, "file://config.json", parse_json: true)
   """
   @spec read(client(), String.t(), keyword()) :: {:ok, any()} | {:error, any()}
-  def read(client, uri, opts \\ []) do
-    opts = facade_options!(opts, [:parse_json])
-    parse_json = Keyword.get(opts, :parse_json, false)
-    full_result? = Keyword.has_key?(opts, :format)
-    if not is_boolean(parse_json), do: raise(ArgumentError, "parse_json must be a boolean")
-
-    if parse_json and full_result?,
-      do: raise(ArgumentError, "parse_json cannot be combined with format")
-
-    request_opts =
-      opts
-      |> Keyword.delete(:parse_json)
-      |> Keyword.put_new(:timeout, 10_000)
-      |> Keyword.put_new(:format, :map)
-
-    case Client.read_resource(client, uri, request_opts) do
-      {:ok, result} when full_result? -> {:ok, result}
-      {:ok, response} -> {:ok, process_read_response(response, parse_json)}
-      {:error, reason} -> {:error, reason}
-    end
-  catch
-    :exit, _reason -> {:error, Error.connection_error("Client not responding")}
-  end
-
-  defp process_read_response(response, parse_json) when is_map(response) do
-    content = extract_resource_content(response)
-
-    if parse_json and is_binary(content) do
-      parse_json_content(content)
-    else
-      content
-    end
-  end
-
-  defp extract_resource_content(%{"contents" => contents} = response) when is_list(contents) do
-    texts = for %{"text" => text} <- contents, is_binary(text), do: text
-    if texts == [], do: response, else: Enum.join(texts, "\n")
-  end
-
-  defp extract_resource_content(%{"content" => content} = response) when is_list(content) do
-    texts = for %{"type" => "text", "text" => text} <- content, is_binary(text), do: text
-    if texts == [], do: response, else: Enum.join(texts, "\n")
-  end
-
-  defp extract_resource_content(%{"text" => text}) when is_binary(text), do: text
-  defp extract_resource_content(response), do: response
-
-  defp tool_error?(%Response{is_error: true}), do: true
-  defp tool_error?(%{"isError" => true}), do: true
-  defp tool_error?(_result), do: false
-
-  defp facade_options!(opts, extra_keys) do
-    Keyword.validate!(
-      opts,
-      extra_keys ++
-        [
-          :timeout,
-          :format,
-          :http_stream_retry,
-          :http_stream_retry_delay,
-          :retry_safe,
-          :retry_policy,
-          :max_mrtr_rounds,
-          :max_input_requests,
-          :max_mrtr_bytes,
-          :request_id,
-          :server_info
-        ]
-    )
-  end
-
-  defp call_options!(opts) do
-    opts =
-      facade_options!(opts, [
-        :normalize,
-        :progress_token,
-        :meta,
-        :idempotency_key,
-        :idempotency_key_path
-      ])
-
-    if Keyword.has_key?(opts, :normalize) and not is_boolean(Keyword.fetch!(opts, :normalize)),
-      do: raise(ArgumentError, "normalize must be a boolean")
-
-    if Keyword.get(opts, :normalize, false) and Keyword.has_key?(opts, :format),
-      do: raise(ArgumentError, "format requires normalize: false")
-
-    opts
-  end
-
-  defp parse_json_content(content) do
-    case Jason.decode(content) do
-      {:ok, parsed} -> parsed
-      {:error, _} -> content
-    end
-  end
-
-  defp extract_tool_result_content(%Response{} = response) do
-    # Handle Response struct - use the text_content function
-    Response.text_content(response)
-  end
-
-  defp extract_tool_result_content(result) when is_map(result) do
-    # Try to extract text content from the result
-    case result do
-      %{"content" => [%{"type" => "text", "text" => text} | _]} ->
-        text
-
-      %{"content" => content} when is_list(content) ->
-        # Extract all text content
-        Enum.map_join(
-          Enum.filter(content, &(is_map(&1) and Map.get(&1, "type") == "text")),
-          "\n",
-          &Map.get(&1, "text")
-        )
-
-      _ ->
-        # Return the full result if we can't extract text
-        result
-    end
-  end
-
-  defp extract_tool_result_content(result), do: result
+  def read(client, uri, opts \\ []), do: Client.read_content(client, uri, opts)
 
   @doc """
-  Gets connection status and server information.
+  Compatibility status wrapper. Prefer `Arbor.MCP.Client.status/2`.
 
   Returns `{:ok, status}` on success, or `{:error, reason}` if the client
   is dead/unresponsive.
   """
   @spec status(client()) :: {:ok, map()} | {:error, any()}
-  def status(client) do
-    Client.get_status(client)
-  catch
-    :exit, _reason -> {:error, Error.connection_error("Client not responding")}
-  end
+  def status(client), do: Convenience.status(client)
 
   @doc """
-  Tests connectivity to an MCP server without establishing a persistent connection.
+  Compatibility connectivity probe. Prefer `Arbor.MCP.Client.probe/2` in new code.
+
+  `Arbor.MCP.Client.ping/2` sends a protocol ping on an existing connection.
   """
   @spec ping(connection_spec(), keyword()) :: :ok | {:error, any()}
-  def ping(connection_spec, opts \\ []) do
-    # Quick connection test using unified client
-    case connect(connection_spec, opts) do
-      {:ok, client} ->
-        result =
-          case status(client) do
-            {:ok, _} -> :ok
-            error -> error
-          end
-
-        case disconnect(client) do
-          :ok -> result
-          {:error, reason} -> {:error, {:cleanup_failed, reason, result}}
-        end
-
-      error ->
-        error
-    end
-  end
+  def ping(connection_spec, opts \\ []), do: Convenience.ping(connection_spec, opts)
 
   @doc """
   Gets library configuration and capabilities.
@@ -712,27 +490,4 @@ defmodule Arbor.MCP do
   end
 
   # Private Helper Functions
-
-  defp normalize_connection_for_client(connection_spec, opts) when is_binary(connection_spec) do
-    # Parse URL and convert to transport options
-    uri = URI.parse(connection_spec)
-
-    transport_opts =
-      case uri.scheme do
-        "http" -> [transport: :http, url: connection_spec]
-        "https" -> [transport: :http, url: connection_spec]
-        _ -> [transport: :stdio, command: connection_spec]
-      end
-
-    Keyword.merge(transport_opts, opts)
-  end
-
-  defp normalize_connection_for_client({transport, transport_opts}, opts) do
-    [transport: transport] ++ transport_opts ++ opts
-  end
-
-  defp normalize_connection_for_client(connection_spec, opts) do
-    # For other formats, pass through
-    Keyword.merge([connection: connection_spec], opts)
-  end
 end

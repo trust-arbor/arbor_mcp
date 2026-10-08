@@ -45,6 +45,50 @@ a persistent test/BEAM peer. That finite limit remains the intended API
 contract. An RC is for downstream testing; it does not establish stable
 release or sustained-run qualification.
 
+## Canonical role entrypoints
+
+Use `Arbor.MCP.Client` for connections and client operations, and
+`Arbor.MCP.Server` for server startup, supervision, controls, statistics and
+shutdown. `Server.Handler` defines callbacks; `Server.DSL` adds declarations.
+Plain and generated handlers share `Server.start_link/1` and return a runtime
+supervisor for BEAM, test, stdio and HTTP. The canonical default is `:beam`.
+
+```elixir
+children = [{Arbor.MCP.Server, handler: MyHandler, transport: :beam}]
+{:ok, client} = Arbor.MCP.Client.connect({:beam, server: server})
+{:ok, response} = Arbor.MCP.Client.call_tool(client, "echo", %{"message" => "hello"})
+text = Arbor.MCP.Response.text_content(response)
+{:ok, status} = Arbor.MCP.Client.status(client)
+{:ok, statistics} = Arbor.MCP.Server.stats(server)
+```
+
+Root client operations remain compatibility wrappers with their existing
+behavior. They are not interchangeable with similarly named Client methods:
+
+| Existing root call | Canonical choice and behavior |
+| --- | --- |
+| `Arbor.MCP.connect/2` | `Client.connect/2`; accepts ClientConfig, URL or transport spec. The root retains legacy bare-command parsing. Neither currently implements transport-list fallback. |
+| `Arbor.MCP.call/4` | `Client.call_tool/4` / `call/4` keep the full Response; `Client.call_content/4` deliberately extracts and normalizes tool errors. |
+| `Arbor.MCP.tools/2` | `Client.list_tools/2` / `tools/2` keep the page; `Client.tool_definitions/2` extracts the list. |
+| `Arbor.MCP.resources/2` / `read/3` | `Client.list_resources/2` / `read_resource/3` keep full responses; `resource_definitions/2` / `read_content/3` extract. |
+| `Arbor.MCP.disconnect/1` | `Client.stop/1` terminates; `Client.disconnect/1` retains the disconnected process. |
+| `Arbor.MCP.ping/2` | `Client.probe/2` checks a temporary connection with scoped cleanup; `Client.ping/2` operates on an existing client. |
+| `Arbor.MCP.status/1` | `Client.status/2` returns tagged status or timeout/unavailable errors; `status!/2` raises explicitly. |
+
+`Arbor.MCP.start_server/1` retains its legacy `:test` default and now routes
+explicit stdio/HTTP correctly. New code should use `Server.start_link/1` with
+an explicit transport. `Server.stop/2` uses Runtime's existing overall shutdown
+budget and ownership receipts; it does not stop a borrowed Phoenix listener or
+borrowed IO devices. A supervisor still applies its child restart policy.
+
+ArborACP follows the same role convention with `Arbor.ACP.Client` and
+`Arbor.ACP.Agent` (ACP's protocol term). Root ACP startup functions remain thin
+shorthand. `Agent.stop/3` now accepts a reason and timeout like `Client.stop/3`;
+the previous `Agent.stop(agent, timeout: ...)` form remains supported. Vendor
+adapters supply implementations under `Arbor.ACP.Adapters.*`; session workflows
+stay in the core Client. ArborRPC retains resource APIs such as
+`Subprocess.open/close` and its framing/envelope modules.
+
 ## 1. Replace the dependency with the packages you use
 
 Remove `{:ex_mcp, ...}` from `mix.exs`. For an MCP application, use an exact RC
@@ -180,7 +224,7 @@ Operational inspection uses tagged success consistently:
 ```elixir
 {:ok, status} = Arbor.ACP.Client.status(client, timeout: 1_000)
 {:ok, status} = Arbor.ACP.Agent.status(agent, timeout: 1_000)
-{:ok, statistics} = Arbor.MCP.Server.Runtime.stats(runtime)
+{:ok, statistics} = Arbor.MCP.Server.stats(runtime)
 {:ok, statistics} = Arbor.RPC.Subprocess.stats(handle)
 ```
 

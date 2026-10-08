@@ -36,7 +36,7 @@ The endpoint owns the HTTP listener; this Runtime borrows it. A standalone
 server can own a Cowboy or Bandit listener instead; see
 [HTTP listeners](HTTP_LISTENERS.md). For BEAM/test, the generated DSL
 `MyServer.start_link(transport: :beam)` and
-`Arbor.MCP.Server.HandlerServer.start_link(handler: MyHandler, transport: :test)`
+`Arbor.MCP.Server.start_link(handler: MyHandler, transport: :test)`
 also return Runtime supervisor PIDs. Treat those PIDs as server handles, not
 as GenServers containing handler state.
 

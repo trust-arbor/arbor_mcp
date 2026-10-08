@@ -71,17 +71,11 @@ defmodule Arbor.MCP.Server.DSL do
 
       @doc false
       def child_spec(opts) do
-        Arbor.MCP.Server.Runtime.Diagnostics.child_spec(%{
-          id: Keyword.get(opts, :id, __MODULE__),
-          start: {__MODULE__, :start_link, [opts]},
-          type:
-            if(Keyword.get(opts, :transport, :beam) in [:test, :beam],
-              do: :supervisor,
-              else: :worker
-            ),
-          restart: :permanent,
-          shutdown: Keyword.get(opts, :shutdown_timeout_ms, 5_000)
-        })
+        opts
+        |> Keyword.put_new(:id, __MODULE__)
+        |> Keyword.put_new(:handler, __MODULE__)
+        |> Arbor.MCP.Server.child_spec()
+        |> Map.put(:modules, [__MODULE__])
       end
 
       defoverridable child_spec: 1
@@ -745,36 +739,13 @@ defmodule Arbor.MCP.Server.DSL do
     end
   end
 
-  defp generate_start_link_callback(server_info) do
+  defp generate_start_link_callback(_server_info) do
     quote do
-      alias Arbor.MCP.Server.{HandlerServer, Transport}
-
-      @doc """
-      Starts this MCP handler using the requested transport.
-      """
+      @doc "Starts this MCP handler through Arbor.MCP.Server.start_link/1."
       def start_link(opts \\ []) do
-        case Keyword.get(opts, :transport, :beam) do
-          :test ->
-            opts
-            |> Keyword.put_new(:handler, __MODULE__)
-            |> HandlerServer.start_link()
-
-          :beam ->
-            opts
-            |> Keyword.put_new(:handler, __MODULE__)
-            |> HandlerServer.start_link()
-
-          transport when transport in [:http, :stdio] ->
-            Transport.start_server(
-              __MODULE__,
-              unquote(Macro.escape(server_info)),
-              [],
-              opts
-            )
-
-          transport ->
-            {:error, {:unsupported_transport, transport}}
-        end
+        opts
+        |> Keyword.put_new(:handler, __MODULE__)
+        |> Arbor.MCP.Server.start_link()
       end
     end
   end

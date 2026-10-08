@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 2.0.0-rc.2 (unreleased)
 
+- Consolidate public entrypoints in Client and Server. Add transport-aware Server
+  startup/child specs, bounded stop and statistics; route DSL startup through the
+  same constructor. Add explicit Client extraction helpers, scoped connectivity
+  probe, tagged status/bang inspection and ClientConfig connections. Preserve root
+  compatibility semantics and forward transport-specific ClientConfig options.
 - Ship agent usage rules in Hex archives and ExDoc, with downstream UsageRules
   setup guidance and API-reference validation through the existing docs gate.
 - Preserve complete Response wire fields, extensions, pagination and false/null

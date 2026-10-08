@@ -5,6 +5,19 @@ Reviewed October 7, 2026 against MCP `0812257`, ACP `7e299f8` and RPC
 source review and a proposed release disposition, not a Spark migration or a
 new compiled API freeze. Existing compatibility evidence retains its sources.
 
+## Canonical entrypoint follow-up (October 8)
+
+Client and Server now own ordinary operations and lifecycle. New explicit
+Client extraction helpers preserve the old root facade result behavior without
+changing Client's full-response aliases. Root operations remain compatibility
+wrappers. Server starts plain/DSL handlers across all four transports through
+one dispatcher, with supervisor child specs and bounded Runtime shutdown/stats.
+Client status uses tagged errors and an explicit bang; a scoped probe differs
+from an existing connection's wire ping. ACP retains Client/Agent roles and
+adds the matching Agent stop reason/options form. The migration guide records
+the canonical entrypoints and legacy semantic differences. Spark stays deferred.
+Validation of this follow-up is recorded separately from earlier checkpoints.
+
 ## Implemented release changes
 
 The focused cleanup below is implemented for ArborMCP `2.0.0-rc.2` and

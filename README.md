@@ -65,6 +65,16 @@ Arbor.MCP.Client.stop(client)
 
 The latest stable MCP revision is `2026-07-28`. `:prefer_modern` allows evidence-based fallback to the legacy protocol era; `:modern_only` and `:legacy_only` select an era explicitly. Library version 2 and the MCP wire revision are separate version identifiers.
 
+## Public entrypoints
+
+Use `Arbor.MCP.Client` for connection, protocol operations and explicit client
+conveniences; use `Arbor.MCP.Server` for startup, supervision, controls, statistics
+and shutdown. `Server.Handler` defines callbacks and `Server.DSL` adds declarations.
+Canonical Client operations preserve complete responses; `call_content`,
+`read_content`, `tool_definitions` and `resource_definitions` extract explicitly.
+Root client operations remain compatibility wrappers with their original behavior.
+See the [entrypoint migration table](docs/guides/MIGRATING_V1_TO_V2.md#canonical-role-entrypoints).
+
 ## Servers and transports
 
 Handlers use `Arbor.MCP.Server.Handler` and the declarative `Arbor.MCP.Server.DSL` to define tools, resources and prompts. HTTP, stdio and BEAM use a supervised Runtime per server, bounded handler scheduling and explicit session/subscription storage contracts. Follow the [roadmap](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/V2_ROADMAP.md) for the accepted contract.

@@ -664,11 +664,11 @@ config =
   |> Arbor.MCP.ClientConfig.put_auth(:bearer, token: System.fetch_env!("MCP_TOKEN"))
   |> Arbor.MCP.ClientConfig.put_retry_policy(max_attempts: 3, base_interval: 500)
 
-{:ok, client} = Arbor.MCP.connect(config)
+{:ok, client} = Arbor.MCP.Client.connect(config)
 ```
 
-`Arbor.MCP.connect/2` also accepts a URL string, a `{transport, opts}` tuple, or
-a list of those specs. Throughout 1.x a list is still accepted, but only the
+`Arbor.MCP.Client.connect/2` also accepts a URL string, a `{transport, opts}` tuple, or
+a list of those specs. A list is still accepted in v2, but only the
 first spec is used. Remaining specs are ignored. This is not a failover.
 
 ## stdio

@@ -176,4 +176,11 @@ defmodule Arbor.MCP.FacadeBoundaryTest do
 
     assert_receive :ping_cleanup_attempted
   end
+
+  test "canonical scoped probe reports cleanup failure instead of connectivity success" do
+    assert {:error, {:cleanup_failed, :cleanup_denied, :ok}} =
+             Client.probe({PingTransport, test: self()}, reconnect: false)
+
+    assert_receive :ping_cleanup_attempted
+  end
 end

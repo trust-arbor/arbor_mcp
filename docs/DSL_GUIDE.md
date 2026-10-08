@@ -375,14 +375,20 @@ For a hand-written handler without the DSL:
 
 ```elixir
 {:ok, pid} =
-  Arbor.MCP.Server.HandlerServer.start_link(
+  Arbor.MCP.Server.start_link(
     transport: :test,
     handler: MyHandler
   )
 ```
 
-`Arbor.MCP.start_server/1` is also available as a top-level convenience wrapper for
-`Arbor.MCP.Server.HandlerServer.start_link/1`.
+`MyServer.start_link/1` delegates to `Arbor.MCP.Server.start_link/1`, so plain
+handlers and DSL handlers share all four transport paths. Both child specs
+describe runtime supervisors. `Arbor.MCP.start_server/1` remains startup shorthand
+with its legacy `:test` default; the canonical Server constructor defaults to `:beam`.
+Select transports explicitly in production.
+
+Use `Arbor.MCP.Server.stop/2` for bounded shutdown and `Server.stats/1` for
+tagged inspection. Supervised endpoints retain their parent's restart policy.
 
 **Fast verification tip:** After `mix compile`, `mix examples.getting_started` runs a quick in-process demo of the DSL + client patterns shown throughout this guide (and in QUICKSTART.md).
 
@@ -414,8 +420,10 @@ The former `use Arbor.MCP.Server` macro and `deftool`, `defresource`, and
    and colocated `read` handlers.
 4. Replacing `defprompt` blocks with `prompt` blocks and colocated `render`
    handlers.
-5. Replacing the removed `Arbor.MCP.Server.start_link` helper with `MyServer.start_link/1`,
-   `Arbor.MCP.Server.HandlerServer.start_link/1`, or `Arbor.MCP.start_server/1`.
+5. Replacing legacy server construction with `Arbor.MCP.Server.start_link/1`,
+   using `handler: MyHandler` and an explicit transport, or generated
+   `MyServer.start_link/1`. The v2 constructor returns a runtime supervisor;
+   it does not restore the removed `use Server` macro or legacy DSL.
 
 Old generated getters such as `get_tools/0`, `get_resources/0`, and
 `get_prompts/0` are no longer part of the server API. Use the standard handler

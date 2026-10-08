@@ -67,6 +67,9 @@ defmodule Arbor.MCP.Client.Internal.Connection do
     end
   end
 
+  def do_parse_connection_spec(%Arbor.MCP.ClientConfig{} = config),
+    do: Arbor.MCP.ClientConfig.to_client_opts(config)
+
   def do_parse_connection_spec(url) when is_binary(url) do
     uri = URI.parse(url)
 

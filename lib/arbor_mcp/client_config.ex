@@ -52,7 +52,7 @@ defmodule Arbor.MCP.ClientConfig do
 
       # Create a simple HTTP configuration
       config = Arbor.MCP.ClientConfig.new(:http, url: "http://localhost:8080")
-      {:ok, client} = Arbor.MCP.connect(config)
+      {:ok, client} = Arbor.MCP.Client.connect(config)
 
   ## Advanced Usage
 
@@ -63,7 +63,7 @@ defmodule Arbor.MCP.ClientConfig do
       |> Arbor.MCP.ClientConfig.put_timeout(connect: 10_000, request: 30_000)
       |> Arbor.MCP.ClientConfig.put_auth(:bearer, token: "...")
 
-      {:ok, client} = Arbor.MCP.connect(config)
+      {:ok, client} = Arbor.MCP.Client.connect(config)
 
   ## Configuration Profiles
 
@@ -497,7 +497,7 @@ defmodule Arbor.MCP.ClientConfig do
   ## Examples
 
       case Arbor.MCP.ClientConfig.validate(config) do
-        :ok -> {:ok, client} = Arbor.MCP.connect(config)
+        :ok -> {:ok, client} = Arbor.MCP.Client.connect(config)
         {:error, errors} -> handle_config_errors(errors)
       end
   """
@@ -883,7 +883,16 @@ defmodule Arbor.MCP.ClientConfig do
     transport_headers = Map.to_list(transport.headers)
     merged_headers = existing_headers ++ transport_headers
 
-    opts
+    # Forward transport-specific constructor options (for example :server for
+    # BEAM), without replacing the profile's canonical timeouts/auth options.
+    transport_opts =
+      transport
+      |> Map.drop([:type, :url, :command, :host, :port, :headers, :options, :ssl, :path])
+      |> Map.to_list()
+      |> then(&Keyword.merge(transport.options, &1))
+
+    transport_opts
+    |> Keyword.merge(opts)
     |> Keyword.put(:transport_options, transport.options)
     |> Keyword.put(:headers, merged_headers)
   end
