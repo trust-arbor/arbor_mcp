@@ -1,17 +1,17 @@
-# Testing the ArborMCP and ArborACP v2 release candidate
+# Testing the ArborMCP and ArborACP release candidates
 
-The original four `2.0.0-rc.1` packages are published on Hex. This checkout
-prepares independent replacement versions:
+The original four `2.0.0-rc.1` packages remain on Hex. The replacement candidate
+train uses independent version lines:
 
-| Package | Prepared replacement | First stable target |
+| Package | Replacement candidate | First stable target |
 | --- | --- | --- |
 | ArborMCP (`arbor_mcp`) | `2.0.0-rc.2` | `2.0.0` |
 | ArborRPC (`arbor_rpc`) | `1.0.0-rc.1` | `1.0.0` |
 | ArborACP (`arbor_acp`) | `1.0.0-rc.1` | `1.0.0` |
 | ArborACP adapters (`arbor_acp_adapters`) | `1.0.0-rc.1` | `1.0.0` |
 
-The replacements are not published yet. Installation examples below apply after
-publication; use reviewed source checkouts to test the prepared graph now.
+Installation examples below require the replacement versions to be available on
+Hex; consult each package's release listing for publication and retirement state.
 Existing tags and archives stay intact. Retire superseded versions only after
 replacement publication and verified installation. Retirement preserves existing
 downloads and lockfile resolution. Start with the
@@ -37,31 +37,39 @@ lockfile, and use normal Hex resolution without the local package path overrides
 
 ## Candidate scope and validation
 
-Development builds after RC1 use revision tokens for atomic output-ledger
-updates. This changes the internal ledger table layout: drain and stop live MCP
-runtimes before loading the new code, then start fresh runtimes. Use the same
-cold-restart procedure when rolling back. This development change still needs
-fresh package/consumer qualification and a new candidate soak. Supported and
-latest MCP CI passed at `0812257`; changed version/dependency metadata needs its
-own archive evidence.
-
 The package split, `Arbor.MCP.*` / `Arbor.ACP.*` namespaces, optional adapter
-bundle and full server runtime/scheduler redesign are included. The candidate
-also includes the native write-publication race fix found during qualification.
+bundle and full server runtime/scheduler redesign are included. Client/Server are
+the canonical MCP entrypoints; ACP uses Client/Agent. The existing DSL remains,
+with stricter diagnostics. Spark and further performance work are deferred.
 
-Earlier implementation checkpoints passed current/minimum production API
-comparisons, four-package source-archive checks, MCP/ACP CI, four
-installed/assembled-release mixed-load rehearsals, and six additional public
-negative controls. Those receipts retain their original source identities.
-The October 6 documentation, dependency-range and Claude file-limit fixes pass
-updated source-archive and supported CI qualification. RPC's macOS native lane
-and all four credential-free CLI lifecycle checks pass. ZCode settings fixes
-at ACP `7e299f8` pass package and latest-BEAM CI. MCP `e4cb5f6` passes its
-22 supported jobs and five latest-BEAM jobs, including the assertion-helper fix.
-The subsequent output-accounting and OTP JSON optimizations require their own
-final-source qualification. Lifecycle checks do not qualify model turns. See the
-[current release assessment](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/V2_RELEASE_ASSESSMENT.md) for active gates.
-Earlier checks do not qualify these changes or establish a completed soak.
+MCP Client adds bounded `all_tools`, `all_resources`, `all_resource_templates`
+and `all_prompts`; ordinary listing still returns one complete Response page.
+Pagination shares one total deadline and finite page/item/byte limits. ACP
+`Client.prompt/4` now returns the peer JSON result unchanged. Callers using the
+original RC's synthesized `result["text"]` must use `prompt_text/4`, which returns
+`{:ok, %{result: peer_result, text: text, truncated?: boolean}}`. Check truncation;
+collection is bounded and excludes thought chunks. `Client.with_connection/2,3`
+provides finite startup and cleanup with explicit retained outcomes on cleanup
+failure. See the [migration guide](MIGRATING_V1_TO_V2.md) for complete contracts.
+
+Development builds after the original RC use revision tokens for atomic
+output-ledger updates. This changes the internal ledger table layout: drain and
+stop live MCP runtimes before loading the new code, then start fresh runtimes.
+Use the same cold-restart procedure when rolling back.
+
+The October 8 source checkpoint passes supported/latest MCP and ACP CI, RPC's
+supported/native matrix, strict docs, four-package archive/source checks and
+installed/compiler-free assembled-release probes on minimum/current toolchains.
+The probes exercise the new pagination, scoped ACP connection and text APIs.
+MCP's full strict checkpoint passes 5,445 tests, 20 doctests and 34 properties;
+core ACP passes 387 tests; adapters pass 1,479 tests. Six pinned official ACP
+TypeScript SDK 1.4.0 interop tests pass. Existing exclusions and source identities
+are recorded in the [current release assessment](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_ASSESSMENT.md).
+
+These checks qualify selected source/archive payloads. Replacement Hex
+publication and ordinary registry installation are verified separately.
+Earlier credential-free CLI lifecycle checks do not qualify live model turns.
+No completed continuous 48-hour final-candidate soak is claimed.
 
 The latest continuous attempt stopped after about 50 minutes when the test
 harness exceeded the documented request-ID capacity of one persistent MCP peer

@@ -40,7 +40,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: trust-arbor/arbor_rpc
-        ref: 1db60551a666b9afc38adb0dd015a28d58d230f3
+        ref: b2e4abee581b060310202c0b8b4d9a5d0e2e3995
         path: .arbor-v2/rpc
         persist-credentials: false
 

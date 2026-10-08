@@ -429,7 +429,8 @@ continues to receive applicable fixes and compatible minor releases; see the
 
 ## Consumer checklist
 
-- Select only the protocol packages and optional adapters you use; pin RC1.
+- Select only the protocol packages and optional adapters you use; pin the
+  prepared replacements in the [RC testing notes](V2_RELEASE_CANDIDATE.md).
 - Provide C17 at source-install time and verify the helper is in the release.
 - Update module/application references while preserving wire/storage identities.
 - Supervise one Runtime per server and give every HTTP mount its Runtime.

@@ -1,8 +1,8 @@
 # Independent package preparation
 
 This is a source-preparation and installation policy. The original four
-`2.0.0-rc.1` releases are published. The replacements below are prepared and
-unpublished; scripts do not publish packages or create tags.
+`2.0.0-rc.1` releases remain published. Replacement publication is verified
+separately; preparation scripts do not publish packages or create tags.
 
 ## Versions, dependencies and tags
 

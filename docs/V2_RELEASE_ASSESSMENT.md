@@ -4,29 +4,54 @@
 - **Released baseline:** `v1.5.0`
 - **Initial integrated audit baseline:** `e4d2fc3`; later qualified v2 checkpoints are recorded below
 - **Status:** Accepted v2 scope implemented; audit fixes and final release qualification in progress
-- **Release target:** Friday 2026-10-09, subject to release gates and RC soak
+- **Release target:** Replacement RC after final source checks; stable follows the
+  accepted continuous 48-hour soak and remaining gates. The original Friday
+  2026-10-09 stable target is superseded because that soak is incomplete.
 - **Canonical plan:** [V2_ROADMAP.md](./V2_ROADMAP.md)
 
-## Current API follow-up — October 8, 2026
+## Release freeze — October 8, 2026
 
-Client and Server are the canonical MCP entrypoints. Explicit Client extraction
-helpers preserve complete-response defaults on protocol operations, while root
-wrappers retain their compatibility behavior. Plain and DSL handlers share
-transport-aware Server startup and supervisor child specs; ordinary stop and
-statistics forward to Runtime's existing bounded ownership path. Client status
-and scoped connectivity probes have distinct, documented semantics. ACP keeps
-Client/Agent roles and now supports the matching Agent stop reason/options form.
-The usage rules, quickstarts and migration table reflect these entrypoints.
+The accepted split, runtime/scheduler redesign, DSL checks and public API review
+are complete for the replacement RC. Client/Server are the canonical MCP
+entrypoints; Client/Agent are the canonical ACP entrypoints. The existing DSL
+stays in this release. Spark and further performance experiments are deferred.
 
-The MCP response checkpoint passes 5,437 tests, 20 doctests and 34 properties
-(208 existing exclusions); 106 focused tests including HTTP pass on minimum and
-current toolchains. Final BEAM response/resource and role regressions also pass
-on both toolchains. Core ACP passes 370 tests (7 existing exclusions) on both;
-Adapters passes 1,479 tests (4 existing exclusions) on the current toolchain.
-Final strict docs, archive/installed-consumer and exact-head CI receipts for this
-follow-up are separate from the earlier source checkpoints below. These API
-checks do not publish the replacement candidates or satisfy the continuous soak,
-real downstream/vendor testing or final release gates.
+MCP Client now offers bounded `all_tools`, `all_resources`,
+`all_resource_templates` and `all_prompts`. One absolute deadline covers all
+pages, with finite page/item/byte limits and explicit cursor/malformed-page
+failures. Ordinary listing preserves a complete single Response. ACP `prompt`
+preserves the peer JSON result; explicit `prompt_text` collects streamed message
+text with separate result/text/truncation fields. ACP `with_connection` adds
+finite startup and confirmed cleanup with retained callback outcomes. Public
+protocol types describe string-keyed wire objects; all 64 prior ACP type names
+remain. Readmes, migration notes, quickstarts and usage rules cover the changes.
+
+Source qualification is bound to MCP `2af7940`, ACP/core-addon `d5b56e6` and
+RPC `1db6055`, with final docs-only release preparation recorded separately.
+MCP's strict full-suite checkpoint passes 5,445 tests, 20 doctests and 34
+properties (208 existing exclusions). Final pagination/extraction regressions
+pass on minimum/current toolchains. Core ACP passes 387 tests (7 exclusions) on
+both toolchains; Adapters passes 1,479 tests (4 exclusions). Six cached official
+TypeScript ACP SDK 1.4.0 interop tests pass. Strict ExDoc and normal source hooks
+pass. All 513 packaged files match selected committed sources; extracted archive
+installation, strict compilation and installed/compiler-free assembled-release
+probes pass on minimum/current toolchains, including the new Client APIs.
+
+Selected MCP supported/latest CI passes 22/5 jobs; selected ACP supported/latest
+CI passes 13/10 jobs. RPC's supported package matrix, macOS native and archive
+consumer lanes pass. Evidence remains in `tmp/v2-sdk-api-improvements-1`;
+release-source association and later publication receipts are separate.
+
+The replacements are MCP `2.0.0-rc.2` and RPC, ACP and Adapters `1.0.0-rc.1`.
+Publication and ordinary registry installation remain pending at this source
+freeze. Preserve original versions and tags; retire superseded candidates only
+after verified replacement publication/installation. The 1.x maintenance branch
+continues independently. No qualifying continuous soak is active.
+
+Stable promotion still requires real downstream/vendor testing, production
+capacity/peer-turnover policy, performance acceptance and the accepted continuous
+48-hour final-candidate soak. Source/archive rehearsals do not satisfy those
+gates. See [RC notes](guides/V2_RELEASE_CANDIDATE.md) for consumer limits.
 
 ## Previous assessment — October 7, 2026
 
