@@ -22,11 +22,10 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.FaultsGoldenTest do
     * the `read_file` control request round trip (`fs/read_text_file`, the
       `contents` / `content` reply spellings, the `absPath` fallback) and
       the control error a client error reply writes;
-    * a recorded defect, pinned as it behaves today rather than fixed: a
-      `read_file` request's `max_bytes` never reaches the client, because
-      the adapter passes it as `:max_bytes` while
-      `ExMCP.ACP.Protocol.encode_file_read_request/3` only reads `:line`
-      and `:limit` (`read_file_drops_the_max_bytes_limit`);
+    * a `read_file` response at its exact `max_bytes` boundary succeeding
+      without inventing an ACP byte-limit field; focused public-callback
+      tests in `file_read_limit_test.exs` cover refusals, UTF-8 byte counts,
+      cancellation and one-time settlement;
     * the fail-closed answers for control requests the adapter does not
       implement and for a malformed control request;
     * `control_cancel_request` dropping a pending client request so a late
@@ -301,22 +300,25 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.FaultsGoldenTest do
       ClaudeGolden.assert_golden(@area, "read_file_without_content_answers_empty", steps)
     end
 
-    test "read_file_drops_the_max_bytes_limit" do
+    test "read_file_honors_the_max_bytes_limit" do
       steps =
         turn() ++
           [
             {:note,
-             "Recorded defect: the adapter passes max_bytes as :max_bytes, but " <>
-               "ACP.Protocol.encode_file_read_request/3 only reads :line and :limit, " <>
-               "so the cap never reaches the client"},
-            Flows.read_file_request("req-read", %{"max_bytes" => 2048}),
+             "ACP has line/limit fields rather than a byte cap; the adapter retains " <>
+               "max_bytes and validates the correlated response before answering Claude"},
+            Flows.read_file_request("req-read", %{"max_bytes" => 4}),
             Flows.reply_last(%{"content" => "body"})
           ]
 
-      transcript = ClaudeGolden.assert_golden(@area, "read_file_drops_the_max_bytes_limit", steps)
+      transcript =
+        ClaudeGolden.assert_golden(@area, "read_file_honors_the_max_bytes_limit", steps)
 
       assert [%{"params" => params}] = acp_requests(transcript)
       assert Map.keys(params) == ["path", "sessionId"]
+
+      assert %{writes: [%{"response" => %{"response" => %{"contents" => "body"}}}]} =
+               ClaudeGolden.last_result(transcript)
     end
 
     test "a_read_file_error_becomes_a_control_error" do

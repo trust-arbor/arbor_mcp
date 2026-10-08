@@ -362,16 +362,16 @@ defmodule ExMCP.ACP.Adapters.ZCodeTest do
 
       msg = %{
         "method" => "session/set_mode",
+        "id" => 40,
         "params" => %{"sessionId" => "sess-1", "modeId" => "auto"}
       }
 
-      assert {:messages_and_write, _messages, data, new_state} =
-               ZCode.translate_outbound(msg, state)
-
+      assert {:pending_and_write, data, new_state} = ZCode.translate_outbound(msg, state)
       zcode_msg = decode(data)
       assert zcode_msg["method"] == "session/setMode"
       assert zcode_msg["params"]["mode"] == "auto"
-      assert new_state.mode_id == "auto"
+      assert new_state.sessions["sess-1"].mode_id == "build"
+      assert new_state.pending_requests[zcode_msg["id"]].acp_id == 40
     end
 
     test "session/set_model sends session/setModel with provider/model ref", %{state: state} do
@@ -379,10 +379,11 @@ defmodule ExMCP.ACP.Adapters.ZCodeTest do
 
       msg = %{
         "method" => "session/set_model",
+        "id" => 41,
         "params" => %{"sessionId" => "sess-1", "modelId" => "anthropic/claude-sonnet"}
       }
 
-      assert {:reply_and_write, %{}, data, _new_state} = ZCode.translate_outbound(msg, state)
+      assert {:pending_and_write, data, _new_state} = ZCode.translate_outbound(msg, state)
       zcode_msg = decode(data)
       assert zcode_msg["method"] == "session/setModel"
       assert zcode_msg["params"]["model"]["providerId"] == "anthropic"
@@ -394,25 +395,29 @@ defmodule ExMCP.ACP.Adapters.ZCodeTest do
 
       msg = %{
         "method" => "session/set_config_option",
-        "params" => %{"configId" => "mode", "value" => "edit"}
+        "id" => 42,
+        "params" => %{"sessionId" => "sess-1", "configId" => "mode", "value" => "edit"}
       }
 
-      assert {:messages_and_write, _, data, _} = ZCode.translate_outbound(msg, state)
+      assert {:pending_and_write, data, _} = ZCode.translate_outbound(msg, state)
       zcode_msg = decode(data)
       assert zcode_msg["method"] == "session/setMode"
     end
 
     test "session/set_config_option thought_level sends setThoughtLevel", %{state: state} do
+      state = ZCode.Sessions.put(state, "sess-1", ZCode.Sessions.empty("sess-1", state))
+
       msg = %{
         "method" => "session/set_config_option",
-        "params" => %{"configId" => "thought_level", "value" => "high"}
+        "id" => 43,
+        "params" => %{"sessionId" => "sess-1", "configId" => "thought_level", "value" => "high"}
       }
 
-      assert {:reply_and_write, %{}, data, new_state} = ZCode.translate_outbound(msg, state)
+      assert {:pending_and_write, data, new_state} = ZCode.translate_outbound(msg, state)
       zcode_msg = decode(data)
       assert zcode_msg["method"] == "session/setThoughtLevel"
       assert zcode_msg["params"]["thoughtLevel"] == "high"
-      assert new_state.thought_level == "high"
+      assert new_state.sessions["sess-1"].thought_level == "medium"
     end
   end
 

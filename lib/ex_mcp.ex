@@ -525,6 +525,12 @@ defmodule ExMCP do
     end
   end
 
+  defp extract_resource_content(%{"contents" => contents}) when is_list(contents),
+    do: resource_text(contents)
+
+  defp extract_resource_content(%{contents: contents}) when is_list(contents),
+    do: resource_text(contents)
+
   defp extract_resource_content(response) when is_map(response) do
     # Try to extract content from the response map
     case response do
@@ -547,6 +553,14 @@ defmodule ExMCP do
     end
   end
 
+  defp resource_text(contents) do
+    Enum.find_value(contents, fn
+      %{"text" => text} when is_binary(text) -> text
+      %{text: text} when is_binary(text) -> text
+      _ -> nil
+    end)
+  end
+
   defp parse_json_content(content) do
     case Jason.decode(content) do
       {:ok, parsed} -> parsed
@@ -557,6 +571,13 @@ defmodule ExMCP do
   defp extract_tool_result_content(%Response{} = response) do
     # Handle Response struct - use the text_content function
     Response.text_content(response)
+  end
+
+  defp extract_tool_result_content(%{content: content} = result) when is_list(content) do
+    case Enum.find(content, &match?(%{type: "text", text: text} when is_binary(text), &1)) do
+      %{text: text} -> text
+      _ -> result
+    end
   end
 
   defp extract_tool_result_content(result) when is_map(result) do

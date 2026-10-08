@@ -69,6 +69,49 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     end
   end
 
+  defmodule DeferredSetterAdapter do
+    @behaviour ExMCP.ACP.Adapter
+
+    def init(opts), do: {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid), pending: MapSet.new()}}
+    def command(opts), do: if(Keyword.get(opts, :no_port), do: :one_shot, else: {"cat", []})
+    def translate_outbound(%{"method" => "initialize"}, state), do: {:ok, :skip, state}
+
+    def translate_outbound(%{"method" => method, "id" => id}, state)
+        when method in ["session/set_model", "session/set_mode", "session/set_config_option"] do
+      data = Jason.encode!(%{"native_request" => id}) <> "\n"
+      {:pending_and_write, data, %{state | pending: MapSet.put(state.pending, id)}}
+    end
+
+    def translate_outbound(
+          %{"method" => "$/cancel_request", "params" => %{"requestId" => id}},
+          state
+        ) do
+      send(state.test_pid, {:native_setter_cancelled, id})
+      {:ok, :skip, %{state | pending: MapSet.delete(state.pending, id)}}
+    end
+
+    def translate_inbound(line, state) do
+      %{"native_request" => id} = Jason.decode!(String.trim(line))
+      send(state.test_pid, {:native_setter_received, id})
+      {:skip, state}
+    end
+
+    def outbound_write_failed(%{"id" => id}, _reason, state) do
+      %{state | pending: MapSet.delete(state.pending, id)}
+    end
+
+    def handle_adapter_message({:native_setter_reply, id, reply}, state) do
+      if MapSet.member?(state.pending, id) do
+        message = Map.merge(%{"jsonrpc" => "2.0", "id" => id}, reply)
+        {:messages, [message], %{state | pending: MapSet.delete(state.pending, id)}}
+      else
+        {:skip, state}
+      end
+    end
+
+    def handle_adapter_message(_message, state), do: {:skip, state}
+  end
+
   # OneShotMockAdapter: simulates one-shot execution
   defmodule OneShotMockAdapter do
     @behaviour ExMCP.ACP.Adapter
@@ -1225,6 +1268,110 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
   end
 
   describe "session/set_model" do
+    test "zero-timeout polling reads buffered output and never registers an empty waiter" do
+      bridge = start_supervised!({AdapterBridge, adapter: MockAdapter, adapter_opts: []})
+      message = %{"jsonrpc" => "2.0", "id" => 200, "method" => "initialize", "params" => %{}}
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(message))
+      assert {:ok, raw} = AdapterBridge.receive_message(bridge, 0)
+      assert Jason.decode!(raw)["id"] == 200
+      assert {:error, :timeout} = AdapterBridge.receive_message(bridge, 0)
+      assert :queue.is_empty(:sys.get_state(bridge).waiters)
+    end
+
+    test "deferred setters wait for one correlated native result or error" do
+      {:ok, bridge} =
+        AdapterBridge.start_link(adapter: DeferredSetterAdapter, adapter_opts: [test_pid: self()])
+
+      on_exit(fn -> if Process.alive?(bridge), do: AdapterBridge.close(bridge) end)
+      _init = send_initialize(bridge)
+
+      for {method, id} <-
+            Enum.with_index(
+              ["session/set_model", "session/set_mode", "session/set_config_option"],
+              201
+            ) do
+        message = %{"jsonrpc" => "2.0", "id" => id, "method" => method, "params" => %{}}
+        assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(message))
+        assert_receive {:native_setter_received, ^id}, 1_000
+        assert {:error, :timeout} = AdapterBridge.receive_message(bridge, 0)
+
+        reply =
+          if rem(id, 2) == 0,
+            do: %{"result" => %{}},
+            else: %{"error" => %{"code" => -32_602, "message" => "native rejected"}}
+
+        send(bridge, {:native_setter_reply, id, reply})
+        assert {:ok, raw} = AdapterBridge.receive_message(bridge, 1_000)
+        assert Jason.decode!(raw) == Map.merge(%{"jsonrpc" => "2.0", "id" => id}, reply)
+        send(bridge, {:native_setter_reply, id, %{"result" => %{}}})
+        assert {:error, :timeout} = AdapterBridge.receive_message(bridge, 0)
+      end
+
+      assert :ok = AdapterBridge.close(bridge)
+    end
+
+    test "rejected deferred writes retire tracking and ignore late native replies" do
+      {:ok, bridge} =
+        AdapterBridge.start_link(
+          adapter: DeferredSetterAdapter,
+          adapter_opts: [test_pid: self(), no_port: true]
+        )
+
+      on_exit(fn -> if Process.alive?(bridge), do: AdapterBridge.close(bridge) end)
+
+      methods =
+        List.duplicate(["session/set_model", "session/set_mode", "session/set_config_option"], 3)
+        |> List.flatten()
+
+      for {method, id} <- Enum.with_index(methods, 211) do
+        message = %{"jsonrpc" => "2.0", "id" => id, "method" => method, "params" => %{}}
+        assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(message))
+        assert {:ok, raw} = AdapterBridge.receive_message(bridge, 1_000)
+        response = Jason.decode!(raw)
+        assert response["id"] == id
+        assert response["error"]["message"] == "no_port"
+        refute Map.has_key?(response, "result")
+        assert :sys.get_state(bridge).adapter_state.pending == MapSet.new()
+        send(bridge, {:native_setter_reply, id, %{"result" => %{}}})
+        assert {:error, :timeout} = AdapterBridge.receive_message(bridge, 0)
+      end
+
+      assert :ok = AdapterBridge.close(bridge)
+    end
+
+    test "a deferred setter timeout cancels its correlation and cannot settle the next request" do
+      alias ExMCP.ACP.{AdapterTransport, Client}
+
+      client =
+        start_supervised!(
+          {Client,
+           transport_mod: AdapterTransport,
+           adapter: DeferredSetterAdapter,
+           adapter_opts: [test_pid: self()]}
+        )
+
+      bridge = :sys.get_state(client).transport_state.bridge
+      first = Task.async(fn -> Client.set_model(client, "session", "first") end)
+      assert_receive {:native_setter_received, first_id}, 1_000
+
+      # Trigger the real deadline handler after native admission, without racing a short timer.
+      send(client, {:pending_request_timeout, first_id})
+      assert {:error, :request_timeout} = Task.await(first, 1_000)
+      assert_receive {:native_setter_cancelled, ^first_id}, 1_000
+      assert :sys.get_state(client).pending_requests == %{}
+      assert :sys.get_state(bridge).adapter_state.pending == MapSet.new()
+
+      second = Task.async(fn -> Client.set_model(client, "session", "second") end)
+      assert_receive {:native_setter_received, second_id}, 1_000
+      refute second_id == first_id
+      send(bridge, {:native_setter_reply, first_id, %{"result" => %{"stale" => true}}})
+      assert :sys.get_state(bridge).adapter_state.pending == MapSet.new([second_id])
+      assert Task.yield(second, 0) == nil
+      send(bridge, {:native_setter_reply, second_id, %{"result" => %{}}})
+      assert {:ok, %{}} = Task.await(second, 1_000)
+      assert :ok = Client.disconnect(client)
+    end
+
     test "returns method-not-found when adapter skips set_model" do
       {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
       _init = send_initialize(bridge)

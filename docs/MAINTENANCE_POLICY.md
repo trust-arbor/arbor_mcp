@@ -1,16 +1,17 @@
-# ExMCP 1.x maintenance and ArborMCP/ArborACP v2 releases
+# ExMCP 1.x maintenance and Arbor package releases
 
-ExMCP 1.x remains supported while ArborMCP, ArborACP, ArborACP adapters and
-ArborRPC 2.x are introduced. Publishing v2 does not require existing applications
-to migrate. No end-of-support date has been set; any future retirement will be
-announced in advance in this policy and the release notes.
+ExMCP 1.x remains supported alongside ArborMCP 2.x and the independently
+versioned ArborACP 1.x, ArborACP adapters 1.x and ArborRPC 1.x packages.
+Publishing ArborMCP v2 does not require existing applications to migrate. No
+end-of-support date has been set; any future retirement will be announced in
+advance in this policy and the release notes.
 
 ## Release lines
 
 | Line | Source branch | Hex packages | Public modules |
 | --- | --- | --- | --- |
 | Maintained 1.x | `codex/maintenance-1.x` in `trust-arbor/arbor_mcp` | `ex_mcp` | `ExMCP.*`, including `ExMCP.ACP.*` |
-| Version 2 | `codex/v2-migration` until merged into MCP's default branch; each split repository thereafter | `arbor_mcp`, `arbor_acp`, `arbor_acp_adapters`, `arbor_rpc` | `Arbor.MCP.*`, `Arbor.ACP.*`, `Arbor.RPC.*` |
+| Arbor packages | Each repository's default branch | `arbor_mcp`, `arbor_acp`, `arbor_acp_adapters`, `arbor_rpc` | `Arbor.MCP.*`, `Arbor.ACP.*`, `Arbor.RPC.*` |
 
 The 1.x branch was preserved from supported commit `3914a927` before the v2
 merge. Its package identity, configuration ownership and compatibility promises
@@ -40,6 +41,19 @@ Consumers staying on 1.x can retain `{:ex_mcp, "~> 1.0"}` to allow compatible
 1.x releases, or choose a narrower minor-series requirement. Keep and review the
 application's lockfile when updating. The GitHub move does not change the Hex
 package name.
+
+## Maintenance CI
+
+The maintenance branch runs its own dependency graph and tests, including the
+minimum Elixir 1.17.3 / OTP 27.0 lane and supported Elixir 1.18, 1.19 and 1.20
+lanes. `BEAM latest stable` resolves current stable patches, reports drift from
+those pins and runs compile, unit and integration checks. Drift is advisory;
+test failures require review before updating a pin.
+
+GitHub runs scheduled workflows only from the default branch. The default
+branch's `ExMCP maintenance latest` workflow checks out `codex/maintenance-1.x`
+explicitly for the weekly run. The branch-local latest workflow also supports
+manual runs and maintenance PRs; its presence alone does not schedule a branch.
 
 ## Reporting and support
 

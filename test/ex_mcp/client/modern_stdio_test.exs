@@ -35,7 +35,9 @@ defmodule ExMCP.Client.ModernStdioTest do
   # as the parent instead of a stale global one.
   defp mix_child_env do
     [{"MIX_ENV", "test"}] ++
-      for name <- ["MIX_HOME", "MIX_ARCHIVES"], value = System.get_env(name), do: {name, value}
+      for name <- ["MIX_HOME", "MIX_ARCHIVES", "MIX_BUILD_PATH", "MIX_DEPS_PATH"],
+          value = System.get_env(name),
+          do: {name, value}
   end
 
   test "modern client completes discovery and tool calls over stdio without initialize" do
