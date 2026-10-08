@@ -205,17 +205,13 @@ defmodule ExMCP.ACP.Adapters.ZCode do
         state
       ) do
     with {:ok, session_id} <- Sessions.fetch_id(params),
-         {:ok, session} <- Sessions.fetch(state, session_id) do
-      case Protocol.prompt_content(params["prompt"]) do
-        {:ok, content} ->
-          if session.active_prompt_acp_id do
-            enqueue_prompt(state, acp_id, session_id, content, params)
-          else
-            start_prompt(acp_id, session_id, content, params, state)
-          end
-
-        {:error, reason} ->
-          {:error, reason, state}
+         {:ok, session} <- Sessions.fetch(state, session_id),
+         {:ok, content} <- Protocol.prompt_content(params["prompt"]),
+         {:ok, wire_params} <- prompt_wire_params(session_id, content, params, session) do
+      if session.active_prompt_acp_id do
+        enqueue_prompt(state, acp_id, session_id, wire_params)
+      else
+        start_prompt(acp_id, session_id, wire_params, state)
       end
     else
       {:error, reason} -> {:error, reason, state}
@@ -285,62 +281,17 @@ defmodule ExMCP.ACP.Adapters.ZCode do
     end
   end
 
-  def translate_outbound(%{"method" => "session/set_mode", "params" => params}, state) do
-    case Config.normalize_requested_mode(params["modeId"]) do
-      {:ok, mode_id} ->
-        session_id = params["sessionId"] || Sessions.current_id(state)
+  def translate_outbound(%{"method" => "session/set_mode", "params" => params} = msg, state),
+    do: set_mode(params, msg["id"], :empty, state)
 
-        {id, state} = next_request_id(state)
-
-        request =
-          Protocol.encode_request(id, "session/setMode", %{
-            "sessionId" => session_id,
-            "mode" => mode_id
-          })
-
-        state =
-          state
-          |> track_request(id, :session_set_mode, nil)
-          |> Map.put(:mode_id, mode_id)
-          |> Sessions.update(session_id, &Map.put(&1, :mode_id, mode_id))
-
-        messages = [AdapterEvents.current_mode_update(session_id, mode_id)]
-        {:messages_and_write, messages, Protocol.line(request), state}
-
-      {:error, reason} ->
-        {:error, reason, state}
-    end
-  end
-
-  def translate_outbound(%{"method" => "session/set_model", "params" => params}, state) do
-    with {:ok, session_id} <- Sessions.fetch_id(params),
-         {:ok, session} <- Sessions.fetch(state, session_id),
-         {:ok, model_ref} <- resolve_model_ref(params["modelId"], state) do
-      {id, state} = next_request_id(state)
-
-      request =
-        Protocol.encode_request(id, "session/setModel", %{
-          "sessionId" => session_id,
-          "model" => model_ref
-        })
-
-      state =
-        state
-        |> track_request(id, :session_set_model, nil)
-        |> Sessions.put(session_id, Map.put(session, :model_ref, model_ref))
-        |> Map.put(:model, model_ref)
-
-      {:reply_and_write, %{}, Protocol.line(request), state}
-    else
-      {:error, reason} -> {:error, reason, state}
-    end
-  end
+  def translate_outbound(%{"method" => "session/set_model", "params" => params} = msg, state),
+    do: set_model(params, msg["id"], :empty, state)
 
   def translate_outbound(
-        %{"method" => "session/set_config_option", "params" => params},
+        %{"method" => "session/set_config_option", "params" => params} = msg,
         state
       ) do
-    translate_config_option(params["configId"], params["value"], state)
+    translate_config_option(params, msg["id"], state)
   end
 
   # Client response to a permission request we forwarded
@@ -371,7 +322,27 @@ defmodule ExMCP.ACP.Adapters.ZCode do
     end
   end
 
+  def translate_outbound(
+        %{"method" => "$/cancel_request", "params" => %{"requestId" => id}},
+        state
+      ),
+      do: {:ok, :skip, retire_setting_request(state, id)}
+
   def translate_outbound(_msg, state), do: {:ok, :skip, state}
+
+  @impl true
+  def outbound_write_failed(message, _reason, state),
+    do: retire_setting_request(state, message["id"])
+
+  defp retire_setting_request(state, acp_id) do
+    pending =
+      Map.reject(state.pending_requests, fn {_id, entry} ->
+        entry.acp_id == acp_id and
+          entry.type in [:session_set_mode, :session_set_model, :session_set_thought_level]
+      end)
+
+    %{state | pending_requests: pending}
+  end
 
   # -------------------------------------------------------------------------
   # Inbound: ZCode → ACP
@@ -448,9 +419,7 @@ defmodule ExMCP.ACP.Adapters.ZCode do
   # Private: prompt lifecycle
   # -------------------------------------------------------------------------
 
-  defp start_prompt(acp_id, session_id, content, params, state) do
-    wire_params = prompt_wire_params(session_id, content, params, state)
-
+  defp start_prompt(acp_id, session_id, wire_params, state) do
     {id, state} = next_request_id(state)
     request = Protocol.encode_request(id, "session/send", wire_params)
 
@@ -462,11 +431,11 @@ defmodule ExMCP.ACP.Adapters.ZCode do
     {:ok, Protocol.line(request), state}
   end
 
-  defp enqueue_prompt(state, acp_id, session_id, content, params) do
+  defp enqueue_prompt(state, acp_id, session_id, wire_params) do
     queued = %{
       acp_id: acp_id,
       session_id: session_id,
-      wire_params: prompt_wire_params(session_id, content, params, state)
+      wire_params: wire_params
     }
 
     queue = PromptQueue.enqueue(state.prompt_queue, queued)
@@ -483,9 +452,14 @@ defmodule ExMCP.ACP.Adapters.ZCode do
     {:messages, [notice, info], %{state | prompt_queue: queue}}
   end
 
-  defp prompt_wire_params(session_id, content, params, state) do
-    %{"sessionId" => session_id, "content" => content}
-    |> Maps.put_present("runtimeModel", model_ref(params["model"] || state.model))
+  defp prompt_wire_params(session_id, content, params, session) do
+    # The native session owns its selected model; an initial adapter default must
+    # not override a later successful per-session model change on every prompt.
+    with {:ok, selection} <- prompt_model_selection(params["model"], session) do
+      {:ok,
+       %{"sessionId" => session_id, "content" => content}
+       |> Maps.put_present("modelSelection", selection)}
+    end
   end
 
   defp cancel_queued_prompts(state, nil), do: {[], state}
@@ -505,41 +479,93 @@ defmodule ExMCP.ACP.Adapters.ZCode do
   # Private: config option translation
   # -------------------------------------------------------------------------
 
-  defp translate_config_option("mode", value, state) do
-    translate_outbound(
-      %{"method" => "session/set_mode", "params" => %{"modeId" => value}},
-      state
-    )
+  defp translate_config_option(%{"configId" => "mode", "value" => value} = params, acp_id, state),
+    do: set_mode(Map.put(params, "modeId", value), acp_id, :config, state)
+
+  defp translate_config_option(
+         %{"configId" => "model", "value" => value} = params,
+         acp_id,
+         state
+       ),
+       do: set_model(Map.put(params, "modelId", value), acp_id, :config, state)
+
+  defp translate_config_option(
+         %{"configId" => "thought_level", "value" => value} = params,
+         acp_id,
+         state
+       ) do
+    with {:ok, session_id} <- Sessions.fetch_id(params),
+         {:ok, session} <- Sessions.fetch(state, session_id),
+         true <- Config.valid_thought_level?(session, value) do
+      queue_setting_request(
+        "session/setThoughtLevel",
+        %{"sessionId" => session_id, "thoughtLevel" => value},
+        :session_set_thought_level,
+        %{"thoughtLevel" => %{"current" => value}},
+        acp_id,
+        :config,
+        state
+      )
+    else
+      false -> {:error, "Unsupported ZCode thought level: #{inspect(value)}", state}
+      {:error, reason} -> {:error, reason, state}
+    end
   end
 
-  defp translate_config_option("model", value, state) do
-    translate_outbound(
-      %{"method" => "session/set_model", "params" => %{"modelId" => value}},
-      state
-    )
+  defp translate_config_option(params, _acp_id, state),
+    do: {:error, "Unknown ZCode config option: #{params["configId"]}", state}
+
+  defp set_mode(params, acp_id, reply_type, state) do
+    with {:ok, session_id} <- Sessions.fetch_id(params),
+         {:ok, _session} <- Sessions.fetch(state, session_id),
+         {:ok, mode_id} <- Config.normalize_requested_mode(params["modeId"]) do
+      queue_setting_request(
+        "session/setMode",
+        %{"sessionId" => session_id, "mode" => mode_id},
+        :session_set_mode,
+        %{"mode" => %{"current" => mode_id}},
+        acp_id,
+        reply_type,
+        state
+      )
+    else
+      {:error, reason} -> {:error, reason, state}
+    end
   end
 
-  defp translate_config_option("thought_level", value, state) do
-    session_id = Sessions.current_id(state)
+  defp set_model(params, acp_id, reply_type, state) do
+    with {:ok, session_id} <- Sessions.fetch_id(params),
+         {:ok, session} <- Sessions.fetch(state, session_id),
+         {:ok, model_ref} <- resolve_model_ref(params["modelId"], session) do
+      model_ref = Config.with_reasoning_level(model_ref, session)
 
+      queue_setting_request(
+        "session/setModel",
+        %{"sessionId" => session_id, "model" => model_ref},
+        :session_set_model,
+        %{"model" => %{"current" => model_ref}},
+        acp_id,
+        reply_type,
+        state
+      )
+    else
+      {:error, reason} -> {:error, reason, state}
+    end
+  end
+
+  defp queue_setting_request(method, params, type, settings, acp_id, reply_type, state) do
     {id, state} = next_request_id(state)
-
-    request =
-      Protocol.encode_request(id, "session/setThoughtLevel", %{
-        "sessionId" => session_id,
-        "thoughtLevel" => value
-      })
+    request = Protocol.encode_request(id, method, params)
 
     state =
-      state
-      |> track_request(id, :session_set_thought_level, nil)
-      |> Map.put(:thought_level, value)
+      track_request(state, id, type, acp_id, %{
+        session_id: params["sessionId"],
+        requested_settings: settings,
+        reply_type: reply_type
+      })
 
-    {:reply_and_write, %{}, Protocol.line(request), state}
+    {:pending_and_write, Protocol.line(request), state}
   end
-
-  defp translate_config_option(config_id, _value, state),
-    do: {:error, "Unknown ZCode config option: #{config_id}", state}
 
   # -------------------------------------------------------------------------
   # Private: workspace / MCP authorization
@@ -722,6 +748,49 @@ defmodule ExMCP.ACP.Adapters.ZCode do
   # Private: model ref helpers
   # -------------------------------------------------------------------------
 
+  defp prompt_model_selection(nil, _session), do: {:ok, nil}
+
+  defp prompt_model_selection(model_id, session) when is_binary(model_id) do
+    with {:ok, ref} <- resolve_model_ref(model_id, session) do
+      prompt_model_selection(ref, session)
+    end
+  end
+
+  defp prompt_model_selection(%{"providerId" => provider, "modelId" => model} = ref, session)
+       when is_binary(provider) and is_binary(model) do
+    provider = String.trim(provider)
+    model = String.trim(model)
+
+    with true <-
+           provider != "" and model != "" and
+             Map.keys(ref) -- ["providerId", "modelId", "options"] == [],
+         {:ok, options} <- prompt_model_options(Map.get(ref, "options", %{})) do
+      ref = %{"providerId" => provider, "modelId" => model}
+      ref = if options == %{}, do: ref, else: Map.put(ref, "options", options)
+
+      with :ok <- Config.validate_model_reasoning(ref, session) do
+        {:ok, Config.with_reasoning_level(ref, session)}
+      end
+    else
+      _ -> {:error, "Invalid ZCode prompt model selection"}
+    end
+  end
+
+  defp prompt_model_selection(_value, _session),
+    do: {:error, "Invalid ZCode prompt model selection"}
+
+  defp prompt_model_options(options) when options == %{}, do: {:ok, %{}}
+
+  defp prompt_model_options(%{"reasoningLevel" => level} = options)
+       when map_size(options) == 1 and is_binary(level) do
+    case String.trim(level) do
+      "" -> {:error, :empty_reasoning_level}
+      level -> {:ok, %{"reasoningLevel" => level}}
+    end
+  end
+
+  defp prompt_model_options(_options), do: {:error, :invalid_model_options}
+
   defp model_ref(nil), do: nil
 
   defp model_ref(%{"providerId" => _, "modelId" => _} = ref), do: ref
@@ -735,15 +804,18 @@ defmodule ExMCP.ACP.Adapters.ZCode do
   end
 
   defp resolve_model_ref(model_id, state) when is_binary(model_id) do
-    if String.contains?(model_id, "/") do
-      [provider | rest] = String.split(model_id, "/")
-      model = Enum.join(rest, "/")
-      {:ok, %{"providerId" => provider, "modelId" => model}}
-    else
-      case find_model_in_catalog(model_id, state.models) do
-        {:ok, ref} -> {:ok, ref}
-        :error -> {:error, "Unknown modelId: #{model_id}"}
-      end
+    case find_model_in_catalog(model_id, Map.get(state, :models) || []) do
+      {:ok, ref} ->
+        {:ok, ref}
+
+      :error ->
+        case String.split(model_id, "/", parts: 2) do
+          [provider, model] when provider != "" and model != "" ->
+            {:ok, %{"providerId" => provider, "modelId" => model}}
+
+          _ ->
+            {:error, "Unknown modelId: #{model_id}"}
+        end
     end
   end
 

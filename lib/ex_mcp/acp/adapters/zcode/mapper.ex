@@ -35,6 +35,17 @@ defmodule ExMCP.ACP.Adapters.ZCode.Mapper do
   end
 
   # Notification
+  def reduce_message(
+        %{
+          "method" => "state.updated",
+          "params" => %{"scope" => "session", "sessionId" => id, "patch" => patch}
+        },
+        state
+      )
+      when is_map(patch) do
+    update_session_settings(state, id, patch)
+  end
+
   def reduce_message(%{"method" => "session/event", "params" => params}, state) do
     handle_session_event(params || %{}, state)
   end
@@ -65,7 +76,7 @@ defmodule ExMCP.ACP.Adapters.ZCode.Mapper do
   end
 
   defp handle_typed_response(:workspace_read_state, _entry, {:ok, result}, state) do
-    models = normalize_model_catalog(result["modelCatalog"] || result["settings"] || %{})
+    models = Config.normalize_model_catalog(result["modelCatalog"] || result["settings"] || %{})
     {[], [], %{state | models: models, phase: :ready}}
   end
 
@@ -172,14 +183,36 @@ defmodule ExMCP.ACP.Adapters.ZCode.Mapper do
     {[error_response(acp_id, error)], [], state}
   end
 
-  defp handle_typed_response(:session_set_mode, _entry, {:ok, _result}, state),
-    do: {[], [], state}
+  defp handle_typed_response(type, %{acp_id: acp_id, meta: meta}, {:ok, result}, state)
+       when type in [:session_set_mode, :session_set_model, :session_set_thought_level] do
+    session_id = meta[:session_id] || Protocol.session_id(result)
 
-  defp handle_typed_response(:session_set_model, _entry, {:ok, _result}, state),
-    do: {[], [], state}
+    # Current ZCode returns only the selected model here; older versions may ACK
+    # with an empty result. Never replace the full session catalog with this patch.
+    {requested_updates, [], state} =
+      update_session_settings(state, session_id, meta[:requested_settings] || %{})
 
-  defp handle_typed_response(:session_set_thought_level, _entry, {:ok, _result}, state),
-    do: {[], [], state}
+    {native_updates, [], state} =
+      update_session_settings(state, session_id, result["settings"] || %{})
+
+    response =
+      if meta[:reply_type] == :config do
+        session = Map.get(state.sessions, session_id, %{})
+        %{"configOptions" => Config.config_options(session)}
+      else
+        %{}
+      end
+
+    replies = if is_nil(acp_id), do: [], else: [Envelope.response(acp_id, response)]
+    updates = if native_updates == [], do: requested_updates, else: native_updates
+    {updates ++ replies, [], state}
+  end
+
+  defp handle_typed_response(type, %{acp_id: acp_id}, {:error, error}, state)
+       when type in [:session_set_mode, :session_set_model, :session_set_thought_level] do
+    replies = if is_nil(acp_id), do: [], else: [error_response(acp_id, error)]
+    {replies, [], state}
+  end
 
   defp handle_typed_response(_type, _entry, _reply, state),
     do: {[], [], state}
@@ -803,18 +836,16 @@ defmodule ExMCP.ACP.Adapters.ZCode.Mapper do
   @doc "Builds the ACP session setup result from a ZCode snapshot."
   @spec session_result(String.t(), map(), map()) :: map()
   def session_result(session_id, snapshot, state) do
-    projection = snapshot["projection"] || %{}
-    mode_id = projection["mode"] || Map.get(state, :mode_id) || Config.default_mode()
-
-    session = Map.get(state.sessions, session_id, %{})
+    session =
+      Map.get(state.sessions, session_id) || Sessions.from_snapshot(session_id, snapshot, state)
 
     %{
       "sessionId" => session_id,
       "modes" => %{
         "availableModes" => Config.modes(),
-        "currentModeId" => mode_id
+        "currentModeId" => session.mode_id
       },
-      "configOptions" => Config.config_options(state),
+      "configOptions" => Config.config_options(session),
       "_meta" => %{
         "ex_mcp" => %{
           "zcode" => %{
@@ -853,27 +884,28 @@ defmodule ExMCP.ACP.Adapters.ZCode.Mapper do
 
   defp format_usage(_), do: nil
 
-  defp normalize_model_catalog(catalog) when is_map(catalog) do
-    available = catalog["available"] || catalog["models"] || []
+  defp update_session_settings(state, session_id, settings) do
+    case Map.fetch(state.sessions, session_id) do
+      {:ok, session} ->
+        updated = Config.apply_settings(session, settings, :partial)
 
-    Enum.map(available, fn model ->
-      ref = model["ref"] || model
+        if updated == session do
+          {[], [], state}
+        else
+          options = AdapterEvents.config_option_update(session_id, Config.config_options(updated))
 
-      %{
-        "ref" => %{
-          "providerId" => ref["providerId"] || ref[:providerId],
-          "modelId" => ref["modelId"] || ref[:modelId]
-        },
-        "label" => model["label"] || model["name"],
-        "description" => model["description"],
-        "contextWindow" => model["contextWindow"],
-        "reasoning" => model["reasoning"]
-      }
-      |> compact()
-    end)
+          modes =
+            if updated.mode_id != session.mode_id,
+              do: [AdapterEvents.current_mode_update(session_id, updated.mode_id)],
+              else: []
+
+          {[options | modes], [], Sessions.put(state, session_id, updated)}
+        end
+
+      :error ->
+        {[], [], state}
+    end
   end
-
-  defp normalize_model_catalog(_), do: []
 
   defp default_runtime_preferences do
     %{

@@ -79,8 +79,13 @@ defmodule ExMCP.ACP.AdapterBridge do
   @doc "Receive the next ACP message from the agent. Blocks until available."
   @spec receive_message(t(), timeout()) :: {:ok, String.t()} | {:error, term()}
   def receive_message(bridge, timeout \\ 30_000) do
-    GenServer.call(bridge, {:receive, timeout, deadline(timeout)}, timeout)
+    # A zero-timeout poll must reach the bridge rather than exit caller-side.
+    # Positive and infinite timeouts retain the existing 1.x call behaviour.
+    GenServer.call(bridge, {:receive, timeout, deadline(timeout)}, receive_call_timeout(timeout))
   end
+
+  defp receive_call_timeout(0), do: 100
+  defp receive_call_timeout(timeout), do: timeout
 
   @doc "Close the bridge and terminate the subprocess."
   @spec close(t()) :: :ok
@@ -190,8 +195,9 @@ defmodule ExMCP.ACP.AdapterBridge do
          %{state | outbox: rest, outbox_bytes: state.outbox_bytes - byte_size(message)}}
 
       {:empty, _} ->
-        if state.status == :closed do
-          {:reply, {:error, :closed}, state}
+        if state.status == :closed or timeout == 0 do
+          reason = if state.status == :closed, do: :closed, else: :timeout
+          {:reply, {:error, reason}, state}
         else
           waiters = prune_dead_waiters(state.waiters)
 
@@ -613,7 +619,7 @@ defmodule ExMCP.ACP.AdapterBridge do
   end
 
   defp handle_outbound(
-         %{"method" => "session/set_config_option", "id" => id} = msg,
+         %{"method" => "session/set_config_option", "id" => _id} = msg,
          _json,
          _from,
          state
@@ -621,7 +627,7 @@ defmodule ExMCP.ACP.AdapterBridge do
     msg
     |> then(&state.adapter_mod.translate_outbound(&1, state.adapter_state))
     |> config_option_parts()
-    |> apply_config_option_translation(id, state)
+    |> apply_config_option_translation(msg, state)
   end
 
   defp handle_outbound(msg, _json, _from, state) do
@@ -633,20 +639,43 @@ defmodule ExMCP.ACP.AdapterBridge do
   # JSON-RPC -32602 = Invalid params. A config value outside the adapter's
   # enum (e.g. Pi's thinking_level) is invalid params from the client's
   # perspective.
-  defp apply_config_option_translation({:error, reason, adapter_state}, id, state) do
+  defp apply_config_option_translation({:error, reason, adapter_state}, %{"id" => id}, state) do
     state = %{state | adapter_state: adapter_state}
     {:reply, :ok, synthesize_error(state, id, -32_602, to_string(reason))}
   end
 
-  defp apply_config_option_translation({:ok, messages, result, data, adapter_state}, id, state) do
-    state = %{state | adapter_state: adapter_state}
-    if data, do: _ = write_to_port(state, data)
-    state = push_encoded_messages(state, messages)
-    {:reply, :ok, synthesize_result(state, id, result || config_options_result(state))}
+  defp apply_config_option_translation({:pending_and_write, data, adapter_state}, msg, state) do
+    case write_pending_translation(msg, data, adapter_state, state) do
+      {:pending_and_write, :sent, state} -> {:reply, :ok, state}
+      {:error, reason, state} -> reply_translation_error(msg, reason, state)
+    end
   end
+
+  defp apply_config_option_translation(
+         {:ok, messages, result, data, adapter_state},
+         %{"id" => id} = msg,
+         state
+       ) do
+    state = %{state | adapter_state: adapter_state}
+
+    case optional_write(state, data) do
+      :ok ->
+        state = push_encoded_messages(state, messages)
+        {:reply, :ok, synthesize_result(state, id, result || config_options_result(state))}
+
+      {:error, reason} ->
+        reply_translation_error(msg, reason, state)
+    end
+  end
+
+  defp optional_write(_state, nil), do: :ok
+  defp optional_write(state, data), do: write_to_port(state, data)
 
   # One shape per translation: messages to push, a result or nil, and a write
   # or nil. `{:ok, :skip, _}` is the adapter declining without a write.
+  defp config_option_parts({:pending_and_write, data, adapter_state}),
+    do: {:pending_and_write, data, adapter_state}
+
   defp config_option_parts({:ok, :skip, adapter_state}), do: {:ok, [], nil, nil, adapter_state}
   defp config_option_parts({:ok, data, adapter_state}), do: {:ok, [], nil, data, adapter_state}
 
@@ -831,6 +860,9 @@ defmodule ExMCP.ACP.AdapterBridge do
 
   defp handle_translated_outbound({:ok, _delivery, state}, _msg), do: {:reply, :ok, state}
 
+  defp handle_translated_outbound({:pending_and_write, :sent, state}, _msg),
+    do: {:reply, :ok, state}
+
   defp handle_translated_outbound({:messages, messages, state}, _msg) do
     state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
     {:reply, :ok, state}
@@ -916,6 +948,9 @@ defmodule ExMCP.ACP.AdapterBridge do
     |> synthesize_after_translated(msg, id, result_fun)
   end
 
+  defp synthesize_after_translated({:pending_and_write, :sent, state}, _msg, _id, _result_fun),
+    do: {:reply, :ok, state}
+
   defp synthesize_after_translated(translated, msg, id, result_fun) do
     case translated_reply_parts(translated) do
       {:ok, messages, result, state} ->
@@ -963,9 +998,30 @@ defmodule ExMCP.ACP.AdapterBridge do
   end
 
   defp translate_outbound_message(msg, state) do
-    msg
-    |> state.adapter_mod.translate_outbound(state.adapter_state)
-    |> normalize_translated_outbound(state)
+    case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
+      {:pending_and_write, data, adapter_state} ->
+        write_pending_translation(msg, data, adapter_state, state)
+
+      translated ->
+        normalize_translated_outbound(translated, state)
+    end
+  end
+
+  defp write_pending_translation(msg, data, adapter_state, state) do
+    state = %{state | adapter_state: adapter_state}
+
+    case write_to_port(state, data) do
+      :ok ->
+        {:pending_and_write, :sent, state}
+
+      {:error, reason} ->
+        adapter_state =
+          if function_exported?(state.adapter_mod, :outbound_write_failed, 3),
+            do: state.adapter_mod.outbound_write_failed(msg, reason, adapter_state),
+            else: adapter_state
+
+        {:error, reason, %{state | adapter_state: adapter_state}}
+    end
   end
 
   defp normalize_translated_outbound({:ok, :skip, adapter_state}, state),

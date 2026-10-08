@@ -144,7 +144,7 @@
   %ExMCP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :note,
-      text: "Recorded defect: the adapter passes max_bytes as :max_bytes, but ACP.Protocol.encode_file_read_request/3 only reads :line and :limit, so the cap never reaches the client"
+      text: "ACP has line/limit fields rather than a byte cap; the adapter retains max_bytes and validates the correlated response before answering Claude"
     },
     result: %{}
   },
@@ -153,7 +153,7 @@
       kind: :inbound,
       message: %{
         "request" => %{
-          "max_bytes" => 2048,
+          "max_bytes" => 4,
           "path" => "<sandbox>/project/notes.md",
           "subtype" => "read_file"
         },

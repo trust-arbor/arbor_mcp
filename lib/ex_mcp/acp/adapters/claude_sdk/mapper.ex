@@ -352,14 +352,12 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
       {%{request_id: request_id, kind: :file_read, request: request}, state} ->
         response =
-          %{
-            "contents" => result["content"] || result["contents"] || "",
-            "absPath" => result["absPath"] || request["path"]
-          }
-          |> compact()
+          case file_read_response(result, request) do
+            {:ok, response} -> ClaudeProtocol.control_success(request_id, response)
+            {:error, error} -> ClaudeProtocol.control_error(request_id, error)
+          end
 
-        {:ok, ClaudeProtocol.control_success(request_id, response) |> ClaudeProtocol.line(),
-         state}
+        {:ok, ClaudeProtocol.line(response), state}
 
       {%{request_id: request_id}, state} ->
         {:ok, ClaudeProtocol.control_success(request_id, result || %{}) |> ClaudeProtocol.line(),
@@ -579,16 +577,22 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   end
 
   defp handle_control_request(request_id, %{"subtype" => "read_file"} = request, state) do
-    acp_id = ACPProtocol.generate_id()
+    case validate_file_read_limit(request) do
+      :ok ->
+        acp_id = ACPProtocol.generate_id()
 
-    message =
-      ACPProtocol.encode_file_read_request(session_id(state), request["path"],
-        max_bytes: request["max_bytes"]
-      )
-      |> Map.put("id", acp_id)
+        # ACP's line/limit fields cannot express a byte cap. Keep the native
+        # cap with this request and enforce it on the correlated response.
+        message =
+          ACPProtocol.encode_file_read_request(session_id(state), request["path"])
+          |> Map.put("id", acp_id)
 
-    state = put_pending_client_request(state, acp_id, request_id, :file_read, request)
-    {[message], [], state}
+        state = put_pending_client_request(state, acp_id, request_id, :file_read, request)
+        {[message], [], state}
+
+      {:error, error} ->
+        {[], [ClaudeProtocol.control_error(request_id, error) |> ClaudeProtocol.line()], state}
+    end
   end
 
   defp handle_control_request(request_id, %{"subtype" => subtype}, state) do
@@ -602,6 +606,50 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
        ClaudeProtocol.control_error(request_id, "Malformed Claude SDK control request")
        |> ClaudeProtocol.line()
      ], state}
+  end
+
+  defp validate_file_read_limit(request) do
+    case Map.fetch(request, "max_bytes") do
+      :error -> :ok
+      {:ok, limit} when is_integer(limit) and limit >= 0 -> :ok
+      {:ok, _limit} -> {:error, "read_file max_bytes must be a non-negative integer"}
+    end
+  end
+
+  defp file_read_response(result, request) when is_map(result) do
+    content =
+      case Map.fetch(result, "content") do
+        {:ok, content} when not is_nil(content) -> content
+        _other -> file_read_contents(result)
+      end
+
+    limit = Map.get(request, "max_bytes")
+
+    cond do
+      not is_binary(content) ->
+        {:error, "read_file response must contain UTF-8 text"}
+
+      is_integer(limit) and byte_size(content) > limit ->
+        {:error, "read_file response exceeds max_bytes"}
+
+      not String.valid?(content) ->
+        {:error, "read_file response must contain UTF-8 text"}
+
+      true ->
+        {:ok,
+         %{"contents" => content, "absPath" => result["absPath"] || request["path"]}
+         |> compact()}
+    end
+  end
+
+  defp file_read_response(_result, _request),
+    do: {:error, "read_file response must contain UTF-8 text"}
+
+  defp file_read_contents(result) do
+    case Map.get(result, "contents") do
+      nil -> ""
+      content -> content
+    end
   end
 
   defp ask_user_question_request(request, state) do

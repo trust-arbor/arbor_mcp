@@ -19,6 +19,7 @@ defmodule ExMCP.ACP.Adapter do
   - `capabilities/0` — return static agent capabilities
   - `post_connect/1` — called after Port is opened
   - `handle_adapter_message/2` — handle process messages for adapter-managed subprocesses
+  - `outbound_write_failed/3` — retire deferred response tracking after a failed native write
   - `shutdown/1` — clean up adapter-managed resources when the bridge closes
   - `env/1` — return child-process environment variables
   - `modes/0` — return supported operational modes for session responses
@@ -69,6 +70,13 @@ defmodule ExMCP.ACP.Adapter do
   emit ACP messages while also writing to the native process, or
   `{:reply_and_write, result, iodata, new_state}` when it can reply while
   also forwarding data to the agent process, or
+  `{:pending_and_write, iodata, new_state}` to write a native request and emit
+  its correlated ACP response later from `translate_inbound/2`. This explicit
+  form suppresses the bridge's automatic setter/config success response; the
+  adapter must settle the request once, including native errors, or leave it
+  for the client's timeout/transport-close handling. Existing return forms
+  retain their automatic-response behavior. Adapters retaining a pending native
+  correlation for this form must implement `outbound_write_failed/3`. Return
   `{:error, reason, new_state}` when the request can't be honored (e.g., a
   config value outside the adapter's enum). The bridge translates
   `{:error, _, _}` into a JSON-RPC error response back to the ACP client.
@@ -85,6 +93,7 @@ defmodule ExMCP.ACP.Adapter do
               | {:messages_and_reply, messages :: [map()], result :: map(), state()}
               | {:messages_and_write, messages :: [map()], iodata(), state()}
               | {:reply_and_write, result :: map(), iodata(), state()}
+              | {:pending_and_write, iodata(), state()}
               | {:messages_and_reply_and_write, messages :: [map()], result :: map(), iodata(),
                  state()}
               | {:error, reason :: any(), state()}
@@ -106,6 +115,20 @@ defmodule ExMCP.ACP.Adapter do
               | {:skip_and_write, iodata(), state()}
               | {:partial, state()}
               | {:skip, state()}
+
+  @doc """
+  Retire deferred response tracking when a `:pending_and_write` write fails.
+
+  The bridge calls this optional callback with the original ACP message, the
+  write error, and the state returned by `translate_outbound/2`, before emitting
+  the ACP error itself. Return state that ignores late replies for this request.
+  Do not emit a response or rewind native request IDs: a failed write may have
+  reached the subprocess. This does not undo any native side effects.
+
+  Required when `:pending_and_write` retains a pending correlation; other
+  outbound return forms do not invoke this callback.
+  """
+  @callback outbound_write_failed(acp_message :: map(), reason :: term(), state()) :: state()
 
   @doc """
   Handle raw messages for adapter-managed subprocesses.
@@ -235,6 +258,7 @@ defmodule ExMCP.ACP.Adapter do
     list_sessions: 2,
     fork_session: 2,
     handle_adapter_message: 2,
+    outbound_write_failed: 3,
     shutdown: 1
   ]
 end

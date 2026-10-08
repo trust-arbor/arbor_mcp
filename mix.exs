@@ -1,7 +1,7 @@
 defmodule ExMCP.MixProject do
   use Mix.Project
 
-  @version "1.5.0"
+  @version "1.6.0"
   @github_url "https://github.com/trust-arbor/arbor_mcp"
 
   def project do
@@ -131,7 +131,8 @@ defmodule ExMCP.MixProject do
       licenses: ["MIT"],
       links: %{
         "GitHub" => @github_url,
-        "Changelog" => "#{@github_url}/blob/master/CHANGELOG.md",
+        "Changelog" => "#{@github_url}/blob/v#{@version}/CHANGELOG.md",
+        "Maintenance" => "#{@github_url}/blob/codex/maintenance-1.x/docs/MAINTENANCE_POLICY.md",
         "MCP Spec" => "https://modelcontextprotocol.io",
         "ACP Spec" => "https://agentclientprotocol.com"
       },
@@ -144,6 +145,8 @@ defmodule ExMCP.MixProject do
           README.md
           LICENSE
           CHANGELOG.md
+          docs/MAINTENANCE_POLICY.md
+          docs/MAINTENANCE_1_6_RELEASE.md
           docs/ACP_GUIDE.md
           docs/ARCHITECTURE.md
           docs/CONFIGURATION.md
@@ -201,6 +204,8 @@ defmodule ExMCP.MixProject do
         "docs/DEVELOPMENT.md",
         "docs/TROUBLESHOOTING.md",
         "docs/ACP_GUIDE.md",
+        "docs/MAINTENANCE_POLICY.md",
+        "docs/MAINTENANCE_1_6_RELEASE.md",
         "CHANGELOG.md"
       ],
       extra_section: "GUIDES",

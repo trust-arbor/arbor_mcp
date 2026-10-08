@@ -30,7 +30,8 @@ defmodule ExMCP.ACP.Adapters.ZCode.Sessions do
       workspace: nil,
       mode_id: Map.get(state, :mode_id) || Config.default_mode(),
       model_ref: Map.get(state, :model),
-      thought_level: Config.default_thought_level(),
+      models: Map.get(state, :models) || [],
+      thought_level: Map.get(state, :thought_level) || Config.default_thought_level(),
       turn_id: nil,
       active_prompt_acp_id: nil,
       accumulated_text: [],
@@ -56,8 +57,9 @@ defmodule ExMCP.ACP.Adapters.ZCode.Sessions do
       mode_id:
         projection["mode"] || session["mode"] || Map.get(state, :mode_id) ||
           Config.default_mode(),
-      model_ref: session["model"] || snapshot["model"]
+      model_ref: session["model"] || snapshot["model"] || Map.get(state, :model)
     })
+    |> Config.apply_settings(snapshot["modelCatalog"] || snapshot["settings"] || %{})
   end
 
   @doc "Fetches a session ID from ACP params."

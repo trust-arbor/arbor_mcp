@@ -7,7 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - Unreleased
+
 ### Fixed
+
+- Claude ACP adapter: enforce each native `read_file.max_bytes` cap on its
+  correlated response. Invalid caps, oversized responses and malformed UTF-8
+  produce a control error instead of returning unchecked or truncated text.
+- ACP adapter bridge: zero-timeout polling returns its timeout result rather
+  than racing a caller-side exit; the original receive deadline is retained.
+- ZCode ACP adapter: use session model/reasoning catalogs and the current
+  native `modelSelection` prompt field. Apply settings and acknowledge setters
+  only after native confirmation; forward rejections and retire correlations
+  after cancellation or failed writes so late replies cannot report success.
+- `ExMCP.Response` round-trips retain metadata, structured content, media and
+  extension fields, pagination, and explicit false/null values. Native BEAM
+  content and descriptor accessors now handle atom keys without creating atoms.
+  Existing `to_test_map/1` and local response `meta`/false-omission conventions
+  remain available in 1.x.
+- `ExMCP.read/3` extracts text from standard MCP `contents`, including native
+  BEAM maps, while retaining legacy `content`, `parse_json`, and return shapes.
+  The 1.x facade's list, tool-error and normalization contracts are preserved.
 
 - **Security:** `ExMCP.Authorization.ProtectedResourceMetadata.discover/2`
   dropped the document's `resource`, so the RFC 9728 §3.3 check could not be
@@ -283,6 +303,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mode` config option's options (claude-agent-acp#1025).
 
 ### Changed
+
+- Refresh supported CI patch versions for Elixir 1.18–1.20, preserve the
+  Elixir 1.17.3 / OTP 27.0 minimum, and add latest-stable drift checks against
+  the maintenance branch's own dependency graph.
+- Clarify that ArborMCP 2.x and newly extracted ArborACP, ArborACP adapters and
+  ArborRPC 1.x have independent versions. ExMCP remains `ex_mcp` / `ExMCP.*`.
 
 - **Security:** minimum dependency versions now exclude two known
   vulnerabilities, so applications using ExMCP resolve fixed versions:

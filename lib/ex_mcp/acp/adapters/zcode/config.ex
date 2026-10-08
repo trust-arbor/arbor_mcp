@@ -84,6 +84,169 @@ defmodule ExMCP.ACP.Adapters.ZCode.Config do
     |> Enum.reject(&is_nil/1)
   end
 
+  @doc "Applies full snapshot settings or a current-model-only settings patch to one session."
+  @spec apply_settings(map(), map(), :full | :partial) :: map()
+  def apply_settings(session, settings, kind \\ :full) do
+    model = if is_map(settings["model"]), do: settings["model"], else: settings
+
+    session = update_model_catalog(session, model, kind)
+
+    session =
+      if Map.has_key?(model, "current"),
+        do: put_current_model(session, model["current"]),
+        else: session
+
+    session =
+      case settings["mode"] do
+        %{"current" => mode} -> Map.put(session, :mode_id, mode)
+        mode when is_binary(mode) -> Map.put(session, :mode_id, mode)
+        _ -> session
+      end
+
+    case settings["thoughtLevel"] do
+      thought when is_map(thought) ->
+        session
+        |> put_setting(thought, "available", :thought_levels)
+        |> put_setting(thought, "current", :thought_level)
+        |> put_setting(thought, "defaultLevel", :default_thought_level)
+        |> put_setting(thought, "enabled", :thought_level_enabled)
+
+      _ ->
+        session
+    end
+  end
+
+  defp update_model_catalog(session, model, kind) do
+    case model["available"] || model["models"] do
+      models when is_list(models) ->
+        models = normalize_model_catalog(%{"available" => models})
+        previous = Map.get(session, :models) || []
+        models = if kind == :full, do: models, else: merge_models(previous, models)
+        Map.put(session, :models, models)
+
+      _ ->
+        session
+    end
+  end
+
+  @doc "Normalizes the legacy catalog and current snapshot model catalog."
+  @spec normalize_model_catalog(map()) :: [map()]
+  def normalize_model_catalog(catalog) when is_map(catalog) do
+    catalog = if is_map(catalog["model"]), do: catalog["model"], else: catalog
+
+    case catalog["available"] || catalog["models"] do
+      models when is_list(models) ->
+        Enum.flat_map(models, fn
+          model when is_map(model) ->
+            case model["ref"] || model do
+              %{"providerId" => provider, "modelId" => id} = ref
+              when is_binary(provider) and is_binary(id) ->
+                ref = Map.take(ref, ["providerId", "modelId", "options"])
+                [model |> Map.put("ref", ref) |> Map.put_new("label", model["name"] || id)]
+
+              _ ->
+                []
+            end
+
+          _ ->
+            []
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  def normalize_model_catalog(_), do: []
+
+  @doc "Adds a supported reasoning level when the selected model requires one."
+  @spec with_reasoning_level(map(), map()) :: map()
+  def with_reasoning_level(ref, session) do
+    model =
+      Enum.find(
+        Map.get(session, :models) || [],
+        &(Map.drop(&1["ref"], ["options"]) == Map.drop(ref, ["options"]))
+      )
+
+    reasoning = if model, do: model["reasoning"] || %{}, else: %{}
+    levels = Enum.map(reasoning["levels"] || [], & &1["value"])
+
+    if levels == [] do
+      ref
+    else
+      current = Map.get(session, :thought_level)
+      default = reasoning["defaultLevel"]
+      explicit = get_in(ref, ["options", "reasoningLevel"])
+      level = Enum.find([explicit, current, default | levels], &(&1 in levels))
+      Map.put(ref, "options", %{"reasoningLevel" => level})
+    end
+  end
+
+  @doc "Rejects an explicit model reasoning choice outside its known catalog."
+  @spec validate_model_reasoning(map(), map()) :: :ok | {:error, String.t()}
+  def validate_model_reasoning(ref, session) do
+    model =
+      Enum.find(
+        Map.get(session, :models) || [],
+        &(Map.drop(&1["ref"], ["options"]) == Map.drop(ref, ["options"]))
+      )
+
+    level = get_in(ref, ["options", "reasoningLevel"])
+
+    case model do
+      %{"reasoning" => %{"levels" => levels}} when is_list(levels) and not is_nil(level) ->
+        if Enum.any?(levels, &(&1["value"] == level)),
+          do: :ok,
+          else: {:error, "Unsupported ZCode model reasoning level: #{inspect(level)}"}
+
+      _ ->
+        :ok
+    end
+  end
+
+  @doc "Checks a reasoning choice against the selected session's advertised levels."
+  @spec valid_thought_level?(map(), term()) :: boolean()
+  def valid_thought_level?(session, value) do
+    levels = Map.get(session, :thought_levels) || reasoning_levels(session)
+
+    Map.get(session, :thought_level_enabled) != false and Map.get(session, :thought_levels) != [] and
+      is_binary(value) and value != "" and
+      (levels == [] or Enum.any?(levels, &((&1["value"] || &1[:value]) == value)))
+  end
+
+  defp put_current_model(session, ref) do
+    session = Map.put(session, :model_ref, ref)
+
+    case current_model_entry(session) do
+      %{"reasoning" => %{"levels" => levels} = reasoning} when is_list(levels) ->
+        values = Enum.map(levels, & &1["value"])
+        selected = if is_map(ref), do: get_in(ref, ["options", "reasoningLevel"])
+        candidates = [selected, session[:thought_level], reasoning["defaultLevel"] | values]
+
+        session
+        |> Map.put(:thought_levels, levels)
+        |> Map.put(:thought_level_enabled, levels != [])
+        |> Map.put(:default_thought_level, reasoning["defaultLevel"])
+        |> Map.put(:thought_level, Enum.find(candidates, &(&1 in values)))
+
+      _ ->
+        session
+    end
+  end
+
+  defp put_setting(session, source, key, field) do
+    if Map.has_key?(source, key), do: Map.put(session, field, source[key]), else: session
+  end
+
+  defp merge_models(previous, models) do
+    Enum.reduce(models, previous, fn model, merged ->
+      case Enum.find_index(merged, &(model_key(&1) == model_key(model))) do
+        nil -> merged ++ [model]
+        index -> List.replace_at(merged, index, Map.merge(Enum.at(merged, index), model))
+      end
+    end)
+  end
+
   defp mode_option(state) do
     current = Map.get(state, :mode_id) || @default_mode
 
@@ -124,8 +287,11 @@ defmodule ExMCP.ACP.Adapters.ZCode.Config do
     end
   end
 
+  defp thought_level_option(%{thought_level_enabled: false}), do: nil
+  defp thought_level_option(%{thought_levels: []}), do: nil
+
   defp thought_level_option(state) do
-    levels = reasoning_levels(state)
+    levels = Map.get(state, :thought_levels) || reasoning_levels(state)
 
     options =
       if levels == [] do
@@ -140,7 +306,9 @@ defmodule ExMCP.ACP.Adapters.ZCode.Config do
       "description" => "Reasoning effort for this session",
       "category" => "thought_level",
       "type" => "select",
-      "currentValue" => Map.get(state, :thought_level) || @default_thought_level,
+      "currentValue" =>
+        Map.get(state, :thought_level) || Map.get(state, :default_thought_level) ||
+          if(levels == [], do: @default_thought_level, else: hd(levels)["value"]),
       "options" =>
         Enum.map(options, fn level ->
           %{
@@ -165,9 +333,10 @@ defmodule ExMCP.ACP.Adapters.ZCode.Config do
   end
 
   defp current_model_id(state) do
-    case Map.get(state, :current_model) || Map.get(state, :model) do
+    case Map.get(state, :model_ref) || Map.get(state, :current_model) || Map.get(state, :model) do
       %{"providerId" => p, "modelId" => m} -> "#{p}/#{m}"
       %{providerId: p, modelId: m} -> "#{p}/#{m}"
+      id when is_binary(id) -> id
       _ -> "default"
     end
   end
