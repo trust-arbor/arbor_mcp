@@ -2,7 +2,7 @@ defmodule Arbor.MCP.APIManifest do
   @moduledoc false
 
   # Repository-only census. Match the conservative lib/ scope of
-  # docs/API_DIFF_RC5_TO_1_0.md rather than treating HexDocs visibility as an
+  # test/fixtures/api/api_baseline_1_5_plus.json rather than treating HexDocs visibility as an
   # exhaustive compatibility promise. Reflection does not start applications.
 
   @excluded_exports [__info__: 1, module_info: 0, module_info: 1]

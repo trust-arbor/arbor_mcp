@@ -32,6 +32,9 @@ arbor_mcp-*.tar
 # Temporary files, for example, from tests.
 /tmp/
 
+# Repository-only API manifests and validation output.
+/_verification/
+
 # Dialyzer PLT files
 /priv/plts/
 

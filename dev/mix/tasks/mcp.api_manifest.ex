@@ -2,7 +2,7 @@ defmodule Mix.Tasks.Mcp.ApiManifest do
   @moduledoc """
   Writes a deterministic JSON census of the compiled package API under lib/.
 
-      mix mcp.api_manifest --output docs/v2/api_current.json
+      mix mcp.api_manifest --output _verification/api_current.json
       mix mcp.api_manifest --source-ref COMMIT --output PATH
       mix mcp.api_manifest --source-ref COMMIT --output PATH --check
 
@@ -34,7 +34,7 @@ defmodule Mix.Tasks.Mcp.ApiManifest do
 
     Mix.Task.run("compile")
     root = File.cwd!()
-    output = Path.expand(opts[:output] || "docs/v2/api_current.json", root)
+    output = Path.expand(opts[:output] || "_verification/api_current.json", root)
     app = Mix.Project.config()[:app]
     version = Mix.Project.config()[:version]
 

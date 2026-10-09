@@ -1,17 +1,17 @@
 # ArborMCP Troubleshooting Guide
 
-Version 2 is under development. Local `Mix.install/2` examples require
-`ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc` until the shared dependency is published.
+ArborMCP `2.0.0-rc.2` and ArborRPC `1.0.0-rc.1` are published.
+Normal installation resolves both from Hex; local source overrides are optional
+development settings.
 
 ## Installation and v1 migration
 
 ### Hex cannot find `arbor_mcp` or `arbor_rpc`
 
-The v2 release candidate is not yet published. Follow the source-checkout
-instructions in the [quickstart](getting-started/QUICKSTART.md), using the
-v2 MCP branch and a separate ArborRPC checkout. Set `ARBOR_RPC_PATH` before
-resolving the MCP dependency. Once published, use the exact coordinated RC
-versions from the [RC guide](guides/V2_RELEASE_CANDIDATE.md).
+Use the explicit `2.0.0-rc.2` MCP requirement and normal Hex resolution.
+RPC's transitive requirement includes `1.0.0-rc.1`; stable-only constraints do
+not select prereleases. Check registry connectivity, dependency conflicts and
+the application's lockfile. Local path overrides are optional for development.
 
 ### Native helper does not compile or cannot be found in a release
 
@@ -275,7 +275,7 @@ Inspect formatted OTP status when diagnosing a Runtime:
 The returned server PID is a supervisor, not the handler-state GenServer.
 Normal library diagnostics omit request/handler payloads. Raw state inspection
 and explicitly enabled debug buffers may expose sensitive data; see
-[runtime diagnostics](V2_RUNTIME_DIAGNOSTICS.md).
+[runtime diagnostics](DIAGNOSTICS.md).
 
 Run focused tests:
 

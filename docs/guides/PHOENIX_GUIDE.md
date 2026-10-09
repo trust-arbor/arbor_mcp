@@ -5,26 +5,20 @@ runtime separately from the host endpoint. The runtime initializes its handler
 once and owns scheduled callbacks, bounded output and configured services. The
 Phoenix request process owns its `Plug.Conn` and the host listener.
 
-RC1 publication is pending. Until then, use a local `arbor_mcp`
-checkout and set `ARBOR_RPC_PATH` to the sibling `arbor_rpc` package when fetching
-dependencies. The released 1.x package remains `ex_mcp`. This guide describes
-the Runtime mounting contract; see the [RC notes](V2_RELEASE_CANDIDATE.md) for
-the qualified consumer scope and open stable-release gates.
+ArborMCP `2.0.0-rc.2` is published. This guide describes the Runtime mounting
+contract; see the [RC notes](V2_RELEASE_CANDIDATE.md) for current consumer scope
+and open stable-release gates.
 
 ## Dependencies
 
 ```elixir
 # mix.exs, alongside your existing Phoenix dependencies
-{:arbor_mcp, path: "../arbor_mcp"}
+{:arbor_mcp, "== 2.0.0-rc.2"}
 ```
 
-Use MCP's `codex/v2-migration` branch, not its still-1.x `master`, and the
-separate ArborRPC `main` checkout. The [Quickstart](../getting-started/QUICKSTART.md)
-shows the clone and path setup.
-
-After publication, replace the path dependency with
-`{:arbor_mcp, "== 2.0.0-rc.2"}` and remove the local RPC override. Source
-installation still requires C17 even though Phoenix owns the listener.
+Resolve normally from Hex. Local path dependencies and `ARBOR_RPC_PATH` are
+optional developer overrides. Source installation requires C17 for the shared
+RPC helper even when Phoenix owns the listener.
 
 Use your host application's HTTP adapter. A mounted plug does not require an
 ArborMCP-owned Cowboy or Bandit listener. The consumer qualification fixture pins
@@ -329,6 +323,6 @@ host endpoint in library-owned shutdown machinery.
   effect was undone.
 
 See [DSL guide](../DSL_GUIDE.md), [configuration](../CONFIGURATION.md),
-[API migration](../V2_API_MIGRATION.md) and [security](../SECURITY.md) for the
+[API migration](../API_REFERENCE.md) and [security](../SECURITY.md) for the
 remaining contracts. The [RC notes](V2_RELEASE_CANDIDATE.md) distinguish the
 tested installed/Phoenix consumers from continuous-soak and stable-release gates.

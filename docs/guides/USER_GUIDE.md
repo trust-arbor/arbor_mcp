@@ -1,7 +1,7 @@
 # ArborMCP User Guide
 
-A practical guide to building MCP clients and servers with ArborMCP RC1.
-Publication is pending. Start with the [Quickstart](../getting-started/QUICKSTART.md)
+A practical guide to building MCP clients and servers with published ArborMCP
+`2.0.0-rc.2`. Start with the [Quickstart](../getting-started/QUICKSTART.md)
 or [v1-to-v2 migration](MIGRATING_V1_TO_V2.md); the
 [RC notes](V2_RELEASE_CANDIDATE.md) describe qualification and known limits.
 
@@ -20,34 +20,11 @@ or [v1-to-v2 migration](MIGRATING_V1_TO_V2.md); the
 
 ## Installation
 
-Version 2 is unpublished. Use a local MCP checkout for development and set
-`ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc` before fetching dependencies.
-The released 1.x package remains `ex_mcp`.
-
-Clone MCP's `codex/v2-migration` branch and the separate ArborRPC `main`
-checkout as described in the [Quickstart](../getting-started/QUICKSTART.md).
-MCP's default `master` branch still contains 1.x code.
-
-After publication, use `{:arbor_mcp, "== 2.0.0-rc.2"}` for reproducible RC tests.
-MCP brings in ArborRPC; it does not install ACP or vendor adapters. Source
-installation requires a C17 compiler on qualified macOS/Linux platforms even
-for HTTP or BEAM use. An assembled release includes the built helper and needs
-no runtime compiler. Windows native subprocess operations are unsupported.
-
-```elixir
-def deps do
-  [
-    {:arbor_mcp, path: "../arbor_mcp"}
-  ]
-end
-```
-
-For a standalone Cowboy HTTP server, add `{:plug_cowboy, "~> 2.7"}` and
-`{:ranch, "== 1.8.1"}` to the host dependencies. For Bandit, add
-`{:bandit, "== 1.12.5"}` and `{:thousand_island, "== 1.5.0"}`. Select Bandit
-with `http_adapter: :bandit`; Cowboy remains the default. HTTP clients and
-mounting `Arbor.MCP.HttpPlug` in an existing host need no additional listener.
-See the [HTTP listener guide](../HTTP_LISTENERS.md).
+Add `{:arbor_mcp, "== 2.0.0-rc.2"}` and run `mix deps.get`. RPC resolves
+transitively from Hex. For source development, clone MCP's default `master`
+branch; `ARBOR_RPC_PATH` optionally selects a local RPC checkout.
+The [quickstart](../getting-started/QUICKSTART.md) covers requirements and setup.
+The maintained 1.x package remains `ex_mcp`.
 
 ## Server DSL
 

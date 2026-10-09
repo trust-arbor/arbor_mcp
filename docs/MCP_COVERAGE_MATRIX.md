@@ -1,7 +1,9 @@
 # MCP Specification Test Coverage Matrix
 
 This document maps ArborMCP's local and external conformance coverage to the MCP
-protocol revisions it implements. Status is current as of 2026-08-22.
+protocol revisions it implements. Release evidence is associated with each tagged package graph separately; see
+the [release checklist](RELEASING.md). The historical 1.0 results below retain
+their original source/date.
 
 ## Protocol Status
 
@@ -145,5 +147,5 @@ The implementation, test coverage, and final-candidate soak for stable ArborMCP
    run of `test/arbor_mcp/integration/rollback_drill_test.exs`, including its
    opt-in exact-`v1.0.0-rc.5` subprocess path.
 
-See the [MCP 2026-07-28 migration plan](MCP_2026_07_28_MIGRATION_PLAN.md) for
+See the [MCP 2026-07-28 migration plan](https://github.com/trust-arbor/arbor_mcp/blob/6c32d32de623962cef0322b2763068c2965980b6/docs/MCP_2026_07_28_MIGRATION_PLAN.md) for
 gate ownership, rollback requirements, and the complete implementation record.

@@ -1,12 +1,13 @@
-# Independent package preparation
+# Releasing the Arbor packages
 
-This is a source-preparation and installation policy. The original four
-`2.0.0-rc.1` releases remain published. Replacement publication is verified
-separately; preparation scripts do not publish packages or create tags.
+The published RC train is ArborMCP `2.0.0-rc.2` and ArborRPC, ArborACP and
+Adapters `1.0.0-rc.1`. The original four `2.0.0-rc.1` candidates are retired;
+their tags and archives remain available. ExMCP `1.6.0` is independently
+maintained. Stable promotion follows the gates below.
 
 ## Versions, dependencies and tags
 
-| Package | Prepared candidate | First stable | Dependencies |
+| Package | Published candidate | First stable | Dependencies |
 | --- | --- | --- | --- |
 | ArborMCP | `2.0.0-rc.2` | `2.0.0` | RPC `~> 1.0.0-rc.1` |
 | ArborRPC | `1.0.0-rc.1` | `1.0.0` | None of the other Arbor packages |
@@ -53,19 +54,19 @@ retirement preserves existing lockfile resolution and downloads.
 ## Standalone documentation and source archives
 
 Each package has its own dev-only, non-runtime ExDoc dependency. From the ACP
-workspace root, generate docs for a package independently, selecting the separate
-RPC checkout while the dependency remains unpublished:
+workspace root, generate docs for each project independently with normal
+Hex dependency resolution:
 
 ```sh
 cd packages/arbor_acp
-ARBOR_RPC_PATH=/path/to/arbor_rpc ARBOR_V2_LOCAL=1 MIX_ENV=dev mix deps.get
-ARBOR_RPC_PATH=/path/to/arbor_rpc ARBOR_V2_LOCAL=1 MIX_ENV=dev mix docs --warnings-as-errors
+MIX_ENV=dev mix deps.get
+MIX_ENV=dev mix docs --warnings-as-errors
 ```
 
 Use `packages/arbor_acp_adapters` for the optional bundle. Generate ArborRPC
 documentation from the root of its separate checkout with
 `MIX_ENV=dev mix deps.get` and `MIX_ENV=dev mix docs --warnings-as-errors`.
-The local overrides are for unpublished workspace dependencies. Build each Hex
+Local source overrides are optional development settings. Build each Hex
 source archive with `ARBOR_V2_LOCAL`, `ARBOR_V2_DEPS`, `ARBOR_RPC_PATH` and release
 version overrides unset. These overrides must never appear in published package
 requirements. ExDoc is excluded from consumer runtime dependencies.
@@ -127,3 +128,45 @@ Stable publication additionally requires the accepted continuous 48-hour run,
 performance acceptance and all remaining release gates. Rebuild archives from
 the final tagged source, and verify their installed versions and dependency
 ranges; an RC or a passed short rehearsal does not qualify the stable release.
+
+## Stable qualification checklist
+
+- Associate every tested source, version, dependency lockfile, archive and owning
+  tag with the final selected package graph. Recheck later changes separately.
+- Pass supported/latest BEAM CI, warnings-as-errors, formatting, strict docs and
+  source/package boundary checks in each repository.
+- Run MCP legacy compliance, modern external conformance and pinned official-SDK
+  interoperability; run ACP SDK, unchanged adapter goldens and reviewed
+  credential-free CLI lifecycle checks. Live model turns need separate evidence.
+- Qualify Cowboy, Bandit, Phoenix mounts, stdio/native ACP, combined packages and
+  installed releases; check lowest/newest declared dependency contracts.
+- Exercise isolation, cancellation, pressure, persistence/recovery, cross-runtime
+  crash/restart/shutdown, diagnostic privacy and cold-restart rollback on the
+  final source. Advertise only the verified platform/architecture matrix.
+- Test real downstream applications and vendor workflows. Define long-lived
+  peer turnover within documented request-ID/capacity limits. Keep those finite
+  limits and original deadlines during the rehearsal.
+- Accept the measured latency/throughput costs; further optimization is deferred.
+- Complete the accepted continuous **48-hour final-candidate soak**. A previous
+  harness run stopped at the persistent-peer cap after about 50 minutes; no
+  completed qualifying soak is recorded. Retain failures and typed cleanup
+  evidence rather than treating process death as physical cleanup.
+- Resolve normally from Hex and verify installed versions, package boundaries,
+  native helper lookup and compiler-free release operation.
+
+See the [roadmap](ROADMAP.md) and [RC testing notes](guides/V2_RELEASE_CANDIDATE.md)
+for current scope and remaining decisions. Preparation, CI and short rehearsals
+create evidence; they do not publish or complete the continuous gate.
+
+## Publication and verification
+
+Review release notes, literal versions, compatible requirements and exact source
+archives before creating fresh tags or publishing. Use the owning repository's
+package tag and preserve previous versions/tags. Hex publication requires an
+interactive user terminal for any 2FA prompt; codes belong only in Hex's prompts.
+
+After publication, independently verify the registry version/requirements,
+archive checksums, versioned HexDocs, ordinary Hex installation, assembled release
+and GitHub release/tag. Retire a superseded candidate only after its replacement
+installation is verified. If an attempt stops, inspect receipts and public state
+before planning a continuation; never reuse a published version or tag.

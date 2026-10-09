@@ -106,24 +106,6 @@ defmodule Arbor.MCP.DocRegressionTest do
     end
   end
 
-  test "1.0 migration documentation answers the dual-era rollout questions" do
-    migration = File.read!("docs/getting-started/MIGRATION.md")
-    mixfile = File.read!("mix.exs")
-
-    for term <- [
-          "rc.5 / legacy MCP",
-          "ExMCP 1.0 includes MCP 2026-07-28 support",
-          "Recommended rollout",
-          "Modern observations are pinned",
-          "legacy_http_sse: true"
-        ] do
-      assert migration =~ term, "migration guide is missing #{inspect(term)}"
-    end
-
-    refute migration =~ "ArborMCP does not\n  implement it yet"
-    assert mixfile =~ ~s("docs/getting-started/MIGRATION.md")
-  end
-
   test "operator and contributor guides document every protocol mode" do
     for file <- ["docs/CONFIGURATION.md", "CLAUDE.md"] do
       content = File.read!(file)
@@ -155,7 +137,8 @@ defmodule Arbor.MCP.DocRegressionTest do
     end
 
     refute readme =~ "**2025-11-25** (latest stable)"
-    assert readme =~ "**Version 2 release candidate preparation.**"
+    assert readme =~ "**Version 2 release candidate.**"
+    refute readme =~ "replacement is not published yet"
     assert readme =~ "`arbor_mcp` 2.0 has not been released"
     assert readme =~ "`ex_mcp`"
     assert readme =~ "protocol_mode: :prefer_modern"
@@ -165,29 +148,6 @@ defmodule Arbor.MCP.DocRegressionTest do
     assert coverage =~ "defaults to `:prefer_modern`"
     assert configuration =~ "newest legacy revision"
     assert coverage =~ "official conformance runner is\nstill published as a prerelease"
-  end
-
-  test "2.0 roadmap records decisions, phases, and the 1.x backport gate" do
-    roadmap = File.read!("docs/V2_ROADMAP.md")
-    release = File.read!("docs/RELEASE_1_0_0_RC_6.md")
-    mixfile = File.read!("mix.exs")
-
-    for term <- [
-          "Anubis MCP",
-          "Grok design review",
-          "Decision register",
-          "Stateful handlers remain serialized by default",
-          "Phase 0 — Finish and freeze the 1.0 baseline",
-          "The 1.x backport lane",
-          "SemVer interpretation",
-          "Legacy HTTP+SSE"
-        ] do
-      assert roadmap =~ term, "2.0 roadmap is missing #{inspect(term)}"
-    end
-
-    assert release =~ "`1.0.0-rc.7` is the next modern-preferred"
-    assert release =~ "RELEASE_1_0_0_RC_7.md"
-    refute mixfile =~ ~s("docs/V2_ROADMAP.md")
   end
 
   test "architecture and transport guides preserve the modern wire invariants" do
@@ -260,28 +220,9 @@ defmodule Arbor.MCP.DocRegressionTest do
 
     for term <- [
           "./scripts/conformance.sh modern",
-          "at least seven calendar days",
-          "mixed-version cluster rollback drill",
           "MCP_COVERAGE_MATRIX.md"
         ] do
       assert development =~ term, "development guide is missing #{inspect(term)}"
-    end
-
-    for repository_only_doc <- [
-          "docs/API_DIFF_RC5_TO_1_0.md",
-          "docs/MCP_2026_07_28_MIGRATION_PLAN.md",
-          "docs/MCP_COVERAGE_MATRIX.md",
-          "docs/RELEASE_1_0_0_RC_6.md",
-          "docs/RELEASE_1_0_0_RC_7.md",
-          "docs/RELEASE_1_0_0_RC_8.md",
-          "docs/RELEASE_1_0_0.md",
-          "docs/SECURITY_AUDIT_2026-08-12.md",
-          "docs/V2_ROADMAP.md",
-          "docs/PRE_2_0_TECH_DEBT_PLAN.md",
-          "docs/POST_1_0_MAINTENANCE_PLAN.md"
-        ] do
-      refute mixfile =~ repository_only_doc,
-             "Hex package/ExDoc config unexpectedly includes #{repository_only_doc}"
     end
 
     for packaged_guide <- [

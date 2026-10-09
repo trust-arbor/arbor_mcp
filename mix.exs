@@ -186,7 +186,6 @@ defmodule Arbor.MCP.MixProject do
           usage-rules.md
           LICENSE
           CHANGELOG.md
-          docs/ACP_GUIDE.md
           docs/ARCHITECTURE.md
           docs/CONFIGURATION.md
           docs/HTTP_LISTENERS.md
@@ -198,26 +197,15 @@ defmodule Arbor.MCP.MixProject do
           docs/TROUBLESHOOTING.md
           docs/getting-started
           docs/guides
-          docs/V2_SCHEMA_DIALECT.md
-          docs/V2_CLIENT_CONNECTION_SCOPE.md
-          docs/V2_STDIO_OUTPUT_LIABILITY.md
-          docs/V2_RUNTIME_DIAGNOSTICS.md
-          docs/V2_ORDINARY_CLIENT_LIFETIME.md
-          docs/V2_CLIENT_DIAGNOSTICS.md
-          docs/V2_HTTP_GATEWAY_SLICE.md
-          docs/V2_HTTP_RUNTIME_CUTOVER.md
-          docs/V2_HTTP_REVERSE_SLICE.md
-          docs/V2_HTTP_SESSION_STREAM_SLICE.md
-          docs/V2_HTTP_CONTROL_CONVERGENCE_SLICE.md
-          docs/V2_HTTP_FUTURE_CONTROL_SLICE.md
-          docs/V2_HTTP_LISTENER_LIFETIME_CORE.md
-          docs/V2_PACKAGE_RELEASE.md
-          docs/V2_NATIVE_STORE_PRESSURE.md
-          docs/V2_DETS_LIFECYCLE.md
-          docs/V2_API_MIGRATION.md
-          docs/V2_DSL_API_REVIEW.md
-          docs/V2_NON_SYMBOL_MIGRATION.md
           docs/RUNTIME_GUIDE.md
+          docs/README.md
+          docs/API_REFERENCE.md
+          docs/SCHEMAS.md
+          docs/DIAGNOSTICS.md
+          docs/STORAGE.md
+          docs/RELEASING.md
+          docs/ROADMAP.md
+          docs/MAINTENANCE_POLICY.md
         )
     ]
   end
@@ -258,29 +246,18 @@ defmodule Arbor.MCP.MixProject do
         "docs/guides/USER_GUIDE.md",
         "docs/guides/PHOENIX_GUIDE.md",
         "docs/DSL_GUIDE.md",
-        "docs/V2_SCHEMA_DIALECT.md",
-        "docs/V2_CLIENT_CONNECTION_SCOPE.md",
-        "docs/V2_STDIO_OUTPUT_LIABILITY.md",
-        "docs/V2_RUNTIME_DIAGNOSTICS.md",
-        "docs/V2_ORDINARY_CLIENT_LIFETIME.md",
-        "docs/V2_CLIENT_DIAGNOSTICS.md",
-        "docs/V2_HTTP_GATEWAY_SLICE.md",
-        "docs/V2_HTTP_RUNTIME_CUTOVER.md",
-        "docs/V2_HTTP_REVERSE_SLICE.md",
-        "docs/V2_HTTP_SESSION_STREAM_SLICE.md",
-        "docs/V2_HTTP_CONTROL_CONVERGENCE_SLICE.md",
-        "docs/V2_HTTP_FUTURE_CONTROL_SLICE.md",
-        "docs/V2_HTTP_LISTENER_LIFETIME_CORE.md",
-        "docs/V2_PACKAGE_RELEASE.md",
-        "docs/V2_NATIVE_STORE_PRESSURE.md",
-        "docs/V2_DETS_LIFECYCLE.md",
-        "docs/V2_API_MIGRATION.md",
-        "docs/V2_DSL_API_REVIEW.md",
-        "docs/V2_NON_SYMBOL_MIGRATION.md",
         "docs/TRANSPORT_GUIDE.md",
         "docs/CONFIGURATION.md",
         "docs/HTTP_LISTENERS.md",
         "docs/RUNTIME_GUIDE.md",
+        {"docs/README.md", filename: "documentation", title: "Documentation index"},
+        "docs/API_REFERENCE.md",
+        "docs/SCHEMAS.md",
+        "docs/DIAGNOSTICS.md",
+        "docs/STORAGE.md",
+        "docs/RELEASING.md",
+        "docs/ROADMAP.md",
+        "docs/MAINTENANCE_POLICY.md",
         "docs/PROTOCOL_GUIDE.md",
         "docs/getting-started/MIGRATION.md",
         "docs/SECURITY.md",
@@ -294,7 +271,8 @@ defmodule Arbor.MCP.MixProject do
       groups_for_extras: [
         Introduction: ~r/README/,
         Guides:
-          ~r/QUICKSTART|RUNTIME_GUIDE|MIGRATING_V1_TO_V2|V2_RELEASE_CANDIDATE|USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|V2_SCHEMA_DIALECT|V2_CLIENT_CONNECTION_SCOPE|TRANSPORT_GUIDE|HTTP_LISTENERS|PROTOCOL_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
+          ~r/QUICKSTART|RUNTIME_GUIDE|MIGRATING_V1_TO_V2|V2_RELEASE_CANDIDATE|USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|SCHEMAS|STORAGE|DIAGNOSTICS|API_REFERENCE|TRANSPORT_GUIDE|HTTP_LISTENERS|PROTOCOL_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|TROUBLESHOOTING/,
+        Maintainers: ~r/DEVELOPMENT|RELEASING|ROADMAP|MAINTENANCE_POLICY/,
         Changelog: ~r/CHANGELOG/
       ],
       groups_for_modules: [

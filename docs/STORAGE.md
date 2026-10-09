@@ -1,17 +1,76 @@
-# Standalone DETS lifecycle qualification
+# Storage and retained payload limits
 
-This is the finite ownership layer for the existing opt-in standalone
-`Arbor.MCP.SessionManager` DETS backend. It is not a Runtime durable-session
-adapter or a new persistence format. Runtime sessions still use the qualified
-ETS service; `storage_backend: :dets` in a Runtime service configuration is
-explicitly rejected as `:runtime_durable_sessions_unqualified`.
+ArborMCP reserves native Tasks and replay operations through the same
+private operation ledger used by addressed session services. Full operation data
+is retained only after count and byte admission; the owner receives a coalesced
+wake. A suspended or busy owner does not admit an unbounded payload mailbox.
+Operations preserve one finite cutoff, caller alias, owner and monotonic phase.
+Immediately before mutation, runtime operations recheck service generation,
+request origin, current batch member/output phase and original deadline. An
+operation queued by a callback cannot newly commit after that callback's
+invocation expires or retires. A commit completed before the cutoff remains
+committed if a caller later times out; timeout is not rollback.
 
-The accepted scope is [roadmap Phase 4](https://github.com/trust-arbor/arbor_mcp/blob/5fd327fc8be6459d0d0d0e8d4c7a35da68259d2b/docs/V2_ROADMAP.md#phase-4--define-state-and-replay-adapters)
-and the existing [store contract](https://github.com/trust-arbor/arbor_mcp/blob/5fd327fc8be6459d0d0d0e8d4c7a35da68259d2b/docs/STORE_ADAPTER.md). Other database or filesystem
-adapters can be supplied separately once they satisfy that contract. Existing
-standalone DETS persistence remains supported.
+Native `Tasks.Store.ETS` and `Server.ReplayCache.ETS` preserve their existing
+standalone operation arities and result shapes. Native operations now use finite
+admission defaults, including outside Runtime:
 
-## Configuration and success semantics
+| Option | Default | Meaning |
+| --- | ---: | --- |
+| `max_operations` | 64 | Concurrent retained operation claims. |
+| `max_operation_bytes` | 1,000,000 | Aggregate retained operation data and metadata. |
+| `max_operation_payload_bytes` | 65,536 | One operation's retained charge. |
+| `operation_timeout_ms` | 1,000 | Maximum synchronous operation wait. A call's `timeout:` may shorten it. |
+| Tasks `max_tasks` | 10,000 | Retained task entries. |
+| Tasks `max_entry_bytes` | 1,000,000 | One full task entry, including owner, inputs, result and metadata. |
+| Tasks `max_retained_bytes` | 8,000,000 | Aggregate task entries. |
+| Tasks `max_ttl_ms` | 2,592,000,000 | Maximum task TTL (30 days). |
+| Replay `max_replay_entries` | 10,000 | Retained consumed identifiers. |
+| Replay `max_replay_bytes` | 8,000,000 | Aggregate consumed identifiers and expiry values. |
+| Replay `max_replay_id_bytes` | 4,096 | One continuation identifier. |
+| Replay `max_replay_ttl_ms` | 2,592,000,000 | Maximum future expiry interval (30 days). |
+
+Capacity is explicit: operations can return `:operation_capacity_exhausted`,
+`:operation_payload_too_large`, `:operation_contention` or `:operation_timeout`.
+Task retained exhaustion returns `:store_full` without changing the previous
+committed lifecycle. Replay exhaustion returns `:replay_cache_full`; previously
+consumed identifiers remain consumed. Invalid identifier/expiry limits return
+`:invalid_replay_id` / `:invalid_replay_expiry`. Idle expiry reclaims native task
+and replay retention without waiting for another public operation. The idle reaper removes at most 32 expired entries and checks a 5 ms cutoff
+between entries; an operation also removes its own expired identifier before lookup. Expiry
+index and map overhead are bounded by the configured entry count, while payload
+counters measure retained serialized data rather than allocator overhead.
+These cooperative checks do not provide CPU preemption or an absolute VM RSS cap. Native ETS
+addresses are local; remote or retired native owners fail unavailable.
+
+Generic standalone custom Task store adapters keep their existing callbacks and
+options. When selected as a Runtime Tasks/replay descriptor, an adapter must now
+explicitly declare `bounded_operations: 1` and implement
+`runtime_service_binding/2` plus `operate/4`. Startup rejects an adapter lacking
+that contract with `{:invalid_service, kind, :bounded_operations_required}`.
+The adapter owns its bounded pre-mailbox admission and must revalidate the
+supplied operation context immediately before mutation; supplying a namespace or
+checking it only in the caller is insufficient. Existing borrowed namespaces,
+logical ServiceRefs and borrowed shutdown ownership remain unchanged. A custom
+adapter's arbitrary effects are not made reversible by this interface.
+
+Managed input/control/scope metadata, prepared output and addressed store data
+are materialized after their size checks and before retention. This detaches
+ordinary subbinary/bitstring backing while preserving structs, tuples, improper
+lists and native PID/reference/port identities. Host functions retain their
+original identity; captured backing bytes that cannot be detached safely are
+charged to the managed budget and can cause rejection. Newly admitted function
+closures must fit these limits. Static handler/configuration closures and
+borrowed native handle bodies remain host-managed state; these counters do not
+claim an absolute VM RSS or arbitrary native resource bound.
+
+## Standalone DETS
+
+Standalone `SessionManager` DETS persistence remains supported. Runtime sessions
+use ETS; selecting DETS for a Runtime service returns
+`:runtime_durable_sessions_unqualified`.
+
+### Configuration and success semantics
 
 ```elixir
 {Arbor.MCP.SessionManager,
@@ -36,7 +95,7 @@ per-open atoms. Each successful mutation still syncs before acknowledging
 success. Reopening retains sessions, events, request-ID claims and the event
 clock. Process-local initialization claims are repaired on reopen.
 
-## Owners and exclusive claims
+### Owners and exclusive claims
 
 Each store has one native GenServer Owner, created by the opening process. It
 monitors that lifetime owner, is registered with PathClaims before any blocking
@@ -71,7 +130,7 @@ Exclusivity is for a managed expanded path on this node. Hosts must not share
 those files with another VM, symlink aliases, or unmanaged concurrent writers.
 This layer does not provide a distributed filesystem lock.
 
-## Timeout, failure and late physical outcomes
+### Timeout, failure and late physical outcomes
 
 An I/O timeout seals the Owner and returns `:storage_io_timeout`; it does not
 prove rollback or cancellation of the already-started physical operation. That
@@ -112,38 +171,3 @@ because its caller timed out or died.
 Native Owner/authority arguments are opaque and status summaries redact paths,
 messages and payloads. Trusted `:sys.get_state`, raw same-VM sends, direct DETS
 calls and host logging of returned errors remain outside that diagnostic policy.
-
-## Qualification and remaining gates
-
-The focused suite retains all 36 prior store-contract cases and adds 16
-lifecycle cases. It covers all four held table workers for write and close,
-foreign-caller close, original cutoff, late persisted bytes, caller death,
-sibling survival, normal restart/claim repair and explicit SessionManager
-storage failure and opening/retirement races. A native-alias regression proves
-that timeout cleanup removes
-an already queued processing reply and rejects later sends. Reproducible
-additional checks are:
-
-```sh
-elixir scripts/check_dets_authority.exs
-MIX_ENV=test mix run --no-start scripts/check_dets_application.exs
-```
-
-The authority probe uses a fresh VM. It checks count overload, detached metadata,
-128 retained controls with at most a token wake and timer in a suspended mailbox,
-expired admission/open, abrupt Owner loss and fail-closed authority loss. It
-only suspends the global DETS server inside that isolated test VM and never
-adopts or kills it. The application probe checks actual managed-store shutdown,
-all four table-process exits, application restart and durable row recovery.
-
-Finite caller waits do not make filesystem I/O preemptible. A permanently
-blocked physical operation can retain one tracked Owner and its bounded path
-claim until it settles or the VM stops. There is no claim of an OS/RSS bound,
-arbitrary-process reclamation, exactly-once disk transactions, or immunity to
-power loss/filesystem corruption. Row reads/enumerations and native mailboxes
-outside the managed admission path still require workload qualification.
-
-Local lifecycle evidence is macOS on the minimum/current supported toolchains.
-Linux CI, final combined source qualification, durable Runtime integration if
-subsequently selected, and RC pressure/reconnect gates remain explicit. This
-checkpoint does not declare a v2 release complete.

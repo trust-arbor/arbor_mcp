@@ -114,7 +114,7 @@ The pinned MCP 2026-07-28 schema defaults to JSON Schema 2020-12.
 `SchemaPolicy` uses JSV for omitted or explicit 2020-12 declarations and
 ExJsonSchema for explicit drafts 4, 6 and 7. Unknown dialects reject. Validation
 returns no transformed data; defaults and coercion remain application decisions.
-See [the dialect contract](V2_SCHEMA_DIALECT.md) for reference restrictions,
+See [the dialect contract](SCHEMAS.md) for reference restrictions,
 format semantics and qualification.
 
 Declared params retain existing atom-key convenience and missing-value defaults.

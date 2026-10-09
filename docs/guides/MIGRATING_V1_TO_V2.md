@@ -22,7 +22,7 @@ process death alone does not certify physical IO cleanup.
 
 ExMCP 1.x splits into **ArborMCP** for MCP and **ArborACP** for ACP, with
 independently installable ArborRPC and optional ArborACP adapter packages.
-This guide covers the prepared ArborMCP `2.0.0-rc.2` and ArborACP, ArborRPC
+This guide covers the published ArborMCP `2.0.0-rc.2` and ArborACP, ArborRPC
 and adapter `1.0.0-rc.1` combination. Library versions are independent; ACP
 protocol versions are a separate upstream concern.
 
@@ -37,13 +37,13 @@ Library names in prose use ArborMCP, ArborACP and ArborRPC. Code uses the dotted
 namespaces above; dependency and application configuration uses the lowercase
 package names.
 
-**RC status:** the original four `2.0.0-rc.1` packages are published. Their
-replacement versions above are prepared but unpublished; the dependency examples
-below apply after replacement publication. Continuous 48-hour qualification is still incomplete: the
-latest continuous harness attempt reached the documented request-ID capacity of
-a persistent test/BEAM peer. That finite limit remains the intended API
-contract. An RC is for downstream testing; it does not establish stable
-release or sustained-run qualification.
+**RC status:** ArborMCP `2.0.0-rc.2` and the other three `1.0.0-rc.1`
+packages are published and verified through ordinary Hex installation. The
+original four `2.0.0-rc.1` versions are retired, with archives and tags preserved.
+Continuous 48-hour qualification remains incomplete: the latest harness attempt
+reached the documented request-ID capacity of a persistent test/BEAM peer.
+That finite limit remains part of the API contract. Use the RCs for downstream
+testing and review the [release checklist](../RELEASING.md) before stable promotion.
 
 ## Canonical role entrypoints
 
@@ -158,8 +158,9 @@ though its implementation is in the optional adapter bundle.
 Do not rename persisted or wire identifiers as part of a source namespace
 replacement. Legacy ACP `_meta.ex_mcp`, `_ex_mcp.pi/*`, existing generated IDs,
 Pi's `~/.ex_mcp/pi/session-map.json` and the OAuth credential storage identity
-are retained. See the [behavior migration record](../V2_NON_SYMBOL_MIGRATION.md)
-for the complete ownership and persistence inventory.
+are retained. The historical
+[behavior migration inventory](https://github.com/trust-arbor/arbor_mcp/blob/6c32d32de623962cef0322b2763068c2965980b6/docs/V2_NON_SYMBOL_MIGRATION.md#packages-configuration-and-identifiers)
+records the original ownership and persistence audit.
 
 ## 3. Keep clients on the public API
 
@@ -199,8 +200,9 @@ protocol Logging APIs still serve pinned legacy revisions.
 
 ## Public operation contracts in the replacement candidate
 
-Canonical MCP Client operations return `{:ok, %Arbor.MCP.Response{}}` by default,
-or `{:ok, wire_map}` with `format: :map`. A tool result with `isError: true`
+Canonical MCP Client tool, resource and prompt operations return
+`{:ok, %Arbor.MCP.Response{}}` by default, or `{:ok, wire_map}` with `format: :map`.
+Other methods retain their documented result types. A tool result with `isError: true`
 is still a successfully delivered protocol result at this layer. Inspect
 `Response.error?/1` and choose an explicit projection such as
 `Response.text_content/1`, `all_text_content/1` or `structured_content/1`.
@@ -368,8 +370,10 @@ explicitly on the mount/listener configuration. Removed server aliases
 | Unimplemented image resize/compress/thumbnail helpers | Do media processing in your application, then use supported content constructors. Removed `:auto_resize` / `:quality` options are rejected. |
 | Raw subprocess Port access or unmanaged cleanup | Opaque `Arbor.RPC.Subprocess` handles, public framing/ACK APIs and typed cleanup receipts. |
 
-The [API migration inventory](../V2_API_MIGRATION.md) lists every accepted
-retirement and owner move. Renaming a function is insufficient when its result
+The frozen
+[API migration inventory](https://github.com/trust-arbor/arbor_mcp/blob/master/test/fixtures/api/api_migration_plan.json)
+lists accepted retirements and owner moves. The [public API reference](../API_REFERENCE.md)
+describes current entrypoints. Renaming a function is insufficient when its result
 shape or lifecycle changed; test the consumer's real result/wire behavior.
 
 ## 7. Plan finite connection lifetimes and handle pressure
@@ -430,7 +434,7 @@ continues to receive applicable fixes and compatible minor releases; see the
 ## Consumer checklist
 
 - Select only the protocol packages and optional adapters you use; pin the
-  prepared replacements in the [RC testing notes](V2_RELEASE_CANDIDATE.md).
+  published candidates in the [RC testing notes](V2_RELEASE_CANDIDATE.md).
 - Provide C17 at source-install time and verify the helper is in the release.
 - Update module/application references while preserving wire/storage identities.
 - Supervise one Runtime per server and give every HTTP mount its Runtime.

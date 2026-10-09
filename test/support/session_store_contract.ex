@@ -2,7 +2,7 @@ defmodule Arbor.MCP.SessionStoreContract do
   @moduledoc false
 
   # Test-only facade over the SessionManager call surface.
-  # This is the accepted 1.x event-store contract from docs/STORE_ADAPTER.md.
+  # This is the accepted 1.x event-store contract from https://github.com/trust-arbor/arbor_mcp/blob/v1.6.0/docs/STORE_ADAPTER.md.
 
   @doc false
   def start_dets_isolated!(opts \\ []) do

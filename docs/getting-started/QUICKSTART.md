@@ -1,65 +1,26 @@
 # ArborMCP Quick Start Guide
 
 This guide shows a minimal MCP server and client in the `2.0.0-rc.2` checkout.
-Publication is pending; see the [RC notes](../guides/V2_RELEASE_CANDIDATE.md)
+The RC is published; see the [RC notes](../guides/V2_RELEASE_CANDIDATE.md)
 for qualification and known limits, and the
 [v1-to-v2 guide](../guides/MIGRATING_V1_TO_V2.md) when upgrading ExMCP.
 
-**Next Steps:** See the [User Guide](../guides/USER_GUIDE.md), [DSL Guide](../DSL_GUIDE.md), and [Configuration Guide](../CONFIGURATION.md).
-
 ## Installation
 
-After RC publication, add `{:arbor_mcp, "== 2.0.0-rc.2"}` to your dependencies.
-Until then, use a local checkout:
-
-```sh
-git clone --branch codex/v2-migration https://github.com/trust-arbor/arbor_mcp.git
-git clone --branch codex/independent-package-versions https://github.com/trust-arbor/arbor_rpc.git
-```
-
-The MCP default `master` branch is still ExMCP 1.x. In a separate consumer
-application with these sibling checkouts, declare the MCP path:
+Use Elixir 1.17 or newer with OTP 27 or newer. Add the published package:
 
 ```elixir
-def deps do
-  [
-    {:arbor_mcp, path: "../arbor_mcp"}
-  ]
-end
+{:arbor_mcp, "== 2.0.0-rc.2"}
 ```
 
-The transitive `arbor_rpc` source build requires a C17 compiler on macOS/Darwin
-and Linux, even when the application uses only HTTP or BEAM. `CC` selects a
-compiler executable; it is not a shell command. Source packages contain no
-prebuilt helper. Include the built helper in assembled releases, which need no
-runtime compiler. Windows native subprocess operations are unsupported; framing
-remains separate. See the [source-install policy](../V2_PACKAGE_RELEASE.md).
+Run `mix deps.get`. Source installation on macOS/Darwin and Linux requires a C17
+compiler for the transitive RPC helper; assembled releases include that helper
+and need no compiler at runtime. Windows native subprocess operations are
+unsupported. For source development, clone the repository's default `master`
+branch and optionally select RPC source with `ARBOR_RPC_PATH`.
 
-For a standalone Cowboy HTTP server, add `{:plug_cowboy, "~> 2.7"}` and
-`{:ranch, "== 1.8.1"}` to the host dependencies. For Bandit, add
-`{:bandit, "== 1.12.5"}` and `{:thousand_island, "== 1.5.0"}`. Select Bandit
-with `http_adapter: :bandit`; Cowboy remains the default. HTTP clients and
-mounting `Arbor.MCP.HttpPlug` in an existing host need no additional listener.
-See the [HTTP listener guide](../HTTP_LISTENERS.md).
-
-Set `ARBOR_RPC_PATH` to the shared RPC checkout, then run `mix deps.get`.
-For example: `export ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc`. The released
-1.x package is `ex_mcp` and uses its previous namespace.
-
-MCP `2026-07-28` is the latest stable revision. The client tries it first while
-retaining evidence-based legacy fallback. Pin the mode explicitly when rollout
-policy must remain fixed:
-
-```elixir
-# config/config.exs
-config :arbor_mcp, protocol_mode: :prefer_modern
-```
-
-New connections default to `:prefer_modern`. Use `:legacy_only` to preserve the
-legacy protocol era. Exact rc.5 wire and session behavior still requires
-package rollback to `1.0.0-rc.5`. See the
-[Configuration Guide](../CONFIGURATION.md#protocol-eras-and-modes) for all four
-modes.
+Clients default to `:prefer_modern`: they try MCP `2026-07-28` (the latest stable
+protocol revision) and negotiate a documented legacy revision when needed.
 
 ## DSL Server
 
@@ -215,4 +176,4 @@ where needed; a timed-out or broken response does not prove the work was undone.
 3. Review [Transport Guide](../TRANSPORT_GUIDE.md)
 4. Review the [v1-to-v2 migration guide](../guides/MIGRATING_V1_TO_V2.md)
    and the [historical protocol rollout](MIGRATION.md)
-5. Explore [Examples](https://github.com/trust-arbor/arbor_mcp/tree/codex/v2-migration/examples)
+5. Explore [Examples](https://github.com/trust-arbor/arbor_mcp/tree/master/examples)

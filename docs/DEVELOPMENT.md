@@ -1,8 +1,8 @@
 # ArborMCP Development Guide
 
 This guide covers developing, testing, and contributing to the MCP package.
-Version 2 is under development; use the
-[v2 roadmap](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/V2_ROADMAP.md)
+The v2 RC is published; use the
+[v2 roadmap](ROADMAP.md)
 for release scope and qualification status.
 
 `ARBOR_RPC_PATH` selects the repository root of a local
@@ -29,14 +29,14 @@ these overrides unset and use the built release artifacts.
 - C17 compiler on macOS/Linux (the ArborRPC source dependency builds a native helper)
 - Git with hooks support
 
-The [CI policy](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/.github/BEAM_CI.md) records the tested Elixir 1.17–1.20 /
+The [CI policy](https://github.com/trust-arbor/arbor_mcp/blob/master/.github/BEAM_CI.md) records the tested Elixir 1.17–1.20 /
 OTP 27–29 pairs and latest-version lanes; not every cross-product is supported.
 
 ### Initial Setup
 
 ```bash
 # Clone the repository
-git clone --branch codex/v2-migration https://github.com/trust-arbor/arbor_mcp.git
+git clone https://github.com/trust-arbor/arbor_mcp.git
 cd arbor_mcp
 
 # Until arbor_rpc is published, select its checkout explicitly.
@@ -53,9 +53,8 @@ mix git_hooks.install
 mix compile --warnings-as-errors && mix credo
 ```
 
-While v2 is unmerged, use `codex/v2-migration`; `master` remains the supported
-ExMCP 1.x line. After the default-branch cutover, follow the published release
-instructions. Keep a lockfile for repeatable local dependency resolution.
+The default `master` branch contains ArborMCP v2. The maintained ExMCP 1.x
+line is `codex/maintenance-1.x`. Keep a lockfile for repeatable local dependency resolution.
 
 ### Essential Development Commands
 
@@ -330,10 +329,10 @@ normally be reclaimed through their supervising test or Runtime shutdown.
 ### Contribution Workflow
 
 1. **Fork the repository** on GitHub
-2. **Create a feature branch** from the v2 migration branch while it is under review:
+2. **Create a feature branch** from the default branch:
    ```bash
-   git checkout codex/v2-migration
-   git checkout -b feature/your-feature-name
+   git checkout master
+   git checkout -b codex/your-feature-name
    ```
 3. **Make your changes** following the coding standards
 4. **Run quality checks**:
@@ -418,7 +417,7 @@ Include:
 
 ## Release Process
 
-The [v2 release plan](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/V2_RELEASE_PLAN.md)
+The [v2 release plan](RELEASING.md)
 records the current package split, release order and qualification gates. The
 protocol transition checklist below is the historical 1.0 checklist and does not
 replace the v2 gates. A target date never waives a failing release gate.
@@ -431,40 +430,12 @@ ArborMCP follows [Semantic Versioning](https://semver.org/):
 - **Minor** (`0.7.0`): New features, non-breaking changes
 - **Major** (`1.0.0`): Breaking changes
 
-### Historical 1.0 Protocol Transition Checklist
+### Current qualification
 
-The [MCP 2026-07-28 migration plan](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_2026_07_28_MIGRATION_PLAN.md) is the
-authoritative checklist for the 1.0 protocol transition. The
-[coverage matrix](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md) records the corresponding local and
-official-suite evidence. If a gate misses, publish another release candidate;
-do not move unfinished protocol work into stable 1.0.
-
-#### Pre-Release
-- [ ] All tests pass on CI
-- [ ] `mix docs` completes without warnings and all packaged links resolve
-- [ ] CHANGELOG.md is updated
-- [ ] Version is bumped in `mix.exs`
-- [ ] `mix hex.audit` and `mix sobelow --skip` pass with no unacknowledged findings
-- [ ] `mix hex.build` succeeds and the unpacked archive contains the documented release evidence
-- [ ] `./scripts/conformance.sh modern` has zero unexplained client or server failures; while its runner is prerelease, all four pinned official-SDK v2 stdio/HTTP interop lanes also pass
-- [ ] All legacy TypeScript SDK interop lanes remain green
-- [ ] `./scripts/conformance.sh server` and `./scripts/conformance.sh client` preserve the published legacy/core baselines
-- [ ] The non-gating `./scripts/conformance.sh all-versions` report has no unexplained regression
-- [ ] The seven-row legacy/modern compatibility matrix passes on stdio and HTTP
-- [ ] A published RC has defaulted to `:prefer_modern` for at least seven calendar days without a release-blocking compatibility regression
-- [x] A mixed-version cluster rollback drill succeeds with active subscriptions and in-flight MRTR operations (completed for 1.0 on 2026-08-22; see `docs/RELEASE_1_0_0.md`)
-- [ ] An owner and evidence link are recorded for every remaining 1.0 release gate
-
-#### Release
-- [ ] Tag release: `git tag vX.Y.Z`
-- [ ] Push tag: `git push origin vX.Y.Z`
-- [ ] GitHub release with changelog
-- [ ] Publish to Hex: `mix hex.publish`
-
-#### Post-Release
-- [ ] Announce release
-- [ ] Update documentation sites
-- [ ] Close related issues/milestones
+Use the [release checklist](RELEASING.md) for source/archive association,
+protocol coverage, dependency contracts, downstream/vendor testing and the
+accepted continuous 48-hour soak. Preserve exact source and lockfile identities
+for each result. The historical 1.0 seven-day rollout is recorded in Git history.
 
 ### Hotfix Process
 
@@ -487,9 +458,9 @@ For critical bugs in production releases:
 - **This guide**: Development setup and processes
 - **[User Guide](guides/USER_GUIDE.md)**: Feature usage and examples  
 - **[Architecture Guide](ARCHITECTURE.md)**: Internal design decisions
-- **[MCP 2026-07-28 Migration Plan](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_2026_07_28_MIGRATION_PLAN.md)**: Release gates and implementation record
+- **[MCP 2026-07-28 Migration Plan](https://github.com/trust-arbor/arbor_mcp/blob/6c32d32de623962cef0322b2763068c2965980b6/docs/MCP_2026_07_28_MIGRATION_PLAN.md)**: Release gates and implementation record
 - **[MCP Coverage Matrix](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md)**: Protocol-by-protocol test evidence
-- **[rc.5 to 1.0 API Diff](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/API_DIFF_RC5_TO_1_0.md)**: Public compatibility audit
+- **[rc.5 to 1.0 API Diff](https://github.com/trust-arbor/arbor_mcp/blob/6c32d32de623962cef0322b2763068c2965980b6/docs/API_DIFF_RC5_TO_1_0.md)**: Public compatibility audit
 - **[Published 1.x API Docs](https://hexdocs.pm/ex_mcp)**: Previous package reference; v2 documentation is generated with `mix docs` during development
 
 ### Community
