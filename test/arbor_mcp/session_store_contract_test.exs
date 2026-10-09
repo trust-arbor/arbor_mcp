@@ -3,7 +3,7 @@ defmodule Arbor.MCP.SessionStoreContractTest do
   Event-store contract suite for the default ETS backend and opt-in DETS.
 
   Pins current `Arbor.MCP.SessionManager` behavior as the accepted 1.x store
-  contract from `docs/STORE_ADAPTER.md`. Isolated managers use unique names
+  contract from `https://github.com/trust-arbor/arbor_mcp/blob/v1.6.0/docs/STORE_ADAPTER.md`. Isolated managers use unique names
   so they do not fight the explicitly supervised standalone SessionManager.
   """
   use ExUnit.Case, async: false

@@ -1,7 +1,8 @@
 # Testing the ArborMCP and ArborACP release candidates
 
-The original four `2.0.0-rc.1` packages remain on Hex. The replacement candidate
-train uses independent version lines:
+The current candidate train is published on Hex and uses independent version
+lines. The original four `2.0.0-rc.1` packages are retired; their archives and
+tags remain available:
 
 | Package | Replacement candidate | First stable target |
 | --- | --- | --- |
@@ -10,11 +11,8 @@ train uses independent version lines:
 | ArborACP (`arbor_acp`) | `1.0.0-rc.1` | `1.0.0` |
 | ArborACP adapters (`arbor_acp_adapters`) | `1.0.0-rc.1` | `1.0.0` |
 
-Installation examples below require the replacement versions to be available on
-Hex; consult each package's release listing for publication and retirement state.
-Existing tags and archives stay intact. Retire superseded versions only after
-replacement publication and verified installation. Retirement preserves existing
-downloads and lockfile resolution. Start with the
+The versions below have been published and verified through ordinary Hex
+installation and assembled-release probes. Start with the
 [v1-to-v2 migration guide](MIGRATING_V1_TO_V2.md). Stable qualification and the
 final continuous 48-hour soak remain incomplete.
 
@@ -64,10 +62,13 @@ The probes exercise the new pagination, scoped ACP connection and text APIs.
 MCP's full strict checkpoint passes 5,445 tests, 20 doctests and 34 properties;
 core ACP passes 387 tests; adapters pass 1,479 tests. Six pinned official ACP
 TypeScript SDK 1.4.0 interop tests pass. Existing exclusions and source identities
-are recorded in the [current release assessment](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_ASSESSMENT.md).
+are recorded in the
+[qualification assessment](https://github.com/trust-arbor/arbor_mcp/blob/6c32d32de623962cef0322b2763068c2965980b6/docs/V2_RELEASE_ASSESSMENT.md).
+The [release checklist](../RELEASING.md) tracks remaining stable gates.
 
-These checks qualify selected source/archive payloads. Replacement Hex
-publication and ordinary registry installation are verified separately.
+These checks qualify selected source/archive payloads. Published archive
+checksums and ordinary Hex installation were independently
+verified after publication.
 Earlier credential-free CLI lifecycle checks do not qualify live model turns.
 No completed continuous 48-hour final-candidate soak is claimed.
 

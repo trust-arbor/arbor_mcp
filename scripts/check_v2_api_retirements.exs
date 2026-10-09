@@ -4,11 +4,11 @@ defmodule Arbor.MCP.Release.APIRetirementAudit do
   def run(argv) do
     {opts, [], []} = OptionParser.parse(argv, strict: [complete: :boolean, output: :string])
     root = Path.expand("..", __DIR__)
-    baseline = File.read!(Path.join(root, "docs/v2/api_baseline_1_5_plus.json"))
+    baseline = File.read!(Path.join(root, "test/fixtures/api/api_baseline_1_5_plus.json"))
     digest = :crypto.hash(:sha256, baseline) |> Base.encode16(case: :lower)
     if digest != @baseline_sha256, do: raise("Frozen 1.x API baseline changed")
 
-    plan = root |> Path.join("docs/v2/api_migration_plan.json") |> File.read!() |> Jason.decode!()
+    plan = root |> Path.join("test/fixtures/api/api_migration_plan.json") |> File.read!() |> Jason.decode!()
     modules = plan["removal_modules"]
     callables = plan["removal_callables"] ++ Enum.flat_map(modules, & &1["callables"])
     module_names = Enum.map(modules, &candidate(&1["module"]))

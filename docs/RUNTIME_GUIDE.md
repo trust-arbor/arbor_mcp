@@ -99,7 +99,7 @@ state, raw Erlang sends, peer mailboxes, external processes or OS buffers.
 Clients borrow existing BEAM/test servers. Stopping a client does not stop that
 server. `Arbor.MCP.Client.with_connection/3` owns a newly created client for a
 callback and reports its cleanup outcome; see the
-[connection guide](V2_CLIENT_CONNECTION_SCOPE.md).
+[connection guide](RUNTIME_GUIDE.md).
 
 BEAM/test peers and stdio connections retain a finite set of request IDs to
 prevent duplicate execution. The default is 10,000 distinct IDs. Plan connection
@@ -129,4 +129,4 @@ an output was consumed, or a remote effect was rolled back.
 Normal diagnostic reports omit handler payloads and retained request data. Trusted
 in-VM inspection can still expose state, and application callbacks control their
 own logging. See [troubleshooting](TROUBLESHOOTING.md) and
-[runtime diagnostics](V2_RUNTIME_DIAGNOSTICS.md).
+[runtime diagnostics](DIAGNOSTICS.md).

@@ -1,17 +1,17 @@
 # ArborMCP Configuration Guide
 
 This guide covers MCP configuration in the v2 source candidate. The Runtime
-redesign is implemented; release qualification and publication remain open.
+redesign is implemented and the RC is published; stable qualification remains open.
 See the [runtime guide](RUNTIME_GUIDE.md) for supervision, scheduling and limits.
 
 ## Dependency
 
-Version 2 is not yet published. Develop against a local MCP checkout:
+Install the published RC through Hex:
 
 ```elixir
 def deps do
   [
-    {:arbor_mcp, path: "../arbor_mcp"}
+    {:arbor_mcp, "== 2.0.0-rc.2"}
   ]
 end
 ```
@@ -21,17 +21,17 @@ C17 compiler even for HTTP-only or BEAM-only use. `CC` selects one compiler
 executable. It ships C source rather than a prebuilt helper; assembled releases
 must include the built helper and do not invoke a runtime compiler. Windows
 native subprocess operations are unsupported, while framing is separate. See
-the [source-install policy](V2_PACKAGE_RELEASE.md).
+the [source-install policy](RELEASING.md).
 
 For a standalone Cowboy HTTP server, add `{:plug_cowboy, "~> 2.7"}` and
 `{:ranch, "== 1.8.1"}` to the host dependencies. For Bandit, add
-`{:bandit, "== 1.12.5"}` and `{:thousand_island, "== 1.5.0"}`. Select Bandit
+`{:bandit, "~> 1.12 and >= 1.12.5"}` and `{:thousand_island, "~> 1.0"}`. Select Bandit
 with `http_adapter: :bandit`; Cowboy remains the default. HTTP clients and
 mounting `Arbor.MCP.HttpPlug` in an existing host need no additional listener.
 See the [HTTP listener guide](HTTP_LISTENERS.md).
 
-Set `ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc` while the shared dependency is
-unpublished. The released 1.x package remains `ex_mcp`; its earlier
+`ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc` optionally selects local source
+for shared-mechanics development; normal consumers resolve RPC from Hex. The released 1.x package remains `ex_mcp`; its earlier
 `1.0.0-rc.5` release is the legacy-only characterization baseline.
 To preserve its connection policy after upgrading, set:
 
@@ -163,7 +163,7 @@ Use the public negotiator for legacy compatibility checks:
 Arbor.MCP.Protocol.VersionNegotiator.supported?("2025-11-25")
 ```
 
-See the [migration rollout](getting-started/MIGRATION.md#recommended-rollout)
+See the [migration rollout](guides/MIGRATING_V1_TO_V2.md#8-cut-over-with-a-cold-restart-and-retain-a-rollback-path)
 and the [architecture era model](ARCHITECTURE.md#protocol-era-model) before
 changing a production default.
 
@@ -596,7 +596,7 @@ adapters also declare `bounded_operations: 1`, implement
 publication and recheck the supplied authority immediately before mutation.
 A borrowed descriptor additionally needs the explicit live `:server` and
 stable `:namespace` contract; the Runtime never stops that borrowed backend.
-See [native store bounds](./V2_NATIVE_STORE_PRESSURE.md).
+See [native store bounds](STORAGE.md).
 
 The store binds each task to the current request's principal, tenant, and
 endpoint. Before starting work outside a request callback, capture both the

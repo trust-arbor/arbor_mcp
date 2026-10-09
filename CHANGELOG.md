@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Refresh published-RC installation guidance and consolidate current documentation.
+
+
 ## [2.0.0-rc.2] — 2026-10-08
 
 ### 2.0.0-rc.2 (unreleased)
@@ -1512,7 +1515,7 @@ tests, tooling). Behavior changes are listed under **Breaking Changes** below.
   - `session/set_mode`, `session/set_config_option` for runtime agent configuration
   - Streaming session updates via notifications
   - Bidirectional communication for permission and file access requests
-- **ACP Documentation** -- New [ACP Guide](docs/ACP_GUIDE.md) with usage examples and adapter development instructions
+- **ACP Documentation** -- New [ACP Guide](https://github.com/trust-arbor/arbor_mcp/blob/6c32d32de623962cef0322b2763068c2965980b6/docs/ACP_GUIDE.md) with usage examples and adapter development instructions
 
 ## [0.7.4] - 2026-02-14
 

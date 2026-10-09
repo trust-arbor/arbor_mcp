@@ -1,47 +1,10 @@
-# JSON Schema dialect replacement
+# JSON Schema dialect and validation
 
-This unpublished v2 slice makes omitted and explicit JSON Schema 2020-12
-declarations use a 2020-12 validator. Explicit drafts 4, 6 and 7 keep their
-ExJsonSchema backend and unchanged compiled Root caches. Unknown dialects fail
-compilation. No public exports are removed, and neither the frozen 1.x API
-baseline nor the supported 1.x source changes.
-
-This document supersedes the legacy-only backend/cache descriptions in
-`V2_SCHEMA_REPLACEMENT_SLICE.md`; that document still describes the tagged API,
-DSL descriptor checks and unresolved Tools migration. This slice does not add
-automatic runtime input validation, default insertion or type coercion.
-
-## Backend and provenance
-
-The pinned MCP snapshot `docs/mcp-specs/2026-07-28/schema.json` specifies
-2020-12 as the default Tool-schema dialect. Upgrading ExJsonSchema alone cannot
-satisfy that contract: its upstream implementation supports drafts 4, 6 and 7.
-[ExJsonSchema source](https://github.com/jonasschmidt/ex_json_schema)
-
-JSV 0.25.0 is a pure Elixir implementation supporting 2020-12 and draft 7,
-with embedded standard meta-schemas and Elixir 1.15 as its minimum. Its versioned
-source is pinned to commit `44053ef7f3e4cacbfb8df2ce50cdee5d9aed9689`.
-It supplies the missing dialect without a native validator, external process,
-application-defined resolver or casting hook.
-[JSV 0.25.0 source](https://github.com/lud/jsv/tree/v0.25.0),
-[JSV API](https://jsv.hexdocs.pm/JSV.html),
-[published package](https://hex.pm/packages/jsv/0.25.0)
-
-The dependency declaration is `{:jsv, "~> 0.25.0"}` through the existing
-`external_dep/2` helper. The resolved graph adds only these four applications;
-existing Jason, Decimal and NimbleParsec resolutions remain unchanged.
-
-| Package | Version | Hex tarball checksum |
-| --- | --- | --- |
-| jsv | 0.25.0 | `d8b207d0c7d341c77e6a0732712dd754c10476acb49825cdc1b5b44ff7f4ee86` |
-| abnf_parsec | 2.1.0 | `e0ed6290c7cc7e5020c006d1003520390c9bdd20f7c3f776bd49bfe3c5cd362a` |
-| idna | 7.1.0 | `6ae959a025bf36df61a8cab8508d9654891b5426a84c44d82deaffd6ddf8c71f` |
-| texture | 2.0.0 | `c85cbac5f456f4c9867deb0f70c45daa8a536142a8c8c5403401bd51962660bc` |
-
-`mix.lock` also records the package contents checksums and requirement graph.
-Fresh normal Hex resolution preserves every unrelated lock entry. Qualification
-uses independent source-only dependency copies and tracked RPC source
-`0e4cfd1efdb7437eb6cf4c944ed6fa04553da7bb` for each toolchain.
+Omitted and explicit JSON Schema 2020-12 declarations use JSV. Explicit drafts
+4, 6 and 7 use ExJsonSchema. Unknown dialects fail compilation. No automatic
+runtime input validation, default insertion or type coercion is introduced.
+Use the [DSL guide](DSL_GUIDE.md) for declarations and
+[API/migration guide](guides/MIGRATING_V1_TO_V2.md) for replacement semantics.
 
 ## Public compilation and validation
 
@@ -152,40 +115,3 @@ Schema preflight still bounds native/encoded bytes, depth, composition and
 subschema count. Worker timeouts bound resolution/validation work; they do not
 cap existing caller allocations, transient backend copies or whole-VM heap.
 No arbitrary user encoder is used to determine these bounds.
-
-## Qualification and remaining release gates
-
-The tracked corpus contains 23 official 2020-12 files, 245 groups and 807 cases
-from JSON Schema Test Suite commit
-`5b0ee1613e45fcc2bddac00e07c19cd49b00d8a8`, with its MIT license and provenance.
-803 cases check the official semantic result. Four URI-named embedded-resource
-cases explicitly check the retained `:network_ref_forbidden` policy. None are
-silently skipped. This is a selected core-keyword corpus, not the entire
-official suite or a claim of unrestricted JSON Schema conformance.
-[Pinned official suite](https://github.com/json-schema-org/JSON-Schema-Test-Suite/tree/5b0ee1613e45fcc2bddac00e07c19cd49b00d8a8/tests/draft2020-12)
-
-The exact source passes **880 pure cases** on minimum Elixir 1.17.3/OTP 27.0.1,
-current Elixir 1.19.5/OTP 28.4.1 and newest Elixir 1.20.3/OTP 29.0.5: 73
-focused cases plus the 807 corpus checks above. Focused tests cover actual DSL compilation/cached output validation,
-legacy caches, single/bulk registry caches, reserved build callbacks,
-allowlisted dynamic references/remote booleans, arbitrary instance protocols,
-meta-validation and finite instance limits. Pure harnesses omit the global
-test helper and application startup. All three toolchains pass forced project
-warnings-as-errors compilation (335 files) and full formatting. Current strict
-Credo checks 660 source files with unchanged configuration and reports no issues.
-Normal test-environment Dialyzer passes on current/minimum with the existing
-filters only (73/67 filtered warnings respectively, zero unfiltered warnings);
-no new filter is added. This does not claim those toolchain totals are identical
-to a different environment's prior warning inventory. Exact paths, base hashes,
-lock delta and logs accompany the immutable source manifest. Full application,
-security/conformance and consumer-archive gates remain for combined integration;
-they are not inferred from the pure corpus.
-
-The root-owned scalar structured-result/unified Result slice remains separate.
-Before release, qualify their combined era/descriptor/output boundaries,
-normal external package/archive graphs with the four new dependencies, security
-and modern conformance suites, and same-runner throughput/pressure. No Tools
-exports are retired by this change; all accepted retirement and dynamic
-registry/default/coercion migration work remains governed by
-`V2_API_MIGRATION.md`. The frozen 1.x baseline SHA-256 remains
-`a6a952ef2483f2490c13594e1a44bc4a47f96abc9efa19ab4829984b2234f0a8`.
