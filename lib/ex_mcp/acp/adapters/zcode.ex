@@ -238,17 +238,21 @@ defmodule ExMCP.ACP.Adapters.ZCode do
   def translate_outbound(%{"method" => "session/list", "id" => acp_id, "params" => params}, state) do
     cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd)
 
-    with :ok <- authorize_optional_workspace(cwd, :session_list, state) do
-      wire_params =
-        %{}
-        |> Maps.put_present("workspace", workspace_ref(cwd))
-        |> Maps.put_present("cursor", params["cursor"])
-        |> Maps.put_present("limit", params["limit"])
+    case authorize_optional_workspace(cwd, :session_list, state) do
+      :ok ->
+        wire_params =
+          %{}
+          |> Maps.put_present("workspace", workspace_ref(cwd))
+          |> Maps.put_present("cursor", params["cursor"])
+          |> Maps.put_present("limit", params["limit"])
 
-      {id, state} = next_request_id(state)
-      request = Protocol.encode_request(id, "session/list", wire_params)
-      state = track_request(state, id, :session_list, acp_id)
-      {:ok, Protocol.line(request), state}
+        {id, state} = next_request_id(state)
+        request = Protocol.encode_request(id, "session/list", wire_params)
+        state = track_request(state, id, :session_list, acp_id)
+        {:ok, Protocol.line(request), state}
+
+      {:error, reason} ->
+        {:error, reason, state}
     end
   end
 

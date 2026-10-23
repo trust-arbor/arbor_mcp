@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-10-22
+
 ### Fixed
 
+- The ACP `AdapterBridge` no longer crashes (taking the connection down) when an
+  adapter's `translate_outbound/2` reports a failed check as `{:error, reason}`
+  without its state; ZCode `session/list` with a relative or unauthorized `cwd`
+  did exactly that. Such results now produce a JSON-RPC error reply
+  (backport of arbor_acp#12, fixes arbor_acp#7 on this line).
 - **Security:** the DSL success path and the deprecated `ExMCP.Server.Tools`
   normalizer no longer `inspect/1` arbitrary handler terms into tool results.
   A handler that returned a struct or tuple sent its full contents (process
