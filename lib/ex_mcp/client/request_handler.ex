@@ -1582,8 +1582,9 @@ defmodule ExMCP.Client.RequestHandler do
           request_id
         )
 
+      # `send_response/2` returns the loop result with the updated transport
+      # state; returning the pre-send state would drop it.
       send_response(response, state)
-      {:noreply, state}
     else
       start_handler_task(kind, fun, request_id, tasks, state)
     end
