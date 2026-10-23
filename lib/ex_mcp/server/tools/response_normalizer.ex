@@ -1,4 +1,7 @@
 defmodule ExMCP.Server.Tools.ResponseNormalizer do
+  require Logger
+  alias ExMCP.Internal.LogSummary
+
   @moduledoc """
   Normalizes tool responses to comply with MCP specification.
 
@@ -50,7 +53,15 @@ defmodule ExMCP.Server.Tools.ResponseNormalizer do
   end
 
   def normalize(other) do
-    %{content: [%{type: "text", text: inspect(other)}]}
+    # Never `inspect/1` arbitrary handler terms into a client-visible result.
+    Logger.warning("Tool handler returned an unsupported result",
+      reason_shape: LogSummary.describe(other)
+    )
+
+    %{
+      content: [%{type: "text", text: "Tool returned an unsupported result; see the server log"}],
+      isError: true
+    }
   end
 
   @doc """
@@ -61,8 +72,24 @@ defmodule ExMCP.Server.Tools.ResponseNormalizer do
     %{content: [%{type: "text", text: reason}], isError: true}
   end
 
+  # Atoms carry no payload, so their inspected form (`:badarg`) is safe to send.
+  def normalize_error(reason) when is_atom(reason),
+    do: %{content: [%{type: "text", text: inspect(reason)}], isError: true}
+
+  def normalize_error(%{message: message}) when is_binary(message),
+    do: %{content: [%{type: "text", text: message}], isError: true}
+
   def normalize_error(reason) do
-    %{content: [%{type: "text", text: inspect(reason)}], isError: true}
+    # Other terms (tuples, structs, exceptions without a message) may carry
+    # internal detail; log the shape and send a fixed message.
+    Logger.warning("Tool handler returned an unsupported error",
+      reason_shape: LogSummary.describe(reason)
+    )
+
+    %{
+      content: [%{type: "text", text: "Tool execution failed; see the server log"}],
+      isError: true
+    }
   end
 
   # Private helpers

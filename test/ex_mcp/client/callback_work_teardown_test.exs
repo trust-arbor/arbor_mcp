@@ -221,6 +221,35 @@ defmodule ExMCP.Client.CallbackWorkTeardownTest do
     end
   end
 
+  describe "concurrent server request limit" do
+    test "requests beyond :max_server_requests get an error reply without a handler task" do
+      client = start_legacy_client(max_server_requests: 2)
+      assert_receive {:transport_connect, 1}
+
+      task1 = deliver_sampling_request(client, 1)
+      task2 = deliver_sampling_request(client, 2)
+
+      push_sampling_request(client, 3)
+
+      assert_receive {:sent, 1,
+                      %{"id" => 3, "error" => %{"code" => -32603, "message" => message}}},
+                     1_000
+
+      assert message =~ "Too many concurrent server requests"
+      refute_receive {:callback_started, _}, 200
+      assert map_size(:sys.get_state(client).server_request_tasks) == 2
+
+      # Releasing a handler frees a slot.
+      send(task1, :release)
+      assert_receive {:sent, 1, %{"id" => 1, "result" => _}}, 1_000
+      task4 = deliver_sampling_request(client, 4)
+
+      for task <- [task2, task4], do: send(task, :release)
+      assert_receive {:sent, 1, %{"id" => 2, "result" => _}}, 1_000
+      assert_receive {:sent, 1, %{"id" => 4, "result" => _}}, 1_000
+    end
+  end
+
   defp start_legacy_client(opts) do
     {:ok, client} =
       Client.start_link(
@@ -239,6 +268,12 @@ defmodule ExMCP.Client.CallbackWorkTeardownTest do
   end
 
   defp deliver_sampling_request(client, id) do
+    push_sampling_request(client, id)
+    assert_receive {:callback_started, task_pid}, 1_000
+    task_pid
+  end
+
+  defp push_sampling_request(client, id) do
     request = %{
       "jsonrpc" => "2.0",
       "id" => id,
@@ -250,8 +285,6 @@ defmodule ExMCP.Client.CallbackWorkTeardownTest do
     }
 
     send(client, {:transport_message, Jason.encode!(request)})
-    assert_receive {:callback_started, task_pid}, 1_000
-    task_pid
   end
 
   defp start_modern_client do

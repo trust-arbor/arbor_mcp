@@ -174,6 +174,10 @@ defmodule ExMCP.Client do
     endpoint, and auth configuration before connecting (default: `false`).
   - `:trace_context` - Optional W3C `traceparent`, `tracestate`, and allowlisted
     `baggage` values to attach to modern requests.
+  - `:max_server_requests` - Maximum number of server-initiated requests
+    (sampling, elicitation, custom methods) whose handler callbacks may run
+    concurrently. Further requests are answered with a JSON-RPC internal error
+    until a slot frees. Default 256.
   - `:health_check_interval` - Interval in milliseconds between idle health
     check pings (default: 30_000). Set to `nil` or `0` to disable.
   - `:reliability` - Reliability features configuration (optional)

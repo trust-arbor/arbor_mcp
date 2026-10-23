@@ -1,4 +1,7 @@
 defmodule ExMCP.Server.DSL.Result do
+  require Logger
+  alias ExMCP.Internal.LogSummary
+
   @moduledoc """
   Response helpers for the modern server DSL.
 
@@ -87,7 +90,17 @@ defmodule ExMCP.Server.DSL.Result do
     do: Map.put_new(result, :content, [])
 
   def normalize_tool_result(%{structuredOutput: _} = result), do: normalize_structured_key(result)
-  def normalize_tool_result(result), do: result |> inspect() |> text()
+  # Anything else is not a tool result the protocol can carry. It used to be
+  # `inspect/1`ed into the reply, which sent arbitrary handler terms (structs,
+  # credentials, process state) to the client. Reject it and keep the detail
+  # in the server log.
+  def normalize_tool_result(result) do
+    Logger.warning("Tool handler returned an unsupported result",
+      reason_shape: LogSummary.describe(result)
+    )
+
+    error("Tool returned an unsupported result; see the server log")
+  end
 
   @doc false
   def normalize_resource({:ok, result}, uri, mime_type, state) do
