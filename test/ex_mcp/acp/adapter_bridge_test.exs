@@ -366,6 +366,35 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     end
   end
 
+  # Reports failed checks as a bare `{:error, reason}` (arbor_acp#7).
+  defmodule BareErrorAdapter do
+    @behaviour ExMCP.ACP.Adapter
+
+    defstruct []
+
+    @impl true
+    def init(_opts), do: {:ok, %__MODULE__{}}
+
+    @impl true
+    def command(_opts), do: {"cat", []}
+
+    @impl true
+    def capabilities, do: %{"sessionCapabilities" => %{"list" => %{}}}
+
+    @impl true
+    def translate_outbound(%{"method" => "initialize"}, state), do: {:ok, :skip, state}
+
+    def translate_outbound(%{"method" => method}, _state)
+        when method in ["session/list", "session/prompt"] do
+      {:error, "Workspace paths must be absolute"}
+    end
+
+    def translate_outbound(_msg, state), do: {:ok, :skip, state}
+
+    @impl true
+    def translate_inbound(_line, state), do: {:skip, state}
+  end
+
   defmodule ParamListAdapter do
     @behaviour ExMCP.ACP.Adapter
 
@@ -1001,6 +1030,29 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
       assert msg["error"]["code"] == -32603
       assert msg["error"]["message"] == "adapter_refused"
 
+      AdapterBridge.close(bridge)
+    end
+
+    test "a bare {:error, reason} from translate_outbound becomes an error reply, not a crash" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: BareErrorAdapter, adapter_opts: [])
+      _init = send_initialize(bridge)
+
+      for {method, id, params} <- [
+            {"session/list", 60, %{"cwd" => "relative/path"}},
+            {"session/prompt", 61,
+             %{"sessionId" => "s1", "prompt" => [%{"type" => "text", "text" => "hi"}]}},
+            {"session/list", 62, %{}}
+          ] do
+        msg = %{"jsonrpc" => "2.0", "method" => method, "params" => params, "id" => id}
+        assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(msg))
+        assert {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+        reply = Jason.decode!(raw)
+        assert reply["id"] == id
+        assert reply["error"]["code"] == -32603
+        assert reply["error"]["message"] == "Workspace paths must be absolute"
+      end
+
+      assert Process.alive?(bridge)
       AdapterBridge.close(bridge)
     end
   end
