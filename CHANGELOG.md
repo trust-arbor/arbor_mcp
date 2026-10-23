@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Security:** the DSL success path and the deprecated `ExMCP.Server.Tools`
+  normalizer no longer `inspect/1` arbitrary handler terms into tool results.
+  A handler that returned a struct or tuple sent its full contents (process
+  state, credentials) to the client; such results now produce a fixed error
+  text and the shape is logged server-side. Binaries, atoms and exception
+  messages are still passed through.
+- **Security:** `ExMCP.Client` caps concurrent server-initiated request handlers
+  (`:max_server_requests`, default 256). A server flooding `sampling/createMessage`
+  or `elicitation/create` could previously spawn an unbounded number of handler
+  processes; excess requests now get an immediate JSON-RPC internal error.
 - **Security:** `ExMCP.Internal.WorkspacePath.canonical/1` resolves symlinks
   before applying `..`, the way the kernel does. A path such as
   `<root>/link/../secret`, where `link` points outside the workspace,

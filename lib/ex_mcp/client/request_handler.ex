@@ -7,6 +7,8 @@ defmodule ExMCP.Client.RequestHandler do
   """
 
   require Logger
+
+  @default_max_server_requests 256
   alias ExMCP.Client.{Deadline, InputDispatcher, MRTR, NotificationListener}
   alias ExMCP.Error
   alias ExMCP.Internal.{JSONRPC, LogSummary, Maps, Protocol, RequestParams, VersionRegistry}
@@ -1563,6 +1565,31 @@ defmodule ExMCP.Client.RequestHandler do
   # `handle_server_request_completion/3`; crashes via
   # `handle_server_request_down/3`.
   defp run_handler_async(kind, fun, request_id, state) do
+    tasks = state.server_request_tasks || %{}
+    limit = Keyword.get(state.transport_opts, :max_server_requests, @default_max_server_requests)
+
+    if map_size(tasks) >= limit do
+      # A server that floods the client with sampling/elicitation requests
+      # must not be able to spawn an unbounded number of handler processes.
+      Logger.warning(
+        "Rejecting #{kind} server request: concurrent handler limit (#{limit}) reached"
+      )
+
+      response =
+        build_error_response(
+          ErrorCodes.internal_error(),
+          "Too many concurrent server requests",
+          request_id
+        )
+
+      send_response(response, state)
+      {:noreply, state}
+    else
+      start_handler_task(kind, fun, request_id, tasks, state)
+    end
+  end
+
+  defp start_handler_task(kind, fun, request_id, tasks, state) do
     parent = self()
 
     {pid, ref} =
@@ -1579,8 +1606,7 @@ defmodule ExMCP.Client.RequestHandler do
         send(parent, {:server_request_result, self(), outcome})
       end)
 
-    tasks = Map.put(state.server_request_tasks || %{}, pid, {ref, request_id, kind})
-    {:noreply, %{state | server_request_tasks: tasks}}
+    {:noreply, %{state | server_request_tasks: Map.put(tasks, pid, {ref, request_id, kind})}}
   end
 
   @doc false

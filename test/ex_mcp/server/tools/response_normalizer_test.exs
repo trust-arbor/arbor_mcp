@@ -38,4 +38,31 @@ defmodule ExMCP.Server.Tools.ResponseNormalizerTest do
              isError: true
            }
   end
+
+  describe "unsupported terms never reach the client verbatim" do
+    test "non-map results become a fixed error without the term" do
+      secret = %{token: "sk-live-SECRET", pid: self()}
+      result = ResponseNormalizer.normalize({:ok, secret})
+
+      assert result.isError == true
+      assert [%{type: "text", text: text}] = result.content
+      refute text =~ "SECRET"
+      refute text =~ "sk-live"
+    end
+
+    test "error reasons: binaries, atoms and messages pass; other terms are replaced" do
+      assert %{content: [%{text: "boom"}], isError: true} =
+               ResponseNormalizer.normalize_error("boom")
+
+      assert %{content: [%{text: ":timeout"}]} = ResponseNormalizer.normalize_error(:timeout)
+
+      assert %{content: [%{text: "bad arg"}]} =
+               ResponseNormalizer.normalize_error(%ArgumentError{message: "bad arg"})
+
+      %{content: [%{text: text}], isError: true} =
+        ResponseNormalizer.normalize_error({:db_error, %{password: "hunter2"}})
+
+      refute text =~ "hunter2"
+    end
+  end
 end
