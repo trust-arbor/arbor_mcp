@@ -817,6 +817,10 @@ defmodule ExMCP.ACP.AdapterBridge do
       {:error, reason, adapter_state} ->
         state = %{state | adapter_state: adapter_state}
         {:reply, :ok, synthesize_error(state, id, error_code, to_string(reason))}
+
+      # A bare error (no adapter state) must not crash the bridge either.
+      {:error, reason} ->
+        {:reply, :ok, synthesize_error(state, id, error_code, to_string(reason))}
     end
   end
 
