@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- OAuth token errors no longer crash `LogSanitizer` on `Jason.DecodeError` or
+  leak the raw token-endpoint body. Structs and exception terms are sanitized
+  without enumerating them as maps, `Jason.DecodeError.data` is redacted, and
+  non-JSON token responses are returned without the raw HTTP body.
+
 ### Changed
 
 - Locked `plug_crypto` 2.2.1 and `cowlib` 2.21.0. plug_crypto 2.2.1 fixes

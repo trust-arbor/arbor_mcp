@@ -3,7 +3,9 @@ defmodule Arbor.MCP.Authorization.LogSanitizerTest do
 
   import ExUnit.CaptureLog
 
-  alias Arbor.MCP.Authorization.{ErrorHandler, LogSanitizer}
+  require Logger
+
+  alias Arbor.MCP.Authorization.{ErrorHandler, HTTPClient, LogSanitizer}
 
   test "redacts nested OAuth credentials and raw response bodies" do
     reason =
@@ -70,5 +72,47 @@ defmodule Arbor.MCP.Authorization.LogSanitizerTest do
     for secret <- ~w(access-secret cookie-secret code-secret state-secret query-secret) do
       refute log =~ secret
     end
+  end
+
+  test "malformed token response is logged without leaking the raw body or crashing" do
+    secret = "leak-me-oauth-token-9f3c2a1b"
+    malformed_body = "<html>bad gateway #{secret}</html>"
+
+    bypass = Bypass.open()
+
+    Bypass.expect_once(bypass, "POST", "/token", fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("text/html")
+      |> Plug.Conn.resp(200, malformed_body)
+    end)
+
+    result =
+      HTTPClient.make_token_request(
+        "http://localhost:#{bypass.port}/token",
+        [{"grant_type", "client_credentials"}, {"client_id", "cid"}, {"client_secret", "cs"}]
+      )
+
+    assert {:error, {:json_decode_error, reason}} = result
+
+    log =
+      capture_log(fn ->
+        formatted = LogSanitizer.format({:json_decode_error, reason})
+        Logger.error("Token refresh failed: #{formatted}")
+      end)
+
+    refute inspect(result) =~ secret
+    refute log =~ secret
+  end
+
+  test "sanitizes exception structs without crashing" do
+    secret = "leak-me-oauth-token-9f3c2a1b"
+    assert {:error, %Jason.DecodeError{} = decode_error} = Jason.decode("not-json #{secret}")
+
+    formatted = LogSanitizer.format(decode_error)
+
+    refute formatted =~ secret
+    assert formatted =~ "[REDACTED]"
+    assert is_binary(LogSanitizer.format(%RuntimeError{message: "boom"}))
+    assert is_binary(LogSanitizer.format(%URI{path: "/token"}))
   end
 end

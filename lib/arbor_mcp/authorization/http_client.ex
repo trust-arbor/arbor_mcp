@@ -38,7 +38,7 @@ defmodule Arbor.MCP.Authorization.HTTPClient do
             parse_token_response(token_data)
 
           {:error, reason} ->
-            {:error, {:json_decode_error, reason}}
+            {:error, {:json_decode_error, redact_decode_error(reason)}}
         end
 
       {:ok, {{_, status, _}, _headers, error_body}} ->
@@ -259,5 +259,9 @@ defmodule Arbor.MCP.Authorization.HTTPClient do
       nil -> :ok
       expected -> Issuer.compare(expected, actual)
     end
+  end
+
+  defp redact_decode_error(%Jason.DecodeError{} = reason) do
+    %{reason | data: "[REDACTED]"}
   end
 end

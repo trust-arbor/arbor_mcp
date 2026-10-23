@@ -10,8 +10,23 @@ defmodule Arbor.MCP.Authorization.LogSanitizer do
     code state cookie set_cookie authorization
   ))
 
+  # Exception/struct fields that commonly carry raw input (e.g. Jason.DecodeError.data).
+  @raw_payload_keys MapSet.new([:data, :term])
+
   @doc false
   @spec sanitize(term()) :: term()
+  def sanitize(%_{} = value) do
+    value
+    |> Map.from_struct()
+    |> Map.new(fn {key, nested} ->
+      if sensitive_key?(key) or raw_payload_key?(key) do
+        {key, @redacted}
+      else
+        {key, sanitize(nested)}
+      end
+    end)
+  end
+
   def sanitize(value) when is_map(value) do
     Map.new(value, fn {key, nested} ->
       if sensitive_key?(key) do
@@ -20,6 +35,14 @@ defmodule Arbor.MCP.Authorization.LogSanitizer do
         {key, sanitize(nested)}
       end
     end)
+  end
+
+  def sanitize({:http_error, status, _body}) do
+    {:http_error, status, @redacted}
+  end
+
+  def sanitize({:json_decode_error, reason}) do
+    {:json_decode_error, sanitize(reason)}
   end
 
   def sanitize(value) when is_tuple(value) do
@@ -100,4 +123,6 @@ defmodule Arbor.MCP.Authorization.LogSanitizer do
 
     MapSet.member?(@sensitive_keys, normalized)
   end
+
+  defp raw_payload_key?(key), do: MapSet.member?(@raw_payload_keys, key)
 end
