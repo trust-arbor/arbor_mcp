@@ -1722,6 +1722,28 @@ defmodule Arbor.MCP.HttpPlugTest do
       refute conn.resp_body =~ "event: connected"
     end
 
+    test "rejects a cross-origin legacy SSE request" do
+      conn =
+        conn(:get, "/sse")
+        |> put_req_header("origin", "https://evil.example")
+        |> call_http(mount_opts(legacy_http_sse: true))
+
+      assert conn.status == 403
+      assert conn.resp_body == "Origin not allowed"
+      refute conn.resp_body =~ "event: endpoint"
+    end
+
+    test "rejects a legacy SSE request whose Host is not allow-listed" do
+      conn =
+        conn(:get, "/sse")
+        |> with_host("evil.example")
+        |> call_http(mount_opts(legacy_http_sse: true, allowed_hosts: ["localhost"]))
+
+      assert conn.status == 421
+      assert Jason.decode!(conn.resp_body)["error"]["message"] == "Host header not allowed"
+      refute conn.resp_body =~ "event: endpoint"
+    end
+
     test "supports configured legacy GET and POST paths" do
       conn =
         conn(:get, "/events")

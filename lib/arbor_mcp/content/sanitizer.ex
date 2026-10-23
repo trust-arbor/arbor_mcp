@@ -104,14 +104,18 @@ defmodule Arbor.MCP.Content.Sanitizer do
 
   @doc """
   Sanitizes file paths to prevent directory traversal.
+
+  Illegal characters are stripped first, then empty, `.`, and `..` segments
+  are dropped so stripping cannot reassemble a parent-directory segment.
   """
   @spec sanitize_path(String.t()) :: String.t()
   def sanitize_path(path) when is_binary(path) do
     path
-    |> String.replace("..", "")
     |> String.replace("~", "")
     |> String.replace(~r/[^\w\-\.\/]/, "")
-    |> String.trim("/")
+    |> String.split("/")
+    |> Enum.reject(&(&1 in ["", ".", ".."]))
+    |> Enum.join("/")
   end
 
   @doc """

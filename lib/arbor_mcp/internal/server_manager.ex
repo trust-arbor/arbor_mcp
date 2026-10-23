@@ -17,8 +17,6 @@ defmodule Arbor.MCP.Internal.ServerManager do
   use GenServer
   require Logger
 
-  alias Arbor.MCP.Internal.Discovery
-
   defstruct servers: %{}, monitors: %{}
 
   @type server_spec :: %{
@@ -75,14 +73,6 @@ defmodule Arbor.MCP.Internal.ServerManager do
   @spec route_request(GenServer.server(), String.t(), any()) :: {:ok, any()} | {:error, any()}
   def route_request(manager \\ __MODULE__, server_name, request) do
     GenServer.call(manager, {:route_request, server_name, request})
-  end
-
-  @doc """
-  Discovers and starts servers based on configuration.
-  """
-  @spec discover_and_start(GenServer.server()) :: {:ok, [String.t()]} | {:error, any()}
-  def discover_and_start(manager \\ __MODULE__) do
-    GenServer.call(manager, :discover_and_start)
   end
 
   # Server callbacks
@@ -153,31 +143,6 @@ defmodule Arbor.MCP.Internal.ServerManager do
         result = route_to_server(module, pid, request)
         {:reply, result, state}
     end
-  end
-
-  def handle_call(:discover_and_start, _from, state) do
-    servers = Discovery.discover_servers()
-
-    results =
-      Enum.map(servers, fn server_config ->
-        spec = build_server_spec(server_config)
-
-        case do_start_server(spec, state) do
-          {:ok, _pid, _new_state} ->
-            {:ok, spec.name}
-
-          {:error, reason} ->
-            Logger.warning("Failed to start server #{spec.name}: #{inspect(reason)}")
-            {:error, spec.name}
-        end
-      end)
-
-    started =
-      results
-      |> Enum.filter(fn {status, _} -> status == :ok end)
-      |> Enum.map(fn {_, name} -> name end)
-
-    {:reply, {:ok, started}, state}
   end
 
   @impl true
@@ -334,43 +299,5 @@ defmodule Arbor.MCP.Internal.ServerManager do
 
   defp route_to_server(_module, _pid, _request) do
     {:error, :unsupported_server_type}
-  end
-
-  defp build_server_spec(config) do
-    transport = Map.get(config, :transport, "stdio")
-
-    module =
-      case transport do
-        "stdio" -> Arbor.MCP.Client
-        "sse" -> Arbor.MCP.Client
-        _ -> nil
-      end
-
-    transport_config =
-      case transport do
-        "stdio" ->
-          [
-            transport: Arbor.MCP.Transport.Stdio,
-            command: config.command,
-            args: config.args,
-            env: config.env
-          ]
-
-        "sse" ->
-          [
-            transport: Arbor.MCP.Transport.SSE,
-            url: config.url,
-            headers: config.headers
-          ]
-
-        _ ->
-          []
-      end
-
-    %{
-      name: config.name,
-      module: module,
-      config: transport_config
-    }
   end
 end

@@ -62,6 +62,15 @@ defmodule Arbor.MCP.ContentValidationRefactorTest do
       assert "home/user/file.txt" = Sanitizer.sanitize_path("../../../home/user/file.txt")
       assert "etc/passwd" = Sanitizer.sanitize_path("/etc/passwd")
     end
+
+    test "does not reconstruct .. after stripping illegal characters" do
+      # Illegal separators/spaces are stripped after ".." removal, which can
+      # reassemble a traversal segment (".\\." -> "..", ". ." -> "..").
+      assert Sanitizer.sanitize_path(".\\.") == ""
+      assert Sanitizer.sanitize_path("foo/.\\./secret") == "foo/secret"
+      assert Sanitizer.sanitize_path("foo/. ./bar") == "foo/bar"
+      refute String.contains?(Sanitizer.sanitize_path("foo/.\\./../etc/passwd"), "..")
+    end
   end
 
   describe "SchemaValidator.validate_schema/2" do

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `Arbor.MCP.Content.Sanitizer.sanitize_path/1` no longer reconstructs `..`
+  after stripping illegal characters (for example `.\\.` or `. .`).
+  Cross-origin legacy HTTP+SSE GETs are rejected by the same Origin/Host
+  checks as Streamable HTTP; a regression test now covers that path.
+
+### Removed
+
+- `Arbor.MCP.Internal.ServerManager.discover_and_start/1`. It launched every
+  server `Discovery` found (workspace `mcp.json`, env, well-known dirs, and
+  global npm packages) with no allowlist and had no in-repo callers.
+- Auto-execution of discovered commands from
+  `Arbor.MCP.Internal.Discovery.test_server/1` (`cmd --version` / `--help`).
+  Command configs now return `false` without being run.
+
 ### Changed
 
 - Locked `plug_crypto` 2.2.1 and `cowlib` 2.21.0. plug_crypto 2.2.1 fixes
