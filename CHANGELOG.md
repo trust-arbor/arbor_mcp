@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Locked `plug_crypto` 2.2.1 and `cowlib` 2.21.0. plug_crypto 2.2.1 fixes
+  CVE-2026-105963 (the secret key base or compared secret landing in
+  `FunctionClauseError` stack frames); ExMCP only calls
+  `Plug.Crypto.secure_compare/2` on equal-size binaries, so the affected
+  guards were not reachable, and the lockfile is not part of the Hex
+  package. Cowlib 2.21.0 fixes EEF-CVE-2026-43969 (`cow_cookie:cookie/1`), so
+  its `mix hex.audit` exception is gone; only EEF-CVE-2026-43966 remains
+  excepted, with the same justification as before.
+
 ## [1.7.2] - 2026-10-22
 
 ### Fixed

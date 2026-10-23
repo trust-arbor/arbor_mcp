@@ -30,6 +30,15 @@ defmodule ExMCP.Security.DependencyAdvisoryMitigationTest do
     assert Version.compare(locked_version, "3.1.2") in [:eq, :gt]
   end
 
+  test "Cowlib and Plug.Crypto locks include the October 2026 advisory fixes" do
+    lock = Lock.read()
+    assert Version.compare(elem(lock[:cowlib], 2), "2.21.0") in [:eq, :gt]
+    assert Version.compare(elem(lock[:plug_crypto], 2), "2.2.1") in [:eq, :gt]
+
+    # Only the independently justified Cowlib exception remains.
+    assert Project.config()[:hex][:ignore_advisories] == ["EEF-CVE-2026-43966"]
+  end
+
   test "Plug rejects response-header bytes covered by EEF-CVE-2026-43966" do
     conn = conn(:get, "/")
 
@@ -40,7 +49,7 @@ defmodule ExMCP.Security.DependencyAdvisoryMitigationTest do
     end
   end
 
-  test "ExMCP modules do not import cow_cookie:cookie/1 from EEF-CVE-2026-43969" do
+  test "ExMCP modules do not import cow_cookie:cookie/1 (EEF-CVE-2026-43969, fixed in Cowlib 2.21.0)" do
     refute {:cow_cookie, :cookie, 1} in application_imports([:ex_mcp])
   end
 
