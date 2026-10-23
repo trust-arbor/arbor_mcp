@@ -46,9 +46,6 @@ because the namespace differs (#95). The touched files otherwise match.
 Still left out of 1.x, as noted for 1.6:
 - JSON Schema 2020-12 dialect support. It needs a new dependency and changes
   how schemas validate.
-- The ZCode `session/list` error path
-  ([arbor_acp#7](https://github.com/trust-arbor/arbor_acp/issues/7)). It will
-  be fixed on the ArborACP line first and then backported.
 
 ## 1.7.1 security patch
 
@@ -69,6 +66,36 @@ returns `{:error, :invalid_npx_package}` for an invalid package specifier.
 | Fix | Origin | 1.x commit |
 | --- | --- | --- |
 | Reject ACP adapter CLI options that would be parsed as flags | arbor_acp#8 (`dd14886`, `61fe5c5`) | `9546f68` (#100) |
+
+## 1.7.2 security patch
+
+1.7.1 was tagged but never published to Hex, so 1.7.2 is the first published
+release carrying its argument-injection fix (GHSA-2q9v-qvwf-3m8w). It adds the
+findings of the pre-release security review:
+
+- GHSA-jrw4-h7gq-x4cj: `ExMCP.Internal.WorkspacePath.canonical/1` collapsed
+  `..` before resolving symlinks, so `<root>/link/../secret` passed the ACP
+  client's `fs`/`terminal` authorization and the Codex/ZCode workspace-root
+  checks while the real file was opened; a project's `.pi/settings.json` could
+  set `piCommand` and so choose the executable the Pi adapter spawns; the Pi
+  edit-snapshot root followed the cwd the agent reported; Codex gateway
+  authentication ignored `:gateway_auth`.
+- 1.x-only items: the DSL success path and the deprecated `Server.Tools`
+  normalizer `inspect/1`ed arbitrary handler terms into tool results, and the
+  client spawned an unbounded handler process per server-initiated request
+  (now bounded by `:max_server_requests`, default 256).
+- The ZCode `session/list` error path (arbor_acp#7), previously left out.
+
+**Behavior change**: handlers returning terms the protocol cannot carry now
+produce a fixed error text (the shape is logged server-side); the project
+`piCommand` setting is ignored; Codex gateway authentication requires
+`adapter_opts[:gateway_auth]` and an https or loopback `baseUrl`.
+
+| Fix | Origin | 1.x commit |
+| --- | --- | --- |
+| Workspace confinement, Pi executable selection, Codex gateway opt-in | arbor_acp#11 (`f810383`, `7e4d929`) | `c4d2867` (#102) |
+| Tool-result `inspect/1` fallbacks; concurrent server-request cap | review, 1.x only | `7d889bc`, `9da1170` (#103) |
+| AdapterBridge crash on bare translation errors | arbor_acp#12 (`336ca66`) | `8d9df01` |
 
 ## Qualification and publication
 
