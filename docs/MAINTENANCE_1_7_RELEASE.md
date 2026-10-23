@@ -73,7 +73,7 @@ returns `{:error, :invalid_npx_package}` for an invalid package specifier.
 release carrying its argument-injection fix (GHSA-2q9v-qvwf-3m8w). It adds the
 findings of the pre-release security review:
 
-- GHSA-jrw4-h7gq-x4cj: `ExMCP.Internal.WorkspacePath.canonical/1` collapsed
+- GHSA-jrw4-h7gq-x4cj: the internal workspace-path canonicalizer collapsed
   `..` before resolving symlinks, so `<root>/link/../secret` passed the ACP
   client's `fs`/`terminal` authorization and the Codex/ZCode workspace-root
   checks while the real file was opened; a project's `.pi/settings.json` could
