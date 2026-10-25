@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its `mix hex.audit` exception is gone; only EEF-CVE-2026-43966 remains
   excepted, with the same justification as before.
 
+### Fixed
+
+- **Security:** a client's `logging/setLevel` changed the host application's
+  global Logger level, because the default `handle_set_log_level/2` called
+  `Logger.configure/1`; any connected client could silence or flood the host's
+  logs. The default handler now accepts a valid level and changes nothing else.
+
 ## [1.7.2] - 2026-10-22
 
 ### Fixed
