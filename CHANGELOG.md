@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A request or notification that leaves out `params` was dropped as an
+  invalid message, so the client never answered a server's `ping` or saw its
+  `notifications/*/list_changed`; the TypeScript SDK's servers send both that
+  way. Such a message now parses with empty params, and a response that also
+  names a method stays a response (backport of 2.x PR #122).
+
 ## [1.7.3] - 2026-10-26
 
 ### Changed
