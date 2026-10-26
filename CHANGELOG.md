@@ -15,17 +15,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SIGKILL. A server that exits on EOF is no longer signalled. The subprocess
   `:cleanup_timeout` defaults to `eof_grace + term_grace + 400` (2_500 ms);
   when only `:cleanup_timeout` is set, the EOF grace shrinks to fit it.
+  `close/1` returns within `:cleanup_timeout`, and the shutdown runs in a
+  process of its own, so a server that ignores EOF is still stopped when the
+  closing process (a client its supervisor kills during the grace, say)
+  dies first. Negative graces and a non-positive budget are rejected.
+  Backport of 2.x #109.
 - A client's default close limit (`Deadline.cleanup_timeout/1`) covers a stdio
   server's shutdown budget plus 500 ms: 3_000 ms with the stdio defaults. Other
   transports keep 1_000 ms.
 - A modern `tools/call` checked its `Mcp-Param-*` headers against the first
   `tools/list` page only, so a tool on a later page of a paginated list
   skipped the check. The server now follows the cursors until it finds the
-  tool, for up to 100 pages, and fails the request closed past that.
+  tool, for up to 100 pages and one `handler_call_timeout` in all, and fails
+  the request closed past either bound. Backport of 2.x #114.
 - The default OAuth provider renews an access token with its refresh
   token, before the token expires and when the server rejects it, instead
   of running the browser flow again (which also found the same
-  authorization server and stopped with `:auth_loop_detected`).
+  authorization server and stopped with `:auth_loop_detected`). Backport of
+  2.x #112 and #115.
+- The HTTP transport keeps an auth provider's new state on every path: a
+  refreshed token (a rotating refresh token is spent once) after a request
+  that succeeds or fails, and a failed flow's loop guards, including for
+  modern request streams. `send_message/2` and the client still return the
+  error shapes they did. Concurrent requests rejected together run one
+  refresh or flow: the client answers the auth challenges of its modern
+  request streams and of its legacy async POSTs one at a time, and reuses a
+  token another request already got.
 
 ## [1.7.3] - 2026-10-26
 
