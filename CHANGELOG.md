@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.3] - 2026-10-26
+
 ### Changed
 
 - Locked `plug_crypto` 2.2.1 and `cowlib` 2.21.0. plug_crypto 2.2.1 fixes

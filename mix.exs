@@ -1,7 +1,7 @@
 defmodule ExMCP.MixProject do
   use Mix.Project
 
-  @version "1.7.2"
+  @version "1.7.3"
   @github_url "https://github.com/trust-arbor/arbor_mcp"
 
   def project do

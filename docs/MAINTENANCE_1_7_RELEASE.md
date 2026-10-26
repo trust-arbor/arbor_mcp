@@ -97,6 +97,28 @@ produce a fixed error text (the shape is logged server-side); the project
 | Tool-result `inspect/1` fallbacks; concurrent server-request cap | review, 1.x only | `7d889bc`, `9da1170` (#103) |
 | AdapterBridge crash on bare translation errors | arbor_acp#12 (`336ca66`) | `8d9df01` |
 
+## 1.7.3 security patch
+
+1.7.3 stops a client's `logging/setLevel` from changing the host application's
+global Logger level. The default `handle_set_log_level/2` called
+`Logger.configure/1`, so any connected client could silence or flood the
+host's logs. It now accepts a valid level and changes nothing else. ArborMCP
+`2.0.0-rc.6` also applies the level to the `notifications/message` that client
+receives (not yet over legacy Streamable HTTP); 1.x doesn't filter them.
+
+The release also locks plug_crypto 2.2.1 and cowlib 2.21.0. The lockfile is
+not part of the Hex package, and the plug_crypto advisory was not reachable
+from ExMCP.
+
+**Behavior change**: a server that relied on `logging/setLevel` changing its
+Logger level must call `Logger.configure/1` in its own
+`handle_set_log_level/2`.
+
+| Fix | Origin | 1.x commit |
+| --- | --- | --- |
+| `logging/setLevel` no longer changes the host's Logger level | arbor_mcp `c908c29` | `e79f76d` |
+| plug_crypto 2.2.1 and cowlib 2.21.0 locks | arbor_mcp #106 | `660015f` (#105) |
+
 ## Qualification and publication
 
 Run maintenance CI and adapter/protocol/security regressions on this source.
