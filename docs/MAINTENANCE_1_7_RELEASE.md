@@ -99,24 +99,31 @@ produce a fixed error text (the shape is logged server-side); the project
 
 ## 1.7.3 security patch
 
-1.7.3 stops a client's `logging/setLevel` from changing the host application's
-global Logger level. The default `handle_set_log_level/2` called
+1.7.3 fixes two security issues. It stops a client's `logging/setLevel` from
+changing the host application's global Logger level. The default `handle_set_log_level/2` called
 `Logger.configure/1`, so any connected client could silence or flood the
 host's logs. It now accepts a valid level and changes nothing else. ArborMCP
 `2.0.0-rc.6` also applies the level to the `notifications/message` that client
 receives (not yet over legacy Streamable HTTP); 1.x doesn't filter them.
 
+It also stops `ExMCP.ACP.Registry.fetch/1` from following HTTP redirects.
+`:httpc` re-sent the caller's `:headers` to the redirect target, even another
+host or an `http:` URL; on OTP 27 and 28 that includes `Authorization` and
+cookies. It affects applications that pass credentials in `:headers`.
+
 The release also locks plug_crypto 2.2.1 and cowlib 2.21.0. The lockfile is
 not part of the Hex package, and the plug_crypto advisory was not reachable
 from ExMCP.
 
-**Behavior change**: a server that relied on `logging/setLevel` changing its
+**Behavior changes**: a server that relied on `logging/setLevel` changing its
 Logger level must call `Logger.configure/1` in its own
-`handle_set_log_level/2`.
+`handle_set_log_level/2`. A registry URL that redirects now fails with
+`{:error, {:redirect_refused, status, location}}`; use the final URL.
 
 | Fix | Origin | 1.x commit |
 | --- | --- | --- |
 | `logging/setLevel` no longer changes the host's Logger level | arbor_mcp `c908c29` | `e79f76d` |
+| ACP registry fetch refuses redirects | arbor_acp#16 (`666992a`, `0923e56`) | `6deb436` |
 | plug_crypto 2.2.1 and cowlib 2.21.0 locks | arbor_mcp #106 | `660015f` (#105) |
 
 ## Qualification and publication

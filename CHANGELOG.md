@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   global Logger level, because the default `handle_set_log_level/2` called
   `Logger.configure/1`; any connected client could silence or flood the host's
   logs. The default handler now accepts a valid level and changes nothing else.
+- **Security:** `ExMCP.ACP.Registry.fetch/1` followed HTTP redirects, which
+  sends the caller's `:headers` to the redirect target, even another host or
+  an `http:` URL. On OTP 27 and 28 that includes `Authorization` and cookies;
+  OTP 29 drops those two but still sends custom headers such as API keys.
+  Redirects are now refused with `{:error, {:redirect_refused, status,
+  location}}`, the location stripped of its userinfo, query and fragment
+  (backport of arbor_acp#16).
 
 ## [1.7.2] - 2026-10-22
 

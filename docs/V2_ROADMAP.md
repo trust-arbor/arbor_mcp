@@ -1,5 +1,10 @@
 # ExMCP 2.0 Roadmap
 
+> **Historical record.** This plan was last updated on 2026-10-04. ArborMCP v2
+> has since been published as release candidates; see the current
+> [roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/ROADMAP.md)
+> and [RC notes](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/guides/V2_RELEASE_CANDIDATE.md).
+
 - **Status:** Full v2 scope accepted; independent package projects and runtime foundation implemented; transport integration and release qualification underway
 - **Target:** Arbor package v2 release, Friday 2026-10-09, after qualification and RC soak
 - **Last updated:** 2026-10-04

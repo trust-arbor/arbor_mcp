@@ -15,10 +15,8 @@ This guide helps you upgrade your ExMCP applications between versions. Each sect
 
 ExMCP 1.0 includes MCP 2026-07-28 support. This is the latest stable protocol
 revision and is wire incompatible with the pre-2026 revisions supported by
-rc.5, but ExMCP itself has not yet published a stable 1.0 API. Landing the
-protocol transition in the remaining release candidates gives 1.0 one coherent
-compatibility baseline; waiting for ExMCP 2.0 would make the first stable
-release immediately obsolete.
+rc.5. Landing the protocol transition before 1.0 gave the stable API one
+coherent compatibility baseline.
 
 This does **not** waive ExMCP API compatibility. Existing 1.x functions,
 callbacks, struct fields, and legacy protocol behavior remain available. The
