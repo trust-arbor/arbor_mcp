@@ -22,6 +22,12 @@ defmodule ExMCP.Transport.Stdio do
   - `:process_group` - when `true`, stopping the server signals its whole
     process group rather than the one process the port started (default:
     `false`). See "Process groups" below.
+  - `:eof_grace` - time in milliseconds to wait for the server to exit after
+    stdin closes before sending SIGTERM (default: 2_000)
+  - `:term_grace` - time in milliseconds to wait after SIGTERM before sending
+    SIGKILL (default: 100)
+  - `:cleanup_timeout` - subprocess shutdown budget, defaulting to
+    `eof_grace + term_grace + 400` (default: 2_500)
 
   The command is resolved against the `PATH` the child will see (an explicit
   `PATH` in `:env`, else the inherited one), not the VM's own. When the VM
@@ -59,7 +65,9 @@ defmodule ExMCP.Transport.Stdio do
   alias ExMCP.Transport.{Error, SecurityGuard}
 
   @termination_poll_ms 10
-  @termination_grace_attempts 10
+  @eof_grace 2_000
+  @term_grace 100
+  @shutdown_slack 400
   @default_max_frame_bytes 1_048_576
   defstruct [
     :port,
@@ -68,14 +76,54 @@ defmodule ExMCP.Transport.Stdio do
     :subscriber,
     :reader_pid,
     max_frame_bytes: @default_max_frame_bytes,
-    process_group: false
+    process_group: false,
+    eof_grace: @eof_grace,
+    term_grace: @term_grace
   ]
 
   @impl true
   def connect(opts) do
+    opts = shutdown_options(opts)
+
     with :ok <- PortEnvironment.validate_policy(opts),
          :ok <- validate_process_group(opts) do
       do_connect(opts)
+    end
+  end
+
+  @doc false
+  # Subprocess shutdown options for an MCP server. Explicit values win; a
+  # caller-chosen budget keeps whatever EOF grace still fits inside it.
+  def shutdown_options(opts) do
+    term_grace = Keyword.get(opts, :term_grace, @term_grace)
+
+    case {Keyword.fetch(opts, :eof_grace), Keyword.fetch(opts, :cleanup_timeout)} do
+      _ when not is_integer(term_grace) ->
+        opts
+
+      {:error, :error} ->
+        opts
+        |> Keyword.put(:eof_grace, @eof_grace)
+        |> Keyword.put(:cleanup_timeout, @eof_grace + term_grace + @shutdown_slack)
+
+      {{:ok, eof_grace}, :error} when is_integer(eof_grace) ->
+        Keyword.put(opts, :cleanup_timeout, eof_grace + term_grace + @shutdown_slack)
+
+      {:error, {:ok, budget}} when is_integer(budget) ->
+        Keyword.put(opts, :eof_grace, min(@eof_grace, max(0, budget - term_grace - 50)))
+
+      _explicit_or_invalid ->
+        opts
+    end
+  end
+
+  @doc false
+  # How long the client must allow `close/1`: the subprocess budget plus the
+  # helper's reply allowance.
+  def close_budget(opts) do
+    case Keyword.get(shutdown_options(opts), :cleanup_timeout) do
+      budget when is_integer(budget) and budget > 0 -> budget + 500
+      _invalid -> nil
     end
   end
 
@@ -139,7 +187,9 @@ defmodule ExMCP.Transport.Stdio do
         line_buffer: "",
         max_frame_bytes:
           Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes),
-        process_group: Keyword.get(opts, :process_group, false)
+        process_group: Keyword.get(opts, :process_group, false),
+        eof_grace: Keyword.get(opts, :eof_grace, @eof_grace),
+        term_grace: Keyword.get(opts, :term_grace, @term_grace)
       }
 
       :telemetry.execute([:ex_mcp, :transport, :connection, :opened], %{}, %{
@@ -419,7 +469,11 @@ defmodule ExMCP.Transport.Stdio do
     # guarantee that the spawned OS process exits. Explicitly terminate the
     # child after detaching the reader so repeated stdio connections cannot
     # leak servers and exhaust the runner's process/thread budget.
-    terminate_os_process(signal_target(os_pid, state.process_group))
+    terminate_os_process(
+      signal_target(os_pid, state.process_group),
+      state.eof_grace,
+      state.term_grace
+    )
 
     :ok
   end
@@ -436,18 +490,20 @@ defmodule ExMCP.Transport.Stdio do
   # is only a group that emptied and whose id was handed to a new group
   # leader within the grace period. Runs in its own process so neither the
   # client nor the reader waits for it.
-  defp reap_group(%__MODULE__{process_group: true, os_pid: os_pid}) when is_integer(os_pid) do
-    reap_group(os_pid)
+  defp reap_group(%__MODULE__{process_group: true, os_pid: os_pid, eof_grace: eg, term_grace: tg})
+       when is_integer(os_pid) do
+    spawn(fn -> terminate_os_process({:group, os_pid}, eg, tg) end)
+    :ok
   end
 
   defp reap_group(%__MODULE__{}), do: :ok
 
   defp reap_group(os_pid) when is_integer(os_pid) do
-    spawn(fn -> terminate_os_process({:group, os_pid}) end)
+    spawn(fn -> terminate_os_process({:group, os_pid}, @eof_grace, @term_grace) end)
     :ok
   end
 
-  defp reap_group(_os_pid), do: :ok
+  defp reap_group(_other), do: :ok
 
   # Tolerate a port that is nil or already closed (e.g. the spawned process
   # exited on its own before close/1 was called).
@@ -465,18 +521,24 @@ defmodule ExMCP.Transport.Stdio do
     end
   end
 
-  defp terminate_os_process(nil), do: :ok
+  defp terminate_os_process(nil, _eof_grace, _term_grace), do: :ok
 
-  defp terminate_os_process(target) do
+  defp terminate_os_process(target, eof_grace, term_grace) do
     case :os.type() do
       {:win32, _name} ->
         run_command("taskkill", ["/PID", Integer.to_string(target_pid(target)), "/T", "/F"])
 
       {:unix, _name} ->
-        signal_process(target, "TERM")
+        if wait_for_process_exit_ms(target, eof_grace) do
+          :ok
+        else
+          signal_process(target, "TERM")
 
-        unless wait_for_process_exit(target, @termination_grace_attempts) do
-          signal_process(target, "KILL")
+          if wait_for_process_exit_ms(target, term_grace) do
+            :ok
+          else
+            signal_process(target, "KILL")
+          end
         end
     end
 
@@ -491,12 +553,24 @@ defmodule ExMCP.Transport.Stdio do
   defp kill_args(signal, {:group, os_pid}), do: ["-#{signal}", "--", "-#{os_pid}"]
   defp kill_args(signal, os_pid), do: ["-#{signal}", Integer.to_string(os_pid)]
 
-  defp wait_for_process_exit(_os_pid, 0), do: false
+  defp wait_for_process_exit_ms(target, grace_ms)
+       when is_integer(grace_ms) and grace_ms >= 0 do
+    deadline = System.monotonic_time(:millisecond) + grace_ms
+    do_wait_for_process_exit(target, deadline)
+  end
 
-  defp wait_for_process_exit(os_pid, attempts_left) do
-    if os_process_alive?(os_pid) do
-      Process.sleep(@termination_poll_ms)
-      wait_for_process_exit(os_pid, attempts_left - 1)
+  defp wait_for_process_exit_ms(target, _grace_ms), do: not os_process_alive?(target)
+
+  defp do_wait_for_process_exit(target, deadline) do
+    if os_process_alive?(target) do
+      remaining = deadline - System.monotonic_time(:millisecond)
+
+      if remaining > 0 do
+        Process.sleep(min(remaining, @termination_poll_ms))
+        do_wait_for_process_exit(target, deadline)
+      else
+        false
+      end
     else
       true
     end

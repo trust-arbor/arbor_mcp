@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The stdio transport follows the MCP shutdown order: `close/1` closes the
+  server's stdin, waits up to `:eof_grace` (default 2_000 ms, as in the MCP
+  reference SDKs) for it to exit, then sends SIGTERM and, after `:term_grace`,
+  SIGKILL. A server that exits on EOF is no longer signalled. The subprocess
+  `:cleanup_timeout` defaults to `eof_grace + term_grace + 400` (2_500 ms);
+  when only `:cleanup_timeout` is set, the EOF grace shrinks to fit it.
+- A client's default close limit (`Deadline.cleanup_timeout/1`) covers a stdio
+  server's shutdown budget plus 500 ms: 3_000 ms with the stdio defaults. Other
+  transports keep 1_000 ms.
+
 ## [1.7.3] - 2026-10-26
 
 ### Changed
