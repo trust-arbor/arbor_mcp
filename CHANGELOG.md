@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Nested atom keys in a client's declared capabilities are now normalized
+  for the Local transport too, matching the HTTP wire shape. This closes a
+  Local-transport gap in the 1.x backport of 2.x PR #116.
 - Legacy POST event-stream responses with both a method and a result or error
   now remain responses in synchronous and streamed paths. This completes the
   response-preservation behavior of the 1.x backports of 2.x PRs #121 and #122.

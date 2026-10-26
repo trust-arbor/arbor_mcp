@@ -712,8 +712,17 @@ defmodule ExMCP.Client.ConnectionManager do
   defp initialize_capabilities(opts) do
     opts
     |> Keyword.get(:capabilities, %{})
-    |> Map.new(fn {key, value} -> {to_string(key), value} end)
+    |> stringify_capability_keys()
   end
+
+  defp stringify_capability_keys(value) when is_map(value) do
+    Map.new(value, fn {key, nested} -> {to_string(key), stringify_capability_keys(nested)} end)
+  end
+
+  defp stringify_capability_keys(value) when is_list(value),
+    do: Enum.map(value, &stringify_capability_keys/1)
+
+  defp stringify_capability_keys(value), do: value
 
   defp exchange_initialize(
          transport_mod,

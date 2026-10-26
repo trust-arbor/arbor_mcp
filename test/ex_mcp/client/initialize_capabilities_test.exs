@@ -33,10 +33,12 @@ defmodule ExMCP.Client.InitializeCapabilitiesTest do
   end
 
   defp connect(opts) do
+    transport = Keyword.get(opts, :transport, :test)
+
     {:ok, server} =
       HandlerServer.start_link(
         handler: ServerHandler,
-        transport: :test,
+        transport: transport,
         handler_args: [owner: self()],
         protocol_mode: :legacy_only
       )
@@ -45,12 +47,12 @@ defmodule ExMCP.Client.InitializeCapabilitiesTest do
 
     Client.start_link(
       [
-        transport: :test,
+        transport: transport,
         server: server,
         protocol_mode: :legacy_only,
         health_check_interval: nil,
         reconnect: false
-      ] ++ opts
+      ] ++ Keyword.delete(opts, :transport)
     )
   end
 
@@ -67,6 +69,21 @@ defmodule ExMCP.Client.InitializeCapabilitiesTest do
 
     assert_receive {:initialize_params, %{"capabilities" => capabilities}}, 2_000
     assert capabilities == %{"sampling" => %{}}
+  end
+
+  test "nested atom capability keys have the same shape over Local and HTTP" do
+    {:ok, _client} =
+      connect(
+        transport: :beam,
+        capabilities: %{elicitation: %{form: %{}}, experimental: [%{feature: true}]}
+      )
+
+    assert_receive {:initialize_params, %{"capabilities" => capabilities}}, 2_000
+
+    assert capabilities == %{
+             "elicitation" => %{"form" => %{}},
+             "experimental" => [%{"feature" => true}]
+           }
   end
 
   test "a client that declares nothing still sends empty capabilities" do
