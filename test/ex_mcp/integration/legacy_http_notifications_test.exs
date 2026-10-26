@@ -91,6 +91,44 @@ defmodule ExMCP.Integration.LegacyHTTPNotificationsTest do
     end
   end
 
+  # A session manager that records append_event/3 and delegates everything
+  # else to the default, so a plug configured with it must persist its
+  # sessions' notifications through it.
+  defmodule DelegatingManager do
+    @moduledoc false
+
+    def append_event(session_id, type, data) do
+      case :persistent_term.get({__MODULE__, :owner}, nil) do
+        nil -> :ok
+        owner -> send(owner, {:recorded_event, session_id, data})
+      end
+
+      ExMCP.SessionManager.append_event(session_id, type, data)
+    end
+
+    def create_session(metadata \\ %{}), do: ExMCP.SessionManager.create_session(metadata)
+    def update_session(sid, attrs), do: ExMCP.SessionManager.update_session(sid, attrs)
+    def ensure_session(sid, attrs), do: ExMCP.SessionManager.ensure_session(sid, attrs)
+
+    def ensure_initialized_session(sid, attrs),
+      do: ExMCP.SessionManager.ensure_initialized_session(sid, attrs)
+
+    def claim_initialization(sid), do: ExMCP.SessionManager.claim_initialization(sid)
+
+    def complete_initialization(sid, version),
+      do: ExMCP.SessionManager.complete_initialization(sid, version)
+
+    def claim_request_id(sid, rid), do: ExMCP.SessionManager.claim_request_id(sid, rid)
+    def terminate_session(sid), do: ExMCP.SessionManager.terminate_session(sid)
+    def get_session(sid), do: ExMCP.SessionManager.get_session(sid)
+
+    def replay_events_after(sid, last_event_id \\ nil),
+      do: ExMCP.SessionManager.replay_events_after(sid, last_event_id)
+
+    def replay_events_after(sid, last_event_id, handler_pid),
+      do: ExMCP.SessionManager.replay_events_after(sid, last_event_id, handler_pid)
+  end
+
   # The standalone GET stream used by legacy Streamable HTTP is served when
   # the deprecated-transport flag is on; it is the one 1.x configuration in
   # which a mounted server has a channel for server-initiated notifications.
@@ -98,20 +136,24 @@ defmodule ExMCP.Integration.LegacyHTTPNotificationsTest do
     port = free_port()
     ref = {:legacy_http_notifications, System.unique_integer([:positive])}
 
+    plug_opts =
+      [
+        handler: Handler,
+        handler_opts: [owner: self()],
+        protocol_mode: :legacy_only,
+        legacy_http_sse: true,
+        # The suite's test_helper sets :test_mode, which serves GET streams
+        # one-shot; a real server keeps the stream open (:stream default).
+        sse_mode: :stream,
+        allowed_origins: ["http://127.0.0.1:#{port}"],
+        path: "/mcp"
+      ]
+      |> Keyword.merge(Keyword.get(opts, :plug_opts, []))
+
     {:ok, _listener} =
       Plug.Cowboy.http(
         HttpPlug,
-        [
-          handler: Handler,
-          handler_opts: [owner: self()],
-          protocol_mode: :legacy_only,
-          legacy_http_sse: true,
-          # The suite's test_helper sets :test_mode, which serves GET streams
-          # one-shot; a real server keeps the stream open (:stream default).
-          sse_mode: :stream,
-          allowed_origins: ["http://127.0.0.1:#{port}"],
-          path: "/mcp"
-        ],
+        plug_opts,
         ip: {127, 0, 0, 1},
         port: port,
         ref: ref
@@ -243,6 +285,35 @@ defmodule ExMCP.Integration.LegacyHTTPNotificationsTest do
     after
       close_pair(pair_b)
       close_pair(pair_a)
+    end
+  end
+
+  test "a plug configured with another session manager persists its notifications there" do
+    :persistent_term.put({DelegatingManager, :owner}, self())
+
+    pair = start_pair(true, plug_opts: [session_manager: DelegatingManager])
+    client = pair.client
+
+    try do
+      assert {:ok, listener} =
+               Client.subscribe_notifications(client, %{"toolsListChanged" => true})
+
+      assert {:ok, _} = Client.call_tool(client, "change", %{}, timeout: 5_000, format: :map)
+      assert_receive {:server_list_changed, :ok}, 2_000
+
+      session_id = :sys.get_state(client).transport_state.session_id
+
+      # The notification was persisted through the plug's configured session
+      # manager, not the default one.
+      assert_receive {:recorded_event, ^session_id,
+                      %{"method" => "notifications/tools/list_changed"}},
+                     2_000
+
+      assert_receive {:ex_mcp_notification, ^listener, "notifications/tools/list_changed", _},
+                     2_000
+    after
+      :persistent_term.put({DelegatingManager, :owner}, nil)
+      close_pair(pair)
     end
   end
 

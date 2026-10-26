@@ -757,21 +757,8 @@ defmodule ExMCP.Server.Handler do
 
       @impl GenServer
       def handle_call({:mcp_context, context, request}, from, state) do
-        # Remember the HTTP session this request belongs to, so a
-        # notification cast arriving after the callback (from a detached
-        # task, for instance) can still reach the client (see
-        # ExMCP.Server's notify helpers).
-        ExMCP.Server.__remember_mounted_session__(context)
-
         ExMCP.Server.Context.with_context(context, fn -> handle_call(request, from, state) end)
       end
-
-      # A bare handler has no transport of its own, so the notification casts
-      # of ExMCP.Server's notify helpers would otherwise crash it. A mounted
-      # handler delivers to its HTTP session; every other bare handler drops
-      # the notification. Injected before user clauses, so a handler's own
-      # handle_cast still sees everything else.
-      ExMCP.Server.Handler.__notify_casts__()
 
       def handle_call({:initialize, params}, _from, state),
         do: HandlerBridge.call(__MODULE__, :handle_initialize, [params], state)
@@ -860,55 +847,6 @@ defmodule ExMCP.Server.Handler do
       invalid ->
         raise ArgumentError,
               "expected :tasks to be false or :store, got: #{inspect(invalid)}"
-    end
-  end
-
-  @doc false
-  # Injected by `use ExMCP.Server.Handler` ahead of the user's own clauses:
-  # a bare handler GenServer has no transport of its own, so the notification
-  # casts of ExMCP.Server's notify helpers would otherwise crash it. A
-  # handler mounted through ExMCP.HttpPlug delivers to its HTTP session; a
-  # detached handler drops the notification.
-  defmacro __notify_casts__ do
-    quote do
-      @impl GenServer
-      def handle_cast({:send_log_message, _level, _message, _data} = cast, state) do
-        ExMCP.Server.__deliver_mounted__(cast)
-        {:noreply, state}
-      end
-
-      @impl GenServer
-      def handle_cast({:notify_progress, _token, _progress, _total} = cast, state) do
-        ExMCP.Server.__deliver_mounted__(cast)
-        {:noreply, state}
-      end
-
-      @impl GenServer
-      def handle_cast({:notify_resource_update, _uri} = cast, state) do
-        ExMCP.Server.__deliver_mounted__(cast)
-        {:noreply, state}
-      end
-
-      @impl GenServer
-      def handle_cast({:notify_resources_changed} = cast, state) do
-        ExMCP.Server.__deliver_mounted__(cast)
-        {:noreply, state}
-      end
-
-      @impl GenServer
-      def handle_cast({:notify_tools_changed} = cast, state) do
-        ExMCP.Server.__deliver_mounted__(cast)
-        {:noreply, state}
-      end
-
-      @impl GenServer
-      def handle_cast({:notify_prompts_changed} = cast, state) do
-        ExMCP.Server.__deliver_mounted__(cast)
-        {:noreply, state}
-      end
-
-      @impl GenServer
-      def handle_cast(:notify_roots_changed, state), do: {:noreply, state}
     end
   end
 

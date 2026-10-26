@@ -2066,6 +2066,7 @@ defmodule ExMCP.HttpPlug do
             require_replay_protection: Map.get(opts, :require_replay_protection, false),
             principal_id: Map.get(opts, :principal_id),
             tenant_id: Map.get(opts, :tenant_id),
+            session_manager: Map.get(opts, :session_manager),
             request_notification_target: Map.get(opts, :request_notification_target),
             request_headers: Map.get(opts, :request_headers, [])
           })
@@ -2395,18 +2396,25 @@ defmodule ExMCP.HttpPlug do
   Delivers a server-initiated notification to a session's standalone GET
   stream.
 
-  The notification is persisted to the session's event log first, so a client
-  without a live GET stream receives it through `Last-Event-ID` replay after
-  reconnecting, and delivery to a live stream never reaches another session's
-  stream. The live write waits for the stream's backpressure permission and
-  is bounded, so a stalled client cannot hold the calling request forever.
+  The notification is persisted to the session's event log first — under the
+  session manager the plug serving the session was configured with, which
+  defaults to `ExMCP.SessionManager` — so a client without a live GET stream
+  receives it through `Last-Event-ID` replay after reconnecting, and delivery
+  to a live stream never reaches another session's stream. The live write
+  waits for the stream's backpressure permission and is bounded, so a stalled
+  client cannot hold the calling request forever.
   """
-  @spec deliver_session_notification(String.t(), map()) :: :ok | {:error, term()}
-  def deliver_session_notification(session_id, notification)
-      when is_binary(session_id) and is_map(notification) do
+  @spec deliver_session_notification(String.t(), map(), module()) ::
+          :ok | {:error, term()}
+  def deliver_session_notification(
+        session_id,
+        notification,
+        session_manager \\ ExMCP.SessionManager
+      )
+      when is_binary(session_id) and is_map(notification) and is_atom(session_manager) do
     task =
       Task.async(fn ->
-        case ExMCP.SessionManager.append_event(session_id, "message", notification) do
+        case session_manager.append_event(session_id, "message", notification) do
           {:ok, event} ->
             deliver_persisted_event(session_id, notification, event.id)
 

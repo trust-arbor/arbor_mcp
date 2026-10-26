@@ -1884,6 +1884,17 @@ defmodule ExMCP.Client do
     end
   end
 
+  # The receiver's stream ended for good while the connection stays up: the
+  # server stopped offering its legacy GET stream. Go on without a receiver,
+  # as a connection whose server never offered one does. Its normal exit then
+  # isn't a dead receiver's.
+  def handle_info({:transport_receiver_stopped, pid}, %{receiver_task: %Task{pid: pid}} = state) do
+    Logger.info("The server stopped offering its event stream; continuing without it")
+    {:noreply, %{state | receiver_task: nil}}
+  end
+
+  def handle_info({:transport_receiver_stopped, _pid}, state), do: {:noreply, state}
+
   # The receiver reports a closed transport with {:transport_closed, _}
   # before it exits, so its exit while it is still the receiver means it
   # crashed with the connection (a stdio server, an HTTP session) possibly

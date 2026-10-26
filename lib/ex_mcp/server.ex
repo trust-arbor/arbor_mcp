@@ -287,60 +287,46 @@ defmodule ExMCP.Server do
   # request with no transport of its own, so the notify casts above would
   # neither reach the client nor even be handled: a bare `use
   # ExMCP.Server.Handler` module has no handle_cast clauses of its own. When
-  # such a handler notifies from inside a request callback, the notification
-  # is delivered to the request's HTTP session directly (see
-  # ExMCP.HttpPlug.deliver_session_notification/2); a cast that arrives after
-  # the callback (from a detached task, for instance) finds the remembered
-  # session the same way, through the clauses `use ExMCP.Server.Handler`
-  # injects. A long-lived transport-aware server keeps the cast path.
-
-  @mounted_session_key {__MODULE__, :mounted_http_session}
-
-  @doc false
-  def __remember_mounted_session__(%ExMCP.Server.RequestContext{} = context) do
-    case context.session_id do
-      nil -> :ok
-      session_id -> Process.put(@mounted_session_key, session_id)
-    end
-
-    :ok
-  end
-
-  @doc false
-  def __deliver_mounted__(cast) do
-    case Process.get(@mounted_session_key) do
-      nil ->
-        :ok
-
-      session_id ->
-        _ = deliver_mounted(cast, session_id)
-        :ok
-    end
-  end
+  # such a handler notifies from inside a request callback, its current
+  # context names the HTTP session the request belongs to, and the
+  # notification is delivered to that session directly (see
+  # ExMCP.HttpPlug.deliver_session_notification/3) — only that session, never
+  # an earlier request's. A notify cast outside a request callback follows the
+  # long-standing cast path to a transport-aware server; the per-request
+  # handler of a mounted request is stopped once it has replied, so such a
+  # cast finds no process and is dropped (a cast never fails, crashes or
+  # hangs on a dead pid).
 
   defp notify_client(server, cast) do
     case mounted_session(server) do
       nil -> GenServer.cast(server, cast)
-      session_id -> deliver_mounted(cast, session_id)
+      {session_id, session_manager} -> deliver_mounted(cast, session_id, session_manager)
     end
 
     :ok
   end
 
   # Inside a request callback the handler process is its own server, and its
-  # current context names the HTTP session the request belongs to.
+  # current context names the HTTP session the request belongs to, plus the
+  # session manager its server was configured with. Nothing is remembered
+  # beyond the callback: a later request (or none at all) must never fall
+  # back to an earlier request's session.
   defp mounted_session(server) do
     if server == self() do
       case ExMCP.Server.Context.current() do
-        %{session_id: session_id} when is_binary(session_id) -> session_id
-        _other -> nil
+        %{session_id: session_id, session_manager: session_manager}
+        when is_binary(session_id) ->
+          {session_id, session_manager || ExMCP.SessionManager}
+
+        _other ->
+          nil
       end
     else
       nil
     end
   end
 
-  defp deliver_mounted({:send_log_message, level, message, data}, session_id) do
+  defp deliver_mounted({:send_log_message, level, message, data}, session_id, session_manager) do
     notification = %{
       "jsonrpc" => "2.0",
       "method" => "notifications/message",
@@ -352,33 +338,37 @@ defmodule ExMCP.Server do
       }
     }
 
-    ExMCP.HttpPlug.deliver_session_notification(session_id, notification)
+    ExMCP.HttpPlug.deliver_session_notification(session_id, notification, session_manager)
   end
 
-  defp deliver_mounted({:notify_progress, progress_token, progress, total}, session_id) do
+  defp deliver_mounted(
+         {:notify_progress, progress_token, progress, total},
+         session_id,
+         session_manager
+       ) do
     notification = %{
       "jsonrpc" => "2.0",
       "method" => "notifications/progress",
       "params" => %{"progressToken" => progress_token, "progress" => progress, "total" => total}
     }
 
-    ExMCP.HttpPlug.deliver_session_notification(session_id, notification)
+    ExMCP.HttpPlug.deliver_session_notification(session_id, notification, session_manager)
   end
 
-  defp deliver_mounted({:notify_resource_update, uri}, _session_id) do
+  defp deliver_mounted({:notify_resource_update, uri}, _session_id, _session_manager) do
     # Resource updates belong to subscribers of the URI across sessions, as
     # on a transport-aware server.
     ExMCP.HttpPlug.broadcast_resource_update(uri)
   end
 
-  defp deliver_mounted(cast, session_id) do
+  defp deliver_mounted(cast, session_id, session_manager) do
     {method, params} = mounted_notification(cast)
 
-    ExMCP.HttpPlug.deliver_session_notification(session_id, %{
-      "jsonrpc" => "2.0",
-      "method" => method,
-      "params" => params
-    })
+    ExMCP.HttpPlug.deliver_session_notification(
+      session_id,
+      %{"jsonrpc" => "2.0", "method" => method, "params" => params},
+      session_manager
+    )
   end
 
   defp mounted_notification({:notify_tools_changed}),

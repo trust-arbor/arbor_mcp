@@ -15,13 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mounted 1.x server serves one). `ExMCP.Server.notify_progress/3,4`,
   `notify_tools_changed/1`, `notify_prompts_changed/1`,
   `notify_resources_changed/1`, `notify_resource_update/2` and
-  `send_log_message/4`, called from
-  inside a request callback, now deliver to that request's HTTP session —
-  persisted to its event log and written to its live GET stream, never to
-  another session's stream. A cast arriving after the callback (from a
-  detached task, for instance) finds the remembered session the same way, and
-  a bare `use ExMCP.Server.Handler` GenServer no longer crashes on the notify
-  casts, which it has no clauses of its own to handle.
+  `send_log_message/4`, called from inside a request callback, now deliver to
+  that request's HTTP session only — persisted to its event log (under the
+  session manager the plug was configured with) and written to its live GET
+  stream, never to another session's, including one an earlier request on
+  the same handler process used. Notifications must be sent while the
+  request callback is in flight, which is when its context names the session:
+  a notify cast outside a callback keeps the long-standing cast path, and a
+  mounted request's per-request handler is stopped once it has replied, so
+  such a cast finds no process and is dropped (a cast never fails, crashes
+  or hangs on a dead pid).
 - A legacy client's `c:ExMCP.Client.Handler.handle_progress/3` callback now
   also runs for a `notifications/progress` that arrives on the connection
   (a legacy GET stream, or any transport other than a modern request
@@ -44,6 +47,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   receiver keeps waiting instead of dropping the session and failing every
   pending request; stream errors still end it (backport of the client part
   of the 2.x legacy HTTP notifications fix).
+
+- A legacy HTTP client whose reopened GET stream was refused with 405 — the
+  server no longer offers one — waited for events that would never come while
+  the connection looked healthy. The connection now carries on POST-only, as
+  with a server that never offered a GET stream: the receiver stops and the
+  client drops it without dropping the session (backport of the 2.x fix).
 
 ## [1.7.3] - 2026-10-26
 

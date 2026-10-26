@@ -184,7 +184,8 @@ defmodule ExMCP.MessageProcessor do
         request_context
         | notification_target: Map.get(opts, :request_notification_target),
           cancellation_scope: scope,
-          session_id: conn.session_id
+          session_id: conn.session_id,
+          session_manager: Map.get(opts, :session_manager)
       }
 
       conn =

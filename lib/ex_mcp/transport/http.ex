@@ -1032,6 +1032,15 @@ defmodule ExMCP.Transport.HTTP do
       # connection.
       {:sse_closed, ^sse_pid} ->
         receive_message(state)
+
+      # The SSE client answers a 405 by giving up on the stream: the server
+      # no longer offers one. The first GET's 405 reaches the process that
+      # opened the stream, so this is a reopened GET. Requests and their
+      # responses don't need the stream, so the connection carries on
+      # POST-only, as when the server never offered one, and the reader
+      # stops instead of waiting for events that won't come.
+      {:sse_not_supported, ^sse_pid} ->
+        {:error, :stream_withdrawn}
     end
   end
 
