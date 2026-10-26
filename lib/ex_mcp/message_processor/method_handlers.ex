@@ -416,23 +416,39 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   defp validate_tool_request_headers(_conn, _server_pid, _tool_name, _params), do: :ok
 
   # The tool may be on any page of tools/list, so follow the cursors until it
-  # turns up. A list that runs past the bound fails closed.
+  # turns up, stopping at the first page that has it. A list that runs past
+  # the page bound, or past one handler call timeout for the whole walk,
+  # fails closed: a slow handler can't hold a tools/call for a timeout per
+  # page.
   @max_tool_pages 100
 
-  defp load_tools_for_header_validation(server_pid, conn, tool_name),
-    do: load_tool_pages(server_pid, conn, tool_name, nil, @max_tool_pages)
+  defp load_tools_for_header_validation(server_pid, conn, tool_name) do
+    deadline =
+      case call_timeout(conn) do
+        timeout when is_integer(timeout) -> System.monotonic_time(:millisecond) + timeout
+        _infinity -> :infinity
+      end
 
-  defp load_tool_pages(_server_pid, _conn, _tool_name, _cursor, 0),
+    load_tool_pages(server_pid, tool_name, nil, @max_tool_pages, deadline)
+  end
+
+  defp load_tool_pages(_server_pid, _tool_name, _cursor, 0, _deadline),
     do: {:error, :tool_schema_unavailable}
 
-  defp load_tool_pages(server_pid, conn, tool_name, cursor, pages) do
-    case GenServer.call(server_pid, {:list_tools, cursor}, call_timeout(conn))
-         |> normalize_list_reply() do
+  defp load_tool_pages(server_pid, tool_name, cursor, pages, deadline) do
+    case remaining_time(deadline) do
+      0 -> {:error, :tool_schema_unavailable}
+      timeout -> load_tool_page(server_pid, tool_name, cursor, pages, deadline, timeout)
+    end
+  end
+
+  defp load_tool_page(server_pid, tool_name, cursor, pages, deadline, timeout) do
+    case GenServer.call(server_pid, {:list_tools, cursor}, timeout) |> normalize_list_reply() do
       {:list, tools, next} ->
         tools = ResultNormalizer.stringify_keys(tools)
 
         if is_binary(next) and is_nil(find_tool(tools, tool_name)),
-          do: load_tool_pages(server_pid, conn, tool_name, next, pages - 1),
+          do: load_tool_pages(server_pid, tool_name, next, pages - 1, deadline),
           else: {:ok, tools}
 
       {:result, result} ->
@@ -446,6 +462,11 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   catch
     :exit, _reason -> {:error, :tool_schema_unavailable}
   end
+
+  defp remaining_time(:infinity), do: :infinity
+
+  defp remaining_time(deadline),
+    do: max(deadline - System.monotonic_time(:millisecond), 0)
 
   defp find_tool(tools, name) when is_list(tools) do
     Enum.find(tools, &(Map.get(&1, "name") == name))
