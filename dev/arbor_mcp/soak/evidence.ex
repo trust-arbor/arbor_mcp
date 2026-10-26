@@ -82,6 +82,12 @@ defmodule Arbor.MCP.Soak.Evidence do
         by_scenario:
           Map.new(state.turnover_series, fn {scenario, series} -> {scenario, series.count} end)
       },
+      "leak_coverage_complete" =>
+        Policy.leak_coverage_complete?(
+          state.sample_series,
+          state.turnover_series,
+          Map.keys(state.scenarios)
+        ),
       "overall_latency_ms" => overall,
       "results" => results,
       "known_blocked" => known_blocked,
@@ -97,6 +103,11 @@ defmodule Arbor.MCP.Soak.Evidence do
       Enum.sort(config.transports) ==
         Enum.sort([:beam, :stdio, :cowboy_owned, :cowboy_host, :bandit_owned, :bandit_host]) and
       config.only == nil and config.mix == Policy.default_mix() and
+      Policy.leak_coverage_complete?(
+        state.sample_series,
+        state.turnover_series,
+        Map.keys(state.scenarios)
+      ) and
       full_scenario_coverage?(state)
   end
 

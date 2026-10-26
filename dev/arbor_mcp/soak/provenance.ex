@@ -1,9 +1,13 @@
 defmodule Arbor.MCP.Soak.Provenance do
   @moduledoc false
 
+  alias Arbor.MCP.Soak.DependencySource
+
   @overrides ["ARBOR_RPC_PATH", "ARBOR_V2_DEPS", "ARBOR_V2_LOCK"]
 
   def capture do
+    dependencies = Mix.Dep.load_and_cache()
+
     %{
       git_head: command("git", ["rev-parse", "HEAD"]),
       git_status_porcelain: command("git", ["status", "--porcelain"]),
@@ -15,7 +19,8 @@ defmodule Arbor.MCP.Soak.Provenance do
       os_version: inspect(:os.version()),
       platform: :erlang.system_info(:system_architecture) |> List.to_string(),
       mix_env: Mix.env(),
-      dependencies: dependency_versions(),
+      dependencies: dependency_versions(dependencies),
+      dependency_sources: DependencySource.capture(dependencies),
       overrides: Map.new(@overrides, &{&1, System.get_env(&1) != nil})
     }
   end
@@ -36,6 +41,20 @@ defmodule Arbor.MCP.Soak.Provenance do
       start_snapshot != end_snapshot,
       :provenance_changed,
       changed_fields(start_snapshot, end_snapshot)
+    )
+    |> maybe_violation(
+      Map.get(start_snapshot, :dependency_sources) != Map.get(end_snapshot, :dependency_sources),
+      :dependency_source_changed,
+      :dependency_sources
+    )
+    |> maybe_violation(
+      DependencySource.failed(Map.get(start_snapshot, :dependency_sources, %{})) != [] or
+        DependencySource.failed(Map.get(end_snapshot, :dependency_sources, %{})) != [],
+      :dependency_source_mismatch,
+      %{
+        start: DependencySource.failed(Map.get(start_snapshot, :dependency_sources, %{})),
+        finish: DependencySource.failed(Map.get(end_snapshot, :dependency_sources, %{}))
+      }
     )
     |> maybe_violation(
       Enum.any?(start_snapshot.overrides, fn {_key, set?} -> set? end) or
@@ -76,8 +95,8 @@ defmodule Arbor.MCP.Soak.Provenance do
     end
   end
 
-  defp dependency_versions do
-    Mix.Dep.load_and_cache()
+  defp dependency_versions(dependencies) do
+    dependencies
     |> Map.new(fn dep ->
       version =
         case dep.status do

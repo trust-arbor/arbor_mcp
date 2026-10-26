@@ -7,6 +7,7 @@ defmodule Arbor.MCP.Soak.Runner do
   alias Arbor.MCP.Server.{Runtime, Transport}
 
   alias Arbor.MCP.Soak.{
+    Cleanup,
     ClientHandler,
     Evidence,
     Execution,
@@ -24,7 +25,10 @@ defmodule Arbor.MCP.Soak.Runner do
     [:arbor_mcp, :client, :reconnect, :attempt],
     [:arbor_mcp, :client, :reconnect, :success],
     [:arbor_mcp, :client, :reconnect, :error],
-    [:arbor_mcp, :client, :reconnect, :timeout]
+    [:arbor_mcp, :client, :reconnect, :timeout],
+    [:arbor_mcp, :transport, :sse, :connected],
+    [:arbor_mcp, :transport, :sse, :disconnected],
+    [:arbor_mcp, :transport, :sse, :reconnecting]
   ]
 
   def run(args) do
@@ -42,7 +46,7 @@ defmodule Arbor.MCP.Soak.Runner do
         telemetry_id,
         @telemetry_events,
         fn event, measurements, metadata, owner ->
-          send(owner, {:soak_client_event, event, measurements, metadata})
+          send(owner, {:soak_client_event, event, measurements, metadata, self()})
         end,
         self()
       )
@@ -54,6 +58,7 @@ defmodule Arbor.MCP.Soak.Runner do
       started_at: DateTime.utc_now(),
       start_ms: now_ms(),
       scenarios: %{},
+      closing_sse_pids: MapSet.new(),
       results: %{},
       failures: [],
       turnover_series: %{},
@@ -298,25 +303,60 @@ defmodule Arbor.MCP.Soak.Runner do
 
         case safe_call(fn -> Client.start_link(opts) end) do
           {:ok, client} ->
-            {:ok,
-             Map.merge(server, %{
-               client: client,
-               endpoint: endpoint,
-               era: era,
-               opened_ms: now_ms(),
-               requests: 2,
-               operation_counts: %{}
-             })}
+            case safe_call(fn -> transport_tracking(client, endpoint, era) end) do
+              {:ok, tracking} ->
+                {:ok,
+                 Map.merge(server, tracking)
+                 |> Map.merge(%{
+                   client: client,
+                   endpoint: endpoint,
+                   era: era,
+                   opened_ms: now_ms(),
+                   requests: 2,
+                   operation_counts: %{}
+                 })}
+
+              error ->
+                client_cleanup = safe_call(fn -> Client.stop(client) end)
+                server_cleanup = close_unclaimed_server(server)
+                {:error, inspect(error), %{client: client_cleanup, server: server_cleanup}}
+            end
 
           error ->
-            cleanup = close_server(server)
+            cleanup = close_unclaimed_server(server)
             {:error, inspect(error), cleanup}
         end
+
+      {:error, {:listener_setup_failed, reason, cleanup}} ->
+        {:error, inspect(reason), cleanup}
 
       {:error, reason} ->
         {:error, inspect(reason), %{server: :not_started}}
     end
   end
+
+  defp transport_tracking(client, :stdio, _era) do
+    with %{transport_state: %{subprocess: subprocess}} <- :sys.get_state(client),
+         pid when is_integer(pid) and pid > 0 <- Arbor.RPC.Subprocess.os_pid(subprocess) do
+      {:ok, %{subprocess: subprocess, os_pid: pid, sse_pid: nil}}
+    else
+      _ -> {:error, :stdio_child_identity_unavailable}
+    end
+  end
+
+  defp transport_tracking(client, endpoint, :legacy)
+       when endpoint in [:cowboy_owned, :cowboy_host, :bandit_owned, :bandit_host] do
+    case :sys.get_state(client) do
+      %{transport_state: %{sse_pid: pid}} when is_pid(pid) ->
+        {:ok, %{sse_pid: pid, subprocess: nil, os_pid: nil}}
+
+      _ ->
+        {:error, :legacy_sse_identity_unavailable}
+    end
+  end
+
+  defp transport_tracking(_client, _endpoint, _era),
+    do: {:ok, %{sse_pid: nil, subprocess: nil, os_pid: nil}}
 
   defp server_opts(mode) do
     [
@@ -432,8 +472,21 @@ defmodule Arbor.MCP.Soak.Runner do
         success
 
       error ->
-        safe_call(fn -> Server.stop(root) end)
-        {:error, inspect(error)}
+        ref = Process.monitor(root)
+        stop = safe_call(fn -> Server.stop(root) end)
+
+        forced =
+          if stop != :ok and Process.alive?(root) do
+            Process.exit(root, :kill)
+            true
+          else
+            false
+          end
+
+        down = await_down(ref, root)
+
+        {:error,
+         {:listener_setup_failed, error, %{server_stop: stop, server_down: down, forced: forced}}}
     end
   end
 
@@ -600,9 +653,25 @@ defmodule Arbor.MCP.Soak.Runner do
 
   defp perform(:restart, %{endpoint: :stdio} = scenario) do
     transport = :sys.get_state(scenario.client).transport_state
+    os_pid = safe_call(fn -> Arbor.RPC.Subprocess.os_pid(transport.subprocess) end)
 
-    with :ok <- Arbor.RPC.Subprocess.close(transport.subprocess) do
-      {:scenario_update, await_planned_reconnect(scenario.client), scenario}
+    child = %{
+      scenario
+      | subprocess: transport.subprocess,
+        os_pid: if(is_integer(os_pid) and os_pid > 0, do: os_pid, else: nil)
+    }
+
+    close = safe_call(fn -> Arbor.RPC.Subprocess.close(transport.subprocess) end)
+    receipt = Cleanup.child_receipt(child)
+
+    if close == :ok and receipt == :reaped do
+      with :ok <- await_planned_reconnect(scenario.client),
+           {:ok, tracking} <- transport_tracking(scenario.client, :stdio, scenario.era) do
+        {:scenario_update, :ok, Map.merge(scenario, tracking)}
+      end
+    else
+      forced = Cleanup.force_child(child)
+      {:error, {:restart_child_cleanup_failed, close, receipt, forced}}
     end
   end
 
@@ -779,7 +848,7 @@ defmodule Arbor.MCP.Soak.Runner do
     remaining = max(deadline - now_ms(), 0)
 
     receive do
-      {:soak_client_event, event, measurements, %{pid: ^client} = metadata} ->
+      {:soak_client_event, event, measurements, %{pid: ^client} = metadata, _source_pid} ->
         send(self(), {:soak_planned_reconnect_event, client, event, measurements, metadata})
 
         key =
@@ -835,7 +904,10 @@ defmodule Arbor.MCP.Soak.Runner do
          Policy.request_budget(scenario.endpoint, scenario.era, state.config.turnover_requests),
          state.config.turnover_ms
        ) do
+      state = mark_closing_sse(state, scenario)
       cleanup = safe_close_scenario(scenario)
+      state = drain_events(state)
+      state = unmark_closing_sse(state, scenario)
 
       write_event(state, %{
         type: "turnover",
@@ -896,6 +968,7 @@ defmodule Arbor.MCP.Soak.Runner do
 
   defp close_scenarios(state) do
     Enum.reduce(state.scenarios, state, fn {id, scenario}, state ->
+      state = mark_closing_sse(state, scenario)
       cleanup = safe_close_scenario(scenario)
       write_event(state, %{type: "final_cleanup", scenario: id, cleanup: cleanup})
 
@@ -905,18 +978,46 @@ defmodule Arbor.MCP.Soak.Runner do
     end)
   end
 
+  defp mark_closing_sse(state, %{sse_pid: pid}) when is_pid(pid),
+    do: %{state | closing_sse_pids: MapSet.put(state.closing_sse_pids, pid)} |> checkpoint()
+
+  defp mark_closing_sse(state, _scenario), do: state
+
+  defp unmark_closing_sse(state, %{sse_pid: pid}) when is_pid(pid),
+    do: %{state | closing_sse_pids: MapSet.delete(state.closing_sse_pids, pid)} |> checkpoint()
+
+  defp unmark_closing_sse(state, _scenario), do: state
+
   defp safe_close_scenario(scenario) do
-    close_scenario(scenario)
-  rescue
-    error ->
-      %{
-        client_stop: {:error, Exception.message(error)},
-        client_down: :unknown,
-        server_stop: :unknown
-      }
-  catch
-    kind, reason ->
-      %{client_stop: {kind, inspect(reason)}, client_down: :unknown, server_stop: :unknown}
+    scenario = refresh_tracking(scenario)
+
+    cleanup =
+      try do
+        close_scenario(scenario)
+      rescue
+        error ->
+          %{
+            client_stop: {:error, Exception.message(error)},
+            client_down: :unknown,
+            server_stop: :unknown
+          }
+      catch
+        kind, reason ->
+          %{client_stop: {kind, inspect(reason)}, client_down: :unknown, server_stop: :unknown}
+      end
+
+    if Cleanup.complete?(cleanup) do
+      cleanup
+    else
+      Map.put(cleanup, :forced_cleanup, Cleanup.force(scenario, cleanup))
+    end
+  end
+
+  defp refresh_tracking(%{endpoint: endpoint, era: era, client: client} = scenario) do
+    case safe_call(fn -> transport_tracking(client, endpoint, era) end) do
+      {:ok, tracking} -> Map.merge(scenario, tracking)
+      _unavailable -> scenario
+    end
   end
 
   defp close_scenario(scenario) do
@@ -924,7 +1025,10 @@ defmodule Arbor.MCP.Soak.Runner do
     ref = Process.monitor(client)
     result = safe_call(fn -> Client.stop(client) end)
     down = await_down(ref, client)
+
     Map.merge(%{client_stop: result, client_down: down}, close_server(scenario))
+    |> Map.put(:stdio_receipt, Cleanup.child_receipt(scenario))
+    |> Map.put(:stdio_os_pid, scenario.os_pid)
   end
 
   defp close_server(%{root: nil}), do: %{server_stop: :not_owned}
@@ -947,7 +1051,31 @@ defmodule Arbor.MCP.Soak.Runner do
     result = safe_call(fn -> Server.stop(root) end)
     down = await_down(ref, root)
     listener_down = if listener, do: not Process.alive?(listener), else: :not_applicable
-    %{host_stop: host_stop, server_stop: result, server_down: down, listener_down: listener_down}
+
+    %{
+      host_stop: host_stop,
+      server_stop: result,
+      server_down: down,
+      listener_down: listener_down,
+      port_free: Cleanup.port_free?(scenario)
+    }
+  end
+
+  defp close_unclaimed_server(server) do
+    cleanup = close_server(server)
+
+    base =
+      Map.merge(
+        %{client_stop: :ok, client_down: :normal, stdio_receipt: :not_applicable},
+        cleanup
+      )
+
+    if Cleanup.complete?(base) do
+      cleanup
+    else
+      scenario = Map.merge(%{client: nil, subprocess: nil, os_pid: nil}, server)
+      Map.put(cleanup, :forced_cleanup, Cleanup.force(scenario, base))
+    end
   end
 
   defp safe_call(fun) do
@@ -966,13 +1094,7 @@ defmodule Arbor.MCP.Soak.Runner do
     end
   end
 
-  defp cleanup_passed?(cleanup) do
-    cleanup.client_stop == :ok and cleanup.client_down in [:normal, :noproc] and
-      cleanup.server_stop in [:ok, :not_owned] and
-      Map.get(cleanup, :server_down, :normal) in [:normal, :noproc] and
-      Map.get(cleanup, :host_stop, :not_host) in [:ok, :not_host] and
-      Map.get(cleanup, :listener_down, true) in [true, :not_applicable]
-  end
+  defp cleanup_passed?(cleanup), do: Cleanup.complete?(cleanup)
 
   defp maybe_sample(state) do
     if now_ms() < state.next_sample do
@@ -1118,20 +1240,18 @@ defmodule Arbor.MCP.Soak.Runner do
 
   defp drain_events(state) do
     receive do
-      {:soak_client_event, event, measurements, metadata} ->
+      {:soak_client_event, event, measurements, metadata, source_pid} ->
         client = Map.get(metadata, :pid)
 
-        scenario =
-          Enum.find_value(state.scenarios, fn {id, value} ->
-            if value.client == client, do: id
-          end)
+        scenario = Policy.scenario_for_event(state.scenarios, client, source_pid)
 
         write_event(state, %{
           type: "client_event",
           event: event,
           scenario: scenario,
           measurements: measurements,
-          metadata: inspect(metadata)
+          metadata: inspect(metadata),
+          source_pid: inspect(source_pid)
         })
 
         planned_failure? =
@@ -1141,7 +1261,12 @@ defmodule Arbor.MCP.Soak.Runner do
           end)
 
         state =
-          if Policy.unexpected_client_event?(event, scenario != nil, planned_failure?) do
+          if Policy.unexpected_client_event?(event, scenario != nil, planned_failure?) or
+               Policy.unexpected_stream_event?(
+                 event,
+                 scenario != nil,
+                 MapSet.member?(state.closing_sse_pids, source_pid)
+               ) do
             record_failure(state, scenario, :unexpected_disconnect, %{
               event: event,
               metadata: inspect(metadata)

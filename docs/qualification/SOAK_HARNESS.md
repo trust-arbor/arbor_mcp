@@ -21,7 +21,9 @@ and template reads, prompts, progress, cancellation, modern MRTR, notifications
 and subscriptions. A restart operation terminates the stdio server
 while its client remains live and requires exactly one disconnect, reconnect
 attempt, and reconnect success before a ping. Any other disconnect or reconnect
-attempt is a failure. BEAM binds a client to one server process, and modern HTTP
+attempt is a failure. The harness also attributes SSE-client reconnect telemetry
+to each legacy HTTP stream's process and fails an unplanned GET-stream reconnect.
+BEAM binds a client to one server process, and modern HTTP
 is stateless, so those transports skip this reconnect operation.
 The `--rate` option
 sets target operations per second; `--mix` accepts comma-separated operation
@@ -60,6 +62,10 @@ other transports use the configured limit, capped at 5,000 below the 10,000
 peer limit. Request accounting includes a conservative allowance for handshake
 and subscription calls. A cycle also
 closes subscriptions and confirms the old client and owned server terminate.
+If normal cleanup fails, it force-stops the listener and confirms the bound
+port can be reused; for stdio it retains the child OS PID and requires a
+subprocess reaping receipt, signalling and checking the child if needed. Any
+forced cleanup is recorded as a failure even if it succeeds.
 No limit is raised to make a run pass.
 
 The sampler forces garbage collection of the harness, client, and owned server
@@ -68,13 +74,20 @@ BEAM memory, process count, ETS table count and aggregate word size, port count,
 and OS file descriptor count when available. A bounded series is retained for
 each scenario's turnover samples and for periodic whole-VM samples. Leak checks
 compare the median of eight post-warm-up baseline samples with the median of
-the latest eight samples. Operation latency uses fixed buckets for bounded
+the latest eight samples. Qualification requires at least 18 periodic samples
+and 18 turnover samples for every scenario, so each leak series has both windows.
+Operation latency uses fixed buckets for bounded
 p50/p95/p99 estimates; percentile values are bucket ceilings. It writes one
 JSON object per periodic sample, turnover sample, or failure to
 `events.jsonl`. `summary.json` contains the source commit, lockfile SHA-256,
 full OTP version, OS version, Mix environment, dependency versions, override
 flags, and `git status --porcelain` at both start and end, plus configuration,
 per-operation totals, percentiles, and failures with typed cleanup evidence.
+For each Hex dependency, the harness verifies the cached package checksum
+against `mix.lock`, compares extracted source and build files with the package,
+and repeats the check at the end. Generated Erlang lexer/parser source is
+regenerated from its locked grammar and compared before acceptance. A missing
+package cache or a source mismatch fails qualification.
 Evidence is flushed as it is written, and a nonempty output directory is refused.
 On completion the task exits nonzero for any operation or cleanup failure,
 error rate above 0.1%, p99 above 5 seconds, a dirty or changing tree, an

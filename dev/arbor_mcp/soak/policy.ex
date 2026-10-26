@@ -27,6 +27,7 @@ defmodule Arbor.MCP.Soak.Policy do
   ]
   @baseline_size 8
   @recent_size 16
+  @minimum_leak_samples 18
 
   def turnover?(requests, opened_ms, now_ms, request_limit, age_limit_ms) do
     requests >= request_limit or now_ms - opened_ms >= age_limit_ms
@@ -56,7 +57,7 @@ defmodule Arbor.MCP.Soak.Policy do
     }
   end
 
-  def leak_violations(%{count: count} = series) when count >= 18 do
+  def leak_violations(%{count: count} = series) when count >= @minimum_leak_samples do
     recent = Enum.take(series.recent, @baseline_size)
 
     for {metric, threshold} <- @leak_thresholds,
@@ -73,6 +74,20 @@ defmodule Arbor.MCP.Soak.Policy do
   end
 
   def leak_violations(_series), do: []
+
+  def leak_series_ready?(%{count: count, baseline: baseline, recent: recent}) do
+    count >= @minimum_leak_samples and length(baseline) == @baseline_size and
+      length(recent) >= @baseline_size
+  end
+
+  def leak_series_ready?(_series), do: false
+
+  def leak_coverage_complete?(periodic, turnover_series, scenario_ids) do
+    leak_series_ready?(periodic) and
+      Enum.all?(scenario_ids, fn id ->
+        turnover_series |> Map.get(id) |> leak_series_ready?()
+      end)
+  end
 
   def request_budget(endpoint, :legacy, requested)
       when endpoint in [:cowboy_owned, :cowboy_host, :bandit_owned, :bandit_host],
@@ -115,6 +130,20 @@ defmodule Arbor.MCP.Soak.Policy do
         [:arbor_mcp, :client, :reconnect, :error],
         [:arbor_mcp, :client, :reconnect, :timeout]
       ]
+  end
+
+  def unexpected_stream_event?(event, owned_stream?, closing?) do
+    owned_stream? and not closing? and
+      event in [
+        [:arbor_mcp, :transport, :sse, :disconnected],
+        [:arbor_mcp, :transport, :sse, :reconnecting]
+      ]
+  end
+
+  def scenario_for_event(scenarios, client_pid, source_pid) do
+    Enum.find_value(scenarios, fn {id, scenario} ->
+      if scenario.client == client_pid or scenario.sse_pid == source_pid, do: id
+    end)
   end
 
   def threshold_failures(successes, errors, p99_ms, turnover_samples, elapsed_ms, duration_ms) do

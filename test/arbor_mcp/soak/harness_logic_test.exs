@@ -1,7 +1,16 @@
 defmodule Arbor.MCP.Soak.HarnessLogicTest do
   use ExUnit.Case, async: true
 
-  alias Arbor.MCP.Soak.{Evidence, Execution, Histogram, Policy, Provenance, Runner}
+  alias Arbor.MCP.Soak.{
+    Cleanup,
+    DependencySource,
+    Evidence,
+    Execution,
+    Histogram,
+    Policy,
+    Provenance,
+    Runner
+  }
 
   test "turnover uses the lower legacy HTTP session budget" do
     refute Policy.turnover?(95, 1_000, 120_999, 96, 120_000)
@@ -104,6 +113,179 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
     assert Policy.unexpected_client_event?([:arbor_mcp, :client, :reconnect, :success], true)
     assert Policy.reconnect_complete?(%{disconnected: 1, attempt: 1, success: 1})
     refute Policy.reconnect_complete?(%{disconnected: 1, attempt: 2, success: 1})
+  end
+
+  test "SSE reconnect telemetry is attributed by the emitting stream process" do
+    client =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    stream =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    on_exit(fn ->
+      send(client, :stop)
+      send(stream, :stop)
+    end)
+
+    scenarios = %{"cowboy_host/legacy" => %{client: client, sse_pid: stream}}
+    assert Policy.scenario_for_event(scenarios, nil, stream) == "cowboy_host/legacy"
+    assert Policy.scenario_for_event(scenarios, client, self()) == "cowboy_host/legacy"
+    assert Policy.scenario_for_event(scenarios, nil, self()) == nil
+
+    reconnecting = [:arbor_mcp, :transport, :sse, :reconnecting]
+    disconnected = [:arbor_mcp, :transport, :sse, :disconnected]
+    assert Policy.unexpected_stream_event?(reconnecting, true, false)
+    assert Policy.unexpected_stream_event?(disconnected, true, false)
+    refute Policy.unexpected_stream_event?(reconnecting, true, true)
+    refute Policy.unexpected_stream_event?(reconnecting, false, false)
+  end
+
+  test "failed cleanup forces listener and child teardown and remains a failure" do
+    scenario = %{
+      client: self(),
+      root: self(),
+      listener: self(),
+      listener_ref: :test_ranch,
+      adapter: :cowboy,
+      port: 43210,
+      subprocess: :test_child,
+      os_pid: 76543
+    }
+
+    cleanup = %{
+      client_stop: {:error, :timeout},
+      client_down: :timeout,
+      server_stop: {:error, :timeout},
+      server_down: :timeout,
+      host_stop: {:error, :timeout},
+      listener_down: false,
+      port_free: false,
+      stdio_receipt: {:error, :unconfirmed}
+    }
+
+    receipt_count = make_ref()
+
+    forced =
+      Cleanup.force(scenario, cleanup, %{
+        kill_process: fn pid ->
+          send(self(), {:killed, pid})
+          {:down, :killed}
+        end,
+        stop_ranch: fn ref ->
+          send(self(), {:stopped_ranch, ref})
+          :ok
+        end,
+        port_free?: fn _ -> true end,
+        close_child: fn handle ->
+          send(self(), {:closed_child, handle})
+          {:error, :timeout}
+        end,
+        child_receipt: fn _ ->
+          count = Process.get(receipt_count, 0)
+          Process.put(receipt_count, count + 1)
+          if count == 0, do: {:error, :unconfirmed}, else: :reaped
+        end,
+        kill_os_pid: fn pid ->
+          send(self(), {:killed_os, pid})
+          :signalled
+        end,
+        os_gone?: fn _ -> false end,
+        wait_ms: 0
+      })
+
+    assert_receive {:stopped_ranch, :test_ranch}
+    assert_receive {:killed, pid}
+    assert pid == self()
+    assert_receive {:killed, ^pid}
+    assert_receive {:killed, ^pid}
+    assert_receive {:closed_child, :test_child}
+    assert_receive {:killed_os, 76543}
+    assert forced.child.os_gone
+    assert forced.port_free
+    refute Cleanup.complete?(Map.put(cleanup, :forced_cleanup, forced))
+
+    clean = %{
+      client_stop: :ok,
+      client_down: :normal,
+      server_stop: :ok,
+      server_down: :normal,
+      host_stop: :ok,
+      listener_down: true,
+      port_free: true,
+      stdio_receipt: :reaped
+    }
+
+    assert Cleanup.complete?(clean)
+    refute Cleanup.complete?(%{clean | port_free: false})
+    refute Cleanup.complete?(%{clean | stdio_receipt: {:error, :unconfirmed}})
+  end
+
+  test "listener port confirmation distinguishes bound from reusable" do
+    {:ok, socket} =
+      :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}, reuseaddr: true])
+
+    {:ok, port} = :inet.port(socket)
+    refute Cleanup.port_free?(%{port: port})
+    :ok = :gen_tcp.close(socket)
+    assert Cleanup.port_free?(%{port: port})
+  end
+
+  test "dependency source comparison detects patched or added code" do
+    assert DependencySource.failed(%{}) == ["<no_dependencies>"]
+    dir = Path.join(System.tmp_dir!(), "soak-dep-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(Path.join(dir, "lib"))
+    on_exit(fn -> File.rm_rf!(dir) end)
+    source = Path.join(dir, "lib/example.ex")
+    File.write!(source, "defmodule Example, do: :original")
+
+    expected = DependencySource.source_hashes(dir)
+    assert DependencySource.compare(expected, expected).verified
+
+    File.write!(source, "defmodule Example, do: :patched")
+    patched = DependencySource.compare(DependencySource.source_hashes(dir), expected)
+    refute patched.verified
+    assert patched.changed_paths == ["lib/example.ex"]
+
+    File.write!(Path.join(dir, "lib/extra.ex"), "defmodule Extra, do: :unexpected")
+    extra = DependencySource.compare(DependencySource.source_hashes(dir), expected)
+    refute extra.verified
+    assert "lib/extra.ex" in extra.changed_paths
+
+    clean = snapshot()
+    mismatched = %{clean | dependency_sources: %{"example" => extra}}
+
+    assert :dependency_source_mismatch in Enum.map(
+             Provenance.violations(mismatched, mismatched),
+             & &1.kind
+           )
+
+    assert :dependency_source_changed in Enum.map(
+             Provenance.violations(clean, mismatched),
+             & &1.kind
+           )
+  end
+
+  test "generated Erlang source must match its locked grammar" do
+    dir = Path.join(System.tmp_dir!(), "soak-grammar-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(Path.join(dir, "src"))
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    input = "src/erlex_lexer.xrl"
+    output = "src/erlex_lexer.erl"
+    File.cp!(Path.join("deps/erlex", input), Path.join(dir, input))
+    File.cp!(Path.join("deps/erlex", output), Path.join(dir, output))
+    assert DependencySource.generated_matches?(dir, input, output)
+
+    File.write!(Path.join(dir, output), File.read!(Path.join(dir, output)) <> "\n% patched\n")
+    refute DependencySource.generated_matches?(dir, input, output)
   end
 
   test "operation exceptions and exits become failures without losing scenario state" do
@@ -221,8 +403,13 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
       operations: 5,
       turnovers: 6,
       samples: 30,
-      sample_series: %{Policy.new_series() | count: 30},
-      turnover_series: %{"stdio/legacy" => %{Policy.new_series() | count: 6}}
+      sample_series: samples(30),
+      turnover_series:
+        Map.new(
+          for transport <- config.transports,
+              era <- config.eras,
+              do: {"#{transport}/#{era}", samples(18)}
+        )
     }
 
     metadata = %{
@@ -235,11 +422,12 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
     summary = Evidence.build(state, metadata)
     assert summary["passed"]
     assert summary["qualification_complete"]
+    assert summary["leak_coverage_complete"]
     assert summary["source_commit"] == "abc123"
 
     assert summary["leak_sample_counts"] == %{
              periodic: 30,
-             by_scenario: %{"stdio/legacy" => 6}
+             by_scenario: Map.new(state.turnover_series, fn {key, _series} -> {key, 18} end)
            }
 
     assert summary["overall_latency_ms"] == %{p50: 5, p95: 5, p99: 5}
@@ -253,6 +441,15 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
 
     startup_only = %{state | timed_counts: Map.delete(state.timed_counts, "stdio/legacy/restart")}
     refute Evidence.build(startup_only, metadata)["qualification_complete"]
+
+    few_periodic = %{state | sample_series: samples(17)}
+    refute Evidence.build(few_periodic, metadata)["qualification_complete"]
+
+    few_turnovers = put_in(state.turnover_series["stdio/legacy"], samples(17))
+    refute Evidence.build(few_turnovers, metadata)["qualification_complete"]
+
+    missing_series = %{state | turnover_series: Map.delete(state.turnover_series, "stdio/legacy")}
+    refute Evidence.build(missing_series, metadata)["qualification_complete"]
 
     refute Evidence.build(%{state | config: %{config | only: "beam/modern"}}, metadata)[
              "qualification_complete"
@@ -270,7 +467,14 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
       git_head: "abc123",
       git_status_porcelain: "",
       mix_lock_sha256: "sha",
-      overrides: %{"ARBOR_RPC_PATH" => false, "ARBOR_V2_DEPS" => false}
+      overrides: %{"ARBOR_RPC_PATH" => false, "ARBOR_V2_DEPS" => false},
+      dependency_sources: %{"example" => %{verified: true, actual_sha256: "source"}}
     }
+  end
+
+  defp samples(count) do
+    Enum.reduce(1..count, Policy.new_series(), fn _, series ->
+      Policy.add_sample(series, %{processes: 100})
+    end)
   end
 end
