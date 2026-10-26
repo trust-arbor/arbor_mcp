@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A legacy `initialize` always sent `"capabilities": %{}`, ignoring the
+  client's `:capabilities` option, so servers that respect declared
+  capabilities never sent this client elicitation, sampling or roots
+  requests. The declared capabilities are now sent, with atom keys sent as
+  strings, as the same map arrives over the wire (backport of the capability
+  part of 2.x PR #116).
 - In the legacy Streamable HTTP revisions a server may answer a request's
   POST with an event stream that carries the request's notifications and its
   own requests ahead of the response, as the TypeScript SDK's servers do for
