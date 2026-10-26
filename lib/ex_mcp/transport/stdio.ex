@@ -27,10 +27,11 @@ defmodule ExMCP.Transport.Stdio do
   - `:term_grace` - time in milliseconds to wait after SIGTERM before sending
     SIGKILL (default: 100)
   - `:cleanup_timeout` - subprocess shutdown budget, defaulting to
-    `eof_grace + term_grace + 400` (default: 2_500). `close/1` returns
-    within it, and SIGKILL goes out within it, the graces shortened if they
-    don't fit. The shutdown runs in a process of its own, so it completes
-    even if the process that called `close/1` is killed meanwhile.
+    `eof_grace + term_grace + 400` (default: 2_500). SIGKILL goes out within
+    it, the graces shortened if they don't fit, and `close/1` returns within
+    it plus 500 ms. The shutdown is run by a process started with the
+    connection, which acts when the port closes, so it completes even if the
+    process that owns the connection dies first, before or during `close/1`.
 
   The command is resolved against the `PATH` the child will see (an explicit
   `PATH` in `:env`, else the inherited one), not the VM's own. When the VM
@@ -68,11 +69,14 @@ defmodule ExMCP.Transport.Stdio do
   alias ExMCP.Transport.{Error, SecurityGuard}
 
   @termination_poll_ms 10
+  @max_termination_poll_ms 100
   @eof_grace 2_000
   @term_grace 100
   @shutdown_slack 400
   # Kept back from the cleanup budget for sending SIGKILL.
   @kill_allowance 50
+  # What close/1 allows past the budget for the shutdown to be confirmed.
+  @reply_allowance 500
   @default_max_frame_bytes 1_048_576
   defstruct [
     :port,
@@ -80,6 +84,8 @@ defmodule ExMCP.Transport.Stdio do
     :line_buffer,
     :subscriber,
     :reader_pid,
+    # Runs the shutdown order once the port closes (see start_reaper/1).
+    :reaper,
     max_frame_bytes: @default_max_frame_bytes,
     process_group: false,
     eof_grace: @eof_grace,
@@ -129,7 +135,7 @@ defmodule ExMCP.Transport.Stdio do
   # helper's reply allowance.
   def close_budget(opts) do
     case Keyword.get(shutdown_options(opts), :cleanup_timeout) do
-      budget when is_integer(budget) and budget > 0 -> budget + 500
+      budget when is_integer(budget) and budget > 0 -> budget + @reply_allowance
       _invalid -> nil
     end
   end
@@ -219,6 +225,8 @@ defmodule ExMCP.Transport.Stdio do
         cleanup_timeout:
           Keyword.get(opts, :cleanup_timeout, @eof_grace + @term_grace + @shutdown_slack)
       }
+
+      state = %{state | reaper: start_reaper(state)}
 
       :telemetry.execute([:ex_mcp, :transport, :connection, :opened], %{}, %{
         transport: :stdio,
@@ -478,14 +486,8 @@ defmodule ExMCP.Transport.Stdio do
   def close(%__MODULE__{port: port, os_pid: os_pid, reader_pid: reader_pid} = state) do
     :telemetry.execute([:ex_mcp, :transport, :connection, :closed], %{}, %{transport: :stdio})
 
-    # Port.close/1 tears down the Erlang port, but on Unix it does not
-    # guarantee that the spawned OS process exits. The shutdown order (EOF
-    # grace, SIGTERM, SIGKILL) therefore runs in a process of its own,
-    # unlinked and started before stdin closes, so the server is stopped even
-    # if the caller is killed meanwhile: a supervisor whose shutdown timeout
-    # is shorter than the EOF grace, say. Repeated stdio connections cannot
-    # leak servers and exhaust the runner's process/thread budget.
-    reaper = start_reaper(signal_target(os_pid, state.process_group), state)
+    # A state built without connect/1 has no reaper yet.
+    reaper = state.reaper || start_reaper(state)
 
     # Close the port before killing the reader: port_close exits the port
     # with reason :normal, which linked processes ignore, whereas killing
@@ -502,23 +504,67 @@ defmodule ExMCP.Transport.Stdio do
       Process.exit(reader_pid, :kill)
     end
 
-    # The reaper ends within the cleanup budget; close/1 waits no longer.
-    await_reaper(reaper, state.cleanup_timeout)
+    case reaper do
+      # Windows: taskkill stops the tree at once.
+      nil ->
+        terminate_os_process(signal_target(os_pid, state.process_group), 0, 0)
+
+      # The reaper sends SIGKILL within the cleanup budget; close/1 allows
+      # it a little more to confirm, and returns either way.
+      reaper ->
+        await_reaper(reaper, state.cleanup_timeout + @reply_allowance)
+    end
+
     :ok
   end
 
-  defp start_reaper(nil, _state), do: nil
-
-  defp start_reaper(target, state) do
+  # Port.close/1 tears down the Erlang port, but on Unix it does not
+  # guarantee that the spawned OS process exits. A reaper, started with the
+  # connection and unlinked from everything, watches the port: when the port
+  # closes, through close/1 or because its owner died (a client killed by its
+  # supervisor before or during close/1, say), it runs the shutdown order on
+  # a server still running. A server that exited on its own is not signalled.
+  # Repeated stdio connections therefore cannot leak servers and exhaust the
+  # runner's process/thread budget.
+  defp start_reaper(%__MODULE__{port: port, os_pid: os_pid} = state) when is_integer(os_pid) do
+    target = signal_target(os_pid, state.process_group)
     {eof_grace, term_grace} = shutdown_schedule(state)
-    spawn_monitor(fn -> terminate_os_process(target, eof_grace, term_grace) end)
+
+    case :os.type() do
+      {:win32, _name} ->
+        # taskkill stops the tree at once, so there is no grace to outlive.
+        nil
+
+      {:unix, _name} ->
+        spawn(fn ->
+          monitor = monitor_port(port)
+
+          receive do
+            {:DOWN, ^monitor, :port, _port, _reason} ->
+              terminate_os_process(target, eof_grace, term_grace)
+          end
+        end)
+    end
+  end
+
+  defp start_reaper(_state), do: nil
+
+  # A port that is already closed reports :DOWN at once.
+  defp monitor_port(port) when is_port(port), do: :erlang.monitor(:port, port)
+
+  defp monitor_port(_no_port) do
+    monitor = make_ref()
+    send(self(), {:DOWN, monitor, :port, nil, :noproc})
+    monitor
   end
 
   defp await_reaper(nil, _budget), do: :ok
 
-  defp await_reaper({pid, monitor}, budget) do
+  defp await_reaper(reaper, budget) do
+    monitor = Process.monitor(reaper)
+
     receive do
-      {:DOWN, ^monitor, :process, ^pid, _reason} -> :ok
+      {:DOWN, ^monitor, :process, ^reaper, _reason} -> :ok
     after
       budget ->
         Process.demonitor(monitor, [:flush])
@@ -604,18 +650,20 @@ defmodule ExMCP.Transport.Stdio do
   defp wait_for_process_exit_ms(target, grace_ms)
        when is_integer(grace_ms) and grace_ms >= 0 do
     deadline = System.monotonic_time(:millisecond) + grace_ms
-    do_wait_for_process_exit(target, deadline)
+    do_wait_for_process_exit(target, deadline, @termination_poll_ms)
   end
 
   defp wait_for_process_exit_ms(target, _grace_ms), do: not os_process_alive?(target)
 
-  defp do_wait_for_process_exit(target, deadline) do
+  # Each check runs `kill`, so checks grow sparser over a long grace.
+  defp do_wait_for_process_exit(target, deadline, interval) do
     if os_process_alive?(target) do
       remaining = deadline - System.monotonic_time(:millisecond)
 
       if remaining > 0 do
-        Process.sleep(min(remaining, @termination_poll_ms))
-        do_wait_for_process_exit(target, deadline)
+        Process.sleep(min(remaining, interval))
+        next = min(interval * 2, @max_termination_poll_ms)
+        do_wait_for_process_exit(target, deadline, next)
       else
         false
       end

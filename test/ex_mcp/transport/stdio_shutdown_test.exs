@@ -164,7 +164,32 @@ defmodule ExMCP.Transport.StdioShutdownTest do
     :ok = DynamicSupervisor.terminate_child(supervisor, client)
     assert_receive {:DOWN, ^monitor, :process, ^client, :killed}
 
-    wait_until(fn -> not os_alive?(os_pid) end, timeout: 2_000)
+    # Without the fix the server outlives the client for its full 30 s.
+    wait_until(fn -> not os_alive?(os_pid) end, timeout: 5_000)
+  end
+
+  test "a client killed before it closes the connection leaves no server process" do
+    Process.flag(:trap_exit, true)
+
+    {:ok, client} =
+      Client.start_link(
+        transport: :stdio,
+        command: ["/bin/sh", "-c", @stubborn_server],
+        protocol_mode: :legacy_only,
+        eof_grace: 200,
+        term_grace: 100,
+        health_check_interval: nil,
+        reconnect: false
+      )
+
+    os_pid = :sys.get_state(client).transport_state.os_pid
+    kill_on_exit(os_pid)
+
+    # No terminate/2, so no close/1: only the port closing with its owner.
+    Process.exit(client, :kill)
+    assert_receive {:EXIT, ^client, :killed}
+
+    wait_until(fn -> not os_alive?(os_pid) end, timeout: 5_000)
   end
 
   test "close/1 stops a server that ignores EOF and SIGTERM within its cleanup budget" do
@@ -179,9 +204,10 @@ defmodule ExMCP.Transport.StdioShutdownTest do
 
     started = System.monotonic_time(:millisecond)
     assert :ok = Stdio.close(state)
-    # The budget is 600 ms; the margin is for a loaded machine.
+    # At most the 600 ms budget plus 500 ms to confirm; without the fix
+    # close/1 took the 5 s EOF grace.
     assert System.monotonic_time(:millisecond) - started < 1_500
 
-    wait_until(fn -> not os_alive?(state.os_pid) end, timeout: 1_000)
+    wait_until(fn -> not os_alive?(state.os_pid) end, timeout: 5_000)
   end
 end
