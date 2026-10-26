@@ -5,6 +5,8 @@ defmodule ExMCP.Transport.HTTP.BoundedClient do
   alias ExMCP.Internal.HTTPResponseReducer, as: Reducer
   alias ExMCP.Transport.HTTP.TargetPolicy
 
+  @max_declared_length Integer.pow(2, 62)
+
   @type response :: {
           {charlist(), pos_integer(), charlist()},
           [{String.t(), String.t()}],
@@ -127,8 +129,22 @@ defmodule ExMCP.Transport.HTTP.BoundedClient do
         {:ok, next_conn, request_ref} ->
           deadline = response_deadline(opts)
           max_bytes = Keyword.fetch!(opts, :max_response_bytes)
-          limits = [max_bytes: max_bytes, validate_headers: header_policy(max_bytes)]
-          receive_response(next_conn, request_ref, Reducer.empty_response(), deadline, limits)
+          stream = Keyword.get(opts, :event_stream)
+
+          limits = [
+            max_bytes: max_bytes,
+            max_bytes_for: body_limit(max_bytes, stream),
+            validate_headers: header_policy(max_bytes, stream)
+          ]
+
+          receive_response(
+            next_conn,
+            request_ref,
+            Reducer.empty_response(),
+            deadline,
+            limits,
+            stream
+          )
 
         {:error, next_conn, reason} ->
           {{:error, {:http_request_failed, reason}}, next_conn}
@@ -139,17 +155,24 @@ defmodule ExMCP.Transport.HTTP.BoundedClient do
     reply
   end
 
-  defp receive_response(conn, request_ref, response, deadline, limits) do
+  defp receive_response(conn, request_ref, response, deadline, limits, stream) do
     timeout = Reducer.remaining_ms(deadline, System.monotonic_time(:millisecond))
 
     case Mint.HTTP1.recv(conn, 0, timeout) do
       {:ok, next_conn, events} ->
-        case Reducer.reduce(events, request_ref, response, limits) do
-          {:done, completed} ->
-            {{:ok, format_response(completed)}, next_conn}
-
+        with {:done, completed} <- Reducer.reduce(events, request_ref, response, limits),
+             {:ok, completed, stream} <- consume_stream(completed, stream, deadline),
+             {:ok, completed} <- finish_stream(completed, stream) do
+          {{:ok, format_response(completed)}, next_conn}
+        else
           {:cont, updated} ->
-            receive_response(next_conn, request_ref, updated, deadline, limits)
+            case consume_stream(updated, stream, deadline) do
+              {:ok, updated, stream} ->
+                receive_response(next_conn, request_ref, updated, deadline, limits, stream)
+
+              {:error, reason} ->
+                {{:error, reason}, next_conn}
+            end
 
           {:error, reason} ->
             {{:error, reason}, next_conn}
@@ -160,11 +183,67 @@ defmodule ExMCP.Transport.HTTP.BoundedClient do
     end
   end
 
+  # An `:event_stream` hook, `{acc, fun}`, takes the body of a 2xx
+  # `text/event-stream` response as it arrives instead of it accumulating:
+  # `fun.({:data, chunk, deadline}, acc)` returns `{:ok, acc}` or
+  # `{:error, reason}`, where `deadline` is the response's (monotonic
+  # milliseconds), and `fun.(:done, acc)` returns `{:ok, body}`, the body the
+  # response then carries.
+  defp consume_stream(response, {acc, fun} = stream, deadline) do
+    if response.chunks != [] and event_stream?(response) do
+      case fun.({:data, Reducer.body(response), deadline}, acc) do
+        {:ok, acc} -> {:ok, %{response | chunks: [], size: 0}, {acc, fun}}
+        {:error, _reason} = error -> error
+      end
+    else
+      {:ok, response, stream}
+    end
+  end
+
+  defp consume_stream(response, nil, _deadline), do: {:ok, response, nil}
+
+  defp finish_stream(response, {acc, fun}) do
+    if event_stream?(response) do
+      with {:ok, body} <- fun.(:done, acc),
+           do: {:ok, %{response | chunks: [body], size: byte_size(body)}}
+    else
+      {:ok, response}
+    end
+  end
+
+  defp finish_stream(response, nil), do: {:ok, response}
+
+  defp event_stream?(%{status: status, headers: headers}) when status in 200..299,
+    do: event_stream_type?(headers)
+
+  defp event_stream?(_response), do: false
+
+  defp event_stream_type?(headers) do
+    case List.keyfind(headers, "content-type", 0) do
+      {_name, value} -> String.contains?(String.downcase(value), "text/event-stream")
+      nil -> false
+    end
+  end
+
+  # A 2xx event-stream body handed to an `:event_stream` hook is limited as
+  # the hook takes it, so neither one read of it nor the length it declares
+  # counts against `:max_response_bytes`.
+  defp body_limit(max_bytes, nil), do: fn _response -> max_bytes end
+
+  defp body_limit(max_bytes, _stream) do
+    fn response -> if event_stream?(response), do: @max_declared_length, else: max_bytes end
+  end
+
   # Applied to the accumulated header list, trailers included: compression
   # and conflicting framing are refused, and the strict single-value
   # content-length rule decides the size limit.
-  defp header_policy(max_bytes) do
-    fn _batch, accumulated ->
+  defp header_policy(max_bytes, stream) do
+    fn _batch, accumulated, status ->
+      length_limit =
+        if is_nil(stream) or not event_stream?(%{status: status, headers: accumulated}),
+          do: max_bytes,
+          else: @max_declared_length
+
       cond do
         Reducer.compressed?(accumulated) ->
           {:error, :compressed_response}
@@ -172,7 +251,7 @@ defmodule ExMCP.Transport.HTTP.BoundedClient do
         Reducer.conflicting_framing?(accumulated) ->
           {:error, :invalid_response_framing}
 
-        Reducer.invalid_or_oversized_content_length?(accumulated, max_bytes) ->
+        Reducer.invalid_or_oversized_content_length?(accumulated, length_limit) ->
           {:error, :response_too_large}
 
         true ->

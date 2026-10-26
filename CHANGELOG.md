@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- In the legacy Streamable HTTP revisions a server may answer a request's
+  POST with an event stream that carries the request's notifications and its
+  own requests ahead of the response, as the TypeScript SDK's servers do for
+  progress, log messages and elicitation. The client read the whole stream
+  before parsing it and joined every event's data into one JSON document, so
+  a notification ahead of the response left the call waiting until it timed
+  out, and a request the server waited on was never answered. On a POST sent
+  from its own task (any request once the legacy standalone GET stream is
+  open), each message on the stream is now handled as it arrives: list
+  changes and cancellations are routed, the server's requests are answered
+  while the stream is open, and the stream's length is no longer limited by
+  `:max_response_bytes` (each event is limited by
+  `:max_stream_buffer_bytes`). The SSE parser also reads an `id`, `retry` or
+  `event` field written without a space after the colon, as the format
+  allows; such an event id used to be ignored for resumption (backport of
+  2.x PR #121).
 - A request or notification that leaves out `params` was dropped as an
   invalid message, so the client never answered a server's `ping` or saw its
   `notifications/*/list_changed`; the TypeScript SDK's servers send both that

@@ -106,6 +106,7 @@ defmodule ExMCP.Transport.HTTP do
   alias ExMCP.Transport.HTTP.{
     BoundedClient,
     ModernStreamClient,
+    PostStream,
     RequestHeaders,
     TargetPolicy,
     ToolHeaders
@@ -386,8 +387,18 @@ defmodule ExMCP.Transport.HTTP do
     # exit-trapping client's {:EXIT, ...} transport handling is untouched.
     {_task_pid, task_ref} =
       spawn_monitor(fn ->
+        # A legacy POST answered with an event stream carries the request's
+        # notifications and the server's own requests ahead of the response;
+        # this task hands each to the client as it arrives (see PostStream).
+        # The client process is free meanwhile: it is not blocked on this POST.
+        stream =
+          PostStream.consumer(parent,
+            max_buffer_bytes: state.max_stream_buffer_bytes,
+            max_kept_bytes: state.max_response_bytes
+          )
+
         result =
-          case perform_and_maybe_auth(message, state) do
+          case perform_and_maybe_auth(message, state, event_stream: stream) do
             {:ok, response} -> handle_http_response(response, state, message)
             {:ok, response, new_state} -> handle_http_response(response, new_state, message)
             {:error, reason} -> {:error, reason}
@@ -417,12 +428,16 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
+  defp perform_and_maybe_auth(body, state, opts \\ [])
+
   # Perform HTTP request with automatic OAuth retry via auth provider.
-  defp perform_and_maybe_auth(body, %{auth_provider: provider} = state)
+  # `opts` may name an `:event_stream` consumer for the response body (see
+  # PostStream); a request re-sent after an auth challenge runs without one.
+  defp perform_and_maybe_auth(body, %{auth_provider: provider} = state, opts)
        when not is_nil(provider) do
     state = apply_provider_token(state)
 
-    case perform_http_request(body, state) do
+    case perform_http_request(body, state, opts) do
       {:ok, response} ->
         handle_provider_auth_challenge(response, body, state)
 
@@ -432,8 +447,8 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   # Legacy inline OAuth path (when no auth provider configured)
-  defp perform_and_maybe_auth(body, state) do
-    result = perform_http_request(body, state)
+  defp perform_and_maybe_auth(body, state, opts) do
+    result = perform_http_request(body, state, opts)
 
     case result do
       {:ok, response} ->
@@ -686,7 +701,7 @@ defmodule ExMCP.Transport.HTTP do
     |> List.insert_at(0, {"Authorization", "Bearer #{token}"})
   end
 
-  defp perform_http_request(body, state) do
+  defp perform_http_request(body, state, opts \\ []) do
     # According to MCP spec, POST directly to the MCP endpoint, not /messages
     url = build_url(state, "")
     Logger.debug("HTTP request", endpoint_hash: LogSummary.fingerprint(url))
@@ -701,7 +716,7 @@ defmodule ExMCP.Transport.HTTP do
     # Security validation before making external request
     case sanitize_http_request("POST", url, headers, state) do
       {:ok, sanitized_headers} ->
-        make_http_request(url, sanitized_headers, body, state)
+        make_http_request(url, sanitized_headers, body, state, opts)
 
       {:error, security_error} ->
         Logger.warning("HTTP request blocked by security policy",
@@ -740,9 +755,10 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  defp make_http_request(url, headers, body, state) do
+  defp make_http_request(url, headers, body, state, opts) do
     with {:ok, transport_opts} <- https_transport_opts(url, state) do
       BoundedClient.request(:post, url, headers, "application/json", body,
+        event_stream: Keyword.get(opts, :event_stream),
         deadline: state.deadline,
         connect_timeout: state.timeouts.connect,
         request_timeout: state.timeouts.request,
@@ -917,7 +933,7 @@ defmodule ExMCP.Transport.HTTP do
   defp handle_non_sse_response(body, headers, state, request_body) do
     content_type = Headers.get(headers, "content-type") || ""
 
-    if String.contains?(content_type, "text/event-stream") do
+    if String.contains?(String.downcase(content_type), "text/event-stream") do
       handle_sse_post_response(body, state, request_body)
     else
       case Jason.decode(body) do
@@ -977,16 +993,22 @@ defmodule ExMCP.Transport.HTTP do
   defp apply_sse_event_id(state, nil), do: state
   defp apply_sse_event_id(state, id), do: %{state | last_event_id: id}
 
+  # The POST's answer is the response among its events. The notifications
+  # and requests ahead of it were handed to the client as they arrived (see
+  # PostStream), or, in a body read whole during establishment, aren't
+  # answered.
   defp sse_json_data(events) do
-    events
-    |> Enum.flat_map(fn event ->
-      case event[:data] do
-        nil -> []
-        "" -> []
-        data -> [data]
-      end
+    Enum.find_value(events, "", fn
+      %{data: data} when is_binary(data) and data != "" ->
+        case Jason.decode(data) do
+          {:ok, %{"method" => _method}} -> nil
+          {:ok, _response} -> data
+          {:error, _reason} -> nil
+        end
+
+      _no_data ->
+        nil
     end)
-    |> Enum.join("")
   end
 
   defp handle_sse_json_data("", state, _request_body), do: reconnect_deferred_sse(state)
