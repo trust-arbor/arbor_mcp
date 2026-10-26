@@ -1621,7 +1621,7 @@ defmodule ExMCP.Client do
       )
       when is_map(challenge) do
     if HTTP.stream_owner?(transport_state, request_id, stream_pid) do
-      {result, transport_state} = answer_auth_challenge(transport_state, challenge)
+      {result, transport_state} = answer_stream_challenge(transport_state, challenge)
       send(stream_pid, {:modern_http_stream_auth_result, ref, result})
       {:noreply, %{state | transport_state: transport_state}}
     else
@@ -1637,32 +1637,6 @@ defmodule ExMCP.Client do
       )
       when is_pid(stream_pid) do
     send(stream_pid, {:modern_http_stream_auth_result, ref, {:error, :stream_retired}})
-    {:noreply, state}
-  end
-
-  # An async POST task got a 401 or 403: answered in turn with the request
-  # streams' challenges, so all of them run one refresh or flow between them.
-  def handle_info(
-        {:http_post_auth_challenge, task_pid, request_id, ref, challenge},
-        %{
-          transport_mod: HTTP,
-          transport_state: %HTTP{} = transport_state
-        } = state
-      )
-      when is_pid(task_pid) and is_map(challenge) do
-    if known_async_post_request?(state, request_id) do
-      {result, transport_state} = answer_auth_challenge(transport_state, challenge)
-      send(task_pid, {:http_post_auth_result, ref, result})
-      {:noreply, %{state | transport_state: transport_state}}
-    else
-      send(task_pid, {:http_post_auth_result, ref, {:error, :request_retired}})
-      {:noreply, state}
-    end
-  end
-
-  def handle_info({:http_post_auth_challenge, task_pid, _request_id, ref, _challenge}, state)
-      when is_pid(task_pid) do
-    send(task_pid, {:http_post_auth_result, ref, {:error, :request_retired}})
     {:noreply, state}
   end
 
@@ -2009,28 +1983,28 @@ defmodule ExMCP.Client do
     end
   end
 
-  defp answer_auth_challenge(%HTTP{access_token: current} = transport_state, challenge)
+  defp answer_stream_challenge(%HTTP{access_token: current} = transport_state, challenge)
        when is_binary(current) and current != :erlang.map_get(:token, challenge) do
     # Another stream replaced the rejected token. That answers a 401; a 403
     # needs the challenged scopes, which a refresh alone doesn't add.
     if challenge.status == 401 or
          scopes_granted?(transport_state.auth_provider_state, challenge.scopes),
        do: {{:ok, current}, transport_state},
-       else: run_auth_challenge(transport_state, challenge)
+       else: run_stream_challenge(transport_state, challenge)
   end
 
-  defp answer_auth_challenge(%HTTP{auth_provider: nil} = transport_state, _challenge),
+  defp answer_stream_challenge(%HTTP{auth_provider: nil} = transport_state, _challenge),
     do: {{:error, :no_auth_provider}, transport_state}
 
-  defp answer_auth_challenge(transport_state, challenge),
-    do: run_auth_challenge(transport_state, challenge)
+  defp answer_stream_challenge(transport_state, challenge),
+    do: run_stream_challenge(transport_state, challenge)
 
   defp scopes_granted?(%{granted_scopes: granted}, [_ | _] = scopes) when is_list(granted),
     do: Enum.all?(scopes, &(&1 in granted))
 
   defp scopes_granted?(_provider_state, _scopes), do: false
 
-  defp run_auth_challenge(%HTTP{auth_provider: provider} = transport_state, challenge) do
+  defp run_stream_challenge(%HTTP{auth_provider: provider} = transport_state, challenge) do
     callback = if challenge.status == 401, do: :handle_unauthorized, else: :handle_forbidden
     args = [challenge.www_authenticate, challenge.scopes, transport_state.auth_provider_state]
 

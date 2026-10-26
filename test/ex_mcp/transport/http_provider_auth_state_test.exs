@@ -58,28 +58,6 @@ defmodule ExMCP.Transport.HTTPProviderAuthStateTest do
     end
   end
 
-  defmodule RefreshingProvider do
-    @moduledoc false
-    # Holds an expired token; a 401 refreshes it, spending the one refresh
-    # token it has.
-    @behaviour ExMCP.Authorization.Provider
-
-    @impl true
-    def init(config), do: {:ok, %{test_pid: Keyword.fetch!(config, :test_pid), token: "stale"}}
-
-    @impl true
-    def get_token(state), do: {:ok, state.token, state}
-
-    @impl true
-    def handle_unauthorized(_www_auth, _scopes, state) do
-      send(state.test_pid, {:refreshed, state.token})
-      {:ok, "fresh", %{state | token: "fresh"}}
-    end
-
-    @impl true
-    def handle_forbidden(_www_auth, _scopes, state), do: {:error, :forbidden, state}
-  end
-
   defp reject_every_post(bypass) do
     Bypass.stub(bypass, "POST", "/mcp", fn conn ->
       conn
@@ -287,81 +265,6 @@ defmodule ExMCP.Transport.HTTPProviderAuthStateTest do
       # The task used the token it was given and refreshed nothing itself.
       refute Map.has_key?(meta.state_changes, :auth_provider_state)
       refute_received {:spent, _}
-    end
-  end
-
-  describe "concurrent async POSTs rejected together" do
-    test "run one refresh, answered by the client one challenge at a time" do
-      bypass = Bypass.open()
-      barrier = start_supervised!({Agent, fn -> [] end})
-
-      Bypass.stub(bypass, "POST", "/mcp", fn conn ->
-        {:ok, body, conn} = Plug.Conn.read_body(conn)
-        %{"id" => id} = Jason.decode!(body)
-
-        if Plug.Conn.get_req_header(conn, "authorization") == ["Bearer fresh"] do
-          json(conn, 200, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"tools" => []}})
-        else
-          # Both POSTs get their 401 together.
-          waiting = Agent.get_and_update(barrier, &{[self() | &1], [self() | &1]})
-          if length(waiting) == 2, do: Enum.each(waiting, &send(&1, :release))
-
-          receive do
-            :release -> :ok
-          after
-            2_000 -> :ok
-          end
-
-          conn
-          |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
-          |> Plug.Conn.resp(401, "")
-        end
-      end)
-
-      {:ok, transport} =
-        HTTP.connect(
-          url: "http://127.0.0.1:#{bypass.port}/mcp",
-          use_sse: true,
-          auth_provider: {RefreshingProvider, test_pid: self()}
-        )
-
-      # The test plays the client process: it gets the tasks' messages and
-      # hands them to ExMCP.Client.handle_info/2.
-      Process.put({ExMCP.Client, :client}, true)
-      transport = %{transport | sse_pid: self()}
-
-      transport =
-        Enum.reduce([1, 2], transport, fn id, transport ->
-          request = Jason.encode!(%{"jsonrpc" => "2.0", "id" => id, "method" => "tools/list"})
-          assert {:ok, transport} = HTTP.send_message(request, transport)
-          transport
-        end)
-
-      assert_receive {:async_post_task, ref_1, 1}
-      assert_receive {:async_post_task, ref_2, 2}
-      state = client_state(transport, async_post_tasks: %{ref_1 => 1, ref_2 => 2})
-
-      state =
-        Enum.reduce(1..2, state, fn _challenge, state ->
-          assert_receive {:http_post_auth_challenge, _task, _id, _ref, %{token: "stale"}} =
-                           challenge,
-                         5_000
-
-          assert {:noreply, state} = Client.handle_info(challenge, state)
-          state
-        end)
-
-      assert state.transport_state.access_token == "fresh"
-      assert_received {:refreshed, "stale"}
-      refute_received {:refreshed, _token}
-
-      for id <- [1, 2] do
-        assert_receive {:async_post_result, {:ok, _transport, _data}, %{request_id: ^id} = meta},
-                       5_000
-
-        # The token the client handed out stays the client's to change.
-        refute Map.has_key?(meta.state_changes, :access_token)
-      end
     end
   end
 end

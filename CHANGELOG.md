@@ -38,10 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refreshed token (a rotating refresh token is spent once) after a request
   that succeeds or fails, and a failed flow's loop guards, including for
   modern request streams. `send_message/2` and the client still return the
-  error shapes they did. Concurrent requests rejected together run one
-  refresh or flow: the client answers the auth challenges of its modern
-  request streams and of its legacy async POSTs one at a time, and reuses a
-  token another request already got.
+  error shapes they did. Concurrent modern request streams rejected together
+  run one refresh or flow: the client answers their auth challenges one at a
+  time, and reuses a token another stream already got.
 
 ## [1.7.3] - 2026-10-26
 

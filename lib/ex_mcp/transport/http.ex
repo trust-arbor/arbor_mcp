@@ -184,15 +184,6 @@ defmodule ExMCP.Transport.HTTP do
   @default_max_stream_buffer_bytes 1 * 1_024 * 1_024
   @default_max_request_bytes 8 * 1_024 * 1_024
 
-  # How long an async POST task waits for the client to answer its auth
-  # challenge, as a modern request stream does: a browser flow can take
-  # minutes.
-  @auth_wait_ms 600_000
-
-  # The transport-state fields an ExMCP.Client owns while it answers its
-  # POST tasks' auth challenges.
-  @client_auth_fields [:access_token, :headers, :auth_provider_state]
-
   @impl true
   def connect(config) do
     raw_url = Keyword.fetch!(config, :url)
@@ -373,53 +364,26 @@ defmodule ExMCP.Transport.HTTP do
     # the same refresh token.
     state = apply_provider_token(state)
 
-    # An ExMCP.Client answers its POST tasks' auth challenges itself, one at
-    # a time, as it does for modern request streams: concurrent 401s run one
-    # refresh or OAuth flow between them. For any other caller the task runs
-    # the provider, as before.
-    client_auth? =
-      not is_nil(state.auth_provider) and Process.get({ExMCP.Client, :client}) == true
-
-    go = make_ref()
-
     # spawn_monitor rather than Task.start: the parent (the ExMCP.Client
     # GenServer) owns the monitor, so a crashed POST task produces a
     # {:DOWN, ref, ...} the client maps back to the pending request instead
     # of leaving it hanging until timeout. No link is created, so the
     # exit-trapping client's {:EXIT, ...} transport handling is untouched.
-    {task_pid, task_ref} =
+    {_task_pid, task_ref} =
       spawn_monitor(fn ->
-        authenticate =
-          if client_auth? do
-            # The client knows which request this task serves before it can
-            # hear the task's challenge.
-            receive do
-              {^go, :run} -> ask_client(parent, request_id)
-            after
-              5_000 -> exit(:normal)
-            end
-          else
-            &run_provider/4
-          end
-
-        result = exchange(message, state, authenticate)
+        result = exchange(message, state)
 
         # Report the durable transport-state fields this POST changed
         # (session rotation, OAuth token refresh, a failed provider's loop
         # guards) so the client can merge them into its copy of the transport
         # state instead of discarding. The result keeps send_message/2's
-        # shapes: the state travels in meta only. A client that answered the
-        # task's challenges already holds the auth state it handed out, and
-        # may have replaced it since.
-        changes = result_state_changes(state, result)
-        changes = if client_auth?, do: Map.drop(changes, @client_auth_fields), else: changes
-        meta = %{request_id: request_id, state_changes: changes}
+        # shapes: the state travels in meta only.
+        meta = %{request_id: request_id, state_changes: result_state_changes(state, result)}
         send(parent, {:async_post_result, without_state(result), meta})
       end)
 
     # Let the client associate the monitored task with the request it serves.
     send(parent, {:async_post_task, task_ref, request_id})
-    if client_auth?, do: send(task_pid, {go, :run})
 
     # Return without response data — it will arrive via :async_post_result
     # or via the GET SSE stream (for SSE-formatted POST responses)
@@ -429,13 +393,11 @@ defmodule ExMCP.Transport.HTTP do
   # Non-SSE mode, and the fallback: the request-response runs synchronously.
   def send_keeping_state(message, %__MODULE__{} = state), do: send_sync(message, state)
 
-  defp send_sync(message, state),
-    do: exchange(message, apply_provider_token(state), &run_provider/4)
+  defp send_sync(message, state), do: exchange(message, apply_provider_token(state))
 
   # One request-response, with the provider's token already on `state`.
-  # `authenticate` answers a 401 or 403 (see run_provider/4).
-  defp exchange(message, state, authenticate) do
-    case perform_with_token(message, state, authenticate) do
+  defp exchange(message, state) do
+    case perform_with_token(message, state) do
       {:ok, response} ->
         handle_http_response(response, state, message)
 
@@ -456,11 +418,11 @@ defmodule ExMCP.Transport.HTTP do
   # Perform HTTP request with automatic OAuth retry via auth provider. Every
   # outcome returns the state: getting the token may have refreshed it, and
   # so may a 401, and a rotating refresh token must not be used twice.
-  defp perform_with_token(body, %{auth_provider: provider} = state, authenticate)
+  defp perform_with_token(body, %{auth_provider: provider} = state)
        when not is_nil(provider) do
     case perform_http_request(body, state) do
       {:ok, response} ->
-        handle_provider_auth_challenge(response, body, state, authenticate)
+        handle_provider_auth_challenge(response, body, state)
 
       {:error, reason} ->
         {:error, reason, state}
@@ -468,7 +430,7 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   # Legacy inline OAuth path (when no auth provider configured)
-  defp perform_with_token(body, state, _authenticate) do
+  defp perform_with_token(body, state) do
     result = perform_http_request(body, state)
 
     case result do
@@ -495,13 +457,13 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   # Route provider auth challenge based on response status.
-  defp handle_provider_auth_challenge(response, body, state, authenticate) do
+  defp handle_provider_auth_challenge(response, body, state) do
     case extract_auth_status(response) do
       {:unauthorized, www_auth} ->
-        provider_authenticate(:handle_unauthorized, www_auth, body, state, authenticate)
+        provider_authenticate(:handle_unauthorized, www_auth, body, state)
 
       {:forbidden, www_auth} ->
-        provider_authenticate(:handle_forbidden, www_auth, body, state, authenticate)
+        provider_authenticate(:handle_forbidden, www_auth, body, state)
 
       :ok ->
         {:ok, response, state}
@@ -509,73 +471,27 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   # Authenticate via provider, retry request, handle scope step-up on retry.
-  defp provider_authenticate(callback, www_auth, body, state, authenticate) do
+  defp provider_authenticate(callback, www_auth, body, state) do
+    provider = state.auth_provider
     scopes = extract_scope_from_www_auth(www_auth)
 
-    case authenticate.(callback, www_auth, scopes, state) do
-      {:ok, token, new_state} ->
-        provider_retry_request(body, apply_token_to_state(new_state, token), authenticate)
+    case apply(provider, callback, [www_auth, scopes, state.auth_provider_state]) do
+      {:ok, token, new_ps} ->
+        new_state = state |> Map.put(:auth_provider_state, new_ps) |> apply_token_to_state(token)
+        provider_retry_request(body, new_state)
 
-      {:error, reason, new_state} ->
-        {:error, reason, new_state}
+      {:error, reason, ps} ->
+        {:error, reason, %{state | auth_provider_state: ps}}
     end
   end
-
-  # Runs the provider's callback in this process. Its state, which on a
-  # failure records what it tried (its loop guards), is kept either way.
-  defp run_provider(callback, www_auth, scopes, state) do
-    case apply(state.auth_provider, callback, [www_auth, scopes, state.auth_provider_state]) do
-      {:ok, token, ps} -> {:ok, token, %{state | auth_provider_state: ps}}
-      {:error, reason, ps} -> {:error, reason, %{state | auth_provider_state: ps}}
-    end
-  end
-
-  # Hands a 401 or 403 to the client process (`parent`), which answers its
-  # POST tasks' and request streams' challenges one at a time and keeps the
-  # provider's state. Waits at most @auth_wait_ms: a browser flow can take
-  # minutes, and a client that exits is noticed through the monitor.
-  defp ask_client(parent, request_id) do
-    fn callback, www_auth, scopes, state ->
-      ref = make_ref()
-      monitor = Process.monitor(parent)
-
-      challenge = %{
-        status: if(callback == :handle_unauthorized, do: 401, else: 403),
-        www_authenticate: www_auth,
-        scopes: scopes,
-        token: state.access_token
-      }
-
-      send(parent, {:http_post_auth_challenge, self(), request_id, ref, challenge})
-
-      receive do
-        {:http_post_auth_result, ^ref, result} ->
-          Process.demonitor(monitor, [:flush])
-          client_auth_result(result, state)
-
-        {:DOWN, ^monitor, :process, _pid, reason} ->
-          {:error, {:client_down, reason}, state}
-      after
-        @auth_wait_ms ->
-          Process.demonitor(monitor, [:flush])
-          {:error, :timeout, state}
-      end
-    end
-  end
-
-  defp client_auth_result({:ok, token}, state) when is_binary(token), do: {:ok, token, state}
-  defp client_auth_result({:error, reason}, state), do: {:error, reason, state}
-
-  defp client_auth_result(other, state),
-    do: {:error, {:invalid_provider_response, other}, state}
 
   # Retry request after auth; if 403 scope step-up, try once more.
-  defp provider_retry_request(body, state, authenticate) do
+  defp provider_retry_request(body, state) do
     case perform_http_request(body, state) do
       {:ok, retry_resp} ->
         case extract_auth_status(retry_resp) do
           {:forbidden, www_auth} ->
-            provider_authenticate(:handle_forbidden, www_auth, body, state, authenticate)
+            provider_authenticate(:handle_forbidden, www_auth, body, state)
 
           _ ->
             {:ok, retry_resp, state}
