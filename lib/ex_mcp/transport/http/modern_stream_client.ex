@@ -402,14 +402,10 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
 
     case apply(state.auth_provider, callback, [www_auth, scopes, state.auth_provider_state]) do
       {:ok, token, provider_state} when is_binary(token) ->
+        report_auth_state(state, %{access_token: token, auth_provider_state: provider_state})
+
         case sanitize_retry_headers(put_bearer_header(state.headers, token), state) do
           {:ok, headers} ->
-            send(
-              state.parent,
-              {:modern_http_stream_auth_updated, self(), state.request_id,
-               %{access_token: token, auth_provider_state: provider_state}}
-            )
-
             {:retry,
              %{
                state
@@ -426,8 +422,12 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
             {:error, {:security_policy_rejected, reason}, state}
         end
 
-      {:error, reason, _provider_state} ->
-        {:error, reason, state}
+      # The provider's state records what it tried (the OAuth provider's loop
+      # guards), so the client keeps it: otherwise every later 401 could
+      # start the same failed flow again.
+      {:error, reason, provider_state} ->
+        report_auth_state(state, %{auth_provider_state: provider_state})
+        {:error, reason, %{state | auth_provider_state: provider_state}}
 
       other ->
         {:error, {:invalid_provider_response, other}, state}
@@ -435,6 +435,12 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
   end
 
   defp maybe_retry_with_auth(_status, _response_headers, _state), do: :no_retry
+
+  # Sent before the stream's close notice, so the client has merged the
+  # durable auth state by the time it answers the request.
+  defp report_auth_state(state, changes) do
+    send(state.parent, {:modern_http_stream_auth_updated, self(), state.request_id, changes})
+  end
 
   defp sanitize_retry_headers(headers, %{header_sanitizer: sanitizer})
        when is_function(sanitizer, 1) do

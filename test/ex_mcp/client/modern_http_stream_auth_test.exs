@@ -29,6 +29,110 @@ defmodule ExMCP.Client.ModernHTTPStreamAuthTest do
     end
   end
 
+  defmodule GuardedProvider do
+    @moduledoc false
+    # Like the OAuth provider after a rejection: a failed flow records a loop
+    # guard in its state, and while the guard is set a 401 is refused without
+    # starting the flow (which may open a browser) again.
+    @behaviour ExMCP.Authorization.Provider
+
+    @impl true
+    def init(config), do: {:ok, %{test_pid: Keyword.fetch!(config, :test_pid), guard: false}}
+
+    @impl true
+    def get_token(state), do: {:ok, nil, state}
+
+    @impl true
+    def handle_unauthorized(_www_auth, _scopes, %{guard: true} = state),
+      do: {:error, :auth_loop_detected, state}
+
+    def handle_unauthorized(_www_auth, _scopes, state) do
+      send(state.test_pid, :flow_started)
+      {:error, :flow_failed, %{state | guard: true}}
+    end
+
+    @impl true
+    def handle_forbidden(_www_auth, _scopes, state), do: {:error, :forbidden, state}
+  end
+
+  defmodule ToolServer do
+    @moduledoc false
+    use ExMCP.Server.Handler
+
+    @impl true
+    def handle_list_tools(_cursor, state), do: {:ok, [], nil, state}
+
+    @impl true
+    def handle_call_tool(_name, _arguments, state), do: {:ok, %{content: []}, state}
+  end
+
+  defmodule AuthGate do
+    @moduledoc false
+    # Lets server/discover through to the MCP plug and answers every other
+    # request with a 401.
+    @behaviour Plug
+
+    @impl true
+    def init(opts), do: ExMCP.HttpPlug.init(opts)
+
+    @impl true
+    def call(conn, mcp_opts) do
+      if Plug.Conn.get_req_header(conn, "mcp-method") == ["server/discover"] do
+        ExMCP.HttpPlug.call(conn, mcp_opts)
+      else
+        conn
+        |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
+        |> Plug.Conn.send_resp(401, "")
+      end
+    end
+  end
+
+  test "a request stream's failed authentication keeps the provider's loop guard" do
+    {:ok, socket} = :gen_tcp.listen(0, [:binary, ip: {127, 0, 0, 1}])
+    {:ok, port} = :inet.port(socket)
+    :ok = :gen_tcp.close(socket)
+    ranch_ref = {__MODULE__, System.unique_integer([:positive])}
+
+    {:ok, _pid} =
+      Plug.Cowboy.http(
+        AuthGate,
+        [
+          handler: ToolServer,
+          path: "/mcp",
+          protocol_mode: :modern_only,
+          allowed_origins: ["http://127.0.0.1:#{port}"]
+        ],
+        ip: {127, 0, 0, 1},
+        port: port,
+        ref: ranch_ref
+      )
+
+    on_exit(fn -> Plug.Cowboy.shutdown(ranch_ref) end)
+
+    {:ok, client} =
+      Client.start_link(
+        transport: :http,
+        url: "http://127.0.0.1:#{port}/mcp",
+        protocol_mode: :modern_only,
+        protocol_version: "2026-07-28",
+        use_sse: false,
+        auth_provider: {GuardedProvider, test_pid: self()},
+        health_check_interval: nil,
+        reconnect: false
+      )
+
+    # A progress token makes each call its own request stream.
+    for token <- ["guarded-1", "guarded-2"] do
+      assert {:error, _reason} =
+               Client.call_tool(client, "anything", %{}, progress_token: token, timeout: 5_000)
+    end
+
+    assert_received :flow_started
+    refute_received :flow_started
+
+    Client.stop(client)
+  end
+
   test "a modern POST-owned request stream reauthenticates and persists provider state" do
     bypass = Bypass.open()
     attempts = start_supervised!({Agent, fn -> 0 end})
