@@ -32,6 +32,32 @@ defmodule ExMCP.Transport.HTTPProviderAuthStateTest do
     def handle_forbidden(_www_auth, _scopes, state), do: {:error, :forbidden, state}
   end
 
+  defmodule RotatingProvider do
+    @moduledoc false
+    # Every token it hands out spends the refresh token it holds and keeps the
+    # next one, as a refresh with rotating refresh tokens does. A spent
+    # refresh token used again would fail with invalid_grant.
+    @behaviour ExMCP.Authorization.Provider
+
+    @impl true
+    def init(config),
+      do: {:ok, %{test_pid: Keyword.fetch!(config, :test_pid), refresh_token: 0}}
+
+    @impl true
+    def get_token(state), do: rotate(state)
+
+    @impl true
+    def handle_unauthorized(_www_auth, _scopes, state), do: rotate(state)
+
+    @impl true
+    def handle_forbidden(_www_auth, _scopes, state), do: {:error, :forbidden, state}
+
+    defp rotate(%{refresh_token: spent} = state) do
+      send(state.test_pid, {:spent, spent})
+      {:ok, "access-#{spent + 1}", %{state | refresh_token: spent + 1}}
+    end
+  end
+
   defp reject_every_post(bypass) do
     Bypass.stub(bypass, "POST", "/mcp", fn conn ->
       conn
@@ -124,6 +150,121 @@ defmodule ExMCP.Transport.HTTPProviderAuthStateTest do
       assert_received {^reply_tag, {:error, {:transport_error, :flow_failed}}}
       assert state.pending_requests == %{}
       assert state.transport_state.auth_provider_state == %{tried: 1}
+    end
+  end
+
+  describe "a provider's refreshed token" do
+    # A legacy server whose tools/list answers come from `script`, in order.
+    defp scripted_server(bypass, script) do
+      script = start_supervised!({Agent, fn -> script end})
+
+      Bypass.stub(bypass, "POST", "/mcp", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+
+        case Jason.decode!(body) do
+          %{"method" => "initialize", "id" => id} ->
+            json(conn, 200, %{
+              "jsonrpc" => "2.0",
+              "id" => id,
+              "result" => %{
+                "protocolVersion" => "2025-06-18",
+                "capabilities" => %{"tools" => %{}},
+                "serverInfo" => %{"name" => "rotating", "version" => "1.0.0"}
+              }
+            })
+
+          %{"method" => "tools/list", "id" => id} ->
+            case Agent.get_and_update(script, fn [next | rest] -> {next, rest} end) do
+              :ok ->
+                json(conn, 200, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"tools" => []}})
+
+              :unauthorized ->
+                conn
+                |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
+                |> Plug.Conn.resp(401, "")
+
+              :server_error ->
+                Plug.Conn.resp(conn, 500, "unavailable")
+            end
+
+          _notification ->
+            Plug.Conn.resp(conn, 202, "")
+        end
+      end)
+    end
+
+    defp json(conn, status, body) do
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.resp(status, Jason.encode!(body))
+    end
+
+    test "is kept by the client after every request, failed ones too" do
+      bypass = Bypass.open()
+      # A failure after a refresh before the request, then a failed retry
+      # after a refresh on a 401, then a success.
+      scripted_server(bypass, [:server_error, :unauthorized, :server_error, :ok])
+
+      {:ok, client} =
+        Client.start_link(
+          transport: :http,
+          url: "http://127.0.0.1:#{bypass.port}/mcp",
+          use_sse: false,
+          auth_provider: {RotatingProvider, test_pid: self()},
+          protocol_mode: :legacy_only,
+          reconnect: false,
+          health_check_interval: nil
+        )
+
+      # initialize, then notifications/initialized
+      assert_received {:spent, 0}
+      assert_received {:spent, 1}
+
+      assert {:error, _reason} = Client.list_tools(client, format: :map)
+      assert_received {:spent, 2}
+
+      assert {:error, _reason} = Client.list_tools(client, format: :map)
+      # The token for the request, then the refresh after its 401
+      assert_received {:spent, 3}
+      assert_received {:spent, 4}
+
+      assert {:ok, %{"tools" => []}} = Client.list_tools(client, format: :map)
+      assert_received {:spent, 5}
+      refute_received {:spent, _}
+
+      Client.stop(client)
+    end
+
+    test "for an async POST is resolved by the caller, which keeps it" do
+      bypass = Bypass.open()
+      test_pid = self()
+
+      Bypass.expect_once(bypass, "POST", "/mcp", fn conn ->
+        send(test_pid, {:authorization, Plug.Conn.get_req_header(conn, "authorization")})
+
+        json(conn, 200, %{"jsonrpc" => "2.0", "id" => 9, "result" => %{"tools" => []}})
+      end)
+
+      {:ok, transport} =
+        HTTP.connect(
+          url: "http://127.0.0.1:#{bypass.port}/mcp",
+          use_sse: true,
+          auth_provider: {RotatingProvider, test_pid: self()}
+        )
+
+      transport = %{transport | sse_pid: self()}
+      request = Jason.encode!(%{"jsonrpc" => "2.0", "id" => 9, "method" => "tools/list"})
+
+      assert {:ok, transport} = HTTP.send_message(request, transport)
+      assert_received {:spent, 0}
+      assert transport.auth_provider_state.refresh_token == 1
+
+      assert_receive {:async_post_result, result, meta}, 5_000
+      assert elem(result, 0) == :ok
+      assert_received {:authorization, ["Bearer access-1"]}
+      # The task used the token it was given and refreshed nothing itself.
+      refute Map.has_key?(meta.state_changes, :auth_provider_state)
+      refute_received {:spent, _}
     end
   end
 end

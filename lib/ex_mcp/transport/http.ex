@@ -320,70 +320,49 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   @impl true
-  def send_message(message, %__MODULE__{use_sse: true, sse_pid: nil} = state) do
+  def send_message(message, %__MODULE__{} = state) do
+    case send_keeping_state(message, state) do
+      {:error, reason, _state} -> {:error, reason}
+      result -> result
+    end
+  end
+
+  @doc false
+  # send_message/2, except that a send that fails after changing the
+  # transport state returns that state too, as {:error, reason, state}. An
+  # auth provider may have refreshed its token (spending a rotating refresh
+  # token) or recorded a failed flow's loop guards before the request failed;
+  # ExMCP.Client keeps that state instead of using the old one again.
+  @spec send_keeping_state(term(), t()) ::
+          {:ok, t()} | {:ok, t(), term()} | {:error, term()} | {:error, term(), t()}
+  def send_keeping_state(message, %__MODULE__{use_sse: true, sse_pid: nil} = state) do
     # SSE configured but not yet started (pre-initialization).
     # Handle synchronously like non-SSE mode, then start SSE if we get a session ID.
-    case perform_and_maybe_auth(message, state) do
-      {:ok, response} ->
-        case handle_http_response(response, state, message) do
-          {:ok, new_state, response_data} ->
-            new_state = maybe_start_deferred_sse(new_state, message)
-            {:ok, new_state, response_data}
+    case send_sync(message, state) do
+      {:ok, new_state, response_data} ->
+        {:ok, maybe_start_deferred_sse(new_state, message), response_data}
 
-          {:ok, new_state} ->
-            new_state = maybe_start_deferred_sse(new_state, message)
-            {:ok, new_state}
+      {:ok, new_state} ->
+        {:ok, maybe_start_deferred_sse(new_state, message)}
 
-          error ->
-            error
-        end
-
-      {:ok, response, new_state} ->
-        case handle_http_response(response, new_state, message) do
-          {:ok, new_state2, response_data} ->
-            new_state2 = maybe_start_deferred_sse(new_state2, message)
-            {:ok, new_state2, response_data}
-
-          {:ok, new_state2} ->
-            new_state2 = maybe_start_deferred_sse(new_state2, message)
-            {:ok, new_state2}
-
-          error ->
-            error
-        end
-
-      {:error, reason, _state} ->
-        {:error, reason}
-
-      {:error, reason} ->
-        {:error, reason}
+      error ->
+        error
     end
   end
 
-  def send_message(message, %__MODULE__{use_sse: false} = state) do
-    # For non-SSE mode, we handle the request-response synchronously
-    case perform_and_maybe_auth(message, state) do
-      {:ok, response} ->
-        handle_http_response(response, state, message)
-
-      {:ok, response, new_state} ->
-        handle_http_response(response, new_state, message)
-
-      {:error, reason, _state} ->
-        {:error, reason}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  def send_message(message, %__MODULE__{use_sse: true, sse_pid: sse_pid} = state)
+  def send_keeping_state(message, %__MODULE__{use_sse: true, sse_pid: sse_pid} = state)
       when is_pid(sse_pid) do
     # SSE mode with active connection — use async POST so the GenServer
     # can process SSE events (elicitation, sampling) while waiting for
     # the POST response. The response arrives as {:async_post_result, result, meta}.
     parent = self()
     request_id = extract_request_id(message)
+
+    # The provider's token is resolved here, in the calling (client)
+    # process, and returned with the state below: a refresh is kept whatever
+    # the POST's outcome, and concurrent POST tasks never refresh (and spend)
+    # the same refresh token.
+    state = apply_provider_token(state)
 
     # spawn_monitor rather than Task.start: the parent (the ExMCP.Client
     # GenServer) owns the monitor, so a crashed POST task produces a
@@ -392,13 +371,7 @@ defmodule ExMCP.Transport.HTTP do
     # exit-trapping client's {:EXIT, ...} transport handling is untouched.
     {_task_pid, task_ref} =
       spawn_monitor(fn ->
-        result =
-          case perform_and_maybe_auth(message, state) do
-            {:ok, response} -> handle_http_response(response, state, message)
-            {:ok, response, new_state} -> handle_http_response(response, new_state, message)
-            {:error, reason, new_state} -> {:error, reason, new_state}
-            {:error, reason} -> {:error, reason}
-          end
+        result = exchange(message, state)
 
         # Report the durable transport-state fields this POST changed
         # (session rotation, OAuth token refresh, a failed provider's loop
@@ -417,32 +390,47 @@ defmodule ExMCP.Transport.HTTP do
     {:ok, state}
   end
 
-  def send_message(message, %__MODULE__{} = state) do
-    # SSE mode without active connection (pre-initialization) or fallback
-    case perform_and_maybe_auth(message, state) do
-      {:ok, response} -> handle_http_response(response, state, message)
-      {:ok, response, new_state} -> handle_http_response(response, new_state, message)
-      {:error, reason, _new_state} -> {:error, reason}
-      {:error, reason} -> {:error, reason}
-    end
-  end
+  # Non-SSE mode, and the fallback: the request-response runs synchronously.
+  def send_keeping_state(message, %__MODULE__{} = state), do: send_sync(message, state)
 
-  # Perform HTTP request with automatic OAuth retry via auth provider.
-  defp perform_and_maybe_auth(body, %{auth_provider: provider} = state)
-       when not is_nil(provider) do
-    state = apply_provider_token(state)
+  defp send_sync(message, state), do: exchange(message, apply_provider_token(state))
 
-    case perform_http_request(body, state) do
+  # One request-response, with the provider's token already on `state`.
+  defp exchange(message, state) do
+    case perform_with_token(message, state) do
       {:ok, response} ->
-        handle_provider_auth_challenge(response, body, state)
+        handle_http_response(response, state, message)
+
+      {:ok, response, new_state} ->
+        case handle_http_response(response, new_state, message) do
+          {:error, reason} -> {:error, reason, new_state}
+          result -> result
+        end
+
+      {:error, reason, new_state} ->
+        {:error, reason, new_state}
 
       {:error, reason} ->
         {:error, reason}
     end
   end
 
+  # Perform HTTP request with automatic OAuth retry via auth provider. Every
+  # outcome returns the state: getting the token may have refreshed it, and
+  # so may a 401, and a rotating refresh token must not be used twice.
+  defp perform_with_token(body, %{auth_provider: provider} = state)
+       when not is_nil(provider) do
+    case perform_http_request(body, state) do
+      {:ok, response} ->
+        handle_provider_auth_challenge(response, body, state)
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
+  end
+
   # Legacy inline OAuth path (when no auth provider configured)
-  defp perform_and_maybe_auth(body, state) do
+  defp perform_with_token(body, state) do
     result = perform_http_request(body, state)
 
     case result do
@@ -478,7 +466,7 @@ defmodule ExMCP.Transport.HTTP do
         provider_authenticate(:handle_forbidden, www_auth, body, state)
 
       :ok ->
-        {:ok, response}
+        {:ok, response, state}
     end
   end
 
@@ -510,7 +498,7 @@ defmodule ExMCP.Transport.HTTP do
         end
 
       {:error, reason} ->
-        {:error, reason}
+        {:error, reason, state}
     end
   end
 
@@ -1247,26 +1235,38 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   @doc false
-  @spec open_stream(binary(), t(), pid(), keyword()) :: {:ok, t()} | {:error, term()}
+  # A failure after the provider's token was resolved returns the state too,
+  # as send_keeping_state/2 does, so a refreshed token isn't lost.
+  @spec open_stream(binary(), t(), pid(), keyword()) ::
+          {:ok, t()} | {:error, term()} | {:error, term(), t()}
   def open_stream(message, state, parent, opts \\ [])
 
   def open_stream(message, %__MODULE__{protocol_era: :modern} = state, parent, opts)
       when is_binary(message) and is_pid(parent) and is_list(opts) do
-    # Resolve the provider's current token before deriving request headers.
-    # Unlike the ordinary POST path, a modern request stream is owned by a
-    # dedicated process, so it cannot call perform_and_maybe_auth/2. Passing
-    # the provider snapshot lets that process handle a later 401/403 and send
-    # the refreshed durable auth state back to the client.
-    state = apply_provider_token(state)
     request_id = extract_request_id(message)
-    url = build_url(state, "")
-    headers = RequestHeaders.build(message, state)
     stream_kind = Keyword.get(opts, :stream_kind, :request)
 
     with :ok <- request_within_limit(message, state.max_request_bytes),
          :ok <- validate_stream_kind(stream_kind),
-         :ok <- validate_stream_request_id(request_id, state),
-         {:ok, headers} <- sanitize_http_request("POST", url, headers, state),
+         :ok <- validate_stream_request_id(request_id, state) do
+      # Resolve the provider's current token before deriving request headers.
+      # Unlike the ordinary POST path, a modern request stream is owned by a
+      # dedicated process, so it cannot call perform_with_token/2. Passing
+      # the provider snapshot lets that process handle a later 401/403 and
+      # send the refreshed durable auth state back to the client.
+      state
+      |> apply_provider_token()
+      |> start_stream(message, request_id, stream_kind, parent)
+    end
+  end
+
+  def open_stream(_message, _state, _parent, _opts), do: {:error, :modern_http_stream_required}
+
+  defp start_stream(state, message, request_id, stream_kind, parent) do
+    url = build_url(state, "")
+    headers = RequestHeaders.build(message, state)
+
+    with {:ok, headers} <- sanitize_http_request("POST", url, headers, state),
          {:ok, http_options} <- modern_stream_http_options(url, state),
          {:ok, pid} <-
            ModernStreamClient.start(
@@ -1289,11 +1289,9 @@ defmodule ExMCP.Transport.HTTP do
            ) do
       {:ok, %{state | modern_streams: Map.put(state.modern_streams, request_id, pid)}}
     else
-      {:error, reason} -> {:error, reason}
+      {:error, reason} -> {:error, reason, state}
     end
   end
-
-  def open_stream(_message, _state, _parent, _opts), do: {:error, :modern_http_stream_required}
 
   @doc false
   @spec close_stream(t(), ExMCP.Types.request_id()) :: t()
