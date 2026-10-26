@@ -48,6 +48,17 @@ defmodule Arbor.MCP.Soak.Provenance do
       :dependency_sources
     )
     |> maybe_violation(
+      DependencySource.changed_artifacts(
+        Map.get(start_snapshot, :dependency_sources, %{}),
+        Map.get(end_snapshot, :dependency_sources, %{})
+      ) != [],
+      :dependency_artifact_changed,
+      DependencySource.changed_artifacts(
+        Map.get(start_snapshot, :dependency_sources, %{}),
+        Map.get(end_snapshot, :dependency_sources, %{})
+      )
+    )
+    |> maybe_violation(
       DependencySource.failed(Map.get(start_snapshot, :dependency_sources, %{})) != [] or
         DependencySource.failed(Map.get(end_snapshot, :dependency_sources, %{})) != [],
       :dependency_source_mismatch,

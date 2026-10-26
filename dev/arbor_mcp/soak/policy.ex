@@ -140,6 +140,14 @@ defmodule Arbor.MCP.Soak.Policy do
       ]
   end
 
+  def stream_reconnect_transition(event, owned_stream?, closing?, active?) do
+    cond do
+      event == [:arbor_mcp, :transport, :sse, :connected] -> {false, false}
+      unexpected_stream_event?(event, owned_stream?, closing?) and not active? -> {true, true}
+      true -> {false, active?}
+    end
+  end
+
   def scenario_for_event(scenarios, client_pid, source_pid) do
     Enum.find_value(scenarios, fn {id, scenario} ->
       if scenario.client == client_pid or scenario.sse_pid == source_pid, do: id

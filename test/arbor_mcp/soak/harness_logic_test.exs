@@ -146,6 +146,22 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
     assert Policy.unexpected_stream_event?(disconnected, true, false)
     refute Policy.unexpected_stream_event?(reconnecting, true, true)
     refute Policy.unexpected_stream_event?(reconnecting, false, false)
+
+    assert Policy.stream_reconnect_transition(disconnected, true, false, false) ==
+             {true, true}
+
+    assert Policy.stream_reconnect_transition(reconnecting, true, false, true) ==
+             {false, true}
+
+    assert Policy.stream_reconnect_transition(
+             [:arbor_mcp, :transport, :sse, :connected],
+             true,
+             false,
+             true
+           ) == {false, false}
+
+    assert Policy.stream_reconnect_transition(reconnecting, true, false, false) ==
+             {true, true}
   end
 
   test "failed cleanup forces listener and child teardown and remains a failure" do
@@ -157,7 +173,8 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
       adapter: :cowboy,
       port: 43210,
       subprocess: :test_child,
-      os_pid: 76543
+      os_pid: 76543,
+      os_identity: {:ok, %{start: "birth", command: "child"}}
     }
 
     cleanup = %{
@@ -193,8 +210,10 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
           Process.put(receipt_count, count + 1)
           if count == 0, do: {:error, :unconfirmed}, else: :reaped
         end,
-        kill_os_pid: fn pid ->
+        os_identity: fn _pid -> scenario.os_identity end,
+        kill_os_pid: fn pid, identity ->
           send(self(), {:killed_os, pid})
+          assert identity == scenario.os_identity
           :signalled
         end,
         os_gone?: fn _ -> false end,
@@ -228,6 +247,70 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
     refute Cleanup.complete?(%{clean | stdio_receipt: {:error, :unconfirmed}})
   end
 
+  test "failed subprocess lookup retains only the same child's known pid and identity" do
+    original = %{
+      subprocess: :first_child,
+      os_pid: 76543,
+      os_identity: {:ok, %{start: "birth", command: "child"}}
+    }
+
+    unavailable = %{
+      get_os_pid: fn _handle -> nil end,
+      os_identity: fn _pid -> {:error, :unavailable} end
+    }
+
+    assert Cleanup.track_child(:first_child, original, unavailable) == original
+
+    assert Cleanup.track_child(:replacement_child, original, unavailable) == %{
+             subprocess: :replacement_child,
+             os_pid: nil,
+             os_identity: {:error, :unavailable}
+           }
+
+    assert Cleanup.track_child(:replacement_child, original, %{
+             get_os_pid: fn _handle -> 888 end,
+             os_identity: fn 888 -> {:ok, %{start: "later", command: "child"}} end
+           }).os_pid == 888
+  end
+
+  test "forced child cleanup refuses a reused or unverified OS pid" do
+    child = %{
+      subprocess: :child,
+      os_pid: 76543,
+      os_identity: {:ok, %{start: "original", command: "child"}}
+    }
+
+    common = %{
+      close_child: fn _ -> {:error, :timeout} end,
+      child_receipt: fn _ -> {:error, :unconfirmed} end,
+      os_gone?: fn _ -> false end,
+      kill_os_pid: fn _pid, _identity -> flunk("must not kill a different process") end,
+      wait_ms: 0
+    }
+
+    reused =
+      Cleanup.force_child(
+        child,
+        Map.put(common, :os_identity, fn _ ->
+          {:ok, %{start: "replacement", command: "child"}}
+        end)
+      )
+
+    assert match?({:error, {:unverified_os_identity, _, _}}, reused.signal)
+    refute reused.os_gone
+
+    unavailable =
+      Cleanup.force_child(
+        child,
+        Map.put(common, :os_identity, fn _ ->
+          {:error, :os_identity_unavailable}
+        end)
+      )
+
+    assert match?({:error, {:unverified_os_identity, _, _}}, unavailable.signal)
+    refute unavailable.os_gone
+  end
+
   test "listener port confirmation distinguishes bound from reusable" do
     {:ok, socket} =
       :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}, reuseaddr: true])
@@ -236,6 +319,53 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
     refute Cleanup.port_free?(%{port: port})
     :ok = :gen_tcp.close(socket)
     assert Cleanup.port_free?(%{port: port})
+  end
+
+  test "setup failure stops a host listener before its runtime and confirms the port" do
+    parent = self()
+
+    listener =
+      spawn(fn ->
+        {:ok, socket} =
+          :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}, reuseaddr: true])
+
+        {:ok, port} = :inet.port(socket)
+        send(parent, {:listener_port, port})
+        receive do: (:stop -> :gen_tcp.close(socket))
+      end)
+
+    assert_receive {:listener_port, port}
+    root = spawn(fn -> receive do: (:stop -> :ok) end)
+
+    on_exit(fn ->
+      Process.exit(listener, :kill)
+      Process.exit(root, :kill)
+    end)
+
+    server = %{root: root, listener: listener, owned: false, adapter: :bandit, port: port}
+
+    cleanup =
+      Cleanup.setup_failure(server, %{
+        stop_host: fn _server ->
+          send(parent, {:setup_step, :host_stop})
+          send(listener, :stop)
+          :ok
+        end,
+        stop_root: fn _root ->
+          send(parent, {:setup_step, :root_stop})
+          send(root, :stop)
+          :ok
+        end,
+        wait_ms: 500
+      })
+
+    assert_receive {:setup_step, first_step}
+    assert first_step == :host_stop
+    assert_receive {:setup_step, second_step}
+    assert second_step == :root_stop
+    assert cleanup.listener_down
+    assert cleanup.port_free
+    refute Process.alive?(root)
   end
 
   test "dependency source comparison detects patched or added code" do
@@ -269,6 +399,54 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
 
     assert :dependency_source_changed in Enum.map(
              Provenance.violations(clean, mismatched),
+             & &1.kind
+           )
+  end
+
+  test "dependency source and loaded build artifact hashes detect executable changes" do
+    dir = Path.join(System.tmp_dir!(), "soak-artifacts-#{System.unique_integer([:positive])}")
+    source_dir = Path.join(dir, "source")
+    build_dir = Path.join(dir, "build")
+    File.mkdir_p!(Path.join(source_dir, "priv"))
+    File.mkdir_p!(Path.join(build_dir, "ebin"))
+    File.mkdir_p!(Path.join(build_dir, "priv/native"))
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    source_priv = Path.join(source_dir, "priv/config.json")
+    beam = Path.join(build_dir, "ebin/example.beam")
+    native = Path.join(build_dir, "priv/native/example")
+    File.write!(source_priv, "original")
+    File.write!(beam, "beam-a")
+    File.write!(native, "native-a")
+
+    expected_source = DependencySource.source_hashes(source_dir)
+    assert Map.has_key?(expected_source, "priv/config.json")
+    File.write!(source_priv, "patched")
+
+    refute DependencySource.compare(DependencySource.source_hashes(source_dir), expected_source).verified
+
+    before = DependencySource.artifact_hashes(build_dir)
+    assert Map.keys(before) |> Enum.sort() == ["ebin/example.beam", "priv/native/example"]
+
+    File.write!(native, "native-b")
+    after_change = DependencySource.artifact_hashes(build_dir)
+    assert before["priv/native/example"] != after_change["priv/native/example"]
+    assert before["ebin/example.beam"] == after_change["ebin/example.beam"]
+
+    start_snapshot = %{snapshot() | dependency_sources: %{"example" => %{artifacts: before}}}
+
+    end_snapshot = %{
+      snapshot()
+      | dependency_sources: %{"example" => %{artifacts: after_change}}
+    }
+
+    assert DependencySource.changed_artifacts(
+             start_snapshot.dependency_sources,
+             end_snapshot.dependency_sources
+           ) == ["example"]
+
+    assert :dependency_artifact_changed in Enum.map(
+             Provenance.violations(start_snapshot, end_snapshot),
              & &1.kind
            )
   end

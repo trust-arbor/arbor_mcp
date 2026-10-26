@@ -22,7 +22,9 @@ and subscriptions. A restart operation terminates the stdio server
 while its client remains live and requires exactly one disconnect, reconnect
 attempt, and reconnect success before a ping. Any other disconnect or reconnect
 attempt is a failure. The harness also attributes SSE-client reconnect telemetry
-to each legacy HTTP stream's process and fails an unplanned GET-stream reconnect.
+to each legacy HTTP stream's process and reports one failure per unplanned
+GET-stream reconnect episode, even when both disconnect and reconnect telemetry
+are emitted.
 BEAM binds a client to one server process, and modern HTTP
 is stateless, so those transports skip this reconnect operation.
 The `--rate` option
@@ -64,7 +66,12 @@ and subscription calls. A cycle also
 closes subscriptions and confirms the old client and owned server terminate.
 If normal cleanup fails, it force-stops the listener and confirms the bound
 port can be reused; for stdio it retains the child OS PID and requires a
-subprocess reaping receipt, signalling and checking the child if needed. Any
+subprocess reaping receipt. Before signalling a child, it verifies the saved
+process start time and command against the current PID; if OS identity cannot be
+confirmed, cleanup fails without signalling that PID. The last known child PID
+and identity survive an inconclusive lookup during restart. Host listeners use
+an OS-selected ephemeral port known before startup, so a failed port-info call
+can still be followed by listener shutdown and a port-free check. Any
 forced cleanup is recorded as a failure even if it succeeds.
 No limit is raised to make a run pass.
 
@@ -84,8 +91,12 @@ full OTP version, OS version, Mix environment, dependency versions, override
 flags, and `git status --porcelain` at both start and end, plus configuration,
 per-operation totals, percentiles, and failures with typed cleanup evidence.
 For each Hex dependency, the harness verifies the cached package checksum
-against `mix.lock`, compares extracted source and build files with the package,
-and repeats the check at the end. Generated Erlang lexer/parser source is
+against `mix.lock`, compares extracted source files (including packaged `priv/`)
+with the package, and repeats the check at the end. It also records per-file
+hashes of each dependency's loaded `_build/<env>/lib/<dep>/ebin` and `priv`
+artifacts, including native binaries, and fails if they change during the run.
+Generated build output without a package checksum is compared between the two
+snapshots. Generated Erlang lexer/parser source is
 regenerated from its locked grammar and compared before acceptance. A missing
 package cache or a source mismatch fails qualification.
 Evidence is flushed as it is written, and a nonempty output directory is refused.

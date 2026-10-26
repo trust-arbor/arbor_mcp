@@ -3,6 +3,7 @@ defmodule Arbor.MCP.Soak.ServerHost do
 
   def run do
     redirect_logger()
+    {:ok, _} = Application.ensure_all_started(:mix)
     {:ok, _} = Application.ensure_all_started(:arbor_mcp)
 
     mode =
