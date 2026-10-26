@@ -643,6 +643,33 @@ defmodule ExMCP.Client.RequestHandler do
     end)
   end
 
+  @doc false
+  # An HTTP POST's response answers the request that POST carried, whatever
+  # id its body echoes (a server may answer an invalid request with a null
+  # id), as when the POST was synchronous, and is dropped once that request
+  # has settled (timed out or cancelled), never routed to another one.
+  # Anything else, such as a batch, a notification or a server request, or
+  # the response to a POST that carried no request, is routed as usual.
+  def handle_post_response(response_data, nil, state),
+    do: parse_transport_message(response_data, state)
+
+  def handle_post_response(response_data, request_id, state) do
+    case Protocol.parse_message(response_data) do
+      {kind, payload, _echoed_id} when kind in [:result, :error] ->
+        if pending_single?(state.pending_requests, request_id),
+          do: handle_single_response({kind, payload, request_id}, state),
+          else: {:noreply, state}
+
+      _other ->
+        parse_transport_message(response_data, state)
+    end
+  end
+
+  defp pending_single?(pending, request_id) do
+    match?({_from, :single, _method}, Map.get(pending, request_id)) or
+      match?({_from, :single}, Map.get(pending, request_id))
+  end
+
   @doc """
   Handles a single response from the transport.
   """

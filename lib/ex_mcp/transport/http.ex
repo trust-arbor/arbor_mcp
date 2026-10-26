@@ -396,7 +396,12 @@ defmodule ExMCP.Transport.HTTP do
         # Report the durable transport-state fields this POST changed
         # (session rotation, OAuth token refresh) so the client can merge
         # them into its copy of the transport state instead of discarding.
-        meta = %{request_id: request_id, state_changes: result_state_changes(state, result)}
+        meta = %{
+          request_id: request_id,
+          deadline: state.deadline,
+          state_changes: result_state_changes(state, result)
+        }
+
         send(parent, {:async_post_result, result, meta})
       end)
 

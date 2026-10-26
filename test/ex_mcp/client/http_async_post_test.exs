@@ -1,0 +1,164 @@
+defmodule ExMCP.Client.HTTPAsyncPostTest do
+  @moduledoc """
+  The legacy SSE HTTP client POSTs each request from its own task. It must
+  still behave as the synchronous path did: a POST's response answers the
+  request it carried, a POST that runs past its caller's deadline is the
+  caller's timeout and is cancelled on the server, and a late response for a
+  settled request is dropped rather than misrouted to another request.
+  """
+
+  use ExUnit.Case, async: false
+
+  alias ExMCP.Client
+
+  test "a response with a null or different id answers the request its POST carried" do
+    client = start_client()
+
+    assert {:error, %{code: -32600}} = Client.call_tool(client, "null_id", %{}, timeout: 5_000)
+    assert {:ok, _result} = Client.call_tool(client, "string_id", %{}, timeout: 5_000)
+  end
+
+  test "a request whose POST outlives an explicit timeout is cancelled on the server" do
+    client = start_client()
+
+    assert {:error, :timeout} = Client.call_tool(client, "hang", %{}, format: :map, timeout: 300)
+    assert_receive {:tool_call_started, "hang", _handler}
+    assert_receive {:notification, "notifications/cancelled", %{"requestId" => _id}}, 2_000
+  end
+
+  test "a POST that answers after its request settled is dropped, not given to another" do
+    client = start_client()
+
+    late = Task.async(fn -> Client.call_tool(client, "late", %{}, timeout: 5_000) end)
+    assert_receive {:tool_call_started, "late", late_handler, late_id}
+    other = Task.async(fn -> Client.call_tool(client, "other", %{}, timeout: 5_000) end)
+    assert_receive {:tool_call_started, "other", other_handler, other_id}
+
+    :ok = Client.send_cancelled(client, late_id, "user")
+    assert {:error, :cancelled} = Task.await(late)
+    assert_receive {:notification, "notifications/cancelled", %{"requestId" => ^late_id}}
+
+    # The cancelled request's POST answers with the other request's id.
+    send(late_handler, {:respond_with_id, other_id})
+    assert_receive {:responded, ^late_handler}
+    send(other_handler, :release)
+
+    assert {:ok, response} = Task.await(other)
+    assert [%{text: "other"}] = response.content
+  end
+
+  defp start_client(opts \\ []) do
+    bypass = Bypass.open()
+    test_pid = self()
+
+    Bypass.stub(bypass, "GET", "/mcp", fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("text/event-stream")
+      |> Plug.Conn.send_chunked(200)
+    end)
+
+    Bypass.stub(bypass, "POST", "/mcp", fn conn ->
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      respond(conn, Jason.decode!(body), test_pid)
+    end)
+
+    {:ok, client} =
+      Client.start_link(
+        [
+          transport: :http,
+          url: "http://127.0.0.1:#{bypass.port}/mcp",
+          use_sse: true,
+          protocol_mode: :legacy_only,
+          health_check_interval: nil,
+          reconnect: false
+        ] ++ opts
+      )
+
+    on_exit(fn -> if Process.alive?(client), do: Process.exit(client, :kill) end)
+    client
+  end
+
+  defp respond(conn, %{"method" => "initialize", "id" => id}, _test_pid) do
+    conn
+    |> Plug.Conn.put_resp_header("mcp-session-id", "test-session")
+    |> json(%{
+      "jsonrpc" => "2.0",
+      "id" => id,
+      "result" => %{
+        "protocolVersion" => "2025-06-18",
+        "capabilities" => %{"tools" => %{}},
+        "serverInfo" => %{"name" => "async-post", "version" => "1"}
+      }
+    })
+  end
+
+  defp respond(
+         conn,
+         %{"method" => "tools/call", "id" => id, "params" => %{"name" => name}},
+         test_pid
+       )
+       when name in ["late", "other"] do
+    send(test_pid, {:tool_call_started, name, self(), id})
+
+    receive do
+      {:respond_with_id, other_id} ->
+        send(test_pid, {:responded, self()})
+        text_result(conn, other_id, name)
+
+      :release ->
+        text_result(conn, id, name)
+    after
+      2_000 -> text_result(conn, id, name)
+    end
+  end
+
+  defp respond(conn, %{"method" => "tools/call", "id" => id, "params" => params}, test_pid) do
+    name = params["name"]
+    send(test_pid, {:tool_call_started, name, self()})
+
+    case name do
+      "null_id" ->
+        json(conn, %{
+          "jsonrpc" => "2.0",
+          "id" => nil,
+          "error" => %{"code" => -32600, "message" => "Invalid Request"}
+        })
+
+      "string_id" ->
+        json(conn, %{"jsonrpc" => "2.0", "id" => to_string(id), "result" => %{"content" => []}})
+
+      "hang" ->
+        # The client gives up at its deadline and closes the connection;
+        # end normally when Cowboy stops this handler for that.
+        Process.flag(:trap_exit, true)
+
+        receive do
+          :release -> :ok
+          {:EXIT, _from, _reason} -> :ok
+        after
+          2_000 -> :ok
+        end
+
+        json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"content" => []}})
+    end
+  end
+
+  defp respond(conn, %{"method" => method} = message, test_pid) do
+    send(test_pid, {:notification, method, Map.get(message, "params", %{})})
+    Plug.Conn.resp(conn, 202, "")
+  end
+
+  defp text_result(conn, id, text) do
+    json(conn, %{
+      "jsonrpc" => "2.0",
+      "id" => id,
+      "result" => %{"content" => [%{"type" => "text", "text" => text}]}
+    })
+  end
+
+  defp json(conn, body) do
+    conn
+    |> Plug.Conn.put_resp_content_type("application/json")
+    |> Plug.Conn.resp(200, Jason.encode!(body))
+  end
+end

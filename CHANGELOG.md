@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Legacy SSE async POST responses are matched by the request the POST carried
+  rather than solely by the `id` echoed in the response body. Responses with a
+  null or different id answer the caller instead of timing out, and responses
+  arriving after a request has settled (cancelled or timed out) are dropped
+  rather than misrouted to another request. A POST that fails at or after its
+  deadline replies `:timeout` and cancels the request on the server (backport of
+  2.x #110: `3065dc3` and `adcf5f4`).
+
 ## [1.7.3] - 2026-10-26
 
 ### Changed
