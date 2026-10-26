@@ -9,13 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `jose` `>= 1.11.13` is required and locked. 1.11.13 fixes EEF-CVE-2026-65625
-  (attacker-chosen AES-GCM tag length), EEF-CVE-2026-65626 (RSAES-PKCS1-v1_5
-  padding oracle) and EEF-CVE-2026-65627 (unbounded JWE zip decompression).
-  All three are in JWE decryption, which this library doesn't use: it only
-  signs and verifies JWS, and MRTR request state is sealed with `:crypto`
-  directly and checks the tag length. The floor keeps applications'
-  dependency graphs off the affected releases.
+- `jose` `>= 1.11.13` is required and locked. 1.11.13 fixes five advisories:
+  EEF-CVE-2026-65625 (attacker-chosen AES-GCM tag length), EEF-CVE-2026-65626
+  (RSAES-PKCS1-v1_5 padding oracle), EEF-CVE-2026-65627 (unbounded JWE zip
+  decompression), EEF-CVE-2026-65628 (infinite recursion in
+  `JOSE.JWK.shared_secret/2` on mismatched key types) and EEF-CVE-2026-65629
+  (weak PBKDF2 parameters for password-encrypted private-key export). This
+  library reaches none of them: it only signs and verifies JWS, never decrypts
+  JWE, derives shared secrets or exports password-encrypted keys, and MRTR
+  request state is sealed with `:crypto` directly and checks the tag length.
+  The floor keeps applications' dependency graphs off the affected releases.
 
 ## [1.7.3] - 2026-10-26
 

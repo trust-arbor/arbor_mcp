@@ -19,7 +19,7 @@ defmodule ExMCP.Security.DependencyAdvisoryMitigationTest do
     assert Version.compare(locked_version, "1.10.2") in [:eq, :gt]
   end
 
-  test "JOSE requirement and lock exclude versions affected by the October 2026 JWE advisories" do
+  test "JOSE requirement and lock exclude versions affected by EEF-CVE-2026-65625 through 65629" do
     jose_dep = List.keyfind(Project.config()[:deps], :jose, 0)
     requirement = elem(jose_dep, 1)
 
