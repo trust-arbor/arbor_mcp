@@ -7,6 +7,12 @@ deadline-sensitive test suite. A 30-minute rehearsal uses `--duration 30m`.
 The 48-hour release gate must run against the final candidate without a source
 or lockfile change; a short or interrupted run cannot satisfy it.
 
+Use `--era modern|legacy|both` (default `both`) and `--transports` with a
+comma-separated subset of `beam,stdio,cowboy_owned,cowboy_host,bandit_owned,bandit_host`
+(default `all`) to select coverage. For example, `mix soak.run --short --era modern
+--transports all` runs every modern transport. `--only beam/modern` narrows a
+selected set to one scenario for diagnosis.
+
 Each cycle covers legacy `2025-11-25` and modern `2026-07-28` peers over BEAM,
 stdio, and Streamable HTTP. HTTP exercises Cowboy and Bandit with both owned
 listeners and host-mounted `HttpPlug`. The workload checks tool calls, resource
@@ -14,6 +20,19 @@ and template reads, prompts, progress, cancellation, modern MRTR, notifications
 and subscriptions, and reconnects across a server restart. The `--rate` option
 sets target operations per second; `--mix` accepts comma-separated operation
 weights. All operations use the library's normal deadlines and limits.
+Every HTTP server passes `sse_mode: :stream` explicitly so the legacy GET SSE
+connection stays open even when the test environment enables `:test_mode`.
+
+Legacy Streamable HTTP progress, cancellation, and `tools/list_changed` on
+Cowboy and Bandit (owned or host-mounted) are currently **known blocked** by
+the independently reproduced server notification delivery defect:
+notifications return `:stream_closed` despite a connected GET SSE stream.
+Those scenario/operation pairs are recorded with attempt counts and the reason
+in `summary.json` under `known_blocked` and in `events.jsonl`; they are not
+counted as successes. Any such entry makes `passed` and
+`qualification_complete` false. After the library fix, run
+`--exercise-known-blocked` after the fix branch merges to exercise them before
+removing this temporary classification from `Arbor.MCP.Soak.Policy`.
 
 Clients turn over after the configured `--turnover-requests` (default 500) or
 `--turnover-seconds` (default 120), whichever comes first. The harness counts

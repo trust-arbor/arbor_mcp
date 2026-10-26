@@ -5,7 +5,7 @@ defmodule Arbor.MCP.Soak.Runner do
   alias Arbor.MCP.Client.Subscription
   alias Arbor.MCP.Server
   alias Arbor.MCP.Server.{Runtime, Transport}
-  alias Arbor.MCP.Soak.{ClientHandler, Handler}
+  alias Arbor.MCP.Soak.{ClientHandler, Evidence, Handler, Policy}
 
   @modes [legacy: {:legacy_only, "2025-11-25"}, modern: {:modern_only, "2026-07-28"}]
   @endpoints [:beam, :stdio, :cowboy_owned, :cowboy_host, :bandit_owned, :bandit_host]
@@ -75,7 +75,8 @@ defmodule Arbor.MCP.Soak.Runner do
     if summary["passed"], do: {:ok, summary}, else: {:error, summary}
   end
 
-  defp parse!(args) do
+  @doc false
+  def parse!(args) do
     switches = [
       short: :boolean,
       duration: :string,
@@ -85,6 +86,9 @@ defmodule Arbor.MCP.Soak.Runner do
       turnover_requests: :integer,
       turnover_seconds: :integer,
       sample_seconds: :integer,
+      era: :string,
+      transports: :string,
+      exercise_known_blocked: :boolean,
       only: :string,
       debug: :boolean
     ]
@@ -93,14 +97,17 @@ defmodule Arbor.MCP.Soak.Runner do
 
     validate_args!(rest, invalid)
 
-    duration = if opts[:short], do: 300_000, else: parse_duration!(opts[:duration] || "48h")
+    duration = duration!(opts)
     {rate, ""} = opts |> Keyword.get(:rate, "2") |> Float.parse()
     mix = parse_mix!(opts[:mix])
     turnover_requests = opts[:turnover_requests] || 500
     turnover_seconds = opts[:turnover_seconds] || if(opts[:short], do: 30, else: 120)
     sample_seconds = opts[:sample_seconds] || 10
+    eras = parse_eras!(opts[:era] || "both")
+    transports = parse_transports!(opts[:transports] || "all")
 
     validate_numbers!(rate, turnover_requests, turnover_seconds, sample_seconds)
+    validate_only!(opts[:only], eras, transports)
 
     %{
       duration_ms: duration,
@@ -109,6 +116,9 @@ defmodule Arbor.MCP.Soak.Runner do
       turnover_requests: turnover_requests,
       turnover_ms: turnover_seconds * 1_000,
       sample_ms: sample_seconds * 1_000,
+      eras: eras,
+      transports: transports,
+      exercise_known_blocked: opts[:exercise_known_blocked] || false,
       only: opts[:only],
       debug: opts[:debug] || false,
       output:
@@ -123,6 +133,10 @@ defmodule Arbor.MCP.Soak.Runner do
 
   defp validate_args!(rest, invalid),
     do: Mix.raise("invalid soak arguments: #{inspect(rest ++ invalid)}")
+
+  defp duration!(opts) do
+    if opts[:short], do: 300_000, else: parse_duration!(opts[:duration] || "48h")
+  end
 
   defp validate_numbers!(rate, requests, turnover, sample) do
     if rate <= 0, do: Mix.raise("--rate must be positive")
@@ -169,12 +183,40 @@ defmodule Arbor.MCP.Soak.Runner do
     ArgumentError -> Mix.raise("invalid --mix entry")
   end
 
+  defp parse_eras!("both"), do: [:legacy, :modern]
+  defp parse_eras!("legacy"), do: [:legacy]
+  defp parse_eras!("modern"), do: [:modern]
+  defp parse_eras!(_), do: Mix.raise("--era must be modern, legacy or both")
+
+  defp parse_transports!("all"), do: @endpoints
+
+  defp parse_transports!(value) do
+    names = String.split(value, ",", trim: false)
+    allowed = Map.new(@endpoints, &{Atom.to_string(&1), &1})
+
+    if Enum.any?(names, &(not Map.has_key?(allowed, &1))) do
+      Mix.raise(
+        "--transports must be a comma-separated list of #{Enum.join(Map.keys(allowed) |> Enum.sort(), ",")}"
+      )
+    end
+
+    Enum.uniq(Enum.map(names, &Map.fetch!(allowed, &1)))
+  end
+
+  defp validate_only!(nil, _eras, _transports), do: :ok
+
+  defp validate_only!(id, eras, transports) do
+    selected = for endpoint <- transports, era <- eras, do: "#{endpoint}/#{era}"
+    if id not in selected, do: Mix.raise("--only must name a selected transport/era scenario")
+  end
+
   defp start_scenarios(state) do
-    Enum.reduce(@endpoints, state, fn endpoint, state ->
+    Enum.reduce(state.config.transports, state, fn endpoint, state ->
       Enum.reduce(@modes, state, fn {era, {mode, version}}, state ->
         id = "#{endpoint}/#{era}"
 
-        if state.config.only == nil or state.config.only == id do
+        if era in state.config.eras and
+             (state.config.only == nil or state.config.only == id) do
           case open_scenario(endpoint, era, mode, version) do
             {:ok, scenario} ->
               write_event(state, %{type: "scenario_open", scenario: id})
@@ -234,8 +276,9 @@ defmodule Arbor.MCP.Soak.Runner do
     ]
   end
 
-  defp mrtr_opts(mode) do
+  defp http_plug_opts(mode) do
     [
+      sse_mode: :stream,
       mrtr: mode == :modern_only,
       request_state: [active_key_id: "soak", keys: %{"soak" => @request_key}]
     ]
@@ -283,7 +326,7 @@ defmodule Arbor.MCP.Soak.Runner do
             transport: :http,
             http:
               [adapter: adapter, port: port, host: {127, 0, 0, 1}, allowed_origins: [origin]] ++
-                mrtr_opts(mode)
+                http_plug_opts(mode)
           ]
 
       with {:ok, root} <- Server.start_link(opts) do
@@ -356,7 +399,7 @@ defmodule Arbor.MCP.Soak.Runner do
     case Plug.Cowboy.http(
            Arbor.MCP.HttpPlug,
            [runtime: root, path: "/mcp", protocol_mode: mode, allowed_origins: [origin]] ++
-             mrtr_opts(mode),
+             http_plug_opts(mode),
            ip: {127, 0, 0, 1},
            port: port,
            ref: ref
@@ -369,7 +412,7 @@ defmodule Arbor.MCP.Soak.Runner do
   defp start_host_listener(:bandit, root, mode, port, origin) do
     opts =
       [runtime: root, path: "/mcp", protocol_mode: mode, allowed_origins: [origin]] ++
-        mrtr_opts(mode)
+        http_plug_opts(mode)
 
     case Bandit.start_link(
            plug: {Arbor.MCP.HttpPlug, opts},
@@ -422,7 +465,7 @@ defmodule Arbor.MCP.Soak.Runner do
         Enum.reduce(Keyword.keys(state.config.mix), state, fn operation, state ->
           scenario = state.scenarios[id]
           started = now_ms()
-          result = perform(operation, scenario)
+          result = execute(operation, scenario, state.config)
           state = record_result(state, id, operation, result, now_ms() - started)
           scenario = %{scenario | requests: scenario.requests + request_cost(operation)}
           put_in(state.scenarios[id], scenario)
@@ -441,7 +484,7 @@ defmodule Arbor.MCP.Soak.Runner do
       scenario = state.scenarios[id]
       operation = choose_operation(state)
       started = now_ms()
-      result = perform(operation, scenario)
+      result = execute(operation, scenario, state.config)
       elapsed = now_ms() - started
       state = record_result(state, id, operation, result, elapsed)
 
@@ -481,6 +524,16 @@ defmodule Arbor.MCP.Soak.Runner do
     Enum.reduce_while(mix, pick, fn {op, weight}, remaining ->
       if remaining < weight, do: {:halt, op}, else: {:cont, remaining - weight}
     end)
+  end
+
+  defp execute(operation, scenario, config) do
+    reason = Policy.known_blocked(scenario.endpoint, scenario.era, operation)
+
+    if reason != nil and not config.exercise_known_blocked do
+      {:known_blocked, reason}
+    else
+      perform(operation, scenario)
+    end
   end
 
   defp perform(:echo, scenario) do
@@ -661,8 +714,13 @@ defmodule Arbor.MCP.Soak.Runner do
   defp maybe_turnover(state, id) do
     scenario = state.scenarios[id]
 
-    if scenario.requests >= state.config.turnover_requests or
-         now_ms() - scenario.opened_ms >= state.config.turnover_ms do
+    if Policy.turnover?(
+         scenario.requests,
+         scenario.opened_ms,
+         now_ms(),
+         state.config.turnover_requests,
+         state.config.turnover_ms
+       ) do
       cleanup = close_scenario(scenario)
 
       write_event(state, %{
@@ -810,36 +868,16 @@ defmodule Arbor.MCP.Soak.Runner do
   defp check_leak(state, id) do
     samples = Enum.take(state.turnover_samples, 6) |> Enum.reverse()
 
-    thresholds = %{
-      memory_bytes: 32 * 1_048_576,
-      processes: 20,
-      ets_words: 100_000,
-      ports: 10,
-      file_descriptors: 20
-    }
-
-    Enum.reduce(thresholds, state, fn {key, threshold}, state ->
-      values = Enum.map(samples, &Map.get(&1, key))
-
-      if length(values) == 6 and Enum.all?(values, &is_integer/1) and
-           increasing?(values) and
-           List.last(values) - hd(values) > threshold do
-        record_failure(state, id, :leak, %{metric: key, values: values, threshold: threshold})
-      else
-        state
-      end
+    Enum.reduce(Policy.leak_violations(samples), state, fn violation, state ->
+      record_failure(state, id, :leak, violation)
     end)
-  end
-
-  defp increasing?(values) do
-    values
-    |> Enum.chunk_every(2, 1, :discard)
-    |> Enum.all?(fn [a, b] -> b > a end)
   end
 
   defp record_result(state, id, operation, result, elapsed) do
     key = "#{id}/#{operation}"
-    entry = Map.get(state.results, key, %{ok: 0, error: 0, skipped: 0, latency_ms: []})
+
+    entry =
+      Map.get(state.results, key, %{ok: 0, error: 0, skipped: 0, blocked: 0, latency_ms: []})
 
     {entry, state} =
       case result do
@@ -848,6 +886,19 @@ defmodule Arbor.MCP.Soak.Runner do
 
         :skipped ->
           {%{entry | skipped: entry.skipped + 1}, state}
+
+        {:known_blocked, reason} ->
+          if entry.blocked == 0 do
+            write_event(state, %{
+              type: "known_blocked",
+              scenario: id,
+              operation: operation,
+              reason: reason
+            })
+          end
+
+          {entry |> Map.put(:blocked, entry.blocked + 1) |> Map.put(:blocked_reason, reason),
+           state}
 
         other ->
           kind =
@@ -887,78 +938,16 @@ defmodule Arbor.MCP.Soak.Runner do
   end
 
   defp summarize(state) do
-    results =
-      for {key, entry} <- state.results, into: %{} do
-        {key,
-         Map.drop(entry, [:latency_ms])
-         |> Map.put(
-           :latency_ms,
-           percentiles(entry.latency_ms)
-         )}
-      end
-
-    successes = Enum.reduce(state.results, 0, fn {_key, e}, sum -> sum + e.ok end)
-    errors = Enum.reduce(state.results, 0, fn {_key, e}, sum -> sum + e.error end)
-    latencies = state.results |> Map.values() |> Enum.flat_map(& &1.latency_ms)
-    overall = percentiles(latencies)
-    error_rate = if successes + errors == 0, do: 1.0, else: errors / (successes + errors)
-    elapsed = now_ms() - state.start_ms
-    config = state.config
-
-    threshold_failures =
-      []
-      |> maybe_threshold(error_rate > 0.001, :error_rate, error_rate)
-      |> maybe_threshold(overall.p99 > 5_000, :latency_p99_ms, overall.p99)
-      |> maybe_threshold(
-        length(state.turnover_samples) < 6,
-        :insufficient_turnovers,
-        length(state.turnover_samples)
-      )
-      |> maybe_threshold(elapsed < config.duration_ms, :incomplete_duration, elapsed)
-
-    failures = Enum.reverse(state.failures) ++ threshold_failures
-
-    %{
-      "passed" => failures == [],
-      "summary_path" => state.summary_path,
-      "events_path" => Path.join(config.output, "events.jsonl"),
-      "started_at" => DateTime.to_iso8601(state.started_at),
-      "finished_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
-      "elapsed_ms" => elapsed,
-      "source_commit" => git_head(),
-      "mix_lock_sha256" =>
-        Base.encode16(:crypto.hash(:sha256, File.read!("mix.lock")), case: :lower),
-      "elixir" => System.version(),
-      "otp" => List.to_string(:erlang.system_info(:otp_release)),
-      "platform" => :erlang.system_info(:system_architecture) |> List.to_string(),
-      "os" => :os.type() |> inspect(),
-      "config" => config,
-      "scenarios" => Map.keys(state.scenarios) |> Enum.sort(),
-      "operations" => state.operations,
-      "turnovers" => state.turnovers,
-      "samples" => state.samples,
-      "overall_latency_ms" => overall,
-      "results" => results,
-      "failures" => failures
-    }
-  end
-
-  defp maybe_threshold(failures, true, kind, value),
-    do: failures ++ [%{kind: kind, value: value}]
-
-  defp maybe_threshold(failures, false, _kind, _value), do: failures
-
-  defp percentiles([]), do: %{p50: 0, p95: 0, p99: 0}
-
-  defp percentiles(values) do
-    sorted = Enum.sort(values)
-    n = length(sorted)
-
-    %{
-      p50: Enum.at(sorted, ceil(n * 0.5) - 1),
-      p95: Enum.at(sorted, ceil(n * 0.95) - 1),
-      p99: Enum.at(sorted, ceil(n * 0.99) - 1)
-    }
+    Evidence.build(state, %{
+      elapsed_ms: now_ms() - state.start_ms,
+      finished_at: DateTime.utc_now() |> DateTime.to_iso8601(),
+      source_commit: git_head(),
+      mix_lock_sha256: Base.encode16(:crypto.hash(:sha256, File.read!("mix.lock")), case: :lower),
+      elixir: System.version(),
+      otp: List.to_string(:erlang.system_info(:otp_release)),
+      platform: :erlang.system_info(:system_architecture) |> List.to_string(),
+      os: :os.type() |> inspect()
+    })
   end
 
   defp git_head do
