@@ -398,7 +398,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
          tool_name,
          params
        ) do
-    with {:ok, tools} <- load_tools_for_header_validation(server_pid, conn),
+    with {:ok, tools} <- load_tools_for_header_validation(server_pid, conn, tool_name),
          tool when is_map(tool) <- find_tool(tools, tool_name),
          {:ok, annotations} <- ToolHeaders.compile(tool) do
       ToolHeaders.validate_request(
@@ -415,12 +415,31 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
 
   defp validate_tool_request_headers(_conn, _server_pid, _tool_name, _params), do: :ok
 
-  defp load_tools_for_header_validation(server_pid, conn) do
-    case GenServer.call(server_pid, {:list_tools, nil}, call_timeout(conn))
+  # The tool may be on any page of tools/list, so follow the cursors until it
+  # turns up. A list that runs past the bound fails closed.
+  @max_tool_pages 100
+
+  defp load_tools_for_header_validation(server_pid, conn, tool_name),
+    do: load_tool_pages(server_pid, conn, tool_name, nil, @max_tool_pages)
+
+  defp load_tool_pages(_server_pid, _conn, _tool_name, _cursor, 0),
+    do: {:error, :tool_schema_unavailable}
+
+  defp load_tool_pages(server_pid, conn, tool_name, cursor, pages) do
+    case GenServer.call(server_pid, {:list_tools, cursor}, call_timeout(conn))
          |> normalize_list_reply() do
-      {:list, tools, _cursor} -> {:ok, ResultNormalizer.stringify_keys(tools)}
-      {:result, result} -> {:ok, Map.get(ResultNormalizer.stringify_keys(result), "tools", [])}
-      {:error, _reason} -> {:error, :tool_schema_unavailable}
+      {:list, tools, next} ->
+        tools = ResultNormalizer.stringify_keys(tools)
+
+        if is_binary(next) and is_nil(find_tool(tools, tool_name)),
+          do: load_tool_pages(server_pid, conn, tool_name, next, pages - 1),
+          else: {:ok, tools}
+
+      {:result, result} ->
+        {:ok, Map.get(ResultNormalizer.stringify_keys(result), "tools", [])}
+
+      {:error, _reason} ->
+        {:error, :tool_schema_unavailable}
     end
   rescue
     _error -> {:error, :tool_schema_unavailable}

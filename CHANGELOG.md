@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A client's default close limit (`Deadline.cleanup_timeout/1`) covers a stdio
   server's shutdown budget plus 500 ms: 3_000 ms with the stdio defaults. Other
   transports keep 1_000 ms.
+- A modern `tools/call` checked its `Mcp-Param-*` headers against the first
+  `tools/list` page only, so a tool on a later page of a paginated list
+  skipped the check. The server now follows the cursors until it finds the
+  tool, for up to 100 pages, and fails the request closed past that.
 
 ## [1.7.3] - 2026-10-26
 
