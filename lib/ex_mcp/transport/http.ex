@@ -352,6 +352,9 @@ defmodule ExMCP.Transport.HTTP do
             error
         end
 
+      {:error, reason, _state} ->
+        {:error, reason}
+
       {:error, reason} ->
         {:error, reason}
     end
@@ -365,6 +368,9 @@ defmodule ExMCP.Transport.HTTP do
 
       {:ok, response, new_state} ->
         handle_http_response(response, new_state, message)
+
+      {:error, reason, _state} ->
+        {:error, reason}
 
       {:error, reason} ->
         {:error, reason}
@@ -395,10 +401,12 @@ defmodule ExMCP.Transport.HTTP do
           end
 
         # Report the durable transport-state fields this POST changed
-        # (session rotation, OAuth token refresh) so the client can merge
-        # them into its copy of the transport state instead of discarding.
+        # (session rotation, OAuth token refresh, a failed provider's loop
+        # guards) so the client can merge them into its copy of the transport
+        # state instead of discarding. The result keeps send_message/2's
+        # shapes: the state travels in meta only.
         meta = %{request_id: request_id, state_changes: result_state_changes(state, result)}
-        send(parent, {:async_post_result, result, meta})
+        send(parent, {:async_post_result, without_state(result), meta})
       end)
 
     # Let the client associate the monitored task with the request it serves.
@@ -821,6 +829,9 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   defp result_state_changes(_snapshot, _error), do: %{}
+
+  defp without_state({:error, reason, _state}), do: {:error, reason}
+  defp without_state(result), do: result
 
   @doc false
   # Computes the durable transport-state fields an async POST changed relative
