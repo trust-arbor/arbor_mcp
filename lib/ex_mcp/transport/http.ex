@@ -1251,9 +1251,9 @@ defmodule ExMCP.Transport.HTTP do
          :ok <- validate_stream_request_id(request_id, state) do
       # Resolve the provider's current token before deriving request headers.
       # Unlike the ordinary POST path, a modern request stream is owned by a
-      # dedicated process, so it cannot call perform_with_token/2. Passing
-      # the provider snapshot lets that process handle a later 401/403 and
-      # send the refreshed durable auth state back to the client.
+      # dedicated process, so it cannot call perform_with_token/2. It hands a
+      # later 401/403 back to the client process, which answers the
+      # challenges of all its streams one at a time.
       state
       |> apply_provider_token()
       |> start_stream(message, request_id, stream_kind, parent)
@@ -1282,7 +1282,6 @@ defmodule ExMCP.Transport.HTTP do
              max_response_bytes: state.max_response_bytes,
              max_buffer_bytes: state.max_stream_buffer_bytes,
              auth_provider: state.auth_provider,
-             auth_provider_state: state.auth_provider_state,
              header_sanitizer: fn retry_headers ->
                sanitize_http_request("POST", url, retry_headers, state)
              end
