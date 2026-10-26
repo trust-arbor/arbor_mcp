@@ -18,6 +18,28 @@ defmodule ExMCP.Client.HTTPPostStreamEventsTest do
     "serverInfo" => %{"name" => "stub", "version" => "1"}
   }
 
+  defmodule AuthProvider do
+    @behaviour ExMCP.Authorization.Provider
+
+    @impl true
+    def init(config), do: {:ok, %{owner: Keyword.fetch!(config, :owner)}}
+
+    @impl true
+    def get_token(state), do: {:ok, nil, state}
+
+    @impl true
+    def handle_unauthorized(_challenge, _scopes, state) do
+      send(state.owner, :authenticated)
+      {:ok, "first-token", state}
+    end
+
+    @impl true
+    def handle_forbidden(_challenge, _scopes, state) do
+      send(state.owner, :stepped_up)
+      {:ok, "step-up-token", state}
+    end
+  end
+
   # `answer_call` gets the tools/call request and the conn, and sends the
   # POST's response itself. A GET relay keeps the legacy standalone stream
   # open, so the call's POST runs from its own task and can hand the events
@@ -190,6 +212,62 @@ defmodule ExMCP.Client.HTTPPostStreamEventsTest do
     send(server, :release)
 
     assert {:ok, %{"content" => [%{"text" => "done"}]}} = Task.await(task)
+    send(stream, :close)
+  end
+
+  test "a retried POST still handles server requests on its event stream" do
+    attempts = start_supervised!({Agent, fn -> 0 end})
+    test = self()
+
+    answer = fn %{"id" => id}, conn ->
+      attempt = Agent.get_and_update(attempts, fn n -> {n + 1, n + 1} end)
+
+      case attempt do
+        1 ->
+          conn
+          |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer scope="tools.call"))
+          |> Plug.Conn.resp(401, "authentication required")
+
+        2 ->
+          assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer first-token"]
+
+          conn
+          |> Plug.Conn.put_resp_header(
+            "www-authenticate",
+            ~s(Bearer error="insufficient_scope", scope="tools.call")
+          )
+          |> Plug.Conn.resp(403, "more scope required")
+
+        3 ->
+          assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer step-up-token"]
+          conn = open_stream(conn)
+
+          ping = %{"jsonrpc" => "2.0", "id" => "retry-ping", "method" => "ping"}
+          {:ok, conn} = Plug.Conn.chunk(conn, event(ping))
+          send(test, {:retry_stream_open, self()})
+
+          receive do
+            :release -> :ok
+          after
+            3_000 -> :ok
+          end
+
+          {:ok, conn} = Plug.Conn.chunk(conn, event(done(id)))
+          conn
+      end
+    end
+
+    {client, stream} = start(answer, client: [auth_provider: {AuthProvider, owner: self()}])
+    task = call(client)
+
+    assert_receive :authenticated, 5_000
+    assert_receive :stepped_up, 5_000
+    assert_receive {:retry_stream_open, server}, 5_000
+    assert_receive {:client_answered, "retry-ping", %{"result" => %{}}}, 2_000
+    send(server, :release)
+
+    assert {:ok, %{"content" => [%{"text" => "done"}]}} = Task.await(task)
+    assert Agent.get(attempts, & &1) == 3
     send(stream, :close)
   end
 

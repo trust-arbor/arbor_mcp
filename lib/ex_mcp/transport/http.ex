@@ -432,14 +432,15 @@ defmodule ExMCP.Transport.HTTP do
 
   # Perform HTTP request with automatic OAuth retry via auth provider.
   # `opts` may name an `:event_stream` consumer for the response body (see
-  # PostStream); a request re-sent after an auth challenge runs without one.
+  # PostStream); retries must keep that consumer so server requests arriving
+  # on the retried POST can still be answered.
   defp perform_and_maybe_auth(body, %{auth_provider: provider} = state, opts)
        when not is_nil(provider) do
     state = apply_provider_token(state)
 
     case perform_http_request(body, state, opts) do
       {:ok, response} ->
-        handle_provider_auth_challenge(response, body, state)
+        handle_provider_auth_challenge(response, body, state, opts)
 
       {:error, reason} ->
         {:error, reason}
@@ -452,13 +453,13 @@ defmodule ExMCP.Transport.HTTP do
 
     case result do
       {:ok, response} ->
-        case handle_auth_challenge(response, body, state) do
+        case handle_auth_challenge(response, body, state, opts) do
           :no_challenge ->
             {:ok, response}
 
           {:ok, retry_response, new_state} ->
             # Check if retry got another 401 (scope step-up)
-            case handle_auth_challenge(retry_response, body, new_state) do
+            case handle_auth_challenge(retry_response, body, new_state, opts) do
               :no_challenge -> {:ok, retry_response, new_state}
               {:ok, r, s} -> {:ok, r, s}
               {:error, reason} -> {:error, reason}
@@ -474,13 +475,13 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   # Route provider auth challenge based on response status.
-  defp handle_provider_auth_challenge(response, body, state) do
+  defp handle_provider_auth_challenge(response, body, state, opts) do
     case extract_auth_status(response) do
       {:unauthorized, www_auth} ->
-        provider_authenticate(:handle_unauthorized, www_auth, body, state)
+        provider_authenticate(:handle_unauthorized, www_auth, body, state, opts)
 
       {:forbidden, www_auth} ->
-        provider_authenticate(:handle_forbidden, www_auth, body, state)
+        provider_authenticate(:handle_forbidden, www_auth, body, state, opts)
 
       :ok ->
         {:ok, response}
@@ -488,14 +489,14 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   # Authenticate via provider, retry request, handle scope step-up on retry.
-  defp provider_authenticate(callback, www_auth, body, state) do
+  defp provider_authenticate(callback, www_auth, body, state, opts) do
     provider = state.auth_provider
     scopes = extract_scope_from_www_auth(www_auth)
 
     case apply(provider, callback, [www_auth, scopes, state.auth_provider_state]) do
       {:ok, token, new_ps} ->
         new_state = state |> Map.put(:auth_provider_state, new_ps) |> apply_token_to_state(token)
-        provider_retry_request(body, new_state)
+        provider_retry_request(body, new_state, opts)
 
       {:error, reason, _ps} ->
         {:error, reason}
@@ -503,12 +504,12 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   # Retry request after auth; if 403 scope step-up, try once more.
-  defp provider_retry_request(body, state) do
-    case perform_http_request(body, state) do
+  defp provider_retry_request(body, state, opts) do
+    case perform_http_request(body, state, opts) do
       {:ok, retry_resp} ->
         case extract_auth_status(retry_resp) do
           {:forbidden, www_auth} ->
-            provider_authenticate(:handle_forbidden, www_auth, body, state)
+            provider_authenticate(:handle_forbidden, www_auth, body, state, opts)
 
           _ ->
             {:ok, retry_resp, state}
@@ -568,14 +569,14 @@ defmodule ExMCP.Transport.HTTP do
   defp init_auth_provider(nil, _auth_config, _base_url, _endpoint, _version), do: {nil, nil}
 
   # Check if the response is a 401 that we can handle with OAuth
-  defp handle_auth_challenge({status_line, headers, _body}, original_body, state) do
+  defp handle_auth_challenge({status_line, headers, _body}, original_body, state, opts) do
     case status_line do
       {_, 401, _} ->
-        maybe_oauth_retry(headers, original_body, state)
+        maybe_oauth_retry(headers, original_body, state, opts)
 
       {_, 403, _} ->
         # 403 with insufficient_scope → scope step-up
-        maybe_oauth_retry(headers, original_body, state)
+        maybe_oauth_retry(headers, original_body, state, opts)
 
       _ ->
         :no_challenge
@@ -583,18 +584,18 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   # Attempt OAuth discovery and retry if auth_config is available
-  defp maybe_oauth_retry(headers, original_body, %{auth_config: nil} = state) do
+  defp maybe_oauth_retry(headers, original_body, %{auth_config: nil} = state, opts) do
     # No explicit auth config — try full OAuth flow if this looks like an OAuth challenge
     www_auth = Headers.get(headers, "www-authenticate")
 
     if www_auth && String.starts_with?(www_auth, "Bearer") do
-      run_full_oauth_flow(www_auth, original_body, state)
+      run_full_oauth_flow(www_auth, original_body, state, opts)
     else
       :no_challenge
     end
   end
 
-  defp maybe_oauth_retry(headers, original_body, %{access_token: token} = state)
+  defp maybe_oauth_retry(headers, original_body, %{access_token: token} = state, opts)
        when is_binary(token) and byte_size(token) > 0 do
     # Already have a token but got 401/403 — check if this is a scope step-up
     www_auth = Headers.get(headers, "www-authenticate") || ""
@@ -603,7 +604,7 @@ defmodule ExMCP.Transport.HTTP do
       # Scope step-up: clear token and re-auth with new scope requirements
       Logger.info("Scope step-up required, re-authorizing")
       new_state = %{state | access_token: nil, auth_completed: false}
-      maybe_oauth_retry(headers, original_body, new_state)
+      maybe_oauth_retry(headers, original_body, new_state, opts)
     else
       # Token rejected for other reason — auth loop protection
       Logger.warning("Auth failed after successful OAuth flow, not retrying")
@@ -611,7 +612,7 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  defp maybe_oauth_retry(headers, original_body, state) do
+  defp maybe_oauth_retry(headers, original_body, state, opts) do
     # Have auth_config with credentials — use FullOAuthFlow which handles
     # PRM discovery with header fallback and pre-existing credentials
     www_auth = Headers.get(headers, "www-authenticate")
@@ -638,7 +639,7 @@ defmodule ExMCP.Transport.HTTP do
         }
 
         # Retry the original request with auth headers
-        case perform_http_request(original_body, new_state) do
+        case perform_http_request(original_body, new_state, opts) do
           {:ok, response} -> {:ok, response, new_state}
           {:error, reason} -> {:error, reason}
         end
@@ -649,7 +650,7 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  defp run_full_oauth_flow(www_auth, original_body, state) do
+  defp run_full_oauth_flow(www_auth, original_body, state, opts) do
     Logger.info("Attempting full OAuth flow (authorization code + PKCE)")
     resource_url = build_url(state, "")
 
@@ -675,7 +676,7 @@ defmodule ExMCP.Transport.HTTP do
             headers: put_bearer_header(state.headers, access_token)
         }
 
-        case perform_http_request(original_body, new_state) do
+        case perform_http_request(original_body, new_state, opts) do
           {:ok, response} -> {:ok, response, new_state}
           {:error, reason} -> {:error, reason}
         end
@@ -701,7 +702,7 @@ defmodule ExMCP.Transport.HTTP do
     |> List.insert_at(0, {"Authorization", "Bearer #{token}"})
   end
 
-  defp perform_http_request(body, state, opts \\ []) do
+  defp perform_http_request(body, state, opts) do
     # According to MCP spec, POST directly to the MCP endpoint, not /messages
     url = build_url(state, "")
     Logger.debug("HTTP request", endpoint_hash: LogSummary.fingerprint(url))

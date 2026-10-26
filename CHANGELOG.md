@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- OAuth retries of a legacy POST now retain its live event-stream consumer,
+  allowing server requests on the retried stream to be answered. This fixes
+  an auth-path gap in the 1.x backport of 2.x PR #121.
 - A legacy POST event stream now stops at its response deadline even if the
   socket or stream consumer keeps returning data. This closes a deadline gap
   in the 1.x backport of 2.x PR #121.
