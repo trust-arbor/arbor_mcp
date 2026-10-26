@@ -102,8 +102,8 @@ defmodule Arbor.MCP.Soak.Handler do
   end
 
   @impl true
-  def handle_subscribe_resource("soak://fixed", state), do: {:ok, state}
+  def handle_subscribe_resource("soak://fixed", state), do: {:ok, %{}, state}
 
   @impl true
-  def handle_unsubscribe_resource("soak://fixed", state), do: {:ok, state}
+  def handle_unsubscribe_resource("soak://fixed", state), do: {:ok, %{}, state}
 end

@@ -1,12 +1,17 @@
 defmodule Arbor.MCP.Soak.Evidence do
   @moduledoc false
 
-  alias Arbor.MCP.Soak.Policy
+  alias Arbor.MCP.Soak.{Histogram, Policy, Provenance}
 
   def build(state, metadata) do
     results =
       for {key, entry} <- state.results, into: %{} do
-        {key, Map.put(Map.drop(entry, [:latency_ms]), :latency_ms, percentiles(entry.latency_ms))}
+        {key,
+         Map.put(
+           Map.drop(entry, [:latency_hist]),
+           :latency_ms,
+           Histogram.percentiles(entry.latency_hist)
+         )}
       end
 
     successes = Enum.reduce(state.results, 0, fn {_key, entry}, total -> total + entry.ok end)
@@ -18,8 +23,10 @@ defmodule Arbor.MCP.Soak.Evidence do
         total + Map.get(entry, :blocked, 0)
       end)
 
-    latencies = state.results |> Map.values() |> Enum.flat_map(& &1.latency_ms)
-    overall = percentiles(latencies)
+    latency_histogram =
+      state.results |> Map.values() |> Enum.map(& &1.latency_hist) |> Histogram.merge()
+
+    overall = Histogram.percentiles(latency_histogram)
 
     known_blocked =
       for {key, entry} <- state.results,
@@ -40,33 +47,41 @@ defmodule Arbor.MCP.Soak.Evidence do
         successes,
         errors,
         overall.p99,
-        length(state.turnover_samples),
+        state.turnovers,
         metadata.elapsed_ms,
         state.config.duration_ms
       )
 
-    failures = Enum.reverse(state.failures) ++ threshold_failures
+    provenance_failures =
+      Provenance.violations(metadata.provenance_start, metadata.provenance_end)
+
+    failures = Enum.reverse(state.failures) ++ threshold_failures ++ provenance_failures
+    passed = failures == [] and known_blocked == []
+    qualification_complete = qualification_complete?(passed, state, metadata.elapsed_ms)
 
     %{
-      "passed" => failures == [] and known_blocked == [],
-      "qualification_complete" => known_blocked == [],
+      "passed" => passed,
+      "qualification_complete" => qualification_complete,
       "summary_path" => state.summary_path,
       "events_path" => Path.join(state.config.output, "events.jsonl"),
       "started_at" => DateTime.to_iso8601(state.started_at),
       "finished_at" => metadata.finished_at,
       "elapsed_ms" => metadata.elapsed_ms,
-      "source_commit" => metadata.source_commit,
-      "mix_lock_sha256" => metadata.mix_lock_sha256,
-      "elixir" => metadata.elixir,
-      "otp" => metadata.otp,
-      "platform" => metadata.platform,
-      "os" => metadata.os,
+      "source_commit" => metadata.provenance_start.git_head,
+      "mix_lock_sha256" => metadata.provenance_start.mix_lock_sha256,
+      "provenance" => %{start: metadata.provenance_start, finish: metadata.provenance_end},
       "config" => state.config,
       "scenarios" => Map.keys(state.scenarios) |> Enum.sort(),
       "operations" => state.operations,
+      "timed_counts" => state.timed_counts,
       "result_totals" => %{ok: successes, error: errors, skipped: skipped, blocked: blocked},
       "turnovers" => state.turnovers,
       "samples" => state.samples,
+      "leak_sample_counts" => %{
+        periodic: state.sample_series.count,
+        by_scenario:
+          Map.new(state.turnover_series, fn {scenario, series} -> {scenario, series.count} end)
+      },
       "overall_latency_ms" => overall,
       "results" => results,
       "known_blocked" => known_blocked,
@@ -74,16 +89,38 @@ defmodule Arbor.MCP.Soak.Evidence do
     }
   end
 
-  def percentiles([]), do: %{p50: 0, p95: 0, p99: 0}
+  defp qualification_complete?(passed, state, elapsed_ms) do
+    config = state.config
 
-  def percentiles(values) do
-    sorted = Enum.sort(values)
-    n = length(sorted)
+    passed and config.duration_ms >= 172_800_000 and elapsed_ms >= 172_800_000 and
+      Enum.sort(config.eras) == [:legacy, :modern] and
+      Enum.sort(config.transports) ==
+        Enum.sort([:beam, :stdio, :cowboy_owned, :cowboy_host, :bandit_owned, :bandit_host]) and
+      config.only == nil and config.mix == Policy.default_mix() and
+      full_scenario_coverage?(state)
+  end
 
-    %{
-      p50: Enum.at(sorted, ceil(n * 0.5) - 1),
-      p95: Enum.at(sorted, ceil(n * 0.95) - 1),
-      p99: Enum.at(sorted, ceil(n * 0.99) - 1)
-    }
+  defp full_scenario_coverage?(state) do
+    config = state.config
+    expected = for endpoint <- config.transports, era <- config.eras, do: "#{endpoint}/#{era}"
+
+    Enum.sort(Map.keys(state.scenarios)) == Enum.sort(expected) and
+      Enum.all?(state.scenarios, fn {scenario, _value} ->
+        [endpoint, era] = String.split(scenario, "/")
+
+        Enum.all?(
+          Policy.applicable_operations(
+            String.to_existing_atom(endpoint),
+            String.to_existing_atom(era),
+            config.mix
+          ),
+          fn operation ->
+            key = "#{scenario}/#{operation}"
+
+            Map.get(state.results, key, %{ok: 0}).ok > 0 and
+              Map.get(state.timed_counts, key, 0) > 0
+          end
+        )
+      end)
   end
 end

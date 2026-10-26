@@ -5,31 +5,47 @@ defmodule Arbor.MCP.Soak.Runner do
   alias Arbor.MCP.Client.Subscription
   alias Arbor.MCP.Server
   alias Arbor.MCP.Server.{Runtime, Transport}
-  alias Arbor.MCP.Soak.{ClientHandler, Evidence, Handler, Policy}
+
+  alias Arbor.MCP.Soak.{
+    ClientHandler,
+    Evidence,
+    Execution,
+    Handler,
+    Histogram,
+    Policy,
+    Provenance
+  }
 
   @modes [legacy: {:legacy_only, "2025-11-25"}, modern: {:modern_only, "2026-07-28"}]
   @endpoints [:beam, :stdio, :cowboy_owned, :cowboy_host, :bandit_owned, :bandit_host]
-  @default_mix [
-    echo: 40,
-    list: 12,
-    resource: 8,
-    template: 8,
-    prompt: 8,
-    progress: 8,
-    cancellation: 4,
-    notification: 4,
-    mrtr: 4,
-    ping: 4
-  ]
   @request_key :binary.copy(<<83>>, 32)
+  @telemetry_events [
+    [:arbor_mcp, :client, :disconnected],
+    [:arbor_mcp, :client, :reconnect, :attempt],
+    [:arbor_mcp, :client, :reconnect, :success],
+    [:arbor_mcp, :client, :reconnect, :error],
+    [:arbor_mcp, :client, :reconnect, :timeout]
+  ]
 
   def run(args) do
     config = parse!(args)
     Logger.configure(level: if(config.debug, do: :debug, else: :warning))
-    File.mkdir_p!(config.output)
+    ensure_output!(config.output)
     events_path = Path.join(config.output, "events.jsonl")
     summary_path = Path.join(config.output, "summary.json")
-    {:ok, io} = File.open(events_path, [:write, :binary])
+    {:ok, io} = File.open(events_path, [:write, :exclusive, :binary])
+    old_trap = Process.flag(:trap_exit, true)
+    telemetry_id = {__MODULE__, self(), make_ref()}
+
+    :ok =
+      :telemetry.attach_many(
+        telemetry_id,
+        @telemetry_events,
+        fn event, measurements, metadata, owner ->
+          send(owner, {:soak_client_event, event, measurements, metadata})
+        end,
+        self()
+      )
 
     state = %{
       config: config,
@@ -40,40 +56,65 @@ defmodule Arbor.MCP.Soak.Runner do
       scenarios: %{},
       results: %{},
       failures: [],
-      turnover_samples: [],
+      turnover_series: %{},
+      sample_series: Policy.new_series(),
       samples: 0,
       next_sample: now_ms(),
       operations: 0,
+      timed_counts: %{},
       turnovers: 0,
-      scenario_cursor: 0
+      scenario_cursor: 0,
+      provenance_start: Provenance.capture()
     }
 
-    state =
-      try do
-        state
-        |> start_scenarios()
-        |> exercise_scenarios()
-        |> then(&%{&1 | start_ms: now_ms(), next_sample: now_ms()})
-        |> run_until_deadline()
-      rescue
-        error ->
-          record_failure(
-            state,
-            :harness,
-            :exception,
-            Exception.format(:error, error, __STACKTRACE__)
-          )
-      catch
-        kind, reason -> record_failure(state, :harness, kind, inspect(reason))
-      end
+    try do
+      checkpoint(state)
 
-    state = close_scenarios(state)
-    summary = summarize(state)
-    File.write!(summary_path, Jason.encode_to_iodata!(jsonable(summary)))
-    File.close(io)
+      state =
+        try do
+          state
+          |> start_scenarios()
+          |> exercise_scenarios()
+          |> then(&%{&1 | start_ms: now_ms(), next_sample: now_ms()})
+          |> run_until_deadline()
+        rescue
+          error ->
+            record_failure(
+              latest_state(),
+              :harness,
+              :exception,
+              Exception.format(:error, error, __STACKTRACE__)
+            )
+        catch
+          kind, reason -> record_failure(latest_state(), :harness, kind, inspect(reason))
+        end
 
-    if summary["passed"], do: {:ok, summary}, else: {:error, summary}
+      state = state |> drain_events() |> close_scenarios() |> drain_events()
+      summary = summarize(state)
+      File.write!(summary_path, Jason.encode_to_iodata!(jsonable(summary)))
+
+      if summary["passed"], do: {:ok, summary}, else: {:error, summary}
+    after
+      :telemetry.detach(telemetry_id)
+      Process.flag(:trap_exit, old_trap)
+      Process.delete({__MODULE__, :state})
+      File.close(io)
+    end
   end
+
+  @doc false
+  def ensure_output!(output) do
+    File.mkdir_p!(output)
+    if File.ls!(output) != [], do: Mix.raise("soak output directory must be empty: #{output}")
+    :ok
+  end
+
+  defp checkpoint(state) do
+    Process.put({__MODULE__, :state}, state)
+    state
+  end
+
+  defp latest_state, do: Process.get({__MODULE__, :state})
 
   @doc false
   def parse!(args) do
@@ -158,10 +199,10 @@ defmodule Arbor.MCP.Soak.Runner do
     end
   end
 
-  defp parse_mix!(nil), do: @default_mix
+  defp parse_mix!(nil), do: Policy.default_mix()
 
   defp parse_mix!(value) do
-    allowed = Keyword.keys(@default_mix)
+    allowed = Keyword.keys(Policy.default_mix())
 
     mix =
       for part <- String.split(value, ","), part != "" do
@@ -217,10 +258,10 @@ defmodule Arbor.MCP.Soak.Runner do
 
         if era in state.config.eras and
              (state.config.only == nil or state.config.only == id) do
-          case open_scenario(endpoint, era, mode, version) do
+          case safe_open_scenario(endpoint, era, mode, version) do
             {:ok, scenario} ->
               write_event(state, %{type: "scenario_open", scenario: id})
-              put_in(state.scenarios[id], scenario)
+              state |> put_in([:scenarios, id], scenario) |> checkpoint()
 
             {:error, reason, cleanup} ->
               record_failure(state, id, :startup, reason, cleanup)
@@ -230,6 +271,15 @@ defmodule Arbor.MCP.Soak.Runner do
         end
       end)
     end)
+  end
+
+  defp safe_open_scenario(endpoint, era, mode, version) do
+    open_scenario(endpoint, era, mode, version)
+  rescue
+    error ->
+      {:error, Exception.format(:error, error, __STACKTRACE__), %{server: :startup_exception}}
+  catch
+    kind, reason -> {:error, inspect({kind, reason}), %{server: :startup_exit}}
   end
 
   defp open_scenario(endpoint, era, mode, version) do
@@ -246,7 +296,7 @@ defmodule Arbor.MCP.Soak.Runner do
 
         opts = Keyword.merge(opts, server.client_opts)
 
-        case Client.start_link(opts) do
+        case safe_call(fn -> Client.start_link(opts) end) do
           {:ok, client} ->
             {:ok,
              Map.merge(server, %{
@@ -254,7 +304,8 @@ defmodule Arbor.MCP.Soak.Runner do
                endpoint: endpoint,
                era: era,
                opened_ms: now_ms(),
-               requests: 2
+               requests: 2,
+               operation_counts: %{}
              })}
 
           error ->
@@ -316,8 +367,7 @@ defmodule Arbor.MCP.Soak.Runner do
 
   defp open_server(endpoint, mode) do
     {adapter, ownership} = http_endpoint(endpoint)
-    port = free_port()
-    origin = "http://127.0.0.1:#{port}"
+    port = 0
 
     if ownership == :owned do
       opts =
@@ -325,13 +375,13 @@ defmodule Arbor.MCP.Soak.Runner do
           [
             transport: :http,
             http:
-              [adapter: adapter, port: port, host: {127, 0, 0, 1}, allowed_origins: [origin]] ++
+              [adapter: adapter, port: port, host: {127, 0, 0, 1}, allowed_origins: :any] ++
                 http_plug_opts(mode)
           ]
 
       with {:ok, root} <- Server.start_link(opts) do
-        case Transport.http_listener(root) do
-          {:ok, listener_info} ->
+        finish_server(root, fn ->
+          with {:ok, listener_info} <- Transport.http_listener(root) do
             port = listener_port(adapter, listener_info)
 
             {:ok,
@@ -344,16 +394,13 @@ defmodule Arbor.MCP.Soak.Runner do
                port: port,
                client_opts: http_client_opts(port, mode)
              }}
-
-          error ->
-            :ok = Server.stop(root)
-            error
-        end
+          end
+        end)
       end
     else
       with {:ok, root} <- Runtime.start_link(server_opts(mode) ++ [transport: :mounted_http]) do
-        case start_host_listener(adapter, root, mode, port, origin) do
-          {:ok, listener, ref, port} ->
+        finish_server(root, fn ->
+          with {:ok, listener, ref, port} <- start_host_listener(adapter, root, mode, port) do
             {:ok,
              %{
                root: root,
@@ -364,12 +411,29 @@ defmodule Arbor.MCP.Soak.Runner do
                port: port,
                client_opts: http_client_opts(port, mode)
              }}
-
-          error ->
-            :ok = Server.stop(root)
-            error
-        end
+          end
+        end)
       end
+    end
+  end
+
+  defp finish_server(root, fun) do
+    result =
+      try do
+        fun.()
+      rescue
+        error -> {:error, Exception.format(:error, error, __STACKTRACE__)}
+      catch
+        kind, reason -> {:error, {kind, reason}}
+      end
+
+    case result do
+      {:ok, _server} = success ->
+        success
+
+      error ->
+        safe_call(fn -> Server.stop(root) end)
+        {:error, inspect(error)}
     end
   end
 
@@ -382,8 +446,7 @@ defmodule Arbor.MCP.Soak.Runner do
     do: [
       transport: :http,
       url: "http://127.0.0.1:#{port}/mcp",
-      use_sse: mode == :legacy_only,
-      stream_idle_timeout: 2_000
+      use_sse: mode == :legacy_only
     ]
 
   defp listener_port(:cowboy, %{ranch_ref: ref}), do: :ranch.get_port(ref)
@@ -393,12 +456,12 @@ defmodule Arbor.MCP.Soak.Runner do
     port
   end
 
-  defp start_host_listener(:cowboy, root, mode, port, origin) do
+  defp start_host_listener(:cowboy, root, mode, port) do
     ref = {:arbor_mcp_soak, System.unique_integer([:positive])}
 
     case Plug.Cowboy.http(
            Arbor.MCP.HttpPlug,
-           [runtime: root, path: "/mcp", protocol_mode: mode, allowed_origins: [origin]] ++
+           [runtime: root, path: "/mcp", protocol_mode: mode, allowed_origins: :any] ++
              http_plug_opts(mode),
            ip: {127, 0, 0, 1},
            port: port,
@@ -409,9 +472,9 @@ defmodule Arbor.MCP.Soak.Runner do
     end
   end
 
-  defp start_host_listener(:bandit, root, mode, port, origin) do
+  defp start_host_listener(:bandit, root, mode, port) do
     opts =
-      [runtime: root, path: "/mcp", protocol_mode: mode, allowed_origins: [origin]] ++
+      [runtime: root, path: "/mcp", protocol_mode: mode, allowed_origins: :any] ++
         http_plug_opts(mode)
 
     case Bandit.start_link(
@@ -438,7 +501,7 @@ defmodule Arbor.MCP.Soak.Runner do
     else
       if Enum.any?(state.failures, &(&1.kind == :startup)),
         do: state,
-        else: do_run(state, ids, deadline)
+        else: do_run(state, deadline)
     end
   end
 
@@ -465,76 +528,85 @@ defmodule Arbor.MCP.Soak.Runner do
         Enum.reduce(Keyword.keys(state.config.mix), state, fn operation, state ->
           scenario = state.scenarios[id]
           started = now_ms()
-          result = execute(operation, scenario, state.config)
+          {result, scenario} = execute(operation, scenario, state.config)
           state = record_result(state, id, operation, result, now_ms() - started)
           scenario = %{scenario | requests: scenario.requests + request_cost(operation)}
-          put_in(state.scenarios[id], scenario)
+          state |> put_in([:scenarios, id], scenario) |> checkpoint()
         end)
       end)
     end
   end
 
-  defp do_run(state, ids, deadline) do
-    if now_ms() >= deadline or fatal?(state) do
+  defp do_run(state, deadline) do
+    ids = Map.keys(state.scenarios) |> Enum.sort()
+
+    if now_ms() >= deadline or fatal?(state) or ids == [] do
       state
     else
-      state = maybe_sample(state)
+      state = state |> drain_events() |> maybe_sample()
       id = Enum.at(ids, rem(state.scenario_cursor, length(ids)))
       state = maybe_turnover(state, id)
-      scenario = state.scenarios[id]
-      operation = choose_operation(state)
-      started = now_ms()
-      result = execute(operation, scenario, state.config)
-      elapsed = now_ms() - started
-      state = record_result(state, id, operation, result, elapsed)
 
-      scenario = %{
-        state.scenarios[id]
-        | requests: state.scenarios[id].requests + request_cost(operation)
-      }
-
-      state = %{
+      if fatal?(state) or not Map.has_key?(state.scenarios, id) do
         state
-        | scenarios: Map.put(state.scenarios, id, scenario),
-          scenario_cursor: state.scenario_cursor + 1,
-          operations: state.operations + 1
-      }
+      else
+        scenario = state.scenarios[id]
+        operation = Policy.next_operation(state.config.mix, scenario.operation_counts)
+        started = now_ms()
+        {result, scenario} = execute(operation, scenario, state.config)
+        elapsed = now_ms() - started
+        state = record_result(state, id, operation, result, elapsed)
 
-      interval = trunc(1_000 / state.config.rate)
-      remaining = interval - (now_ms() - started)
-      if remaining > 0, do: Process.sleep(remaining)
-      do_run(state, ids, deadline)
+        scenario = %{
+          scenario
+          | requests: scenario.requests + request_cost(operation),
+            operation_counts: Map.update(scenario.operation_counts, operation, 1, &(&1 + 1))
+        }
+
+        state =
+          %{
+            state
+            | scenarios: Map.put(state.scenarios, id, scenario),
+              scenario_cursor: state.scenario_cursor + 1,
+              operations: state.operations + 1,
+              timed_counts: Map.update(state.timed_counts, "#{id}/#{operation}", 1, &(&1 + 1))
+          }
+          |> checkpoint()
+
+        interval = trunc(1_000 / state.config.rate)
+        remaining = interval - (now_ms() - started)
+        if remaining > 0, do: Process.sleep(remaining)
+        do_run(state, deadline)
+      end
     end
   end
 
-  defp fatal?(state) do
-    Enum.any?(state.failures, fn f -> f.kind in [:request_id_capacity_exceeded, :leak] end)
-  end
+  defp fatal?(state), do: state.failures != []
 
-  defp request_cost(:cancellation), do: 2
+  defp request_cost(op) when op in [:cancellation, :restart], do: 2
   defp request_cost(:notification), do: 3
   defp request_cost(op) when op in [:resource, :template, :prompt, :mrtr], do: 2
   defp request_cost(_), do: 1
-
-  defp choose_operation(state) do
-    mix = state.config.mix
-    total = Enum.reduce(mix, 0, fn {_op, weight}, sum -> sum + weight end)
-    pick = rem(state.operations, total)
-
-    Enum.reduce_while(mix, pick, fn {op, weight}, remaining ->
-      if remaining < weight, do: {:halt, op}, else: {:cont, remaining - weight}
-    end)
-  end
 
   defp execute(operation, scenario, config) do
     reason = Policy.known_blocked(scenario.endpoint, scenario.era, operation)
 
     if reason != nil and not config.exercise_known_blocked do
-      {:known_blocked, reason}
+      {{:known_blocked, reason}, scenario}
     else
-      perform(operation, scenario)
+      Execution.protected(fn -> perform(operation, scenario) end, scenario)
     end
   end
+
+  defp perform(:restart, %{endpoint: :stdio} = scenario) do
+    transport = :sys.get_state(scenario.client).transport_state
+
+    with :ok <- Arbor.RPC.Subprocess.close(transport.subprocess) do
+      {:scenario_update, await_planned_reconnect(scenario.client), scenario}
+    end
+  end
+
+  defp perform(:restart, _scenario), do: :skipped
 
   defp perform(:echo, scenario) do
     value = "soak-#{System.unique_integer([:positive])}"
@@ -625,7 +697,7 @@ defmodule Arbor.MCP.Soak.Runner do
       with :ok <- receive_progress(token, 2_000),
            [request_id] <- Client.get_pending_requests(scenario.client),
            :ok <- Client.send_cancelled(scenario.client, request_id, "soak cancellation"),
-           {:error, :cancelled} <- Task.await(task, 3_000),
+           {:ok, {:error, :cancelled}} <- Task.yield(task, 3_000),
            do: :ok
 
     if result != :ok and Process.alive?(task.pid), do: Task.shutdown(task, :brutal_kill)
@@ -698,6 +770,48 @@ defmodule Arbor.MCP.Soak.Runner do
     end
   end
 
+  defp await_planned_reconnect(client) do
+    deadline = now_ms() + 10_000
+    collect_reconnect(client, deadline, %{disconnected: 0, attempt: 0, success: 0})
+  end
+
+  defp collect_reconnect(client, deadline, counts) do
+    remaining = max(deadline - now_ms(), 0)
+
+    receive do
+      {:soak_client_event, event, measurements, %{pid: ^client} = metadata} ->
+        send(self(), {:soak_planned_reconnect_event, client, event, measurements, metadata})
+
+        key =
+          case event do
+            [:arbor_mcp, :client, :disconnected] -> :disconnected
+            [:arbor_mcp, :client, :reconnect, :attempt] -> :attempt
+            [:arbor_mcp, :client, :reconnect, :success] -> :success
+            _ -> :error
+          end
+
+        if key == :error do
+          {:error, {:reconnect_event, event, measurements, inspect(metadata)}}
+        else
+          counts = Map.update!(counts, key, &(&1 + 1))
+
+          if counts.success == 1 do
+            with true <- Policy.reconnect_complete?(counts),
+                 {:ok, _} <- Client.ping(client, timeout: 5_000) do
+              send(self(), {:soak_planned_reconnect, client, counts})
+              :ok
+            else
+              other -> {:error, {:reconnect_counts, counts, other}}
+            end
+          else
+            collect_reconnect(client, deadline, counts)
+          end
+        end
+    after
+      remaining -> {:error, {:reconnect_timeout, counts}}
+    end
+  end
+
   defp receive_progress(token, timeout) do
     receive do
       {:soak_progress, _request_id, %{"progressToken" => ^token}} -> :ok
@@ -718,10 +832,10 @@ defmodule Arbor.MCP.Soak.Runner do
          scenario.requests,
          scenario.opened_ms,
          now_ms(),
-         state.config.turnover_requests,
+         Policy.request_budget(scenario.endpoint, scenario.era, state.config.turnover_requests),
          state.config.turnover_ms
        ) do
-      cleanup = close_scenario(scenario)
+      cleanup = safe_close_scenario(scenario)
 
       write_event(state, %{
         type: "turnover",
@@ -730,26 +844,45 @@ defmodule Arbor.MCP.Soak.Runner do
         requests: scenario.requests
       })
 
-      state = %{state | turnovers: state.turnovers + 1}
+      state = %{state | turnovers: state.turnovers + 1} |> checkpoint()
 
       state =
         if cleanup_passed?(cleanup),
           do: state,
           else: record_failure(state, id, :cleanup, inspect(cleanup), cleanup)
 
-      case open_scenario(
+      case safe_open_scenario(
              scenario.endpoint,
              scenario.era,
              mode(scenario.era),
              version(scenario.era)
            ) do
         {:ok, replacement} ->
-          state = put_in(state.scenarios[id], replacement)
-          sample = metrics()
-          check_leak(%{state | turnover_samples: [sample | state.turnover_samples]}, id)
+          replacement = Policy.carry_operation_counts(scenario, replacement)
+          state = state |> put_in([:scenarios, id], replacement) |> checkpoint()
+          sample = metrics(state)
+
+          series =
+            state.turnover_series |> Map.get(id, Policy.new_series()) |> Policy.add_sample(sample)
+
+          write_event(state, %{
+            type: "turnover_sample",
+            scenario: id,
+            cycle: series.count,
+            metrics: sample
+          })
+
+          check_leak(
+            %{state | turnover_series: Map.put(state.turnover_series, id, series)},
+            id,
+            series
+          )
 
         {:error, reason, evidence} ->
-          record_failure(state, id, :restart, reason, evidence)
+          state
+          |> update_in([:scenarios], &Map.delete(&1, id))
+          |> checkpoint()
+          |> record_failure(id, :restart, reason, evidence)
       end
     else
       state
@@ -763,13 +896,27 @@ defmodule Arbor.MCP.Soak.Runner do
 
   defp close_scenarios(state) do
     Enum.reduce(state.scenarios, state, fn {id, scenario}, state ->
-      cleanup = close_scenario(scenario)
+      cleanup = safe_close_scenario(scenario)
       write_event(state, %{type: "final_cleanup", scenario: id, cleanup: cleanup})
 
       if cleanup_passed?(cleanup),
         do: state,
         else: record_failure(state, id, :cleanup, inspect(cleanup), cleanup)
     end)
+  end
+
+  defp safe_close_scenario(scenario) do
+    close_scenario(scenario)
+  rescue
+    error ->
+      %{
+        client_stop: {:error, Exception.message(error)},
+        client_down: :unknown,
+        server_stop: :unknown
+      }
+  catch
+    kind, reason ->
+      %{client_stop: {kind, inspect(reason)}, client_down: :unknown, server_stop: :unknown}
   end
 
   defp close_scenario(scenario) do
@@ -805,6 +952,8 @@ defmodule Arbor.MCP.Soak.Runner do
 
   defp safe_call(fun) do
     fun.()
+  rescue
+    error -> {:error, Exception.message(error)}
   catch
     kind, reason -> {kind, inspect(reason)}
   end
@@ -829,7 +978,8 @@ defmodule Arbor.MCP.Soak.Runner do
     if now_ms() < state.next_sample do
       state
     else
-      sample = metrics()
+      sample = metrics(state)
+      series = Policy.add_sample(state.sample_series, sample)
 
       write_event(state, %{
         type: "sample",
@@ -838,19 +988,33 @@ defmodule Arbor.MCP.Soak.Runner do
         turnovers: state.turnovers
       })
 
-      %{state | samples: state.samples + 1, next_sample: now_ms() + state.config.sample_ms}
+      state = %{
+        state
+        | samples: state.samples + 1,
+          next_sample: now_ms() + state.config.sample_ms,
+          sample_series: series
+      }
+
+      check_leak(state, :periodic, series)
     end
   end
 
-  defp metrics do
+  defp metrics(state) do
+    Enum.each(state.scenarios, fn {_id, scenario} ->
+      Enum.each([scenario.client, scenario.root], fn
+        pid when is_pid(pid) -> :erlang.garbage_collect(pid)
+        _ -> :ok
+      end)
+    end)
+
+    :erlang.garbage_collect(self())
     tables = :ets.all()
 
     %{
       memory_bytes: :erlang.memory(:total),
       processes: :erlang.system_info(:process_count),
       ets_tables: length(tables),
-      ets_words:
-        Enum.reduce(tables, 0, fn table, sum -> sum + (:ets.info(table, :memory) || 0) end),
+      ets_words: Policy.ets_words(tables),
       ports: length(Port.list()),
       file_descriptors: file_descriptors()
     }
@@ -865,24 +1029,30 @@ defmodule Arbor.MCP.Soak.Runner do
     ErlangError -> nil
   end
 
-  defp check_leak(state, id) do
-    samples = Enum.take(state.turnover_samples, 6) |> Enum.reverse()
-
-    Enum.reduce(Policy.leak_violations(samples), state, fn violation, state ->
+  defp check_leak(state, id, series) do
+    Enum.reduce(Policy.leak_violations(series), state, fn violation, state ->
       record_failure(state, id, :leak, violation)
     end)
+    |> checkpoint()
   end
 
   defp record_result(state, id, operation, result, elapsed) do
     key = "#{id}/#{operation}"
 
     entry =
-      Map.get(state.results, key, %{ok: 0, error: 0, skipped: 0, blocked: 0, latency_ms: []})
+      Map.get(state.results, key, %{
+        ok: 0,
+        error: 0,
+        skipped: 0,
+        blocked: 0,
+        latency_hist: Histogram.new()
+      })
 
     {entry, state} =
       case result do
         :ok ->
-          {%{entry | ok: entry.ok + 1, latency_ms: [elapsed | entry.latency_ms]}, state}
+          {%{entry | ok: entry.ok + 1, latency_hist: Histogram.add(entry.latency_hist, elapsed)},
+           state}
 
         :skipped ->
           {%{entry | skipped: entry.skipped + 1}, state}
@@ -910,7 +1080,7 @@ defmodule Arbor.MCP.Soak.Runner do
            record_failure(state, id, kind, %{operation: operation, result: inspect(other)})}
       end
 
-    %{state | results: Map.put(state.results, key, entry)}
+    %{state | results: Map.put(state.results, key, entry)} |> checkpoint()
   end
 
   defp record_failure(state, scenario, kind, reason, cleanup \\ nil) do
@@ -923,7 +1093,7 @@ defmodule Arbor.MCP.Soak.Runner do
     }
 
     write_event(state, Map.put(failure, :type, "failure"))
-    %{state | failures: [failure | state.failures]}
+    %{state | failures: [failure | state.failures]} |> checkpoint()
   end
 
   defp write_event(state, event) do
@@ -941,30 +1111,90 @@ defmodule Arbor.MCP.Soak.Runner do
     Evidence.build(state, %{
       elapsed_ms: now_ms() - state.start_ms,
       finished_at: DateTime.utc_now() |> DateTime.to_iso8601(),
-      source_commit: git_head(),
-      mix_lock_sha256: Base.encode16(:crypto.hash(:sha256, File.read!("mix.lock")), case: :lower),
-      elixir: System.version(),
-      otp: List.to_string(:erlang.system_info(:otp_release)),
-      platform: :erlang.system_info(:system_architecture) |> List.to_string(),
-      os: :os.type() |> inspect()
+      provenance_start: state.provenance_start,
+      provenance_end: Provenance.capture()
     })
   end
 
-  defp git_head do
-    case System.cmd("git", ["rev-parse", "HEAD"], stderr_to_stdout: true) do
-      {hash, 0} -> String.trim(hash)
-      _ -> nil
+  defp drain_events(state) do
+    receive do
+      {:soak_client_event, event, measurements, metadata} ->
+        client = Map.get(metadata, :pid)
+
+        scenario =
+          Enum.find_value(state.scenarios, fn {id, value} ->
+            if value.client == client, do: id
+          end)
+
+        write_event(state, %{
+          type: "client_event",
+          event: event,
+          scenario: scenario,
+          measurements: measurements,
+          metadata: inspect(metadata)
+        })
+
+        planned_failure? =
+          Enum.any?(state.failures, fn failure ->
+            failure.scenario == scenario and failure.kind == :operation and
+              is_map(failure.reason) and Map.get(failure.reason, :operation) == :restart
+          end)
+
+        state =
+          if Policy.unexpected_client_event?(event, scenario != nil, planned_failure?) do
+            record_failure(state, scenario, :unexpected_disconnect, %{
+              event: event,
+              metadata: inspect(metadata)
+            })
+          else
+            state
+          end
+
+        drain_events(state)
+
+      {:soak_planned_reconnect, client, counts} ->
+        scenario =
+          Enum.find_value(state.scenarios, fn {id, value} ->
+            if value.client == client, do: id
+          end)
+
+        write_event(state, %{type: "planned_reconnect", scenario: scenario, counts: counts})
+        drain_events(state)
+
+      {:soak_planned_reconnect_event, client, event, measurements, metadata} ->
+        scenario =
+          Enum.find_value(state.scenarios, fn {id, value} ->
+            if value.client == client, do: id
+          end)
+
+        write_event(state, %{
+          type: "planned_reconnect_event",
+          scenario: scenario,
+          event: event,
+          measurements: measurements,
+          metadata: inspect(metadata)
+        })
+
+        drain_events(state)
+
+      {:EXIT, pid, reason} ->
+        state =
+          if reason in [:normal, :shutdown] or match?({:shutdown, _}, reason) do
+            state
+          else
+            record_failure(state, :harness, :linked_exit, %{
+              pid: inspect(pid),
+              reason: inspect(reason)
+            })
+          end
+
+        drain_events(state)
+    after
+      0 -> state
     end
   end
 
   defp now_ms, do: System.monotonic_time(:millisecond)
-
-  defp free_port do
-    {:ok, socket} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
-    {:ok, {{127, 0, 0, 1}, port}} = :inet.sockname(socket)
-    :ok = :gen_tcp.close(socket)
-    port
-  end
 
   defp jsonable(value) when is_map(value),
     do: Map.new(value, fn {key, item} -> {key, jsonable(item)} end)
