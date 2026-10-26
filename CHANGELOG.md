@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tools/list` page only, so a tool on a later page of a paginated list
   skipped the check. The server now follows the cursors until it finds the
   tool, for up to 100 pages, and fails the request closed past that.
+- The default OAuth provider renews an access token with its refresh
+  token, before the token expires and when the server rejects it, instead
+  of running the browser flow again (which also found the same
+  authorization server and stopped with `:auth_loop_detected`).
 
 ## [1.7.3] - 2026-10-26
 

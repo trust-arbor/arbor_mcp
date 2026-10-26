@@ -390,6 +390,7 @@ defmodule ExMCP.Transport.HTTP do
           case perform_and_maybe_auth(message, state) do
             {:ok, response} -> handle_http_response(response, state, message)
             {:ok, response, new_state} -> handle_http_response(response, new_state, message)
+            {:error, reason, new_state} -> {:error, reason, new_state}
             {:error, reason} -> {:error, reason}
           end
 
@@ -413,6 +414,7 @@ defmodule ExMCP.Transport.HTTP do
     case perform_and_maybe_auth(message, state) do
       {:ok, response} -> handle_http_response(response, state, message)
       {:ok, response, new_state} -> handle_http_response(response, new_state, message)
+      {:error, reason, _new_state} -> {:error, reason}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -482,8 +484,8 @@ defmodule ExMCP.Transport.HTTP do
         new_state = state |> Map.put(:auth_provider_state, new_ps) |> apply_token_to_state(token)
         provider_retry_request(body, new_state)
 
-      {:error, reason, _ps} ->
-        {:error, reason}
+      {:error, reason, ps} ->
+        {:error, reason, %{state | auth_provider_state: ps}}
     end
   end
 
@@ -519,7 +521,12 @@ defmodule ExMCP.Transport.HTTP do
         %{state | auth_provider_state: new_ps}
 
       {:ok, token, new_ps} ->
-        %{state | auth_provider_state: new_ps, headers: put_bearer_header(state.headers, token)}
+        %{
+          state
+          | auth_provider_state: new_ps,
+            access_token: token,
+            headers: put_bearer_header(state.headers, token)
+        }
 
       {:error, _} ->
         state
@@ -806,6 +813,10 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   defp result_state_changes(snapshot, {:ok, new_state, _response_data}) do
+    async_state_changes(snapshot, new_state)
+  end
+
+  defp result_state_changes(snapshot, {:error, _reason, new_state}) do
     async_state_changes(snapshot, new_state)
   end
 
