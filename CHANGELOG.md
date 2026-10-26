@@ -15,11 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SIGKILL. A server that exits on EOF is no longer signalled. The subprocess
   `:cleanup_timeout` defaults to `eof_grace + term_grace + 400` (2_500 ms);
   when only `:cleanup_timeout` is set, the EOF grace shrinks to fit it.
-  `close/1` returns within `:cleanup_timeout`, and the shutdown runs in a
-  process of its own, so a server that ignores EOF is still stopped when the
-  closing process (a client its supervisor kills during the grace, say)
-  dies first. Negative graces and a non-positive budget are rejected.
-  Backport of 2.x #109.
+  SIGKILL goes out within `:cleanup_timeout`, and `close/1` returns within
+  it plus 500 ms. The shutdown is run by a process started with the
+  connection, which acts when the port closes, so a server that ignores EOF
+  is still stopped when the process owning the connection (a client its
+  supervisor kills, say) dies first, before or during `close/1`. Negative
+  graces and a non-positive budget are rejected. Backport of 2.x #109.
 - A client's default close limit (`Deadline.cleanup_timeout/1`) covers a stdio
   server's shutdown budget plus 500 ms: 3_000 ms with the stdio defaults. Other
   transports keep 1_000 ms.
