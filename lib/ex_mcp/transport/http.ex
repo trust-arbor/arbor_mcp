@@ -1002,6 +1002,8 @@ defmodule ExMCP.Transport.HTTP do
     Enum.find_value(events, "", fn
       %{data: data} when is_binary(data) and data != "" ->
         case Jason.decode(data) do
+          {:ok, %{"id" => _id, "result" => _result}} -> data
+          {:ok, %{"id" => _id, "error" => _error}} -> data
           {:ok, %{"method" => _method}} -> nil
           {:ok, _response} -> data
           {:error, _reason} -> nil

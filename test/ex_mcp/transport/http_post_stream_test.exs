@@ -63,6 +63,14 @@ defmodule ExMCP.Transport.HTTP.PostStreamTest do
     refute body =~ "progress"
   end
 
+  test "keeps a method-bearing response as the POST answer" do
+    response = ~s({"jsonrpc":"2.0","id":1,"method":"tools/call","result":{}})
+
+    assert {:ok, body} = feed(["data: " <> response <> "\n\n"])
+    assert body =~ response
+    refute_receive {:handed_over, _}, 50
+  end
+
   test "a CRLF split across chunks ends one event, not two" do
     assert {:ok, body} =
              feed(["data: " <> @progress <> "\r", "\n\r\ndata: " <> @response <> "\r\n\r\n"])

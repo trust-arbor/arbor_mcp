@@ -319,6 +319,43 @@ defmodule ExMCP.Client.HTTPPostStreamEventsTest do
     send(stream, :close)
   end
 
+  test "a synchronous POST accepts a response that also names a method" do
+    bypass = Bypass.open()
+
+    Bypass.stub(bypass, "POST", "/mcp", fn conn ->
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+
+      case Jason.decode!(body) do
+        %{"method" => "initialize", "id" => id} ->
+          answer_initialize(conn, id, :json)
+
+        %{"method" => "tools/call", "id" => id} ->
+          response = Map.put(done(id), "method", "tools/call")
+
+          conn
+          |> Plug.Conn.put_resp_content_type("text/event-stream")
+          |> Plug.Conn.resp(200, event(response))
+
+        _notification ->
+          Plug.Conn.resp(conn, 202, "")
+      end
+    end)
+
+    {:ok, client} =
+      Client.start_link(
+        transport: :http,
+        url: "http://127.0.0.1:#{bypass.port}/mcp",
+        protocol_mode: :legacy_only,
+        protocol_version: "2025-11-25",
+        use_sse: false,
+        health_check_interval: nil,
+        reconnect: false
+      )
+
+    assert {:ok, %{"content" => [%{"text" => "done"}]}} =
+             Client.call_tool(client, "slow", %{}, timeout: 1_000, format: :map)
+  end
+
   # Sends nothing on the legacy standalone GET stream; it stays open so the
   # call's POST runs from its own task, until the test closes it.
   defp relay(conn) do

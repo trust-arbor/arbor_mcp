@@ -35,6 +35,16 @@ defmodule ExMCP.Internal.OmittedParamsTest do
              Protocol.parse_message_unvalidated(
                ~s({"jsonrpc":"2.0","id":43,"method":"ping","error":{"code":-1,"message":"x"}})
              )
+
+    assert {:result, %{}, 42} =
+             Protocol.parse_message(
+               ~s({"jsonrpc":"2.0","id":42,"method":"ping","params":{},"result":{}})
+             )
+
+    assert {:error, %{"code" => -1, "message" => "x"}, 43} =
+             Protocol.parse_message(
+               ~s({"jsonrpc":"2.0","id":43,"method":"ping","error":{"code":-1,"message":"x"}})
+             )
   end
 
   @tool %{

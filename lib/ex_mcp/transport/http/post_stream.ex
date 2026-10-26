@@ -89,6 +89,12 @@ defmodule ExMCP.Transport.HTTP.PostStream do
     case SSE.parse_complete(block) do
       [%{data: data}] when data != "" ->
         case Jason.decode(data) do
+          {:ok, %{"id" => _id, "result" => _result}} ->
+            {:ok, keep(acc, block)}
+
+          {:ok, %{"id" => _id, "error" => _error}} ->
+            {:ok, keep(acc, block)}
+
           {:ok, %{"method" => method}} when is_binary(method) ->
             with :ok <- deliver(data, limits), do: {:ok, keep_metadata(acc, metadata(block))}
 

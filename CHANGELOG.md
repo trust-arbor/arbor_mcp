@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Legacy POST event-stream responses with both a method and a result or error
+  now remain responses in synchronous and streamed paths. This completes the
+  response-preservation behavior of the 1.x backports of 2.x PRs #121 and #122.
 - OAuth retries of a legacy POST now retain its live event-stream consumer,
   allowing server requests on the retried stream to be answered. This fixes
   an auth-path gap in the 1.x backport of 2.x PR #121.
