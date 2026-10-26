@@ -495,10 +495,13 @@ defmodule ExMCP.Server.Handler do
   @doc """
   Handles setting the log level for the server.
 
-  This callback is called when the client sends a logging/setLevel request.
-  The level parameter will be one of: "debug", "info", "warning", "error".
+  This callback is called when the client sends a logging/setLevel request,
+  with one of the RFC 5424 levels from "debug" to "emergency".
 
-  The implementation should adjust the server's logging verbosity accordingly.
+  The default implementation accepts any valid level and changes nothing else.
+  In particular it never changes the host's Logger configuration: the level
+  is the client's request for log notifications, not a setting for the host.
+  Override this callback to act on it.
 
   > #### Protocol-deprecated feature {: .warning}
   >
@@ -670,10 +673,9 @@ defmodule ExMCP.Server.Handler do
 
       @impl ExMCP.Server.Handler
       def handle_set_log_level(level, state) do
-        case Logging.set_global_level(level) do
-          :ok -> {:ok, state}
-          {:error, reason} -> {:error, reason, state}
-        end
+        if Logging.valid_level?(level),
+          do: {:ok, state},
+          else: {:error, "Invalid log level: #{inspect(level)}", state}
       end
 
       @impl ExMCP.Server.Handler
