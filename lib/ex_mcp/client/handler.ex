@@ -288,7 +288,9 @@ defmodule ExMCP.Client.Handler do
 
   @doc """
   Handles a progress notification delivered on an ordinary request's modern
-  streamable-HTTP response.
+  streamable-HTTP response, or one that arrives on the connection (a legacy
+  GET stream, or any transport other than a modern request stream) naming
+  its request by the progress token that request carried.
 
   The first argument is the JSON-RPC id of the request that owns the stream.
   The map contains `"progressToken"`, `"progress"`, and optional `"total"`

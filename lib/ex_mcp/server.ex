@@ -45,7 +45,7 @@ defmodule ExMCP.Server do
   """
   @spec send_log_message(GenServer.server(), atom() | String.t(), String.t(), map()) :: :ok
   def send_log_message(server, level, message, data) do
-    GenServer.cast(server, {:send_log_message, level, message, data})
+    notify_client(server, {:send_log_message, level, message, data})
   end
 
   @doc """
@@ -86,7 +86,7 @@ defmodule ExMCP.Server do
   """
   @spec notify_progress(GenServer.server(), any(), number()) :: :ok
   def notify_progress(server, progress_token, progress) do
-    GenServer.cast(server, {:notify_progress, progress_token, progress, nil})
+    notify_client(server, {:notify_progress, progress_token, progress, nil})
   end
 
   @doc """
@@ -94,7 +94,7 @@ defmodule ExMCP.Server do
   """
   @spec notify_progress(GenServer.server(), any(), number(), number()) :: :ok
   def notify_progress(server, progress_token, progress, total) do
-    GenServer.cast(server, {:notify_progress, progress_token, progress, total})
+    notify_client(server, {:notify_progress, progress_token, progress, total})
   end
 
   @doc """
@@ -102,7 +102,7 @@ defmodule ExMCP.Server do
   """
   @spec notify_resource_update(GenServer.server(), String.t()) :: :ok
   def notify_resource_update(server, uri) do
-    GenServer.cast(server, {:notify_resource_update, uri})
+    notify_client(server, {:notify_resource_update, uri})
   end
 
   @doc """
@@ -121,7 +121,7 @@ defmodule ExMCP.Server do
   """
   @spec notify_resources_changed(GenServer.server()) :: :ok
   def notify_resources_changed(server) do
-    GenServer.cast(server, {:notify_resources_changed})
+    notify_client(server, {:notify_resources_changed})
   end
 
   @doc """
@@ -129,7 +129,7 @@ defmodule ExMCP.Server do
   """
   @spec notify_tools_changed(GenServer.server()) :: :ok
   def notify_tools_changed(server) do
-    GenServer.cast(server, {:notify_tools_changed})
+    notify_client(server, {:notify_tools_changed})
   end
 
   @doc """
@@ -137,7 +137,7 @@ defmodule ExMCP.Server do
   """
   @spec notify_prompts_changed(GenServer.server()) :: :ok
   def notify_prompts_changed(server) do
-    GenServer.cast(server, {:notify_prompts_changed})
+    notify_client(server, {:notify_prompts_changed})
   end
 
   @doc """
@@ -282,4 +282,111 @@ defmodule ExMCP.Server do
       if Map.has_key?(map, alias_key), do: Map.get(map, alias_key)
     end)
   end
+
+  # A handler mounted through ExMCP.HttpPlug runs one temporary GenServer per
+  # request with no transport of its own, so the notify casts above would
+  # neither reach the client nor even be handled: a bare `use
+  # ExMCP.Server.Handler` module has no handle_cast clauses of its own. When
+  # such a handler notifies from inside a request callback, the notification
+  # is delivered to the request's HTTP session directly (see
+  # ExMCP.HttpPlug.deliver_session_notification/2); a cast that arrives after
+  # the callback (from a detached task, for instance) finds the remembered
+  # session the same way, through the clauses `use ExMCP.Server.Handler`
+  # injects. A long-lived transport-aware server keeps the cast path.
+
+  @mounted_session_key {__MODULE__, :mounted_http_session}
+
+  @doc false
+  def __remember_mounted_session__(%ExMCP.Server.RequestContext{} = context) do
+    case context.session_id do
+      nil -> :ok
+      session_id -> Process.put(@mounted_session_key, session_id)
+    end
+
+    :ok
+  end
+
+  @doc false
+  def __deliver_mounted__(cast) do
+    case Process.get(@mounted_session_key) do
+      nil ->
+        :ok
+
+      session_id ->
+        _ = deliver_mounted(cast, session_id)
+        :ok
+    end
+  end
+
+  defp notify_client(server, cast) do
+    case mounted_session(server) do
+      nil -> GenServer.cast(server, cast)
+      session_id -> deliver_mounted(cast, session_id)
+    end
+
+    :ok
+  end
+
+  # Inside a request callback the handler process is its own server, and its
+  # current context names the HTTP session the request belongs to.
+  defp mounted_session(server) do
+    if server == self() do
+      case ExMCP.Server.Context.current() do
+        %{session_id: session_id} when is_binary(session_id) -> session_id
+        _other -> nil
+      end
+    else
+      nil
+    end
+  end
+
+  defp deliver_mounted({:send_log_message, level, message, data}, session_id) do
+    notification = %{
+      "jsonrpc" => "2.0",
+      "method" => "notifications/message",
+      "params" => %{
+        "level" => level,
+        "logger" => "ExMCP.Server",
+        "data" => data || %{},
+        "message" => message
+      }
+    }
+
+    ExMCP.HttpPlug.deliver_session_notification(session_id, notification)
+  end
+
+  defp deliver_mounted({:notify_progress, progress_token, progress, total}, session_id) do
+    notification = %{
+      "jsonrpc" => "2.0",
+      "method" => "notifications/progress",
+      "params" => %{"progressToken" => progress_token, "progress" => progress, "total" => total}
+    }
+
+    ExMCP.HttpPlug.deliver_session_notification(session_id, notification)
+  end
+
+  defp deliver_mounted({:notify_resource_update, uri}, _session_id) do
+    # Resource updates belong to subscribers of the URI across sessions, as
+    # on a transport-aware server.
+    ExMCP.HttpPlug.broadcast_resource_update(uri)
+  end
+
+  defp deliver_mounted(cast, session_id) do
+    {method, params} = mounted_notification(cast)
+
+    ExMCP.HttpPlug.deliver_session_notification(session_id, %{
+      "jsonrpc" => "2.0",
+      "method" => method,
+      "params" => params
+    })
+  end
+
+  defp mounted_notification({:notify_tools_changed}),
+    do: {"notifications/tools/list_changed", %{}}
+
+  defp mounted_notification({:notify_resources_changed}),
+    do: {"notifications/resources/list_changed", %{}}
+
+  defp mounted_notification({:notify_prompts_changed}),
+    do: {"notifications/prompts/list_changed", %{}}
 end

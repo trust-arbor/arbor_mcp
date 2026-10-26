@@ -2392,6 +2392,37 @@ defmodule ExMCP.HttpPlug do
   end
 
   @doc """
+  Delivers a server-initiated notification to a session's standalone GET
+  stream.
+
+  The notification is persisted to the session's event log first, so a client
+  without a live GET stream receives it through `Last-Event-ID` replay after
+  reconnecting, and delivery to a live stream never reaches another session's
+  stream. The live write waits for the stream's backpressure permission and
+  is bounded, so a stalled client cannot hold the calling request forever.
+  """
+  @spec deliver_session_notification(String.t(), map()) :: :ok | {:error, term()}
+  def deliver_session_notification(session_id, notification)
+      when is_binary(session_id) and is_map(notification) do
+    task =
+      Task.async(fn ->
+        case ExMCP.SessionManager.append_event(session_id, "message", notification) do
+          {:ok, event} ->
+            deliver_persisted_event(session_id, notification, event.id)
+
+          {:error, _reason} ->
+            {:error, :not_delivered}
+        end
+      end)
+
+    case Task.yield(task, 5_000) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      {:exit, _reason} -> {:error, :not_delivered}
+      nil -> {:error, :delivery_timeout}
+    end
+  end
+
+  @doc """
   Broadcasts a resource update to each live SSE client subscribed to `uri`.
 
   Subscription lookup is performed directly against ETS, and delivery uses
@@ -2437,7 +2468,10 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
-  defp deliver_persisted_resource_update(session_id, notification, event_id) do
+  defp deliver_persisted_resource_update(session_id, notification, event_id),
+    do: deliver_persisted_event(session_id, notification, event_id)
+
+  defp deliver_persisted_event(session_id, notification, event_id) do
     with {:ok, handler} <- lookup_sse_handler(session_id),
          true <- Process.alive?(handler),
          :ok <- SSEHandler.request_send(handler) do
@@ -2445,6 +2479,8 @@ defmodule ExMCP.HttpPlug do
         event_id: event_id,
         persist: false
       )
+
+      :ok
     else
       _not_connected -> :stored
     end

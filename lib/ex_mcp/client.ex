@@ -118,6 +118,10 @@ defmodule ExMCP.Client do
     # Monitor ref => Subscription process. Monitors survive reconnects while
     # request ids are replaced.
     subscription_monitors: %{},
+    # Progress token => request id for the requests that asked for progress,
+    # so a connection-level notifications/progress names its request (see
+    # ExMCP.Client.RequestHandler).
+    progress_requests: %{},
     # Ref-counted desired resource set and its currently committed immutable
     # modern subscription stream.
     resource_subscriptions: %{desired: %{}, active: nil, generation: 0},
@@ -1465,6 +1469,7 @@ defmodule ExMCP.Client do
         async_post_tasks: %{},
         subscriptions: %{},
         subscription_monitors: %{},
+        progress_requests: %{},
         resource_subscriptions: %{desired: %{}, active: nil, generation: 0},
         resource_subscriber_monitors: %{},
         notification_listeners: %{},

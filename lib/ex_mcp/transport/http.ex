@@ -1018,29 +1018,20 @@ defmodule ExMCP.Transport.HTTP do
 
     receive do
       {:sse_event, ^sse_pid, %{data: data} = event} ->
-        send(sse_pid, {:sse_event_ack, self()})
-
-        # The enhanced SSE client sends structured events
-        event_id = Map.get(event, :id)
-        new_state = if event_id, do: %{state | last_event_id: event_id}, else: state
-
-        case Jason.decode(data) do
-          {:ok, %{"type" => "keep-alive"}} ->
-            # Ignore keep-alive messages and continue receiving
-            receive_message(new_state)
-
-          {:ok, message} ->
-            {:ok, message, new_state}
-
-          {:error, reason} ->
-            {:error, {:json_decode_error, reason}}
-        end
+        receive_sse_event(data, event, state)
 
       {:sse_error, ^sse_pid, reason} ->
         {:error, {:sse_error, reason}}
 
+      # A server may close the session's GET stream at any time, and an
+      # ExMCP server closes it when its request process ends. The session
+      # lives on: the SSE client opens the stream again with Last-Event-ID,
+      # so the receiver keeps waiting rather than reporting the connection
+      # closed, which would drop the session and fail every pending request.
+      # Errors, such as a 404 for an expired session, still end the
+      # connection.
       {:sse_closed, ^sse_pid} ->
-        {:error, :connection_closed}
+        receive_message(state)
     end
   end
 
@@ -1074,6 +1065,35 @@ defmodule ExMCP.Transport.HTTP do
 
   def receive_message(%__MODULE__{} = _state) do
     {:error, :not_connected}
+  end
+
+  # MCP messages travel in `message` events, the SSE default. Other events,
+  # such as the `connected` event an ExMCP server opens its GET stream with,
+  # aren't JSON-RPC messages, and the client skips them, as the TypeScript
+  # SDK's client does.
+  defp receive_sse_event(_data, %{type: type} = event, state)
+       when type not in [nil, "message"] do
+    send(state.sse_pid, {:sse_event_ack, self()})
+    event_id = Map.get(event, :id)
+    receive_message(if event_id, do: %{state | last_event_id: event_id}, else: state)
+  end
+
+  defp receive_sse_event(data, event, state) do
+    send(state.sse_pid, {:sse_event_ack, self()})
+    event_id = Map.get(event, :id)
+    new_state = if event_id, do: %{state | last_event_id: event_id}, else: state
+
+    case Jason.decode(data) do
+      {:ok, %{"type" => "keep-alive"}} ->
+        # Ignore keep-alive messages and continue receiving
+        receive_message(new_state)
+
+      {:ok, message} ->
+        {:ok, message, new_state}
+
+      {:error, reason} ->
+        {:error, {:json_decode_error, reason}}
+    end
   end
 
   @doc """

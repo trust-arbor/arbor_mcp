@@ -263,7 +263,7 @@ defmodule ExMCP.Client.RequestHandler do
         maybe_schedule_request_timeout(id, meta, updated_state)
         pending_requests = Map.put(updated_state.pending_requests, id, {from, :single, method})
         new_state = %{updated_state | pending_requests: pending_requests}
-        {:noreply, new_state}
+        {:noreply, remember_progress_token(request, id, new_state)}
 
       {:error, :not_connected} ->
         {:reply, {:error, :not_connected}, state}
@@ -487,6 +487,7 @@ defmodule ExMCP.Client.RequestHandler do
   This function is intended to be called from the client's `handle_info/2` callback.
   It decodes the message and delegates to the appropriate response handler.
   """
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def parse_transport_message(message, state) do
     case Protocol.parse_message(message) do
       {:result, result, id} ->
@@ -513,6 +514,12 @@ defmodule ExMCP.Client.RequestHandler do
       {:notification, "notifications/cancelled", params} ->
         Logger.info("Received notification: notifications/cancelled")
         handle_cancellation_notification(params, state)
+
+      # Over every transport but a modern request stream, progress arrives on
+      # the connection and names its request only by the token that request
+      # carried (see remember_progress_token).
+      {:notification, "notifications/progress", params} when is_map(params) ->
+        route_progress(params, state)
 
       {:notification, method, _params} ->
         Logger.info("Received unsupported notification",
@@ -742,6 +749,48 @@ defmodule ExMCP.Client.RequestHandler do
 
     {:noreply, new_state}
   end
+
+  # A connection-level progress notification names its request only by the
+  # progress token that request carried. Tokens whose request has settled
+  # are dropped; a token no pending request carries is not ours.
+  defp route_progress(params, state) do
+    progress_requests = Map.get(state, :progress_requests) || %{}
+
+    case Map.get(progress_requests, params["progressToken"]) do
+      nil ->
+        Logger.debug("Progress for an unknown token")
+        {:noreply, state}
+
+      request_id ->
+        if Map.has_key?(state.pending_requests, request_id) do
+          dispatch_request_notification(:handle_progress, request_id, params, state)
+        else
+          {:noreply, forget_progress_token(state, params["progressToken"])}
+        end
+    end
+  end
+
+  defp remember_progress_token(request, id, state) do
+    case get_in(request, ["params", "_meta", "progressToken"]) do
+      token when is_binary(token) or is_integer(token) ->
+        # Settled requests' tokens are dropped here, so the map never holds
+        # more than the pending requests that asked for progress.
+        live =
+          (Map.get(state, :progress_requests) || %{})
+          |> Enum.reject(fn {_token, owner} ->
+            not Map.has_key?(state.pending_requests, owner)
+          end)
+          |> Map.new()
+
+        %{state | progress_requests: Map.put(live, token, id)}
+
+      _no_token ->
+        state
+    end
+  end
+
+  defp forget_progress_token(state, token),
+    do: Map.update(state, :progress_requests, %{}, &Map.delete(&1, token))
 
   defp dispatch_request_notification(callback, request_id, params, state) do
     :telemetry.execute(

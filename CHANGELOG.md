@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A server mounted through `ExMCP.HttpPlug` could not send progress or
+  list-change notifications to a legacy Streamable HTTP client, even when the
+  client's GET stream was open (`legacy_http_sse: true`, the documented way a
+  mounted 1.x server serves one). `ExMCP.Server.notify_progress/3,4`,
+  `notify_tools_changed/1`, `notify_prompts_changed/1`,
+  `notify_resources_changed/1`, `notify_resource_update/2` and
+  `send_log_message/4`, called from
+  inside a request callback, now deliver to that request's HTTP session —
+  persisted to its event log and written to its live GET stream, never to
+  another session's stream. A cast arriving after the callback (from a
+  detached task, for instance) finds the remembered session the same way, and
+  a bare `use ExMCP.Server.Handler` GenServer no longer crashes on the notify
+  casts, which it has no clauses of its own to handle.
+- A legacy client's `c:ExMCP.Client.Handler.handle_progress/3` callback now
+  also runs for a `notifications/progress` that arrives on the connection
+  (a legacy GET stream, or any transport other than a modern request
+  stream): the client remembers the progress token each pending request
+  carries and routes the notification to that request's handler callback.
+  Such a notification used to be dropped as unsupported, so a server's
+  progress was never seen on 2025-11-25 connections.
+- An event arriving on a legacy HTTP GET stream in the gap between the
+  stream's connection and the receiver task taking it over (an ExMCP server's
+  `connected` greeting, written as soon as the stream opens) stalled the
+  stream until the 5-second consumer-acknowledgement timeout closed it: the
+  event went to the client process, which never reads the stream, while the
+  receiver's handoff sat behind it, and nothing the server sent on the GET
+  stream reached the client after that. While an event waits for its
+  acknowledgement, the SSE client now takes a change of consumer and hands
+  the event to the new one, within the original deadline. The reader also
+  skips SSE events that aren't MCP `message` events (as the TypeScript SDK's
+  client does), and a clean end of the GET stream no longer ends the
+  connection: the SSE client reopens the stream with `Last-Event-ID`, so the
+  receiver keeps waiting instead of dropping the session and failing every
+  pending request; stream errors still end it (backport of the client part
+  of the 2.x legacy HTTP notifications fix).
+
 ## [1.7.3] - 2026-10-26
 
 ### Changed
