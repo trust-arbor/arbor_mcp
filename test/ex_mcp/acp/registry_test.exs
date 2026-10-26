@@ -243,8 +243,7 @@ defmodule ExMCP.ACP.RegistryTest do
         {"connection", "close"}
         | headers
       ]
-      |> Enum.map(fn {name, value} -> "#{name}: #{value}" end)
-      |> Enum.join("\r\n")
+      |> Enum.map_join("\r\n", fn {name, value} -> "#{name}: #{value}" end)
 
     "#{status_line}\r\n#{header_lines}\r\n\r\n#{body}"
   end
