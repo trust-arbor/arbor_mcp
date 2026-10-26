@@ -10,7 +10,7 @@
 
 **A complete Elixir implementation of the Model Context Protocol (MCP) and Agent Client Protocol (ACP)**
 
-[Getting Started](https://github.com/trust-arbor/arbor_mcp/tree/codex/maintenance-1.x/docs/getting-started) | [User Guide](docs/guides/USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [Examples](https://github.com/trust-arbor/arbor_mcp/tree/codex/maintenance-1.x/examples) | [2.0 Roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md) | [Changelog](CHANGELOG.md)
+[Getting Started](https://github.com/trust-arbor/arbor_mcp/tree/codex/maintenance-1.x/docs/getting-started) | [User Guide](docs/guides/USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [Examples](https://github.com/trust-arbor/arbor_mcp/tree/codex/maintenance-1.x/examples) | [2.0 Roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/ROADMAP.md) | [Changelog](CHANGELOG.md)
 
 </div>
 
@@ -18,10 +18,11 @@ The repository has moved to [trust-arbor/arbor_mcp](https://github.com/trust-arb
 The supported 1.x package remains `ex_mcp`. This is the `codex/maintenance-1.x`
 branch: fixes and compatible minor releases continue here, so migration is
 optional. See the [maintenance policy](https://github.com/trust-arbor/arbor_mcp/blob/codex/maintenance-1.x/docs/MAINTENANCE_POLICY.md).
-Version 2 is being prepared as
+Version 2 is published as release candidates of
 `arbor_mcp` (`Arbor.MCP.*`) and `arbor_acp` (`Arbor.ACP.*`), with vendor adapters
-in the optional `arbor_acp_adapters` package. The target is October 9, 2026,
-subject to the [release gates](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_PLAN.md). GitHub redirects
+in the optional `arbor_acp_adapters` package; see the
+[RC notes](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/guides/V2_RELEASE_CANDIDATE.md)
+and the [release gates](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/RELEASING.md). GitHub redirects
 preserve existing repository links; consumers change dependencies through
 the v2 migration guide.
 
@@ -95,7 +96,7 @@ config :ex_mcp, protocol_mode: :legacy_only
 
 Runnable examples live in the GitHub repo under [`examples/`](https://github.com/trust-arbor/arbor_mcp/tree/codex/maintenance-1.x/examples) (not shipped in the Hex package).
 
-The [ExMCP 2.0 roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md) records planned runtime and API
+The [ExMCP 2.0 roadmap](https://github.com/trust-arbor/arbor_mcp/blob/codex/maintenance-1.x/docs/V2_ROADMAP.md) records planned runtime and API
 changes, deprecated-surface removals, and the policy for safely backporting
 selected improvements to 1.x.
 
