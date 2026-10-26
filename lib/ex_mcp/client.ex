@@ -52,7 +52,17 @@ defmodule ExMCP.Client do
   alias ExMCP.Client.NotificationListener.Worker
 
   alias ExMCP.Client.Operations.{Prompts, Resources, Tasks, Tools}
-  alias ExMCP.Internal.{Headers, Protocol, Redaction, RequestParams, VersionInfo, VersionRegistry}
+
+  alias ExMCP.Internal.{
+    Headers,
+    LogSummary,
+    Protocol,
+    Redaction,
+    RequestParams,
+    VersionInfo,
+    VersionRegistry
+  }
+
   alias ExMCP.Reliability.Retry
   alias ExMCP.Response
   alias ExMCP.Server.Discover
@@ -1930,11 +1940,46 @@ defmodule ExMCP.Client do
     {:noreply, state}
   end
 
+  # The server asked the task's POST to authenticate. Re-sending from this
+  # process runs at most one authentication at a time, and later challenges
+  # reuse the credentials it obtained. A POST that carried no request (a
+  # notification, a batch, a reply to a server request) is re-sent too; a
+  # request whose caller has given up is not.
+  defp handle_async_post_result({:error, {:reauthenticate, message}}, meta, state) do
+    request_id = Map.get(meta, :request_id)
+
+    if is_nil(request_id) or Map.has_key?(state.pending_requests, request_id),
+      do: resend_authenticated(message, meta, state),
+      else: {:noreply, state}
+  end
+
+  # The caller receives the failure, as from a synchronous send, so it is not
+  # logged as an error here.
   defp handle_async_post_result({:error, reason}, meta, state) do
-    Logger.error("Async POST failed: #{inspect(reason)}")
+    Logger.debug("Async POST failed", reason: LogSummary.describe(reason))
 
     {:noreply,
      fail_async_post_request(state, Map.get(meta, :request_id), reason, Map.get(meta, :deadline))}
+  end
+
+  defp resend_authenticated(message, meta, state) do
+    request_id = Map.get(meta, :request_id)
+    deadline = Map.get(meta, :deadline)
+    previous = Deadline.on_transport(HTTP, state.transport_state)
+    transport = Deadline.put_on_transport(HTTP, state.transport_state, deadline)
+    restore = &%{state | transport_state: Deadline.put_on_transport(HTTP, &1, previous)}
+
+    case HTTP.send_authenticated(message, transport) do
+      {:ok, transport, response_data} ->
+        RequestHandler.handle_post_response(response_data, request_id, restore.(transport))
+
+      {:ok, transport} ->
+        {:noreply, restore.(transport)}
+
+      {:error, reason} ->
+        Logger.debug("Authenticated resend failed", reason: LogSummary.describe(reason))
+        {:noreply, fail_async_post_request(state, request_id, reason, deadline)}
+    end
   end
 
   # Merge the durable transport-state changes computed by an async POST task

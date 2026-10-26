@@ -357,19 +357,8 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  def send_message(message, %__MODULE__{use_sse: false} = state) do
-    # For non-SSE mode, we handle the request-response synchronously
-    case perform_and_maybe_auth(message, state) do
-      {:ok, response} ->
-        handle_http_response(response, state, message)
-
-      {:ok, response, new_state} ->
-        handle_http_response(response, new_state, message)
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
+  def send_message(message, %__MODULE__{use_sse: false} = state),
+    do: send_authenticated(message, state)
 
   def send_message(message, %__MODULE__{use_sse: true, sse_pid: sse_pid} = state)
       when is_pid(sse_pid) do
@@ -378,6 +367,9 @@ defmodule ExMCP.Transport.HTTP do
     # the POST response. The response arrives as {:async_post_result, result, meta}.
     parent = self()
     request_id = extract_request_id(message)
+    # Resolved here, in the client process, so tasks never refresh (and
+    # possibly rotate) a provider's token concurrently.
+    request_state = apply_provider_token(state)
 
     # spawn_monitor rather than Task.start: the parent (the ExMCP.Client
     # GenServer) owns the monitor, so a crashed POST task produces a
@@ -386,20 +378,15 @@ defmodule ExMCP.Transport.HTTP do
     # exit-trapping client's {:EXIT, ...} transport handling is untouched.
     {_task_pid, task_ref} =
       spawn_monitor(fn ->
-        result =
-          case perform_and_maybe_auth(message, state) do
-            {:ok, response} -> handle_http_response(response, state, message)
-            {:ok, response, new_state} -> handle_http_response(response, new_state, message)
-            {:error, reason} -> {:error, reason}
-          end
+        result = perform_async(message, request_state)
 
         # Report the durable transport-state fields this POST changed
-        # (session rotation, OAuth token refresh) so the client can merge
+        # (session rotation, SSE metadata) so the client can merge
         # them into its copy of the transport state instead of discarding.
         meta = %{
           request_id: request_id,
-          deadline: state.deadline,
-          state_changes: result_state_changes(state, result)
+          deadline: request_state.deadline,
+          state_changes: result_state_changes(request_state, result)
         }
 
         send(parent, {:async_post_result, result, meta})
@@ -410,15 +397,39 @@ defmodule ExMCP.Transport.HTTP do
 
     # Return without response data — it will arrive via :async_post_result
     # or via the GET SSE stream (for SSE-formatted POST responses)
-    {:ok, state}
+    {:ok, %{state | auth_provider_state: request_state.auth_provider_state}}
   end
 
-  def send_message(message, %__MODULE__{} = state) do
-    # SSE mode without active connection (pre-initialization) or fallback
+  def send_message(message, %__MODULE__{} = state),
+    do: send_authenticated(message, state)
+
+  @doc false
+  # Sends `message` synchronously from the calling process, running any
+  # authentication its response asks for. The client re-sends a request this
+  # way when an async POST hands back an auth challenge, so only one
+  # authentication runs at a time.
+  @spec send_authenticated(term(), t()) ::
+          {:ok, t()} | {:ok, t(), term()} | {:error, term()}
+  def send_authenticated(message, %__MODULE__{} = state) do
     case perform_and_maybe_auth(message, state) do
       {:ok, response} -> handle_http_response(response, state, message)
       {:ok, response, new_state} -> handle_http_response(response, new_state, message)
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # A POST task does not authenticate: with several in flight, each would run
+  # the OAuth flow. It hands an auth challenge back to the client process,
+  # which re-sends that request with send_authenticated/2.
+  defp perform_async(message, state) do
+    case perform_http_request(message, state) do
+      {:ok, response} ->
+        if extract_auth_status(response) == :ok,
+          do: handle_http_response(response, state, message),
+          else: {:error, {:reauthenticate, message}}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

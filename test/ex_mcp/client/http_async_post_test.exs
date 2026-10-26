@@ -11,6 +11,27 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
 
   alias ExMCP.Client
 
+  defmodule Provider do
+    @moduledoc false
+    @behaviour ExMCP.Authorization.Provider
+
+    @impl true
+    def init(config), do: {:ok, %{token: "stale", test_pid: Keyword.fetch!(config, :test_pid)}}
+
+    @impl true
+    def get_token(state), do: {:ok, state.token, state}
+
+    @impl true
+    def handle_unauthorized(_www_authenticate, _scopes, state) do
+      send(state.test_pid, :authenticated)
+      {:ok, "fresh", %{state | token: "fresh"}}
+    end
+
+    @impl true
+    def handle_forbidden(www_authenticate, scopes, state),
+      do: handle_unauthorized(www_authenticate, scopes, state)
+  end
+
   test "a response with a null or different id answers the request its POST carried" do
     client = start_client()
 
@@ -45,6 +66,26 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
 
     assert {:ok, response} = Task.await(other)
     assert [%{text: "other"}] = response.content
+  end
+
+  test "concurrent auth challenges run one authentication" do
+    client = start_client(auth_provider: {Provider, test_pid: self()})
+
+    tasks =
+      for _ <- 1..4,
+          do: Task.async(fn -> Client.call_tool(client, "protected", %{}, timeout: 5_000) end)
+
+    assert Enum.all?(Task.await_many(tasks, 10_000), &match?({:ok, _}, &1))
+    assert_received :authenticated
+    refute_received :authenticated
+  end
+
+  test "an auth challenge on a notification re-sends it after authenticating" do
+    client = start_client(auth_provider: {Provider, test_pid: self()})
+
+    :ok = Client.send_cancelled(client, "unknown-request", "auth")
+    assert_receive :authenticated, 2_000
+    assert_receive {:authenticated_notification, "notifications/cancelled"}, 2_000
   end
 
   defp start_client(opts \\ []) do
@@ -140,6 +181,35 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
         end
 
         json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"content" => []}})
+
+      "protected" ->
+        if Plug.Conn.get_req_header(conn, "authorization") == ["Bearer fresh"] do
+          json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"content" => []}})
+        else
+          conn
+          |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
+          |> Plug.Conn.resp(401, "")
+        end
+    end
+  end
+
+  defp respond(conn, %{"method" => "notifications/cancelled" = method} = message, test_pid) do
+    params = Map.get(message, "params", %{})
+    send(test_pid, {:notification, method, params})
+
+    case params["reason"] do
+      "auth" ->
+        if Plug.Conn.get_req_header(conn, "authorization") == ["Bearer fresh"] do
+          send(test_pid, {:authenticated_notification, method})
+          Plug.Conn.resp(conn, 202, "")
+        else
+          conn
+          |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
+          |> Plug.Conn.resp(401, "")
+        end
+
+      _other ->
+        Plug.Conn.resp(conn, 202, "")
     end
   end
 
