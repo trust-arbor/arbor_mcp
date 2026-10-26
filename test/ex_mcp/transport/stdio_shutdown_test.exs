@@ -7,10 +7,27 @@ defmodule ExMCP.Transport.StdioShutdownTest do
 
   use ExUnit.Case, async: true
 
-  import ExMCP.TestHelpers, only: [wait_until: 1]
+  import ExMCP.TestHelpers, only: [wait_until: 1, wait_until: 2]
 
+  alias ExMCP.Client
   alias ExMCP.Client.Deadline
   alias ExMCP.Transport.Stdio
+
+  # Answers initialize, then ignores EOF and SIGTERM: only SIGKILL stops it.
+  @stubborn_server ~S"""
+  trap '' TERM
+  IFS= read -r line
+  id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"stubborn","version":"1.0.0"}}}\n' "$id"
+  exec sleep 30
+  """
+
+  defp os_alive?(os_pid),
+    do: match?({_, 0}, System.cmd("kill", ["-0", "#{os_pid}"], stderr_to_stdout: true))
+
+  defp kill_on_exit(os_pid) do
+    on_exit(fn -> System.cmd("kill", ["-KILL", "#{os_pid}"], stderr_to_stdout: true) end)
+  end
 
   describe "shutdown_options/1" do
     test "defaults give the server 2 s after EOF within a 2.5 s budget" do
@@ -34,6 +51,28 @@ defmodule ExMCP.Transport.StdioShutdownTest do
       opts = [eof_grace: 10, cleanup_timeout: 400]
       assert Stdio.shutdown_options(opts) == opts
       assert Stdio.shutdown_options(term_grace: :bad) == [term_grace: :bad]
+    end
+  end
+
+  describe "shutdown_schedule/1" do
+    test "keeps the graces that fit the budget, with time left for SIGKILL" do
+      assert Stdio.shutdown_schedule(%Stdio{}) == {2_000, 100}
+
+      assert Stdio.shutdown_schedule(%Stdio{eof_grace: 5_000, cleanup_timeout: 600}) ==
+               {550, 0}
+
+      assert Stdio.shutdown_schedule(%Stdio{eof_grace: 400, cleanup_timeout: 500}) == {400, 50}
+    end
+
+    test "connect rejects unusable shutdown options" do
+      assert {:error, {:invalid_shutdown_option, :eof_grace, -1}} =
+               Stdio.connect(command: ["true"], eof_grace: -1)
+
+      assert {:error, {:invalid_shutdown_option, :term_grace, :bad}} =
+               Stdio.connect(command: ["true"], term_grace: :bad)
+
+      assert {:error, {:invalid_shutdown_option, :cleanup_timeout, 0}} =
+               Stdio.connect(command: ["true"], cleanup_timeout: 0)
     end
   end
 
@@ -95,5 +134,54 @@ defmodule ExMCP.Transport.StdioShutdownTest do
         _ -> false
       end
     end)
+  end
+
+  test "a client killed during the EOF grace still leaves no server process" do
+    supervisor = start_supervised!({DynamicSupervisor, strategy: :one_for_one})
+
+    opts = [
+      transport: :stdio,
+      command: ["/bin/sh", "-c", @stubborn_server],
+      protocol_mode: :legacy_only,
+      eof_grace: 400,
+      term_grace: 100,
+      health_check_interval: nil,
+      reconnect: false
+    ]
+
+    # Its supervisor allows the client 100 ms to stop, less than the grace.
+    {:ok, client} =
+      DynamicSupervisor.start_child(
+        supervisor,
+        Supervisor.child_spec({Client, opts}, shutdown: 100)
+      )
+
+    os_pid = :sys.get_state(client).transport_state.os_pid
+    kill_on_exit(os_pid)
+    assert os_alive?(os_pid)
+
+    monitor = Process.monitor(client)
+    :ok = DynamicSupervisor.terminate_child(supervisor, client)
+    assert_receive {:DOWN, ^monitor, :process, ^client, :killed}
+
+    wait_until(fn -> not os_alive?(os_pid) end, timeout: 2_000)
+  end
+
+  test "close/1 stops a server that ignores EOF and SIGTERM within its cleanup budget" do
+    {:ok, state} =
+      Stdio.connect(
+        command: ["/bin/sh", "-c", "trap '' TERM; exec sleep 30"],
+        eof_grace: 5_000,
+        cleanup_timeout: 600
+      )
+
+    kill_on_exit(state.os_pid)
+
+    started = System.monotonic_time(:millisecond)
+    assert :ok = Stdio.close(state)
+    # The budget is 600 ms; the margin is for a loaded machine.
+    assert System.monotonic_time(:millisecond) - started < 1_500
+
+    wait_until(fn -> not os_alive?(state.os_pid) end, timeout: 1_000)
   end
 end

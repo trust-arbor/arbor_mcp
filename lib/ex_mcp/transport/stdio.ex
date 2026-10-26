@@ -27,7 +27,10 @@ defmodule ExMCP.Transport.Stdio do
   - `:term_grace` - time in milliseconds to wait after SIGTERM before sending
     SIGKILL (default: 100)
   - `:cleanup_timeout` - subprocess shutdown budget, defaulting to
-    `eof_grace + term_grace + 400` (default: 2_500)
+    `eof_grace + term_grace + 400` (default: 2_500). `close/1` returns
+    within it, and SIGKILL goes out within it, the graces shortened if they
+    don't fit. The shutdown runs in a process of its own, so it completes
+    even if the process that called `close/1` is killed meanwhile.
 
   The command is resolved against the `PATH` the child will see (an explicit
   `PATH` in `:env`, else the inherited one), not the VM's own. When the VM
@@ -68,6 +71,8 @@ defmodule ExMCP.Transport.Stdio do
   @eof_grace 2_000
   @term_grace 100
   @shutdown_slack 400
+  # Kept back from the cleanup budget for sending SIGKILL.
+  @kill_allowance 50
   @default_max_frame_bytes 1_048_576
   defstruct [
     :port,
@@ -78,7 +83,8 @@ defmodule ExMCP.Transport.Stdio do
     max_frame_bytes: @default_max_frame_bytes,
     process_group: false,
     eof_grace: @eof_grace,
-    term_grace: @term_grace
+    term_grace: @term_grace,
+    cleanup_timeout: @eof_grace + @term_grace + @shutdown_slack
   ]
 
   @impl true
@@ -86,7 +92,8 @@ defmodule ExMCP.Transport.Stdio do
     opts = shutdown_options(opts)
 
     with :ok <- PortEnvironment.validate_policy(opts),
-         :ok <- validate_process_group(opts) do
+         :ok <- validate_process_group(opts),
+         :ok <- validate_shutdown_options(opts) do
       do_connect(opts)
     end
   end
@@ -132,6 +139,25 @@ defmodule ExMCP.Transport.Stdio do
       flag when is_boolean(flag) -> :ok
       invalid -> {:error, {:invalid_process_group, invalid}}
     end
+  end
+
+  defp validate_shutdown_options(opts) do
+    Enum.reduce_while([eof_grace: 0, term_grace: 0, cleanup_timeout: 1], :ok, fn
+      {name, min}, :ok ->
+        case Keyword.get(opts, name) do
+          value when is_nil(value) or (is_integer(value) and value >= min) -> {:cont, :ok}
+          invalid -> {:halt, {:error, {:invalid_shutdown_option, name, invalid}}}
+        end
+    end)
+  end
+
+  @doc false
+  # The EOF and SIGTERM graces close/1 waits, shortened if need be so that
+  # SIGKILL goes out within the cleanup budget.
+  def shutdown_schedule(%__MODULE__{} = state) do
+    available = max(state.cleanup_timeout - @kill_allowance, 0)
+    eof_grace = min(state.eof_grace, available)
+    {eof_grace, min(state.term_grace, available - eof_grace)}
   end
 
   defp do_connect(opts) do
@@ -189,7 +215,9 @@ defmodule ExMCP.Transport.Stdio do
           Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes),
         process_group: Keyword.get(opts, :process_group, false),
         eof_grace: Keyword.get(opts, :eof_grace, @eof_grace),
-        term_grace: Keyword.get(opts, :term_grace, @term_grace)
+        term_grace: Keyword.get(opts, :term_grace, @term_grace),
+        cleanup_timeout:
+          Keyword.get(opts, :cleanup_timeout, @eof_grace + @term_grace + @shutdown_slack)
       }
 
       :telemetry.execute([:ex_mcp, :transport, :connection, :opened], %{}, %{
@@ -450,6 +478,15 @@ defmodule ExMCP.Transport.Stdio do
   def close(%__MODULE__{port: port, os_pid: os_pid, reader_pid: reader_pid} = state) do
     :telemetry.execute([:ex_mcp, :transport, :connection, :closed], %{}, %{transport: :stdio})
 
+    # Port.close/1 tears down the Erlang port, but on Unix it does not
+    # guarantee that the spawned OS process exits. The shutdown order (EOF
+    # grace, SIGTERM, SIGKILL) therefore runs in a process of its own,
+    # unlinked and started before stdin closes, so the server is stopped even
+    # if the caller is killed meanwhile: a supervisor whose shutdown timeout
+    # is shorter than the EOF grace, say. Repeated stdio connections cannot
+    # leak servers and exhaust the runner's process/thread budget.
+    reaper = start_reaper(signal_target(os_pid, state.process_group), state)
+
     # Close the port before killing the reader: port_close exits the port
     # with reason :normal, which linked processes ignore, whereas killing
     # the port's owner (the reader, in push mode) first would cascade a
@@ -465,17 +502,28 @@ defmodule ExMCP.Transport.Stdio do
       Process.exit(reader_pid, :kill)
     end
 
-    # Port.close/1 tears down the Erlang port, but on Unix it does not
-    # guarantee that the spawned OS process exits. Explicitly terminate the
-    # child after detaching the reader so repeated stdio connections cannot
-    # leak servers and exhaust the runner's process/thread budget.
-    terminate_os_process(
-      signal_target(os_pid, state.process_group),
-      state.eof_grace,
-      state.term_grace
-    )
-
+    # The reaper ends within the cleanup budget; close/1 waits no longer.
+    await_reaper(reaper, state.cleanup_timeout)
     :ok
+  end
+
+  defp start_reaper(nil, _state), do: nil
+
+  defp start_reaper(target, state) do
+    {eof_grace, term_grace} = shutdown_schedule(state)
+    spawn_monitor(fn -> terminate_os_process(target, eof_grace, term_grace) end)
+  end
+
+  defp await_reaper(nil, _budget), do: :ok
+
+  defp await_reaper({pid, monitor}, budget) do
+    receive do
+      {:DOWN, ^monitor, :process, ^pid, _reason} -> :ok
+    after
+      budget ->
+        Process.demonitor(monitor, [:flush])
+        :ok
+    end
   end
 
   # A negative pid addresses the process group the port program leads.
