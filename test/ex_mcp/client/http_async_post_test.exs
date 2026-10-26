@@ -88,6 +88,27 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
     assert_receive {:authenticated_notification, "notifications/cancelled"}, 2_000
   end
 
+  test "concurrent tools/list pages each reach the header cache" do
+    client = start_client()
+
+    pages =
+      for cursor <- ["p1", "p2"],
+          do: Task.async(fn -> Client.list_tools(client, cursor: cursor, timeout: 5_000) end)
+
+    handlers = for _ <- 1..2, do: receive_list_started()
+    Enum.each(handlers, &send(&1, :release))
+    assert Enum.all?(Task.await_many(pages, 5_000), &match?({:ok, _}, &1))
+
+    _ = :sys.get_state(client)
+    cache = :sys.get_state(client).transport_state.tool_headers
+    assert Map.has_key?(cache, "tool_p1") and Map.has_key?(cache, "tool_p2")
+  end
+
+  defp receive_list_started do
+    assert_receive {:list_started, _cursor, handler}, 2_000
+    handler
+  end
+
   defp start_client(opts \\ []) do
     bypass = Bypass.open()
     test_pid = self()
@@ -131,6 +152,20 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
         "serverInfo" => %{"name" => "async-post", "version" => "1"}
       }
     })
+  end
+
+  defp respond(conn, %{"method" => "tools/list", "id" => id, "params" => params}, test_pid) do
+    cursor = params["cursor"]
+    send(test_pid, {:list_started, cursor, self()})
+
+    receive do
+      :release -> :ok
+    after
+      2_000 -> :ok
+    end
+
+    tools = [%{"name" => "tool_#{cursor}", "inputSchema" => %{"type" => "object"}}]
+    json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"tools" => tools}})
   end
 
   defp respond(

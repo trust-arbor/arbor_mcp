@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- In legacy SSE mode, concurrent `tools/list` page responses are merged directly
+  into the client process's tool header cache rather than having each async
+  task overwrite `:tool_headers` from its initial snapshot (backport of 2.x
+  #110: `adcf5f4`).
 - In legacy SSE mode, authentication challenges received by concurrent async
   POST tasks are handed back to the client process to re-send synchronously.
   Concurrent 401 challenges now run a single authentication flow and share

@@ -1931,7 +1931,7 @@ defmodule ExMCP.Client do
   # Async POST support (Streamable HTTP transport)
 
   defp handle_async_post_result({:ok, _new_ts, response_data}, meta, state) do
-    # POST response contains data — parse it as a transport message
+    state = cache_tool_list(state, Map.get(meta, :tool_list), response_data)
     RequestHandler.handle_post_response(response_data, Map.get(meta, :request_id), state)
   end
 
@@ -1981,6 +1981,16 @@ defmodule ExMCP.Client do
         {:noreply, fail_async_post_request(state, request_id, reason, deadline)}
     end
   end
+
+  defp cache_tool_list(
+         %{transport_mod: HTTP, transport_state: %HTTP{} = transport} = state,
+         kind,
+         data
+       )
+       when kind in [:first, :cursor],
+       do: %{state | transport_state: HTTP.cache_tool_list(transport, kind, data)}
+
+  defp cache_tool_list(state, _kind, _data), do: state
 
   # Merge the durable transport-state changes computed by an async POST task
   # (session id rotation, OAuth token/auth state, SSE retry metadata) into the

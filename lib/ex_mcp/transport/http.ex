@@ -386,6 +386,7 @@ defmodule ExMCP.Transport.HTTP do
         meta = %{
           request_id: request_id,
           deadline: request_state.deadline,
+          tool_list: tool_list_page(message),
           state_changes: result_state_changes(request_state, result)
         }
 
@@ -805,17 +806,48 @@ defmodule ExMCP.Transport.HTTP do
 
   # Transport-state fields an async POST may durably change. Everything else
   # is either transient (:last_response) or owned by the connection lifecycle
-  # (:sse_pid, :sse_deferred_attempted) and must never be reported back.
+  # (:sse_pid, :sse_deferred_attempted) and must never be reported back. The
+  # client updates :tool_headers itself from each tools/list result (see
+  # cache_tool_list/3), so concurrent pages cannot overwrite one another.
   @async_merge_fields [
     :session_id,
     :access_token,
     :auth_completed,
     :auth_provider_state,
     :headers,
-    :tool_headers,
     :retry_delay,
     :last_event_id
   ]
+
+  @doc false
+  # Applies a tools/list response from an async POST to the client's own
+  # transport state: a first page replaces the header cache, a cursor page
+  # adds to it, as cache_tool_headers/3 does for a synchronous send.
+  @spec cache_tool_list(t(), :first | :cursor, term()) :: t()
+  def cache_tool_list(%__MODULE__{} = state, kind, response_data) do
+    case Jason.decode(response_data) do
+      {:ok, %{"result" => %{"tools" => tools}}} when is_list(tools) and kind == :first ->
+        %{state | tool_headers: ToolHeaders.cache(tools)}
+
+      {:ok, %{"result" => %{"tools" => tools}}} when is_list(tools) ->
+        %{state | tool_headers: Map.merge(state.tool_headers || %{}, ToolHeaders.cache(tools))}
+
+      _other ->
+        state
+    end
+  rescue
+    _invalid -> state
+  end
+
+  defp tool_list_page(message) do
+    case Jason.decode(message) do
+      {:ok, %{"method" => "tools/list"} = request} ->
+        if get_in(request, ["params", "cursor"]), do: :cursor, else: :first
+
+      _other ->
+        nil
+    end
+  end
 
   defp result_state_changes(snapshot, {:ok, new_state}) do
     async_state_changes(snapshot, new_state)
