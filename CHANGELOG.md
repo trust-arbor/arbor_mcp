@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A legacy POST event stream now stops at its response deadline even if the
+  socket or stream consumer keeps returning data. This closes a deadline gap
+  in the 1.x backport of 2.x PR #121.
 - A legacy `initialize` always sent `"capabilities": %{}`, ignoring the
   client's `:capabilities` option, so servers that respect declared
   capabilities never sent this client elicitation, sampling or roots

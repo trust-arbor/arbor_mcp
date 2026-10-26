@@ -156,31 +156,50 @@ defmodule ExMCP.Transport.HTTP.BoundedClient do
   end
 
   defp receive_response(conn, request_ref, response, deadline, limits, stream) do
-    timeout = Reducer.remaining_ms(deadline, System.monotonic_time(:millisecond))
+    remaining = deadline - System.monotonic_time(:millisecond)
 
-    case Mint.HTTP1.recv(conn, 0, timeout) do
+    if remaining <= 0 do
+      {{:error, {:http_receive_failed, :timeout}}, conn}
+    else
+      recv_response(conn, request_ref, response, deadline, limits, stream, remaining)
+    end
+  end
+
+  defp recv_response(conn, request_ref, response, deadline, limits, stream, remaining) do
+    case Mint.HTTP1.recv(conn, 0, remaining) do
       {:ok, next_conn, events} ->
-        with {:done, completed} <- Reducer.reduce(events, request_ref, response, limits),
-             {:ok, completed, stream} <- consume_stream(completed, stream, deadline),
-             {:ok, completed} <- finish_stream(completed, stream) do
-          {{:ok, format_response(completed)}, next_conn}
+        if System.monotonic_time(:millisecond) >= deadline do
+          {{:error, {:http_receive_failed, :timeout}}, next_conn}
         else
-          {:cont, updated} ->
-            case consume_stream(updated, stream, deadline) do
-              {:ok, updated, stream} ->
-                receive_response(next_conn, request_ref, updated, deadline, limits, stream)
+          with {:done, completed} <- Reducer.reduce(events, request_ref, response, limits),
+               {:ok, completed, stream} <- consume_stream(completed, stream, deadline),
+               {:ok, completed} <- finish_stream(completed, stream),
+               :ok <- response_within_deadline(deadline) do
+            {{:ok, format_response(completed)}, next_conn}
+          else
+            {:cont, updated} ->
+              case consume_stream(updated, stream, deadline) do
+                {:ok, updated, stream} ->
+                  receive_response(next_conn, request_ref, updated, deadline, limits, stream)
 
-              {:error, reason} ->
-                {{:error, reason}, next_conn}
-            end
+                {:error, reason} ->
+                  {{:error, reason}, next_conn}
+              end
 
-          {:error, reason} ->
-            {{:error, reason}, next_conn}
+            {:error, reason} ->
+              {{:error, reason}, next_conn}
+          end
         end
 
       {:error, next_conn, reason, _events} ->
         {{:error, {:http_receive_failed, reason}}, next_conn}
     end
+  end
+
+  defp response_within_deadline(deadline) do
+    if System.monotonic_time(:millisecond) < deadline,
+      do: :ok,
+      else: {:error, {:http_receive_failed, :timeout}}
   end
 
   # An `:event_stream` hook, `{acc, fun}`, takes the body of a 2xx
