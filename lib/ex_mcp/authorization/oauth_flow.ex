@@ -108,7 +108,8 @@ defmodule ExMCP.Authorization.OAuthFlow do
       %{client_id: params.client_id}
     )
 
-    with :ok <- reject_custom_state(params),
+    with :ok <- validate_scope_list(params.scopes),
+         :ok <- reject_custom_state(params),
          :ok <- validate_additional_params(params),
          :ok <- Validator.validate_redirect_uri(redirect_uri),
          :ok <- Validator.validate_https_endpoint(auth_endpoint),
@@ -366,6 +367,12 @@ defmodule ExMCP.Authorization.OAuthFlow do
   end
 
   # Private helpers
+
+  defp validate_scope_list(scopes) when is_list(scopes) do
+    if Enum.all?(scopes, &is_binary/1), do: :ok, else: {:error, :invalid_scopes}
+  end
+
+  defp validate_scope_list(_), do: {:error, :invalid_scopes}
 
   defp build_auth_query_params(params, code_challenge, state) do
     base_params = [

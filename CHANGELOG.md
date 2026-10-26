@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Upgraded the development-only Credo dependency to 1.7.19 so linting works
+  on Elixir 1.20; retained the maintenance line's existing style rules.
+
+### Fixed
+
+- Authorization code flow now returns `{:error, :invalid_scopes}` when
+  `:scopes` is not a list of strings, instead of accepting `nil` or raising
+  while building the authorization URL for other invalid values.
+
 ## [1.7.3] - 2026-10-26
 
 ### Changed
