@@ -108,6 +108,9 @@ defmodule ExMCP.Client do
     # Monitor refs of in-flight async POST tasks (Streamable HTTP transport),
     # mapped to the request id each task serves.
     async_post_tasks: %{},
+    # Progress tokens of pending requests, mapped to their request ids, so a
+    # connection-level notifications/progress reaches the request it reports on.
+    progress_requests: %{},
     # Linked processes of a transport (or receiver) this client has since
     # dropped, and that were still alive when it did. Their exit signals are
     # expected and are ignored rather than read as a foreign link's exit.
@@ -1101,6 +1104,7 @@ defmodule ExMCP.Client do
     %__MODULE__{
       transport_opts: opts,
       pending_requests: %{},
+      progress_requests: %{},
       pending_batches: %{},
       cancelled_requests: MapSet.new(),
       health_check_interval: Keyword.get(opts, :health_check_interval, 30_000),
@@ -1465,6 +1469,7 @@ defmodule ExMCP.Client do
       | connection_status: :disconnected,
         transport_state: nil,
         pending_requests: %{},
+        progress_requests: %{},
         pending_batches: %{},
         cancelled_requests: MapSet.new(),
         receiver_task: nil,
@@ -2209,6 +2214,7 @@ defmodule ExMCP.Client do
         transport_state: nil,
         receiver_task: nil,
         pending_requests: %{},
+        progress_requests: %{},
         pending_batches: %{},
         cancelled_requests: MapSet.new(),
         health_check_ref: nil,

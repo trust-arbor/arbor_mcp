@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Progress (`notifications/progress`) and connection-level log messages
+  (`notifications/message`) received over connection streams (stdio, BEAM,
+  legacy HTTP) are now routed to the client handler's `handle_progress/3`
+  and `handle_log_message/3` callbacks. Requests carrying a duplicate
+  `progressToken` currently in use by an active pending request are refused
+  as not sent (backport of 2.x #112: `35fd26a` and #115: `0baa12f`).
 - In legacy SSE mode, concurrent `tools/list` page responses are merged directly
   into the client process's tool header cache rather than having each async
   task overwrite `:tool_headers` from its initial snapshot (backport of 2.x

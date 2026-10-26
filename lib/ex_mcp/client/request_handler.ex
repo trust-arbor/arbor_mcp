@@ -230,6 +230,27 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   defp send_request(request, method, id, from, state, meta) do
+    if progress_token_in_use?(request, state),
+      do: {:reply, {:error, not_sent_error(:duplicate_progress_token, state)}, state},
+      else: send_unique_request(request, method, id, from, state, meta)
+  end
+
+  # Progress names its request only by token, so a token that a pending
+  # request already carries would route that request's progress here.
+  defp progress_token_in_use?(request, state) do
+    case get_in(request, ["params", "_meta", "progressToken"]) do
+      nil ->
+        false
+
+      token ->
+        case Map.get(Map.get(state, :progress_requests) || %{}, token) do
+          nil -> false
+          owner -> Map.has_key?(state.pending_requests, owner)
+        end
+    end
+  end
+
+  defp send_unique_request(request, method, id, from, state, meta) do
     deadline = request_deadline(meta)
 
     case send_by_deadline(request, state, deadline) do
@@ -263,7 +284,7 @@ defmodule ExMCP.Client.RequestHandler do
         maybe_schedule_request_timeout(id, meta, updated_state)
         pending_requests = Map.put(updated_state.pending_requests, id, {from, :single, method})
         new_state = %{updated_state | pending_requests: pending_requests}
-        {:noreply, new_state}
+        {:noreply, remember_progress_token(request, id, new_state)}
 
       {:error, :not_connected} ->
         {:reply, {:error, :not_connected}, state}
@@ -495,31 +516,8 @@ defmodule ExMCP.Client.RequestHandler do
       {:error, error, id} ->
         handle_single_response({:error, error, id}, state)
 
-      {:notification, "notifications/subscriptions/acknowledged", params} ->
-        route_subscription_acknowledgment(params, state)
-
-      {:notification, method, params}
-      when method in [
-             "notifications/tools/list_changed",
-             "notifications/prompts/list_changed",
-             "notifications/resources/list_changed",
-             "notifications/resources/updated"
-           ] ->
-        route_change_notification(method, params, state)
-
-      {:notification, "notifications/tasks" = method, params} ->
-        route_task_subscription_event(method, params, state)
-
-      {:notification, "notifications/cancelled", params} ->
-        Logger.info("Received notification: notifications/cancelled")
-        handle_cancellation_notification(params, state)
-
-      {:notification, method, _params} ->
-        Logger.info("Received unsupported notification",
-          method_hash: LogSummary.fingerprint(method)
-        )
-
-        {:noreply, state}
+      {:notification, method, params} ->
+        route_notification(method, params, state)
 
       {:request, method, params, id} ->
         handle_server_request(method, params, id, state)
@@ -950,6 +948,77 @@ defmodule ExMCP.Client.RequestHandler do
       Map.put(monitors, Process.monitor(subscription_pid), subscription_pid)
     end
   end
+
+  defp route_notification("notifications/subscriptions/acknowledged", params, state),
+    do: route_subscription_acknowledgment(params, state)
+
+  defp route_notification(method, params, state)
+       when method in [
+              "notifications/tools/list_changed",
+              "notifications/prompts/list_changed",
+              "notifications/resources/list_changed",
+              "notifications/resources/updated"
+            ],
+       do: route_change_notification(method, params, state)
+
+  defp route_notification("notifications/tasks" = method, params, state),
+    do: route_task_subscription_event(method, params, state)
+
+  defp route_notification("notifications/cancelled", params, state) do
+    Logger.info("Received notification: notifications/cancelled")
+    handle_cancellation_notification(params, state)
+  end
+
+  defp route_notification("notifications/progress", params, state) when is_map(params),
+    do: route_progress(params, state)
+
+  # A connection-level log message belongs to no request.
+  defp route_notification("notifications/message", params, state) when is_map(params),
+    do: dispatch_request_notification(:handle_log_message, nil, params, state)
+
+  defp route_notification(method, _params, state) do
+    Logger.info("Received unsupported notification",
+      method_hash: LogSummary.fingerprint(method)
+    )
+
+    {:noreply, state}
+  end
+
+  # Over every transport but a modern request stream, progress arrives on the
+  # connection and names its request only by the token that request carried.
+  defp route_progress(params, state) do
+    progress_requests = Map.get(state, :progress_requests) || %{}
+
+    case Map.get(progress_requests, params["progressToken"]) do
+      nil ->
+        Logger.debug("Progress for an unknown token")
+        {:noreply, state}
+
+      request_id ->
+        if Map.has_key?(state.pending_requests, request_id),
+          do: dispatch_request_notification(:handle_progress, request_id, params, state),
+          else: {:noreply, forget_progress_token(state, params["progressToken"])}
+    end
+  end
+
+  defp remember_progress_token(request, id, state) do
+    case get_in(request, ["params", "_meta", "progressToken"]) do
+      token when is_binary(token) or is_integer(token) ->
+        # Settled requests' tokens are dropped here, so the map never holds
+        # more than the pending requests that asked for progress.
+        live =
+          (Map.get(state, :progress_requests) || %{})
+          |> Map.filter(fn {_token, id} -> Map.has_key?(state.pending_requests, id) end)
+
+        Map.put(state, :progress_requests, Map.put(live, token, id))
+
+      _none ->
+        state
+    end
+  end
+
+  defp forget_progress_token(state, token),
+    do: Map.update(state, :progress_requests, %{}, &Map.delete(&1, token))
 
   defp route_subscription_acknowledgment(params, state) do
     request_id = get_in(params, ["_meta", "io.modelcontextprotocol/subscriptionId"])
