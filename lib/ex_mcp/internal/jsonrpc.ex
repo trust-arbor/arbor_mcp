@@ -74,6 +74,14 @@ defmodule ExMCP.Internal.JSONRPC do
     end
   end
 
+  def parse_unvalidated(%{"jsonrpc" => @jsonrpc, "result" => result, "id" => id}) do
+    {:result, result, id}
+  end
+
+  def parse_unvalidated(%{"jsonrpc" => @jsonrpc, "error" => error, "id" => id}) do
+    {:error, error, id}
+  end
+
   def parse_unvalidated(%{
         "jsonrpc" => @jsonrpc,
         "method" => method,
@@ -85,14 +93,6 @@ defmodule ExMCP.Internal.JSONRPC do
 
   def parse_unvalidated(%{"jsonrpc" => @jsonrpc, "method" => method, "params" => params}) do
     {:notification, method, params}
-  end
-
-  def parse_unvalidated(%{"jsonrpc" => @jsonrpc, "result" => result, "id" => id}) do
-    {:result, result, id}
-  end
-
-  def parse_unvalidated(%{"jsonrpc" => @jsonrpc, "error" => error, "id" => id}) do
-    {:error, error, id}
   end
 
   def parse_unvalidated(messages) when is_list(messages), do: {:batch, messages}
