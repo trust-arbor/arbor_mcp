@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Progress (`notifications/progress`) and connection-level log messages
+  (`notifications/message`) received over connection streams (stdio, BEAM,
+  legacy HTTP) are now routed to the client handler's `handle_progress/3`
+  and `handle_log_message/3` callbacks. Requests carrying a duplicate
+  `progressToken` currently in use by an active pending request are refused
+  as not sent (backport of 2.x #112: `35fd26a` and #115: `0baa12f`).
+- In legacy SSE mode, concurrent `tools/list` page responses are merged directly
+  into the client process's tool header cache rather than having each async
+  task overwrite `:tool_headers` from its initial snapshot (backport of 2.x
+  #110: `adcf5f4`).
+- In legacy SSE mode, authentication challenges received by concurrent async
+  POST tasks are handed back to the client process to re-send synchronously.
+  Concurrent 401 challenges now run a single authentication flow and share
+  fresh credentials rather than executing concurrent token refreshes (backport of
+  2.x #110: `3065dc3` and `adcf5f4`).
+- Legacy SSE async POST responses are matched by the request the POST carried
+  rather than solely by the `id` echoed in the response body. Responses with a
+  null or different id answer the caller instead of timing out, and responses
+  arriving after a request has settled (cancelled or timed out) are dropped
+  rather than misrouted to another request. A POST that fails at or after its
+  deadline replies `:timeout` and cancels the request on the server (backport of
+  2.x #110: `3065dc3` and `adcf5f4`).
 - A server mounted through `ExMCP.HttpPlug` could not send progress or
   list-change notifications to a legacy Streamable HTTP client, even when the
   client's GET stream was open (`legacy_http_sse: true`, the documented way a
@@ -25,13 +47,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mounted request's per-request handler is stopped once it has replied, so
   such a cast finds no process and is dropped (a cast never fails, crashes
   or hangs on a dead pid).
-- A legacy client's `c:ExMCP.Client.Handler.handle_progress/3` callback now
-  also runs for a `notifications/progress` that arrives on the connection
-  (a legacy GET stream, or any transport other than a modern request
-  stream): the client remembers the progress token each pending request
-  carries and routes the notification to that request's handler callback.
-  Such a notification used to be dropped as unsupported, so a server's
-  progress was never seen on 2025-11-25 connections.
 - An event arriving on a legacy HTTP GET stream in the gap between the
   stream's connection and the receiver task taking it over (an ExMCP server's
   `connected` greeting, written as soon as the stream opens) stalled the

@@ -287,27 +287,29 @@ defmodule ExMCP.Client.Handler do
               | {:error, error_info, state}
 
   @doc """
-  Handles a progress notification delivered on an ordinary request's modern
-  streamable-HTTP response, or one that arrives on the connection (a legacy
-  GET stream, or any transport other than a modern request stream) naming
-  its request by the progress token that request carried.
+  Handles a progress notification for a pending request, on every transport.
 
-  The first argument is the JSON-RPC id of the request that owns the stream.
+  The first argument is the JSON-RPC id of the request the progress reports on:
+  the request that owns a modern streamable-HTTP response stream, or elsewhere
+  the pending request whose `_meta.progressToken` the notification names.
   The map contains `"progressToken"`, `"progress"`, and optional `"total"`
   and `"message"` fields. Keep this callback fast; it runs in the client
-  process before subsequent events from the same response stream are handled.
+  process.
   """
   @callback handle_progress(ExMCP.Types.request_id(), notification :: map(), state) ::
               {:ok, state}
               | {:error, error_info, state}
 
   @doc """
-  Handles a request-scoped `notifications/message` event delivered before the
-  final response on a modern streamable-HTTP request. The first argument is
-  the owning JSON-RPC request id, which is required to correlate concurrent
-  log streams because log notification params do not contain a progress token.
+  Handles a `notifications/message` log event from the server.
+
+  On a modern streamable-HTTP request, the event arrives before the final
+  response and the first argument is the owning JSON-RPC request id, which
+  correlates concurrent log streams because log params carry no progress token.
+  On other transports (stdio, BEAM, legacy HTTP) log messages belong to the
+  connection, and the first argument is `nil`.
   """
-  @callback handle_log_message(ExMCP.Types.request_id(), notification :: map(), state) ::
+  @callback handle_log_message(ExMCP.Types.request_id() | nil, notification :: map(), state) ::
               {:ok, state}
               | {:error, error_info, state}
 

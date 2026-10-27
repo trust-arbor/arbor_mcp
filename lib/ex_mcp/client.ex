@@ -52,7 +52,17 @@ defmodule ExMCP.Client do
   alias ExMCP.Client.NotificationListener.Worker
 
   alias ExMCP.Client.Operations.{Prompts, Resources, Tasks, Tools}
-  alias ExMCP.Internal.{Headers, Protocol, Redaction, RequestParams, VersionInfo, VersionRegistry}
+
+  alias ExMCP.Internal.{
+    Headers,
+    LogSummary,
+    Protocol,
+    Redaction,
+    RequestParams,
+    VersionInfo,
+    VersionRegistry
+  }
+
   alias ExMCP.Reliability.Retry
   alias ExMCP.Response
   alias ExMCP.Server.Discover
@@ -98,6 +108,9 @@ defmodule ExMCP.Client do
     # Monitor refs of in-flight async POST tasks (Streamable HTTP transport),
     # mapped to the request id each task serves.
     async_post_tasks: %{},
+    # Progress tokens of pending requests, mapped to their request ids, so a
+    # connection-level notifications/progress reaches the request it reports on.
+    progress_requests: %{},
     # Linked processes of a transport (or receiver) this client has since
     # dropped, and that were still alive when it did. Their exit signals are
     # expected and are ignored rather than read as a foreign link's exit.
@@ -118,10 +131,6 @@ defmodule ExMCP.Client do
     # Monitor ref => Subscription process. Monitors survive reconnects while
     # request ids are replaced.
     subscription_monitors: %{},
-    # Progress token => request id for the requests that asked for progress,
-    # so a connection-level notifications/progress names its request (see
-    # ExMCP.Client.RequestHandler).
-    progress_requests: %{},
     # Ref-counted desired resource set and its currently committed immutable
     # modern subscription stream.
     resource_subscriptions: %{desired: %{}, active: nil, generation: 0},
@@ -1095,6 +1104,7 @@ defmodule ExMCP.Client do
     %__MODULE__{
       transport_opts: opts,
       pending_requests: %{},
+      progress_requests: %{},
       pending_batches: %{},
       cancelled_requests: MapSet.new(),
       health_check_interval: Keyword.get(opts, :health_check_interval, 30_000),
@@ -1459,6 +1469,7 @@ defmodule ExMCP.Client do
       | connection_status: :disconnected,
         transport_state: nil,
         pending_requests: %{},
+        progress_requests: %{},
         pending_batches: %{},
         cancelled_requests: MapSet.new(),
         receiver_task: nil,
@@ -1469,7 +1480,6 @@ defmodule ExMCP.Client do
         async_post_tasks: %{},
         subscriptions: %{},
         subscription_monitors: %{},
-        progress_requests: %{},
         resource_subscriptions: %{desired: %{}, active: nil, generation: 0},
         resource_subscriber_monitors: %{},
         notification_listeners: %{},
@@ -1526,17 +1536,7 @@ defmodule ExMCP.Client do
     # Modern streamable HTTP cancels an ordinary request by closing only that
     # request's response stream. Other transports retain the protocol
     # cancellation notification.
-    updated_state =
-      case updated_state do
-        %{transport_mod: HTTP, transport_state: %HTTP{protocol_era: :modern}} ->
-          RequestHandler.close_request_stream(request_id, updated_state)
-
-        _other ->
-          {:noreply, notified_state} =
-            RequestHandler.handle_cast_notification(method, params, updated_state)
-
-          notified_state
-      end
+    updated_state = cancel_on_wire(request_id, method, params, updated_state)
 
     # Check if this request is still pending and complete it with :cancelled error
     case Map.get(state.pending_requests, request_id) do
@@ -1710,12 +1710,12 @@ defmodule ExMCP.Client do
   # refresh), which are merged back into our copy of the transport state.
   def handle_info({:async_post_result, result, meta}, state) when is_map(meta) do
     state = merge_async_transport_state(state, meta)
-    handle_async_post_result(result, Map.get(meta, :request_id), state)
+    handle_async_post_result(result, meta, state)
   end
 
   # Legacy 2-tuple shape (no metadata) kept for compatibility.
   def handle_info({:async_post_result, result}, state) do
-    handle_async_post_result(result, nil, state)
+    handle_async_post_result(result, %{}, state)
   end
 
   # Async POST task registration: maps the task's monitor ref to the request
@@ -1869,15 +1869,13 @@ defmodule ExMCP.Client do
     case Map.get(state.pending_requests, request_id) do
       {from, :single, _method} ->
         GenServer.reply(from, {:error, :timeout})
-
-        state = RequestHandler.close_request_stream(request_id, state)
-        {:noreply, %{state | pending_requests: Map.delete(state.pending_requests, request_id)}}
+        state = %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
+        {:noreply, cancel_timed_out(request_id, state)}
 
       {from, :single} ->
         GenServer.reply(from, {:error, :timeout})
-
-        state = RequestHandler.close_request_stream(request_id, state)
-        {:noreply, %{state | pending_requests: Map.delete(state.pending_requests, request_id)}}
+        state = %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
+        {:noreply, cancel_timed_out(request_id, state)}
 
       _ ->
         {:noreply, state}
@@ -1948,20 +1946,67 @@ defmodule ExMCP.Client do
 
   # Async POST support (Streamable HTTP transport)
 
-  defp handle_async_post_result({:ok, _new_ts, response_data}, _request_id, state) do
-    # POST response contains data — parse it as a transport message
-    RequestHandler.parse_transport_message(response_data, state)
+  defp handle_async_post_result({:ok, _new_ts, response_data}, meta, state) do
+    state = cache_tool_list(state, Map.get(meta, :tool_list), response_data)
+    RequestHandler.handle_post_response(response_data, Map.get(meta, :request_id), state)
   end
 
-  defp handle_async_post_result({:ok, _new_ts}, _request_id, state) do
+  defp handle_async_post_result({:ok, _new_ts}, _meta, state) do
     # POST returned but no inline data — result will come via SSE stream
     {:noreply, state}
   end
 
-  defp handle_async_post_result({:error, reason}, request_id, state) do
-    Logger.error("Async POST failed: #{inspect(reason)}")
-    {:noreply, fail_async_post_request(state, request_id, reason)}
+  # The server asked the task's POST to authenticate. Re-sending from this
+  # process runs at most one authentication at a time, and later challenges
+  # reuse the credentials it obtained. A POST that carried no request (a
+  # notification, a batch, a reply to a server request) is re-sent too; a
+  # request whose caller has given up is not.
+  defp handle_async_post_result({:error, {:reauthenticate, message}}, meta, state) do
+    request_id = Map.get(meta, :request_id)
+
+    if is_nil(request_id) or Map.has_key?(state.pending_requests, request_id),
+      do: resend_authenticated(message, meta, state),
+      else: {:noreply, state}
   end
+
+  # The caller receives the failure, as from a synchronous send, so it is not
+  # logged as an error here.
+  defp handle_async_post_result({:error, reason}, meta, state) do
+    Logger.debug("Async POST failed", reason: LogSummary.describe(reason))
+
+    {:noreply,
+     fail_async_post_request(state, Map.get(meta, :request_id), reason, Map.get(meta, :deadline))}
+  end
+
+  defp resend_authenticated(message, meta, state) do
+    request_id = Map.get(meta, :request_id)
+    deadline = Map.get(meta, :deadline)
+    previous = Deadline.on_transport(HTTP, state.transport_state)
+    transport = Deadline.put_on_transport(HTTP, state.transport_state, deadline)
+    restore = &%{state | transport_state: Deadline.put_on_transport(HTTP, &1, previous)}
+
+    case HTTP.send_authenticated(message, transport) do
+      {:ok, transport, response_data} ->
+        RequestHandler.handle_post_response(response_data, request_id, restore.(transport))
+
+      {:ok, transport} ->
+        {:noreply, restore.(transport)}
+
+      {:error, reason} ->
+        Logger.debug("Authenticated resend failed", reason: LogSummary.describe(reason))
+        {:noreply, fail_async_post_request(state, request_id, reason, deadline)}
+    end
+  end
+
+  defp cache_tool_list(
+         %{transport_mod: HTTP, transport_state: %HTTP{} = transport} = state,
+         kind,
+         data
+       )
+       when kind in [:first, :cursor],
+       do: %{state | transport_state: HTTP.cache_tool_list(transport, kind, data)}
+
+  defp cache_tool_list(state, _kind, _data), do: state
 
   # Merge the durable transport-state changes computed by an async POST task
   # (session id rotation, OAuth token/auth state, SSE retry metadata) into the
@@ -2010,18 +2055,53 @@ defmodule ExMCP.Client do
 
   defp known_async_post_request?(_state, _request_id), do: false
 
-  # Fail the pending request an async POST task was serving. Batch members,
-  # notifications (nil id), and already-completed requests are left to the
-  # normal timeout/cleanup path.
-  defp fail_async_post_request(state, request_id, reason) do
+  # Modern streamable HTTP cancels an ordinary request by closing only that
+  # request's response stream. Other transports retain the protocol
+  # cancellation notification.
+  defp cancel_on_wire(request_id, method, params, state) do
+    case state do
+      %{transport_mod: HTTP, transport_state: %HTTP{protocol_era: :modern}} ->
+        RequestHandler.close_request_stream(request_id, state)
+
+      _other ->
+        {:noreply, notified_state} =
+          RequestHandler.handle_cast_notification(method, params, state)
+
+        notified_state
+    end
+  end
+
+  # The spec asks a sender to cancel a request it stops waiting for, so the
+  # server can stop the work; servers no longer cut it off after 10 s.
+  defp cancel_timed_out(request_id, state) do
+    case Protocol.encode_cancelled(request_id, "Request timed out") do
+      {:ok, %{"method" => method, "params" => params}} ->
+        cancel_on_wire(request_id, method, params, state)
+
+      {:error, :cannot_cancel_initialize} ->
+        RequestHandler.close_request_stream(request_id, state)
+    end
+  end
+
+  # A POST that failed at or after its caller's deadline is the caller's
+  # timeout, answered as a synchronous send was, and is cancelled on the
+  # server: the client's own timeout timer finds nothing left to cancel.
+  defp fail_async_post_request(state, request_id, reason, deadline \\ nil) do
+    timed_out? =
+      reason != :deadline_expired and is_integer(deadline) and Deadline.expired?(deadline)
+
+    error = if timed_out?, do: :timeout, else: {:transport_error, reason}
+
     case request_id && Map.get(state.pending_requests, request_id) do
       {from, :single, _method} ->
-        GenServer.reply(from, {:error, {:transport_error, reason}})
-        %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
+        GenServer.reply(from, {:error, error})
+        state = %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
+        if timed_out?, do: cancel_timed_out(request_id, state), else: state
 
       {from, :single} ->
-        GenServer.reply(from, {:error, {:transport_error, reason}})
-        %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
+        GenServer.reply(from, {:error, error})
+        state = %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
+        if timed_out?, do: cancel_timed_out(request_id, state), else: state
 
       _ ->
         state
@@ -2145,6 +2225,7 @@ defmodule ExMCP.Client do
         transport_state: nil,
         receiver_task: nil,
         pending_requests: %{},
+        progress_requests: %{},
         pending_batches: %{},
         cancelled_requests: MapSet.new(),
         health_check_ref: nil,
