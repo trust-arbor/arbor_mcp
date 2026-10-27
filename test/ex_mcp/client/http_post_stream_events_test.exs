@@ -40,6 +40,22 @@ defmodule ExMCP.Client.HTTPPostStreamEventsTest do
     end
   end
 
+  defmodule DisabledAuthProvider do
+    @behaviour ExMCP.Authorization.Provider
+
+    @impl true
+    def init(_config), do: {:error, :disabled}
+
+    @impl true
+    def get_token(state), do: {:ok, nil, state}
+
+    @impl true
+    def handle_unauthorized(_challenge, _scopes, state), do: {:error, :disabled, state}
+
+    @impl true
+    def handle_forbidden(_challenge, _scopes, state), do: {:error, :disabled, state}
+  end
+
   # `answer_call` gets the tools/call request and the conn, and sends the
   # POST's response itself. A GET relay keeps the legacy standalone stream
   # open, so the call's POST runs from its own task and can hand the events
@@ -49,6 +65,10 @@ defmodule ExMCP.Client.HTTPPostStreamEventsTest do
   defp start(answer_call, opts \\ []) do
     bypass = Bypass.open()
     test = self()
+
+    if setup = Keyword.get(opts, :bypass_setup) do
+      setup.(bypass)
+    end
 
     Bypass.stub(bypass, "DELETE", "/mcp", &Plug.Conn.resp(&1, 200, ""))
 
@@ -268,6 +288,123 @@ defmodule ExMCP.Client.HTTPPostStreamEventsTest do
 
     assert {:ok, %{"content" => [%{"text" => "done"}]}} = Task.await(task)
     assert Agent.get(attempts, & &1) == 3
+    send(stream, :close)
+  end
+
+  test "a retried POST with automatic OAuth discovery handles server requests on its event stream" do
+    attempts = start_supervised!({Agent, fn -> 0 end})
+    test = self()
+
+    answer = fn %{"id" => id}, conn ->
+      attempt = Agent.get_and_update(attempts, fn n -> {n + 1, n + 1} end)
+
+      case attempt do
+        1 ->
+          conn
+          |> Plug.Conn.put_resp_header(
+            "www-authenticate",
+            ~s(Bearer realm="mcp", scope="tools.call")
+          )
+          |> Plug.Conn.resp(401, "authentication required")
+
+        2 ->
+          assert Plug.Conn.get_req_header(conn, "authorization") == [
+                   "Bearer auto-discovered-token"
+                 ]
+
+          conn = open_stream(conn)
+
+          ping = %{"jsonrpc" => "2.0", "id" => "auto-retry-ping", "method" => "ping"}
+          {:ok, conn} = Plug.Conn.chunk(conn, event(ping))
+          send(test, {:retry_stream_open, self()})
+
+          receive do
+            :release -> :ok
+          after
+            3_000 -> :ok
+          end
+
+          {:ok, conn} = Plug.Conn.chunk(conn, event(done(id)))
+          conn
+      end
+    end
+
+    setup_bypass = fn bypass ->
+      Bypass.stub(
+        bypass,
+        "GET",
+        "/.well-known/oauth-protected-resource/mcp",
+        &Plug.Conn.resp(&1, 404, "")
+      )
+
+      Bypass.stub(
+        bypass,
+        "GET",
+        "/.well-known/openid-configuration",
+        &Plug.Conn.resp(&1, 404, "")
+      )
+
+      Bypass.stub(bypass, "GET", "/.well-known/oauth-protected-resource", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          Jason.encode!(%{
+            "resource" => "http://127.0.0.1:#{bypass.port}/mcp",
+            "authorization_servers" => ["http://127.0.0.1:#{bypass.port}"]
+          })
+        )
+      end)
+
+      Bypass.stub(bypass, "GET", "/.well-known/oauth-authorization-server", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          Jason.encode!(%{
+            "issuer" => "http://127.0.0.1:#{bypass.port}",
+            "authorization_endpoint" => "http://127.0.0.1:#{bypass.port}/authorize",
+            "token_endpoint" => "http://127.0.0.1:#{bypass.port}/token",
+            "grant_types_supported" => ["client_credentials"],
+            "token_endpoint_auth_methods_supported" => ["client_secret_post"]
+          })
+        )
+      end)
+
+      Bypass.stub(bypass, "POST", "/token", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          Jason.encode!(%{
+            "access_token" => "auto-discovered-token",
+            "token_type" => "Bearer",
+            "expires_in" => 3600
+          })
+        )
+      end)
+    end
+
+    Application.put_env(:ex_mcp, :oauth_metadata_fetch, allow_insecure_loopback: true)
+    on_exit(fn -> Application.delete_env(:ex_mcp, :oauth_metadata_fetch) end)
+
+    {client, stream} =
+      start(answer,
+        bypass_setup: setup_bypass,
+        client: [
+          auth_provider: {DisabledAuthProvider, []},
+          auth: %{client_id: "auto-client", client_secret: "secret"}
+        ]
+      )
+
+    task = call(client)
+
+    assert_receive {:retry_stream_open, server}, 5_000
+    assert_receive {:client_answered, "auto-retry-ping", %{"result" => %{}}}, 2_000
+    send(server, :release)
+
+    assert {:ok, %{"content" => [%{"text" => "done"}]}} = Task.await(task)
+    assert Agent.get(attempts, & &1) == 2
     send(stream, :close)
   end
 

@@ -2084,13 +2084,32 @@ defmodule ExMCP.Client do
   # concurrent updates to unrelated fields are preserved. The merge is skipped
   # when the task is no longer tracked (the transport was torn down or
   # reconnected after the task started), which keeps stale results from an old
-  # connection out of the new connection's state.
+  # connection out of the new connection's state. Older retry results never
+  # overwrite newer credentials.
+  @credential_fields [
+    :access_token,
+    :headers,
+    :auth_provider_state,
+    :auth_completed,
+    :auth_version
+  ]
+
   defp merge_async_transport_state(state, meta) do
     changes = Map.get(meta, :state_changes) || %{}
 
     if map_size(changes) > 0 and is_map(state.transport_state) and
          known_async_post_request?(state, meta) do
-      %{state | transport_state: Map.merge(state.transport_state, changes)}
+      current_version = state.transport_state.auth_version || 0
+      task_version = Map.get(changes, :auth_version, 0)
+
+      applicable_changes =
+        if task_version < current_version do
+          Map.drop(changes, @credential_fields)
+        else
+          changes
+        end
+
+      %{state | transport_state: Map.merge(state.transport_state, applicable_changes)}
     else
       state
     end
@@ -2098,6 +2117,7 @@ defmodule ExMCP.Client do
 
   defp merge_modern_stream_auth_state(transport_state, changes) do
     provider_state = Map.get(changes, :auth_provider_state, transport_state.auth_provider_state)
+    auth_version = Map.get(changes, :auth_version, (transport_state.auth_version || 0) + 1)
 
     case Map.fetch(changes, :access_token) do
       {:ok, token} when is_binary(token) ->
@@ -2110,11 +2130,12 @@ defmodule ExMCP.Client do
           transport_state
           | access_token: token,
             auth_provider_state: provider_state,
-            headers: headers
+            headers: headers,
+            auth_version: auth_version
         }
 
       _other ->
-        %{transport_state | auth_provider_state: provider_state}
+        %{transport_state | auth_provider_state: provider_state, auth_version: auth_version}
     end
   end
 
@@ -2132,7 +2153,7 @@ defmodule ExMCP.Client do
     # needs the challenged scopes, which a refresh alone doesn't add.
     if challenge.status == 401 or
          scopes_granted?(transport_state.auth_provider_state, challenge.scopes),
-       do: {{:ok, current}, transport_state},
+       do: {{:ok, current, transport_state.auth_version || 0}, transport_state},
        else: run_stream_challenge(transport_state, challenge)
   end
 
@@ -2153,8 +2174,15 @@ defmodule ExMCP.Client do
 
     case apply(provider, callback, args) do
       {:ok, token, provider_state} when is_binary(token) ->
-        changes = %{access_token: token, auth_provider_state: provider_state}
-        {{:ok, token}, merge_modern_stream_auth_state(transport_state, changes)}
+        version = (transport_state.auth_version || 0) + 1
+
+        changes = %{
+          access_token: token,
+          auth_provider_state: provider_state,
+          auth_version: version
+        }
+
+        {{:ok, token, version}, merge_modern_stream_auth_state(transport_state, changes)}
 
       {:error, reason, provider_state} ->
         {{:error, reason}, %{transport_state | auth_provider_state: provider_state}}

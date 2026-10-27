@@ -126,6 +126,45 @@ defmodule ExMCP.Client.AsyncPostResultTest do
       assert new_state.transport_state.headers == []
     end
 
+    test "delayed older retry credentials do not overwrite newer credentials" do
+      task_ref = make_ref()
+
+      ts = %HTTP{
+        session_id: "s1",
+        access_token: "T2",
+        headers: [{"Authorization", "Bearer T2"}],
+        auth_version: 2
+      }
+
+      state =
+        client_state(
+          transport_mod: HTTP,
+          transport_state: ts,
+          async_post_tasks: %{task_ref => 42}
+        )
+
+      # Task A was delayed and completed with older credentials T1 (auth_version 1)
+      meta = %{
+        request_id: 42,
+        state_changes: %{
+          session_id: "rotated_by_a",
+          access_token: "T1",
+          headers: [{"Authorization", "Bearer T1"}],
+          auth_version: 1
+        }
+      }
+
+      assert {:noreply, new_state} =
+               Client.handle_info({:async_post_result, {:ok, ts}, meta}, state)
+
+      # Non-credential changes are merged
+      assert new_state.transport_state.session_id == "rotated_by_a"
+      # Newer credentials (T2, version 2) are preserved and NOT overwritten by T1
+      assert new_state.transport_state.access_token == "T2"
+      assert new_state.transport_state.headers == [{"Authorization", "Bearer T2"}]
+      assert new_state.transport_state.auth_version == 2
+    end
+
     test "stale results from untracked tasks do not touch the transport state" do
       ts = %HTTP{session_id: "fresh", headers: []}
 

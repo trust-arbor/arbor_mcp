@@ -32,6 +32,29 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
       do: handle_unauthorized(www_authenticate, scopes, state)
   end
 
+  defmodule VersionedProvider do
+    @moduledoc false
+    @behaviour ExMCP.Authorization.Provider
+
+    @impl true
+    def init(config), do: {:ok, %{test_pid: Keyword.fetch!(config, :test_pid)}}
+
+    @impl true
+    def get_token(state), do: {:ok, nil, state}
+
+    @impl true
+    def handle_unauthorized(_www_authenticate, _scopes, state) do
+      send(state.test_pid, :authed_t1)
+      {:ok, "T1", Map.put(state, :token, "T1")}
+    end
+
+    @impl true
+    def handle_forbidden(_www_authenticate, _scopes, state) do
+      send(state.test_pid, :authed_t2)
+      {:ok, "T2", Map.put(state, :token, "T2")}
+    end
+  end
+
   test "a response with a null or different id answers the request its POST carried" do
     client = start_client()
 
@@ -182,6 +205,32 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
     assert Map.has_key?(cache, "tool_gen2")
     refute Map.has_key?(cache, "tool_stale_hold")
     refute Map.has_key?(cache, "tool_first")
+  end
+
+  test "a delayed older retry credentials do not overwrite newer credentials" do
+    client = start_client(auth_provider: {VersionedProvider, test_pid: self()})
+
+    task_a = Task.async(fn -> Client.call_tool(client, "versioned_a", %{}, timeout: 5_000) end)
+    assert_receive :authed_t1, 2_000
+    assert_receive {:holding_a, handler_a}, 2_000
+
+    task_b = Task.async(fn -> Client.call_tool(client, "versioned_b", %{}, timeout: 5_000) end)
+    assert_receive :authed_t2, 2_000
+    assert {:ok, _} = Task.await(task_b, 2_000)
+
+    # Client now has T2
+    assert :sys.get_state(client).transport_state.access_token == "T2"
+
+    # Now release delayed Task A (which completed with T1)
+    send(handler_a, :release)
+    assert {:ok, _} = Task.await(task_a, 2_000)
+
+    # Client MUST STILL have T2 (T1 did not overwrite T2)
+    assert :sys.get_state(client).transport_state.access_token == "T2"
+
+    # Third call gets T2
+    assert {:ok, _} = Client.call_tool(client, "versioned_c", %{}, timeout: 5_000)
+    assert_receive {:c_auth, ["Bearer T2"]}, 2_000
   end
 
   defp receive_list_started do
@@ -365,6 +414,9 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
           |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
           |> Plug.Conn.resp(401, "")
         end
+
+      name when name in ["versioned_a", "versioned_b", "versioned_c"] ->
+        respond_versioned(conn, id, name, test_pid)
     end
   end
 
@@ -411,6 +463,60 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
   defp respond(conn, %{"method" => method} = message, test_pid, _counter) do
     send(test_pid, {:notification, method, Map.get(message, "params", %{})})
     Plug.Conn.resp(conn, 202, "")
+  end
+
+  defp respond_versioned(conn, id, "versioned_a", test_pid) do
+    case Plug.Conn.get_req_header(conn, "authorization") do
+      ["Bearer T1"] ->
+        send(test_pid, {:holding_a, self()})
+
+        receive do
+          :release -> :ok
+        after
+          5_000 -> :ok
+        end
+
+        json(conn, %{
+          "jsonrpc" => "2.0",
+          "id" => id,
+          "result" => %{"content" => [%{"type" => "text", "text" => "a_done"}]}
+        })
+
+      _other ->
+        conn
+        |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
+        |> Plug.Conn.resp(401, "")
+    end
+  end
+
+  defp respond_versioned(conn, id, "versioned_b", _test_pid) do
+    case Plug.Conn.get_req_header(conn, "authorization") do
+      ["Bearer T2"] ->
+        json(conn, %{
+          "jsonrpc" => "2.0",
+          "id" => id,
+          "result" => %{"content" => [%{"type" => "text", "text" => "b_done"}]}
+        })
+
+      _other ->
+        conn
+        |> Plug.Conn.put_resp_header(
+          "www-authenticate",
+          ~s(Bearer error="insufficient_scope", scope="tools:b")
+        )
+        |> Plug.Conn.resp(403, "")
+    end
+  end
+
+  defp respond_versioned(conn, id, "versioned_c", test_pid) do
+    auth = Plug.Conn.get_req_header(conn, "authorization")
+    send(test_pid, {:c_auth, auth})
+
+    json(conn, %{
+      "jsonrpc" => "2.0",
+      "id" => id,
+      "result" => %{"content" => [%{"type" => "text", "text" => "c_done"}]}
+    })
   end
 
   defp text_result(conn, id, text) do

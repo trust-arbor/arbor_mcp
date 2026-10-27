@@ -66,6 +66,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than misrouted to another request. A POST that fails at or after its
   deadline replies `:timeout` and cancels the request on the server (backport of
   2.x #110: `3065dc3` and `adcf5f4`).
+- In legacy HTTP POSTs without an explicit auth provider, 401 challenges now
+  perform automatic OAuth discovery and retry directly inside the async task,
+  preserving the live event-stream consumer and preventing synchronous client
+  GenServer deadlocks on retried SSE streams that contain server requests or
+  progress notifications.
+- Async POST retry results version transport credentials (`auth_version`) and
+  compare them before merging into the client process's transport state,
+  preventing delayed older retry results from overwriting newer credentials and
+  exhausting retry allowances on subsequent requests.
 - Nested atom keys in a client's declared capabilities are now normalized
   for the Local transport too, matching the HTTP wire shape. This closes a
   Local-transport gap in the 1.x backport of 2.x PR #116.

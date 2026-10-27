@@ -148,7 +148,8 @@ defmodule ExMCP.Transport.HTTP do
     tool_headers_generation: 0,
     modern_streams: %{},
     sse_deferred_attempted: false,
-    auth_completed: false
+    auth_completed: false,
+    auth_version: 0
   ]
 
   @type t :: %__MODULE__{
@@ -179,7 +180,8 @@ defmodule ExMCP.Transport.HTTP do
           dns_timeout_ms: pos_integer(),
           dns_resolver: module() | function(),
           allowed_private_hosts: [String.t()],
-          deadline: integer() | nil
+          deadline: integer() | nil,
+          auth_version: non_neg_integer()
         }
 
   @default_endpoint "/mcp/v1"
@@ -436,29 +438,45 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  # A POST task does not authenticate directly: with several in flight, each would run
-  # the OAuth flow. It hands an auth challenge back to the client process,
-  # which answers the challenge and returns the token so this task can re-send itself
-  # while keeping its live event stream.
-  defp perform_async(message, state, parent, opts, attempts \\ 0) do
+  # A POST task does not authenticate directly when an auth provider is configured:
+  # with several in flight, each would run the provider callback. It hands an auth challenge
+  # back to the client process, which answers the challenge and returns the token so this task
+  # can re-send itself while keeping its live event stream.
+  # With no auth provider, the task runs automatic OAuth discovery and retry itself,
+  # preserving the event stream consumer across retries so server requests can still be answered.
+  defp perform_async(message, state, parent, opts, attempts \\ 0)
+
+  defp perform_async(message, %{auth_provider: provider} = state, parent, opts, attempts)
+       when not is_nil(provider) do
     stream =
       PostStream.consumer(parent,
         max_buffer_bytes: state.max_stream_buffer_bytes,
         max_kept_bytes: state.max_response_bytes
       )
 
-    case perform_http_request(message, state, [event_stream: stream] ++ opts) do
+    request_opts = [event_stream: stream] ++ opts
+
+    case perform_http_request(message, state, request_opts) do
       {:ok, response} ->
-        case {extract_auth_status(response), state.auth_provider} do
-          {:ok, _provider} ->
+        case extract_auth_status(response) do
+          :ok ->
             handle_http_response(response, state, message, opts)
 
           # As a modern request stream does: the client process answers the
           # challenge, one at a time across its requests, and this task sends
           # the request again itself, so the client isn't held up meanwhile.
           # At most an initial 401 and a 403 step-up.
-          {{kind, www_auth}, provider} when not is_nil(provider) and attempts < 2 ->
+          {kind, www_auth} when attempts < 2 ->
             case await_authentication(parent, kind, www_auth, state) do
+              {:ok, token, version} ->
+                perform_async(
+                  message,
+                  apply_token_to_state(state, token, version),
+                  parent,
+                  opts,
+                  attempts + 1
+                )
+
               {:ok, token} ->
                 perform_async(
                   message,
@@ -472,12 +490,30 @@ defmodule ExMCP.Transport.HTTP do
                 {:error, {:authentication_failed, reason}}
             end
 
-          {_challenge, provider} when not is_nil(provider) ->
+          _challenge ->
             handle_http_response(response, state, message, opts)
-
-          {_challenge, nil} ->
-            {:error, {:reauthenticate, message}}
         end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp perform_async(message, state, parent, opts, _attempts) do
+    stream =
+      PostStream.consumer(parent,
+        max_buffer_bytes: state.max_stream_buffer_bytes,
+        max_kept_bytes: state.max_response_bytes
+      )
+
+    request_opts = [event_stream: stream] ++ opts
+
+    case perform_and_maybe_auth(message, state, request_opts) do
+      {:ok, response} ->
+        handle_http_response(response, state, message, opts)
+
+      {:ok, response, new_state} ->
+        handle_http_response(response, new_state, message, opts)
 
       {:error, reason} ->
         {:error, reason}
@@ -638,8 +674,15 @@ defmodule ExMCP.Transport.HTTP do
 
   defp apply_provider_token(state), do: state
 
-  defp apply_token_to_state(state, token) do
-    %{state | access_token: token, headers: put_bearer_header(state.headers, token)}
+  defp apply_token_to_state(state, token, version \\ nil) do
+    auth_version = version || state.auth_version + 1
+
+    %{
+      state
+      | access_token: token,
+        headers: put_bearer_header(state.headers, token),
+        auth_version: auth_version
+    }
   end
 
   defp init_auth_provider({mod, provider_config}, _auth_config, _base_url, _endpoint, _version) do
@@ -729,7 +772,8 @@ defmodule ExMCP.Transport.HTTP do
           state
           | access_token: access_token,
             auth_completed: true,
-            headers: put_bearer_header(state.headers, access_token)
+            headers: put_bearer_header(state.headers, access_token),
+            auth_version: state.auth_version + 1
         }
 
         # Retry the original request with auth headers
@@ -767,7 +811,8 @@ defmodule ExMCP.Transport.HTTP do
           state
           | access_token: access_token,
             auth_completed: true,
-            headers: put_bearer_header(state.headers, access_token)
+            headers: put_bearer_header(state.headers, access_token),
+            auth_version: state.auth_version + 1
         }
 
         case perform_http_request(original_body, new_state, opts) do
@@ -910,7 +955,8 @@ defmodule ExMCP.Transport.HTTP do
     :auth_provider_state,
     :headers,
     :retry_delay,
-    :last_event_id
+    :last_event_id,
+    :auth_version
   ]
 
   @doc false
