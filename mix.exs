@@ -121,7 +121,13 @@ defmodule ExMCP.MixProject do
       {:propcheck, "~> 1.4", only: :test},
       {:benchee, "~> 1.0", only: [:dev, :test]},
       {:bypass, "~> 2.0", only: :test},
-      {:jose, "~> 1.11"}
+      # 1.11.13 fixes EEF-CVE-2026-65625 (AES-GCM tag length), -65626
+      # (RSAES-PKCS1-v1_5 padding oracle), -65627 (JWE zip decompression),
+      # -65628 (JWK.shared_secret recursion) and -65629 (weak PBKDF2 for
+      # password-encrypted key export). This library only signs and verifies
+      # JWS and reaches none of them; the floor keeps consumers' dependency
+      # graphs off the vulnerable releases.
+      {:jose, "~> 1.11 and >= 1.11.13"}
     ]
   end
 

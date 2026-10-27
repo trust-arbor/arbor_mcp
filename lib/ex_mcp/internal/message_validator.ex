@@ -121,6 +121,11 @@ defmodule ExMCP.Internal.MessageValidator do
       not Map.has_key?(message, "jsonrpc") ->
         {{:error, create_error(@invalid_request, "Invalid message structure")}, state}
 
+      # A response stays a response even when it also names a method.
+      Map.has_key?(message, "id") and
+          (Map.has_key?(message, "result") or Map.has_key?(message, "error")) ->
+        validate_response_with_state(message, state)
+
       # Request: has method and id
       Map.has_key?(message, "method") and Map.has_key?(message, "id") ->
         validate_request_with_state(message, state)
@@ -128,11 +133,6 @@ defmodule ExMCP.Internal.MessageValidator do
       # Notification: has method but no id
       Map.has_key?(message, "method") ->
         validate_notification_with_state(message, state)
-
-      # Response: has result or error with id
-      Map.has_key?(message, "id") and
-          (Map.has_key?(message, "result") or Map.has_key?(message, "error")) ->
-        validate_response_with_state(message, state)
 
       # Has id but no result/error - incomplete response
       Map.has_key?(message, "id") ->

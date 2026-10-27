@@ -691,7 +691,8 @@ Supported options include:
 - `:allowed_private_hosts` (exact internal hostnames allowed to resolve to
   RFC 1918/IPv6 ULA addresses; no wildcards)
 - `:max_request_bytes`
-- `:max_response_bytes`
+- `:max_response_bytes` (a JSON response, or the events of an SSE response
+  that aren't handed to the client as they arrive)
 - `:max_stream_buffer_bytes` (maximum delimiter-free/incomplete SSE data)
 - `:security`
 - `:auth`

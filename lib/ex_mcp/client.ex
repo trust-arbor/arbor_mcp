@@ -1589,6 +1589,15 @@ defmodule ExMCP.Client do
     RequestHandler.parse_transport_message(message, state)
   end
 
+  # A notification or request on a legacy POST's event stream (see
+  # ExMCP.Transport.HTTP.PostStream). Acknowledged on receipt, so a slow
+  # handler doesn't hold up the stream, and at most one more message from it
+  # waits here meanwhile.
+  def handle_info({:http_post_stream_message, task, ref, message}, state) do
+    send(task, {:http_post_stream_ack, ref})
+    RequestHandler.parse_transport_message(message, state)
+  end
+
   def handle_info(
         {:modern_http_stream_message, stream_pid, request_id, message},
         %{
