@@ -1,0 +1,277 @@
+defmodule ExMCP.Transport.Stdio.Reaper do
+  @moduledoc false
+  # Stops a stdio server when its connection ends, in the MCP shutdown order:
+  # EOF (the port closing), then SIGTERM after the EOF grace, then SIGKILL
+  # after the TERM grace.
+  #
+  # A reaper is started with each connection and linked to nothing, so it
+  # outlives whoever owns the connection: a client killed by its supervisor
+  # before or during ExMCP.Transport.Stdio.close/1 still has its server
+  # stopped. It acts once, on the first of:
+  #
+  #   * :close - close/1 asked; the reaper closes the port itself, so it
+  #     knows the close was asked for
+  #   * the port's :DOWN - its owner died, or the server exited
+  #   * :server_exited - the port reported the server's exit status
+  #
+  # A pid names the server only while the server runs: once it exits, the
+  # pid can be handed to an unrelated process. So on Unix every signal is
+  # sent only after checking that the pid still names the child started for
+  # this connection, by its start time recorded at connect, and when that
+  # can't be checked nothing is sent. A group is signalled once its leader
+  # was confirmed, since a group id isn't reused while the group has
+  # members. Windows has no cheap check: taskkill runs only on close/1 or
+  # when the owner died abnormally, when the server was still ours to stop,
+  # never after the server exited.
+
+  @poll_ms 10
+  @max_poll_ms 100
+
+  @type event :: :close | :server_exited | {:port_down, term()}
+  @type action :: :none | :shutdown | :taskkill
+
+  @doc """
+  Starts the reaper of the server `os_pid` behind `port`. Options:
+  `:process_group`, `:eof_grace`, `:term_grace` (already fitted to the
+  budget) and `:budget` (the bound on taskkill); `:identity` stands in for
+  the one read at start, for tests.
+  """
+  @spec start(port(), pos_integer(), keyword()) :: pid()
+  def start(port, os_pid, opts) when is_integer(os_pid) do
+    # Read here, while the connection is new: a server that already exited
+    # gets nil, and nil is never signalled.
+    identity = Keyword.get_lazy(opts, :identity, fn -> identity(os_pid) end)
+    spawn(fn -> run(port, os_pid, identity, opts) end)
+  end
+
+  @doc "Asks the reaper to close the port and stop the server."
+  @spec close(pid()) :: :ok
+  def close(reaper) when is_pid(reaper) do
+    send(reaper, :close)
+    :ok
+  end
+
+  @doc "Tells the reaper the server exited on its own: nothing to stop."
+  @spec server_exited(pid() | nil) :: :ok
+  def server_exited(reaper) when is_pid(reaper) do
+    send(reaper, :server_exited)
+    :ok
+  end
+
+  def server_exited(_no_reaper), do: :ok
+
+  @doc """
+  What a reaper does when `event` ends the connection, on `os_family`
+  (`:unix` or `:win32`). `:shutdown` signals only a child it can confirm.
+  """
+  @spec action(:unix | :win32, event()) :: action()
+  def action(_os_family, :server_exited), do: :none
+  def action(:unix, _event), do: :shutdown
+  def action(:win32, :close), do: :taskkill
+  # The server exited, or its owner did normally: either way not ours to kill.
+  def action(:win32, {:port_down, :normal}), do: :none
+  def action(:win32, {:port_down, _abnormal}), do: :taskkill
+
+  defp run(port, os_pid, identity, opts) do
+    monitor = monitor_port(port)
+
+    event =
+      receive do
+        :close ->
+          close_port(port)
+          :close
+
+        :server_exited ->
+          :server_exited
+
+        {:DOWN, ^monitor, :port, _port, reason} ->
+          {:port_down, reason}
+      end
+
+    case action(os_family(), event) do
+      :none -> :ok
+      :shutdown -> shutdown(os_pid, identity, opts)
+      :taskkill -> taskkill(os_pid, Keyword.fetch!(opts, :budget))
+    end
+  end
+
+  defp shutdown(os_pid, identity, opts) do
+    if same_child?(os_pid, identity) do
+      target = if Keyword.get(opts, :process_group, false), do: {:group, os_pid}, else: os_pid
+
+      unless exited_within?(target, Keyword.fetch!(opts, :eof_grace)) do
+        signal(target, identity, "TERM")
+
+        unless exited_within?(target, Keyword.fetch!(opts, :term_grace)) do
+          signal(target, identity, "KILL")
+        end
+      end
+    end
+
+    :ok
+  end
+
+  # The leader was confirmed when the shutdown began, and a group id isn't
+  # reused while the group has members.
+  defp signal({:group, _os_pid} = target, _identity, signal), do: kill(signal, target)
+
+  defp signal(os_pid, identity, signal) do
+    if same_child?(os_pid, identity), do: kill(signal, os_pid)
+  end
+
+  @doc false
+  # Signals what a server left in its group after exiting on its own (see
+  # Stdio's process_group option). The group id can't be handed to a new
+  # group while the group has members.
+  @spec stop_group(pos_integer(), non_neg_integer(), non_neg_integer()) :: :ok
+  def stop_group(os_pid, eof_grace, term_grace) do
+    target = {:group, os_pid}
+
+    unless exited_within?(target, eof_grace) do
+      kill("TERM", target)
+      unless exited_within?(target, term_grace), do: kill("KILL", target)
+    end
+
+    :ok
+  end
+
+  @doc false
+  # Runs `command`, giving up after `timeout_ms`.
+  @spec run_bounded(String.t(), [String.t()], non_neg_integer()) ::
+          {String.t(), non_neg_integer()} | :timeout
+  def run_bounded(command, args, timeout_ms) do
+    task = Task.async(fn -> run_command(command, args) end)
+
+    case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      _timeout -> :timeout
+    end
+  end
+
+  defp taskkill(os_pid, budget) do
+    run_bounded("taskkill", ["/PID", Integer.to_string(os_pid), "/T", "/F"], budget)
+    :ok
+  end
+
+  @doc false
+  # Identifies the process `os_pid` names, so a pid handed on to another
+  # process isn't taken for the server: its start time, from /proc on Linux
+  # and from ps elsewhere. nil when it can't be read (or no such process).
+  @spec identity(pos_integer()) :: term() | nil
+  def identity(os_pid) do
+    case :os.type() do
+      {:unix, :linux} -> linux_start_time(os_pid)
+      {:unix, _other} -> ps_start_time(os_pid)
+      {:win32, _name} -> nil
+    end
+  end
+
+  defp same_child?(_os_pid, nil), do: false
+  defp same_child?(os_pid, identity), do: identity(os_pid) == identity
+
+  defp linux_start_time(os_pid) do
+    case File.read("/proc/#{os_pid}/stat") do
+      {:ok, stat} -> parse_linux_stat(stat)
+      {:error, _reason} -> nil
+    end
+  end
+
+  @doc false
+  # Field 22 of /proc/<pid>/stat, the start time in clock ticks after boot.
+  # The command name (field 2, in parentheses) may hold spaces and
+  # parentheses, so fields are counted after its last ")".
+  @spec parse_linux_stat(String.t()) :: {:linux, String.t()} | nil
+  def parse_linux_stat(stat) do
+    with [_pid_and_comm, rest] <- :binary.split(stat, ")", [:global]) |> split_last(),
+         fields = String.split(rest, " ", trim: true),
+         start when is_binary(start) <- Enum.at(fields, 19) do
+      {:linux, start}
+    else
+      _unparsable -> nil
+    end
+  end
+
+  defp split_last([_only]), do: :error
+  defp split_last(parts), do: [Enum.join(Enum.drop(parts, -1), ")"), List.last(parts)]
+
+  defp ps_start_time(os_pid) do
+    case run_command("ps", ["-o", "lstart=", "-p", Integer.to_string(os_pid)]) do
+      {output, 0} ->
+        case String.trim(output) do
+          "" -> nil
+          start -> {:ps, start}
+        end
+
+      _gone ->
+        nil
+    end
+  end
+
+  # Each check runs `kill`, so checks grow sparser over a long grace.
+  defp exited_within?(target, grace_ms) do
+    deadline = System.monotonic_time(:millisecond) + grace_ms
+    wait_for_exit(target, deadline, @poll_ms)
+  end
+
+  defp wait_for_exit(target, deadline, interval) do
+    if alive?(target) do
+      remaining = deadline - System.monotonic_time(:millisecond)
+
+      if remaining > 0 do
+        Process.sleep(min(remaining, interval))
+        wait_for_exit(target, deadline, min(interval * 2, @max_poll_ms))
+      else
+        false
+      end
+    else
+      true
+    end
+  end
+
+  # For a group, true while any member is left.
+  defp alive?(target), do: match?({_output, 0}, run_command("kill", kill_args("0", target)))
+
+  defp kill(signal, target) do
+    run_command("kill", kill_args(signal, target))
+    :ok
+  end
+
+  # `kill` addresses a process group by the negated group id; `--` keeps the
+  # negative number from being read as an option.
+  defp kill_args(signal, {:group, os_pid}), do: ["-#{signal}", "--", "-#{os_pid}"]
+  defp kill_args(signal, os_pid), do: ["-#{signal}", Integer.to_string(os_pid)]
+
+  defp os_family do
+    case :os.type() do
+      {:win32, _name} -> :win32
+      {:unix, _name} -> :unix
+    end
+  end
+
+  # A port that is already closed reports :DOWN at once.
+  defp monitor_port(port) when is_port(port), do: :erlang.monitor(:port, port)
+
+  defp monitor_port(_no_port) do
+    monitor = make_ref()
+    send(self(), {:DOWN, monitor, :port, nil, :noproc})
+    monitor
+  end
+
+  defp close_port(port) when is_port(port) do
+    Port.close(port)
+    :ok
+  catch
+    :error, :badarg -> :ok
+  end
+
+  defp close_port(_no_port), do: :ok
+
+  defp run_command(command, args) do
+    case System.find_executable(command) do
+      nil -> {"", 127}
+      executable -> System.cmd(executable, args, stderr_to_stdout: true)
+    end
+  rescue
+    _error -> {"", 1}
+  end
+end

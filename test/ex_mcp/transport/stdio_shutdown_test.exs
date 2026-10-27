@@ -12,6 +12,7 @@ defmodule ExMCP.Transport.StdioShutdownTest do
   alias ExMCP.Client
   alias ExMCP.Client.Deadline
   alias ExMCP.Transport.Stdio
+  alias ExMCP.Transport.Stdio.Reaper
 
   # Answers initialize, then ignores EOF and SIGTERM: only SIGKILL stops it.
   @stubborn_server ~S"""
@@ -209,6 +210,92 @@ defmodule ExMCP.Transport.StdioShutdownTest do
     assert System.monotonic_time(:millisecond) - started < 1_500
 
     wait_until(fn -> not os_alive?(state.os_pid) end, timeout: 5_000)
+  end
+
+  describe "the reaper" do
+    defp sleeper do
+      port = Port.open({:spawn_executable, System.find_executable("sleep")}, args: ["30"])
+      {:os_pid, os_pid} = Port.info(port, :os_pid)
+      kill_on_exit(os_pid)
+      {port, os_pid}
+    end
+
+    defp await_exit(pid) do
+      monitor = Process.monitor(pid)
+      assert_receive {:DOWN, ^monitor, :process, ^pid, _reason}, 5_000
+    end
+
+    test "never signals a pid that now names another process" do
+      # The connection's server exited, and its pid was handed to `victim`.
+      {victim_port, victim} = sleeper()
+      {server_port, _server} = sleeper()
+
+      reaper =
+        Reaper.start(server_port, victim,
+          identity: {:ps, "the server's start time"},
+          eof_grace: 0,
+          term_grace: 0,
+          budget: 1_000
+        )
+
+      Reaper.close(reaper)
+      await_exit(reaper)
+
+      assert os_alive?(victim)
+      Port.close(victim_port)
+    end
+
+    test "stops its own server, which it identifies" do
+      {port, os_pid} = sleeper()
+      refute Reaper.identity(os_pid) == nil
+
+      reaper = Reaper.start(port, os_pid, eof_grace: 0, term_grace: 100, budget: 1_000)
+      Reaper.close(reaper)
+      await_exit(reaper)
+
+      wait_until(fn -> not os_alive?(os_pid) end, timeout: 5_000)
+    end
+
+    test "stands down when the port reported the server's exit" do
+      {port, os_pid} = sleeper()
+      reaper = Reaper.start(port, os_pid, eof_grace: 0, term_grace: 0, budget: 1_000)
+
+      Reaper.server_exited(reaper)
+      await_exit(reaper)
+      Port.close(port)
+
+      assert os_alive?(os_pid)
+    end
+
+    test "reads a Linux start time past a command name with spaces and parentheses" do
+      stat =
+        "4242 (my (odd) server) S 1 4242 4242 0 -1 4194560 120 0 0 0 1 2 0 0 20 0 1 0 " <>
+          "987654 12345678 300 18446744073709551615\n"
+
+      assert Reaper.parse_linux_stat(stat) == {:linux, "987654"}
+      assert Reaper.parse_linux_stat("garbage") == nil
+    end
+
+    # Windows can't be run here, so its decisions are tested as logic.
+    test "decides what each end of the connection calls for" do
+      assert Reaper.action(:unix, :close) == :shutdown
+      assert Reaper.action(:unix, {:port_down, :normal}) == :shutdown
+      assert Reaper.action(:unix, {:port_down, :killed}) == :shutdown
+      assert Reaper.action(:unix, :server_exited) == :none
+
+      assert Reaper.action(:win32, :close) == :taskkill
+      assert Reaper.action(:win32, {:port_down, :killed}) == :taskkill
+      assert Reaper.action(:win32, {:port_down, :shutdown}) == :taskkill
+      assert Reaper.action(:win32, {:port_down, :normal}) == :none
+      assert Reaper.action(:win32, :server_exited) == :none
+    end
+
+    test "gives up on a command that outlasts its bound" do
+      started = System.monotonic_time(:millisecond)
+      assert Reaper.run_bounded("sleep", ["5"], 200) == :timeout
+      assert System.monotonic_time(:millisecond) - started < 2_000
+      assert {_output, 0} = Reaper.run_bounded("true", [], 2_000)
+    end
   end
 
   test "connect rejects an explicit nil shutdown option before starting the server" do
