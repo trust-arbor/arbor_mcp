@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `jose` `>= 1.11.13` is required and locked. 1.11.13 fixes five advisories:
+  EEF-CVE-2026-65625 (attacker-chosen AES-GCM tag length), EEF-CVE-2026-65626
+  (RSAES-PKCS1-v1_5 padding oracle), EEF-CVE-2026-65627 (unbounded JWE zip
+  decompression), EEF-CVE-2026-65628 (infinite recursion in
+  `JOSE.JWK.shared_secret/2` on mismatched key types) and EEF-CVE-2026-65629
+  (weak PBKDF2 parameters for password-encrypted private-key export). This
+  library reaches none of them: it only signs and verifies JWS, never decrypts
+  JWE, derives shared secrets or exports password-encrypted keys, and MRTR
+  request state is sealed with `:crypto` directly and checks the tag length.
+  The floor keeps applications' dependency graphs off the affected releases.
+
 ### Fixed
 
 - Progress (`notifications/progress`) and connection-level log messages
@@ -53,6 +66,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than misrouted to another request. A POST that fails at or after its
   deadline replies `:timeout` and cancels the request on the server (backport of
   2.x #110: `3065dc3` and `adcf5f4`).
+- Nested atom keys in a client's declared capabilities are now normalized
+  for the Local transport too, matching the HTTP wire shape. This closes a
+  Local-transport gap in the 1.x backport of 2.x PR #116.
+- Legacy POST event-stream responses with both a method and a result or error
+  now remain responses in synchronous and streamed paths. This completes the
+  response-preservation behavior of the 1.x backports of 2.x PRs #121 and #122.
+- OAuth retries of a legacy POST now retain its live event-stream consumer,
+  allowing server requests on the retried stream to be answered. This fixes
+  an auth-path gap in the 1.x backport of 2.x PR #121.
+- A legacy POST event stream now stops at its response deadline even if the
+  socket or stream consumer keeps returning data. This closes a deadline gap
+  in the 1.x backport of 2.x PR #121.
+- A legacy `initialize` always sent `"capabilities": %{}`, ignoring the
+  client's `:capabilities` option, so servers that respect declared
+  capabilities never sent this client elicitation, sampling or roots
+  requests. The declared capabilities are now sent, with atom keys sent as
+  strings, as the same map arrives over the wire (backport of the capability
+  part of 2.x PR #116).
+- In the legacy Streamable HTTP revisions a server may answer a request's
+  POST with an event stream that carries the request's notifications and its
+  own requests ahead of the response, as the TypeScript SDK's servers do for
+  progress, log messages and elicitation. The client read the whole stream
+  before parsing it and joined every event's data into one JSON document, so
+  a notification ahead of the response left the call waiting until it timed
+  out, and a request the server waited on was never answered. On a POST sent
+  from its own task (any request once the legacy standalone GET stream is
+  open), each message on the stream is now handled as it arrives: list
+  changes and cancellations are routed, the server's requests are answered
+  while the stream is open, and the stream's length is no longer limited by
+  `:max_response_bytes` (each event is limited by
+  `:max_stream_buffer_bytes`). The SSE parser also reads an `id`, `retry` or
+  `event` field written without a space after the colon, as the format
+  allows; such an event id used to be ignored for resumption (backport of
+  2.x PR #121).
+- A request or notification that leaves out `params` was dropped as an
+  invalid message, so the client never answered a server's `ping` or saw its
+  `notifications/*/list_changed`; the TypeScript SDK's servers send both that
+  way. Such a message now parses with empty params, and a response that also
+  names a method stays a response (backport of 2.x PR #122).
 
 ## [1.7.3] - 2026-10-26
 

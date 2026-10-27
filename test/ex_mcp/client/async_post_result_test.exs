@@ -42,7 +42,7 @@ defmodule ExMCP.Client.AsyncPostResultTest do
       assert {:noreply, new_state} =
                Client.handle_info({:async_post_task, ref, 42, self()}, state)
 
-      assert new_state.async_post_tasks == %{ref => 42}
+      assert new_state.async_post_tasks == %{ref => {self(), 42}}
       assert_receive {:start_async_post, ^ref}
     end
 

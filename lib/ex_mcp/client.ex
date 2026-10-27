@@ -1597,6 +1597,15 @@ defmodule ExMCP.Client do
     RequestHandler.parse_transport_message(message, state)
   end
 
+  # A notification or request on a legacy POST's event stream (see
+  # ExMCP.Transport.HTTP.PostStream). Acknowledged on receipt, so a slow
+  # handler doesn't hold up the stream, and at most one more message from it
+  # waits here meanwhile.
+  def handle_info({:http_post_stream_message, task, ref, message}, state) do
+    send(task, {:http_post_stream_ack, ref})
+    RequestHandler.parse_transport_message(message, state)
+  end
+
   def handle_info(
         {:modern_http_stream_message, stream_pid, request_id, message},
         %{
@@ -1747,7 +1756,7 @@ defmodule ExMCP.Client do
       Process.exit(task_pid, :kill)
       {:noreply, state}
     else
-      tasks = Map.put(state.async_post_tasks || %{}, ref, request_id)
+      tasks = Map.put(state.async_post_tasks || %{}, ref, {task_pid, request_id})
       send(task_pid, {:start_async_post, ref})
       {:noreply, %{state | async_post_tasks: tasks}}
     end
@@ -1757,6 +1766,33 @@ defmodule ExMCP.Client do
   def handle_info({:async_post_task, ref, request_id}, state) when is_reference(ref) do
     tasks = Map.put(state.async_post_tasks || %{}, ref, request_id)
     {:noreply, %{state | async_post_tasks: tasks}}
+  end
+
+  # One of this client's legacy POST tasks got a 401 or 403: answered here,
+  # in turn with every other challenge, and the task sends its request again
+  # with the token.
+  def handle_info(
+        {:http_post_auth_challenge, task, ref, challenge},
+        %{transport_mod: HTTP, transport_state: %HTTP{} = transport_state} = state
+      )
+      when is_pid(task) and is_map(challenge) do
+    if own_post_task?(state, task) and state.connection_status != :disconnected do
+      {result, transport_state} = answer_stream_challenge(transport_state, challenge)
+      send(task, {:http_post_auth_result, ref, result})
+      {:noreply, %{state | transport_state: transport_state}}
+    else
+      send(task, {:http_post_auth_result, ref, {:error, :stream_retired}})
+      {:noreply, state}
+    end
+  end
+
+  def handle_info(
+        {:http_post_auth_challenge, task, ref, _challenge},
+        state
+      )
+      when is_pid(task) and is_reference(ref) do
+    send(task, {:http_post_auth_result, ref, {:error, :stream_retired}})
+    {:noreply, state}
   end
 
   def handle_info(
@@ -1836,7 +1872,8 @@ defmodule ExMCP.Client do
   # request the task was serving instead of leaving it to hang until timeout.
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{async_post_tasks: tasks} = state)
       when is_map(tasks) and is_map_key(tasks, ref) do
-    {request_id, remaining} = Map.pop(tasks, ref)
+    {entry, remaining} = Map.pop(tasks, ref)
+    request_id = async_task_request_id(entry)
     state = %{state | async_post_tasks: remaining}
 
     cond do
@@ -2081,6 +2118,58 @@ defmodule ExMCP.Client do
     end
   end
 
+  defp own_post_task?(state, task) do
+    Enum.any?(state.async_post_tasks || %{}, fn
+      {_ref, {pid, _request_id}} -> pid == task
+      {_ref, pid} when is_pid(pid) -> pid == task
+      _other -> false
+    end)
+  end
+
+  defp answer_stream_challenge(%HTTP{access_token: current} = transport_state, challenge)
+       when is_binary(current) and current != :erlang.map_get(:token, challenge) do
+    # Another stream replaced the rejected token. That answers a 401; a 403
+    # needs the challenged scopes, which a refresh alone doesn't add.
+    if challenge.status == 401 or
+         scopes_granted?(transport_state.auth_provider_state, challenge.scopes),
+       do: {{:ok, current}, transport_state},
+       else: run_stream_challenge(transport_state, challenge)
+  end
+
+  defp answer_stream_challenge(%HTTP{auth_provider: nil} = transport_state, _challenge),
+    do: {{:error, :no_auth_provider}, transport_state}
+
+  defp answer_stream_challenge(transport_state, challenge),
+    do: run_stream_challenge(transport_state, challenge)
+
+  defp scopes_granted?(%{granted_scopes: granted}, [_ | _] = scopes) when is_list(granted),
+    do: Enum.all?(scopes, &(&1 in granted))
+
+  defp scopes_granted?(_provider_state, _scopes), do: false
+
+  defp run_stream_challenge(%HTTP{auth_provider: provider} = transport_state, challenge) do
+    callback = if challenge.status == 401, do: :handle_unauthorized, else: :handle_forbidden
+    args = [challenge.www_authenticate, challenge.scopes, transport_state.auth_provider_state]
+
+    case apply(provider, callback, args) do
+      {:ok, token, provider_state} when is_binary(token) ->
+        changes = %{access_token: token, auth_provider_state: provider_state}
+        {{:ok, token}, merge_modern_stream_auth_state(transport_state, changes)}
+
+      {:error, reason, provider_state} ->
+        {{:error, reason}, %{transport_state | auth_provider_state: provider_state}}
+
+      {:error, reason} ->
+        {{:error, reason}, transport_state}
+
+      other ->
+        {{:error, {:invalid_provider_response, other}}, transport_state}
+    end
+  end
+
+  defp async_task_request_id({_pid, request_id}), do: request_id
+  defp async_task_request_id(request_id), do: request_id
+
   defp known_async_post_request?(%{async_post_tasks: tasks}, meta)
        when is_map(tasks) and is_map(meta) do
     task_ref = Map.get(meta, :task_ref)
@@ -2091,7 +2180,7 @@ defmodule ExMCP.Client do
         is_map_key(tasks, task_ref)
 
       not is_nil(request_id) ->
-        Enum.any?(tasks, fn {_ref, id} -> id == request_id end)
+        Enum.any?(tasks, fn {_ref, entry} -> async_task_request_id(entry) == request_id end)
 
       true ->
         false
