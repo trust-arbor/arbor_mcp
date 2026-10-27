@@ -127,7 +127,7 @@ The four modes are intentionally policies rather than protocol versions:
 |---|---|---|---|
 | `:legacy_only` | Legacy | `initialize` | Never |
 | `:prefer_legacy` | Both | `initialize` | To modern only after an eligible protocol failure on a live transport |
-| `:prefer_modern` | Both | `server/discover` | To legacy only with positive compatibility evidence on a live transport |
+| `:prefer_modern` | Both | `server/discover` | To legacy only with positive compatibility evidence on a live transport, or over stdio on a fresh process when the probed one exited or stayed silent |
 | `:modern_only` | Modern | `server/discover` | Never |
 
 On the server, both `:prefer_legacy` and `:prefer_modern` accept either era;
@@ -158,7 +158,12 @@ validates the era on each request instead.
 
 This separation prevents a failed modern probe from becoming an unsafe silent
 downgrade. Fallback requires both a recognized compatibility signal and a
-still-usable transport. A cached modern peer failing its next probe is surfaced
+still-usable transport. The one exception is stdio under `:prefer_modern`: a
+server that exits without answering the probe (Python `mcp` 1.8 and earlier)
+or does not answer it within its bound is closed, and a fresh process from
+the same options is initialized, once per attempt; the probed pipe, which a
+late answer could still reach, carries nothing more. A cached modern peer
+failing its next probe is surfaced
 as an error until the operator clears that observation or changes policy.
 
 ## Internal Functional Cores

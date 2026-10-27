@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Under `:prefer_modern`, a stdio server that exits without answering the
+  `server/discover` probe, as Python `mcp` 1.6 and 1.8 stdio servers do, or
+  that does not answer it within its bound is now reached with a legacy
+  `initialize`. The client closes that process (EOF, then TERM and KILL),
+  starts a fresh one from the same options and initializes it, once per
+  connection attempt and reconnect, within `:establish_timeout`. The probed
+  pipe carries nothing more, so a late answer to the probe cannot reach the
+  handshake. Malformed output (a JSON-looking line that is not a valid
+  answer, or a frame cut off or over `:max_frame_bytes`) never leads to a
+  respawn, and non-JSON stdout lines are no answer. A modern-only server
+  then fails on `initialize` with the versions it supports, reported as
+  `{:era_probe_and_initialize_failed, %{..., respawned: true}}`; the
+  `[:ex_mcp, :client, :era, :fallback]` event carries `respawned: true`.
+  `:modern_only` never respawns. A server process that cannot be confirmed
+  stopped is never replaced, by a retry or a reconnect either:
+  `start_link/1` returns
+  `{:error, {:transport_connect_failed, {:probed_server_stop_unconfirmed, ...}}}`
+  or `{:error, {:transport_connect_failed, {:cleanup_failed, ...}}}`, and a
+  reconnecting client stops, settles in `:disconnected` and emits the new
+  `[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]` event. A stdio
+  server that wrote part of a frame and exited is now reported as
+  `{:connection_error, {:unfinished_frame, {:process_exited, status}}}`.
+  **Behavior change:** such servers, which failed to connect before, now
+  connect. Backport of ArborMCP `8d1f0b6`, `01c4e2c`, `beb25f2` and the
+  reconnect part of `9bdc531`.
+
 ### Changed
 
 - `jose` `>= 1.11.13` is required and locked. 1.11.13 fixes five advisories:

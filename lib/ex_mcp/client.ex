@@ -156,7 +156,9 @@ defmodule ExMCP.Client do
     included) and waiting for the server's response (default: 10_000).
     On expiry `start_link/1` fails with `{:error, :handshake_timeout}`.
   - `:protocol_mode` - Era policy: `:modern_only`, `:legacy_only`,
-    `:prefer_modern`, or `:prefer_legacy`.
+    `:prefer_modern`, or `:prefer_legacy`. Under `:prefer_modern`, a stdio
+    server that exits without answering the `server/discover` probe, or never
+    answers it, is closed and started again for a legacy `initialize`, once.
   - `:era_probe_timeout` - Dedicated timeout for the side-effect-free modern
     discovery probe exchange, send included (default: 2_000 milliseconds).
     Over stdio the probe is the first message a newly started server reads,
@@ -206,6 +208,12 @@ defmodule ExMCP.Client do
   settles in `:disconnected`. Requests made while reconnecting return
   `{:error, :not_connected}`.
 
+  Over stdio each connection runs its own server process, and none is
+  started while an earlier one may still be running. When a reconnect
+  attempt's stdio server cannot be confirmed stopped, the client stops
+  reconnecting, settles in `:disconnected` and emits
+  `[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]`.
+
   Explicit `disconnect/1` or `stop/2` calls never trigger reconnection.
   Passing `reconnect: false` disables the behavior entirely.
 
@@ -224,6 +232,9 @@ defmodule ExMCP.Client do
   - `[:ex_mcp, :client, :reconnect, :success]` - reconnected and re-initialized
   - `[:ex_mcp, :client, :reconnect, :error]` - a single attempt failed
   - `[:ex_mcp, :client, :reconnect, :timeout]` - gave up after the final attempt
+  - `[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]` - stopped
+    reconnecting because a stdio server from an earlier attempt could not be
+    confirmed stopped; metadata `reason`
 
   ## Reliability Options
 
@@ -1182,6 +1193,12 @@ defmodule ExMCP.Client do
   defp normalize_connection_error(:establish_timeout), do: :establish_timeout
 
   defp normalize_connection_error({:invalid_establish_timeout, _value} = reason), do: reason
+
+  defp normalize_connection_error({:probed_server_stop_unconfirmed, _details} = reason),
+    do: {:transport_connect_failed, reason}
+
+  defp normalize_connection_error({:cleanup_failed, _reason, {:error, _}} = reason),
+    do: {:transport_connect_failed, reason}
 
   defp normalize_connection_error(:invalid_request) do
     {:initialize_error, %{"code" => ErrorCodes.invalid_request()}}
@@ -2527,8 +2544,30 @@ defmodule ExMCP.Client do
           %{reason: reason, transport: configured_transport(state), pid: self()}
         )
 
-        handle_reconnect_failure(state, reason)
+        if ConnectionManager.cleanup_unconfirmed?(reason) and
+             ConnectionManager.spawns_server?(state.transport_opts),
+           do: stop_reconnecting(state, reason),
+           else: handle_reconnect_failure(state, reason)
     end
+  end
+
+  # A new connection to a stdio server starts a new server process, so none
+  # is started while one an earlier attempt opened may still be running: it
+  # could hold the port or lock the new one needs. The client stops
+  # reconnecting, settles in :disconnected and reports why.
+  defp stop_reconnecting(state, reason) do
+    :telemetry.execute(
+      [:ex_mcp, :client, :reconnect, :cleanup_unconfirmed],
+      %{attempt: state.reconnect_attempts},
+      %{reason: reason, transport: configured_transport(state), pid: self()}
+    )
+
+    Logger.error("Not reconnecting: an earlier server may still be running: #{inspect(reason)}")
+
+    close_notification_listeners(
+      %{state | connection_status: :disconnected},
+      {:reconnect_stopped, reason}
+    )
   end
 
   defp handle_reconnect_failure(state, reason) do

@@ -69,9 +69,34 @@ defmodule ExMCP.Client.ConnectionManager do
       do_establish_connection(state, opts)
     end
 
-    retry_opts = Retry.mcp_defaults(retry_policy)
+    retry_opts =
+      retry_policy
+      |> Retry.mcp_defaults()
+      |> never_retry_unconfirmed_cleanup(spawns_server?(opts))
+
     Retry.with_retry(connection_operation, retry_opts)
   end
+
+  # Each attempt starts a new transport, for stdio a new server process. That
+  # never happens while one an earlier attempt opened may still be running,
+  # whatever the policy's own :should_retry? says: it could hold the port or
+  # lock the new one needs.
+  defp never_retry_unconfirmed_cleanup(retry_opts, false = _spawns_server?), do: retry_opts
+
+  defp never_retry_unconfirmed_cleanup(retry_opts, true = _spawns_server?) do
+    should_retry? = Keyword.fetch!(retry_opts, :should_retry?)
+
+    Keyword.put(retry_opts, :should_retry?, fn reason ->
+      not cleanup_unconfirmed?(reason) and should_retry?.(reason)
+    end)
+  end
+
+  @doc false
+  # Whether a failed establishment left a server process it opened not
+  # confirmed stopped.
+  def cleanup_unconfirmed?({:probed_server_stop_unconfirmed, _details}), do: true
+  def cleanup_unconfirmed?({:cleanup_failed, _reason, {:error, _cleanup}}), do: true
+  def cleanup_unconfirmed?(_reason), do: false
 
   defp do_establish_connection(state, opts) do
     opts = maybe_default_legacy_sse_opts(opts)
@@ -86,6 +111,7 @@ defmodule ExMCP.Client.ConnectionManager do
          {:ok, result, state_after_protocol} <-
            transport_mod
            |> establish_protocol(transport_state, opts, era_identity)
+           |> respawn_for_legacy(transport_mod, transport_manager_opts, opts)
            |> close_on_failure(transport_mod),
          state_after_protocol =
            Deadline.put_on_transport(transport_mod, state_after_protocol, nil),
@@ -110,8 +136,12 @@ defmodule ExMCP.Client.ConnectionManager do
 
       {:ok, new_state}
     else
+      # Unconfirmed cleanup outranks the deadline: callers (a retry, a
+      # reconnect) must see it to keep from starting another server.
       {:error, reason} ->
-        if Deadline.expired?(deadline), do: {:error, :establish_timeout}, else: {:error, reason}
+        if Deadline.expired?(deadline) and not cleanup_unconfirmed?(reason),
+          do: {:error, :establish_timeout},
+          else: {:error, reason}
 
       error ->
         {:error, "Unexpected error during connection: #{inspect(error)}"}
@@ -131,9 +161,22 @@ defmodule ExMCP.Client.ConnectionManager do
   # SSE client) and closing an earlier snapshot would leave that behind.
   defp close_on_failure({:ok, _result, _state} = success, _transport_mod), do: success
 
+  # A failure with no open transport left to close.
+  defp close_on_failure({:error, _reason} = failure, _transport_mod), do: failure
+
+  # A spawned server that cannot be confirmed stopped is reported with the
+  # failure, as {:cleanup_failed, reason, cleanup}, so no retry starts
+  # another beside it.
   defp close_on_failure({:error, reason, latest_state}, transport_mod) do
-    close_quietly(transport_mod, with_cleanup_deadline(transport_mod, latest_state))
-    {:error, reason}
+    case close_quietly(transport_mod, with_cleanup_deadline(transport_mod, latest_state)) do
+      {:error, _cleanup} = unconfirmed ->
+        if spawned_server?(transport_mod, latest_state),
+          do: {:error, {:cleanup_failed, reason, unconfirmed}},
+          else: {:error, reason}
+
+      _confirmed ->
+        {:error, reason}
+    end
   end
 
   # Cleanup gets its own budget, whatever is left of the establishment
@@ -165,9 +208,9 @@ defmodule ExMCP.Client.ConnectionManager do
   defp close_quietly(transport_mod, transport_state) do
     transport_mod.close(transport_state)
   rescue
-    _exception -> :ok
+    exception -> {:error, {:cleanup_exception, exception.__struct__}}
   catch
-    :exit, _reason -> :ok
+    :exit, reason -> {:error, {:cleanup_exit, reason}}
   end
 
   defp establish_protocol(transport_mod, transport_state, opts, era_identity) do
@@ -286,8 +329,83 @@ defmodule ExMCP.Client.ConnectionManager do
                 %{probe: probe_error, initialize: initialize_error}}, latest_state}
           end
         else
-          _no_legacy_evidence -> {:error, {:era_probe_failed, probe_error}, updated_state}
+          _no_legacy_evidence ->
+            without_legacy_evidence(transport_mod, updated_state, probe_error)
         end
+    end
+  end
+
+  # A stdio server that predates server/discover may exit on the probe
+  # (Python's `mcp` 1.8 and earlier do) or never answer it. That is no
+  # evidence on the probed pipe, which a late reply could still reach, so
+  # do_establish_connection/2 reaps that child and initializes a new one.
+  defp without_legacy_evidence(transport_mod, transport_state, probe_error) do
+    if respawn_for_legacy?(transport_mod, transport_state, probe_error),
+      do: {:respawn_for_legacy, probe_error, transport_state},
+      else: {:error, {:era_probe_failed, probe_error}, transport_state}
+  end
+
+  defp respawn_for_legacy?(transport_mod, transport_state, {:transport_error, reason}) do
+    spawned_server?(transport_mod, transport_state) and probe_unanswered?(reason)
+  end
+
+  defp respawn_for_legacy?(_transport_mod, _transport_state, _probe_error), do: false
+
+  # The only two triggers: the probe timed out, or the child exited with no
+  # answer at all. Malformed, partial or oversized output and any other
+  # framing error are answers of a sort, and fail the connection.
+  defp probe_unanswered?(:handshake_timeout), do: true
+  defp probe_unanswered?({:connection_error, {:process_exited, _status}}), do: true
+  defp probe_unanswered?(_reason), do: false
+
+  # Under :prefer_modern only, once per attempt: the probed child is closed
+  # (EOF, then TERM and KILL) before a fresh one is started from the same
+  # options for the legacy handshake, all within the establishment deadline.
+  # A child that cannot be confirmed stopped may still hold what the fresh
+  # one needs (a port, a lock), so then no second one is started.
+  defp respawn_for_legacy(
+         {:respawn_for_legacy, probe_error, probed_state},
+         transport_mod,
+         transport_manager_opts,
+         opts
+       ) do
+    deadline = Keyword.get(opts, :establish_deadline)
+    closed = close_quietly(transport_mod, with_cleanup_deadline(transport_mod, probed_state))
+
+    with {:closed, :ok} <- {:closed, closed},
+         :ok <- check_deadline(deadline),
+         {:ok, {_transport_mod, respawned}} <- connect_transport(transport_manager_opts) do
+      initialize_respawned(transport_mod, respawned, probe_error, opts, deadline)
+    else
+      {:closed, cleanup} ->
+        {:error, {:probed_server_stop_unconfirmed, %{probe: probe_error, cleanup: cleanup}}}
+
+      {:error, reason} ->
+        {:error, {:era_probe_and_respawn_failed, %{probe: probe_error, respawn: reason}}}
+    end
+  end
+
+  defp respawn_for_legacy(result, _transport_mod, _transport_manager_opts, _opts), do: result
+
+  # Fails with the respawned transport, which close_on_failure/2 then closes.
+  defp initialize_respawned(transport_mod, respawned, probe_error, opts, deadline) do
+    respawned = Deadline.put_on_transport(transport_mod, respawned, deadline)
+    era_identity = EraCache.identity(transport_mod, respawned, opts)
+
+    case establish_legacy_protocol(transport_mod, respawned, opts, era_identity) do
+      {:ok, _result, _state} = success ->
+        :telemetry.execute(
+          [:ex_mcp, :client, :era, :fallback],
+          %{},
+          %{from: :modern, to: :legacy, reason: probe_failure_class(probe_error), respawned: true}
+        )
+
+        success
+
+      {:error, initialize_error, latest_state} ->
+        {:error,
+         {:era_probe_and_initialize_failed,
+          %{probe: probe_error, initialize: initialize_error, respawned: true}}, latest_state}
     end
   end
 
@@ -457,8 +575,10 @@ defmodule ExMCP.Client.ConnectionManager do
   # the transport reports timed out, such as an HTTP POST cut short by the
   # probe's bound. A stdio probe that runs out of time fails instead as
   # {:transport_error, :handshake_timeout}, which is deliberately not
-  # evidence: the server may only be slow to start, and its late answer to the
-  # probe would share the pipe with an initialize sent after it.
+  # evidence on that pipe: the server may only be slow to start, and its late
+  # answer to the probe would share the pipe with an initialize sent after it.
+  # :prefer_modern initializes a fresh process instead (see
+  # without_legacy_evidence/3).
   defp legacy_fallback_evidence?({:probe_timeout, _reason}), do: true
   defp legacy_fallback_evidence?({:http_probe_rejected, _response}), do: true
   defp legacy_fallback_evidence?(_reason), do: false

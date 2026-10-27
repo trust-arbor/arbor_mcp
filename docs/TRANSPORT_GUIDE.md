@@ -246,6 +246,20 @@ revision, stdio probe timeout, authentication failure, or broken transport is
 surfaced instead of being silently downgraded. `:modern_only` never falls
 back.
 
+Over stdio a server that exits without answering the probe at all, as
+Python `mcp` 1.8 and earlier do, or that does not answer it within its bound
+is no evidence on that pipe, which a late answer could still reach. Under
+`:prefer_modern` the client closes that process (EOF, then TERM and KILL),
+starts a fresh one from the same options and initializes it, once per
+connection attempt, reconnects included, within `:establish_timeout`. A
+modern-only server then fails on `initialize` with the versions it
+supports. Those are the only two triggers: malformed output (a JSON-looking
+line that is not a valid answer, or a frame cut off or over
+`:max_frame_bytes`) fails the connection, while non-JSON lines such as
+banners and logs are ignored and are no answer. `:modern_only` never
+respawns, and a retry or reconnect never starts a server while one an
+earlier attempt opened is not confirmed stopped.
+
 Successful modern observations are pinned by endpoint and relevant transport
 configuration. Legacy observations expire (five minutes by default) so an
 upgraded endpoint is eventually probed again. Pass `reset_era_cache: true` for
