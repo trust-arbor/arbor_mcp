@@ -104,9 +104,50 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
     assert Map.has_key?(cache, "tool_p1") and Map.has_key?(cache, "tool_p2")
   end
 
+  test "a 401 challenge on a notification POST after disconnect/1 does not crash the client" do
+    client = start_client(auth_provider: {Provider, test_pid: self()})
+
+    :ok = Client.send_cancelled(client, "req-1", "delayed_auth")
+    assert_receive {:notification_held, handler}, 2_000
+
+    assert :ok = Client.disconnect(client)
+
+    send(handler, :release_401)
+
+    refute_receive :authenticated, 500
+    assert Process.alive?(client)
+  end
+
+  test "cursor page completing before first page retains both pages' tools in cache" do
+    client = start_client()
+
+    p_first = Task.async(fn -> Client.list_tools(client, timeout: 5_000) end)
+    {nil, first_handler} = receive_list_started_with_cursor()
+
+    p_cursor = Task.async(fn -> Client.list_tools(client, cursor: "c1", timeout: 5_000) end)
+    {"c1", cursor_handler} = receive_list_started_with_cursor()
+
+    # Release cursor handler first
+    send(cursor_handler, :release)
+    assert {:ok, _} = Task.await(p_cursor, 2_000)
+
+    # Release first handler second
+    send(first_handler, :release)
+    assert {:ok, _} = Task.await(p_first, 2_000)
+
+    cache = :sys.get_state(client).transport_state.tool_headers
+    assert Map.has_key?(cache, "tool_c1")
+    assert Map.has_key?(cache, "tool_first")
+  end
+
   defp receive_list_started do
     assert_receive {:list_started, _cursor, handler}, 2_000
     handler
+  end
+
+  defp receive_list_started_with_cursor do
+    assert_receive {:list_started, cursor, handler}, 2_000
+    {cursor, handler}
   end
 
   defp start_client(opts \\ []) do
@@ -122,6 +163,10 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
     Bypass.stub(bypass, "POST", "/mcp", fn conn ->
       {:ok, body, conn} = Plug.Conn.read_body(conn)
       respond(conn, Jason.decode!(body), test_pid)
+    end)
+
+    Bypass.stub(bypass, "DELETE", "/mcp", fn conn ->
+      Plug.Conn.resp(conn, 204, "")
     end)
 
     {:ok, client} =
@@ -164,7 +209,7 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
       2_000 -> :ok
     end
 
-    tools = [%{"name" => "tool_#{cursor}", "inputSchema" => %{"type" => "object"}}]
+    tools = [%{"name" => "tool_#{cursor || "first"}", "inputSchema" => %{"type" => "object"}}]
     json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"tools" => tools}})
   end
 
@@ -241,6 +286,21 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
           conn
           |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
           |> Plug.Conn.resp(401, "")
+        end
+
+      "delayed_auth" ->
+        send(test_pid, {:notification_held, self()})
+
+        receive do
+          :release_401 ->
+            conn
+            |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
+            |> Plug.Conn.resp(401, "")
+        after
+          2_000 ->
+            conn
+            |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
+            |> Plug.Conn.resp(401, "")
         end
 
       _other ->

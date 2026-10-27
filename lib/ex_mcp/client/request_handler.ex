@@ -765,7 +765,7 @@ defmodule ExMCP.Client.RequestHandler do
           state
       end
 
-    {:noreply, new_state}
+    {:noreply, forget_request_progress_token(new_state, response_id)}
   end
 
   defp dispatch_request_notification(callback, request_id, params, state) do
@@ -1019,6 +1019,20 @@ defmodule ExMCP.Client.RequestHandler do
 
   defp forget_progress_token(state, token),
     do: Map.update(state, :progress_requests, %{}, &Map.delete(&1, token))
+
+  @doc false
+  def forget_request_progress_token(state, request_id) do
+    case Map.get(state, :progress_requests) do
+      %{} = progress_requests ->
+        filtered =
+          Map.reject(progress_requests, fn {_token, id} -> id == request_id end)
+
+        %{state | progress_requests: filtered}
+
+      _other ->
+        state
+    end
+  end
 
   defp route_subscription_acknowledgment(params, state) do
     request_id = get_in(params, ["_meta", "io.modelcontextprotocol/subscriptionId"])
@@ -1470,13 +1484,23 @@ defmodule ExMCP.Client.RequestHandler do
           # Reply with cancelled error and remove from pending
           GenServer.reply(from, {:error, :cancelled})
           new_pending = Map.delete(state.pending_requests, request_id)
-          {:noreply, %{updated_state | pending_requests: new_pending}}
+
+          {:noreply,
+           forget_request_progress_token(
+             %{updated_state | pending_requests: new_pending},
+             request_id
+           )}
 
         {from, :single} ->
           # Reply with cancelled error and remove from pending
           GenServer.reply(from, {:error, :cancelled})
           new_pending = Map.delete(state.pending_requests, request_id)
-          {:noreply, %{updated_state | pending_requests: new_pending}}
+
+          {:noreply,
+           forget_request_progress_token(
+             %{updated_state | pending_requests: new_pending},
+             request_id
+           )}
 
         _ ->
           # Other types of requests (batch, etc.)

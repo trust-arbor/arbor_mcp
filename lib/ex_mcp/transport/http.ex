@@ -143,6 +143,8 @@ defmodule ExMCP.Transport.HTTP do
     # timeouts apply.
     :deadline,
     tool_headers: %{},
+    tool_listing_generation: 0,
+    tool_headers_generation: 0,
     modern_streams: %{},
     sse_deferred_attempted: false,
     auth_completed: false
@@ -164,6 +166,8 @@ defmodule ExMCP.Transport.HTTP do
           protocol_version: String.t(),
           protocol_era: :legacy | :modern | :unknown,
           tool_headers: %{optional(String.t()) => [map()]},
+          tool_listing_generation: non_neg_integer(),
+          tool_headers_generation: non_neg_integer(),
           modern_streams: %{optional(ExMCP.Types.request_id()) => pid()},
           sse_deferred_attempted: boolean(),
           auth_provider: module() | nil,
@@ -370,35 +374,47 @@ defmodule ExMCP.Transport.HTTP do
     # Resolved here, in the client process, so tasks never refresh (and
     # possibly rotate) a provider's token concurrently.
     request_state = apply_provider_token(state)
+    {page_info, request_state} = prepare_tool_list_page(message, request_state)
 
-    # spawn_monitor rather than Task.start: the parent (the ExMCP.Client
-    # GenServer) owns the monitor, so a crashed POST task produces a
-    # {:DOWN, ref, ...} the client maps back to the pending request instead
-    # of leaving it hanging until timeout. No link is created, so the
-    # exit-trapping client's {:EXIT, ...} transport handling is untouched.
-    {_task_pid, task_ref} =
-      spawn_monitor(fn ->
-        result = perform_async(message, request_state)
+    # Spawn the task waiting for an activation handshake from the client
+    # process. Monitoring before registering, and registering in the client
+    # before the task begins work, ensures that an abnormal exit (:DOWN) or a
+    # fast completion (:async_post_result) cannot race registration.
+    task_pid =
+      spawn(fn ->
+        receive do
+          {:start_async_post, task_ref} ->
+            result = perform_async(message, request_state)
 
-        # Report the durable transport-state fields this POST changed
-        # (session rotation, SSE metadata) so the client can merge
-        # them into its copy of the transport state instead of discarding.
-        meta = %{
-          request_id: request_id,
-          deadline: request_state.deadline,
-          tool_list: tool_list_page(message),
-          state_changes: result_state_changes(request_state, result)
-        }
+            # Report the durable transport-state fields this POST changed
+            # (session rotation, SSE metadata) so the client can merge
+            # them into its copy of the transport state instead of discarding.
+            meta = %{
+              task_ref: task_ref,
+              request_id: request_id,
+              deadline: request_state.deadline,
+              tool_list: page_info,
+              state_changes: result_state_changes(request_state, result)
+            }
 
-        send(parent, {:async_post_result, result, meta})
+            send(parent, {:async_post_result, result, meta})
+        end
       end)
 
-    # Let the client associate the monitored task with the request it serves.
-    send(parent, {:async_post_task, task_ref, request_id})
+    task_ref = Process.monitor(task_pid)
+
+    # Let the client associate the monitored task with the request it serves,
+    # then start the task once registered.
+    send(parent, {:async_post_task, task_ref, request_id, task_pid})
 
     # Return without response data — it will arrive via :async_post_result
     # or via the GET SSE stream (for SSE-formatted POST responses)
-    {:ok, %{state | auth_provider_state: request_state.auth_provider_state}}
+    {:ok,
+     %{
+       state
+       | auth_provider_state: request_state.auth_provider_state,
+         tool_listing_generation: request_state.tool_listing_generation
+     }}
   end
 
   def send_message(message, %__MODULE__{} = state),
@@ -821,16 +837,23 @@ defmodule ExMCP.Transport.HTTP do
 
   @doc false
   # Applies a tools/list response from an async POST to the client's own
-  # transport state: a first page replaces the header cache, a cursor page
-  # adds to it, as cache_tool_headers/3 does for a synchronous send.
-  @spec cache_tool_list(t(), :first | :cursor, term()) :: t()
-  def cache_tool_list(%__MODULE__{} = state, kind, response_data) do
+  # transport state.
+  #
+  # A new listing generation (a fresh first page whose generation exceeds
+  # tool_headers_generation) legitimately resets the cache. Pages belonging to
+  # the current listing generation merge into the cache, ensuring that if cursor
+  # pages complete before their first page, the first page does not erase the
+  # cursor pages' cached tool headers. Pages from an older generation are ignored
+  # as stale.
+  @spec cache_tool_list(
+          t(),
+          :first | :cursor | {:first, pos_integer()} | {:cursor, pos_integer()} | nil,
+          term()
+        ) :: t()
+  def cache_tool_list(%__MODULE__{} = state, page_info, response_data) do
     case Jason.decode(response_data) do
-      {:ok, %{"result" => %{"tools" => tools}}} when is_list(tools) and kind == :first ->
-        %{state | tool_headers: ToolHeaders.cache(tools)}
-
       {:ok, %{"result" => %{"tools" => tools}}} when is_list(tools) ->
-        %{state | tool_headers: Map.merge(state.tool_headers || %{}, ToolHeaders.cache(tools))}
+        apply_tool_list_cache(state, page_info, tools)
 
       _other ->
         state
@@ -839,14 +862,57 @@ defmodule ExMCP.Transport.HTTP do
     _invalid -> state
   end
 
-  defp tool_list_page(message) do
+  defp apply_tool_list_cache(state, {:first, gen}, tools) when is_integer(gen) do
+    current_gen = state.tool_headers_generation || 0
+
+    cond do
+      gen < current_gen ->
+        state
+
+      gen > current_gen ->
+        %{state | tool_headers_generation: gen, tool_headers: ToolHeaders.cache(tools)}
+
+      true ->
+        %{state | tool_headers: Map.merge(state.tool_headers || %{}, ToolHeaders.cache(tools))}
+    end
+  end
+
+  defp apply_tool_list_cache(state, {:cursor, gen}, tools) when is_integer(gen) do
+    current_gen = state.tool_headers_generation || 0
+
+    cond do
+      gen < current_gen ->
+        state
+
+      gen > current_gen ->
+        %{state | tool_headers_generation: gen, tool_headers: ToolHeaders.cache(tools)}
+
+      true ->
+        %{state | tool_headers: Map.merge(state.tool_headers || %{}, ToolHeaders.cache(tools))}
+    end
+  end
+
+  defp apply_tool_list_cache(state, kind, tools) when kind in [:first, :cursor] do
+    %{state | tool_headers: Map.merge(state.tool_headers || %{}, ToolHeaders.cache(tools))}
+  end
+
+  defp apply_tool_list_cache(state, _page_info, _tools), do: state
+
+  defp prepare_tool_list_page(message, state) do
     case Jason.decode(message) do
       {:ok, %{"method" => "tools/list"} = request} ->
-        if get_in(request, ["params", "cursor"]), do: :cursor, else: :first
+        if get_in(request, ["params", "cursor"]) do
+          {{:cursor, state.tool_listing_generation || 0}, state}
+        else
+          gen = (state.tool_listing_generation || 0) + 1
+          {{:first, gen}, %{state | tool_listing_generation: gen}}
+        end
 
       _other ->
-        nil
+        {nil, state}
     end
+  rescue
+    _invalid -> {nil, state}
   end
 
   defp result_state_changes(snapshot, {:ok, new_state}) do
@@ -983,18 +1049,27 @@ defmodule ExMCP.Transport.HTTP do
        when is_list(tools) do
     case Jason.decode(request_body) do
       {:ok, %{"method" => "tools/list"} = request} ->
-        page = ToolHeaders.cache(tools)
+        page_info =
+          if get_in(request, ["params", "cursor"]) do
+            {:cursor, state.tool_listing_generation || 0}
+          else
+            gen = (state.tool_listing_generation || 0) + 1
+            {:first, gen}
+          end
 
-        tool_headers =
-          if get_in(request, ["params", "cursor"]),
-            do: Map.merge(state.tool_headers || %{}, page),
-            else: page
+        state =
+          case page_info do
+            {:first, gen} -> %{state | tool_listing_generation: gen}
+            _ -> state
+          end
 
-        %{state | tool_headers: tool_headers}
+        apply_tool_list_cache(state, page_info, tools)
 
       _other ->
         state
     end
+  rescue
+    _invalid -> state
   end
 
   defp cache_tool_headers(state, _request_body, _response), do: state

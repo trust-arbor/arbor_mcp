@@ -186,4 +186,69 @@ defmodule ExMCP.Client.ConnectionNotificationsTest do
     assert_receive {:client_log, nil, %{"level" => "info"}}
     assert_receive {:client_log, nil, %{"level" => "error"}}
   end
+
+  test "settled requests release their progress tokens upon response", %{client: client} do
+    assert {:ok, _} = Client.call_tool(client, "work", %{}, progress_token: "tok-done")
+    state = :sys.get_state(client)
+    assert Map.get(state.progress_requests, "tok-done") == nil
+
+    # Re-using the same token is immediately accepted because it was released:
+    assert {:ok, _} = Client.call_tool(client, "work", %{}, progress_token: "tok-done")
+  end
+
+  test "settled requests release their progress tokens upon timeout", %{client: client} do
+    first =
+      Task.async(fn ->
+        Client.call_tool(client, "wait", %{}, progress_token: "tok-timeout", format: :map)
+      end)
+
+    assert_receive {:tool_waiting, worker}, 1_000
+    [pending_id] = Client.get_pending_requests(client)
+
+    send(client, {:request_timeout, pending_id})
+
+    assert {:error, :timeout} = Task.await(first)
+    state = :sys.get_state(client)
+    assert Map.get(state.progress_requests, "tok-timeout") == nil
+    send(worker, :release)
+  end
+
+  test "settled requests release their progress tokens upon cancellation", %{client: client} do
+    first =
+      Task.async(fn -> Client.call_tool(client, "wait", %{}, progress_token: "tok-cancel") end)
+
+    assert_receive {:tool_waiting, worker}, 1_000
+
+    [pending_id] = Client.get_pending_requests(client)
+
+    send(
+      client,
+      {:transport_message,
+       Jason.encode!(%{
+         "jsonrpc" => "2.0",
+         "method" => "notifications/cancelled",
+         "params" => %{"requestId" => pending_id}
+       })}
+    )
+
+    assert {:error, :cancelled} = Task.await(first)
+    state = :sys.get_state(client)
+    assert Map.get(state.progress_requests, "tok-cancel") == nil
+    send(worker, :release)
+  end
+
+  test "disconnect clears all progress tokens", %{client: client} do
+    _first =
+      Task.async(fn -> Client.call_tool(client, "wait", %{}, progress_token: "tok-disc") end)
+
+    assert_receive {:tool_waiting, worker}, 1_000
+
+    state = :sys.get_state(client)
+    assert Map.has_key?(state.progress_requests, "tok-disc")
+
+    assert :ok = Client.disconnect(client)
+    state = :sys.get_state(client)
+    assert state.progress_requests == %{}
+    send(worker, :release)
+  end
 end
