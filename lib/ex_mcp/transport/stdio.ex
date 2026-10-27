@@ -147,12 +147,15 @@ defmodule ExMCP.Transport.Stdio do
     end
   end
 
+  # Every shutdown option given, nil included, must be usable before the
+  # server is started: the reaper's schedule is built from them.
   defp validate_shutdown_options(opts) do
     Enum.reduce_while([eof_grace: 0, term_grace: 0, cleanup_timeout: 1], :ok, fn
       {name, min}, :ok ->
-        case Keyword.get(opts, name) do
-          value when is_nil(value) or (is_integer(value) and value >= min) -> {:cont, :ok}
-          invalid -> {:halt, {:error, {:invalid_shutdown_option, name, invalid}}}
+        case Keyword.fetch(opts, name) do
+          :error -> {:cont, :ok}
+          {:ok, value} when is_integer(value) and value >= min -> {:cont, :ok}
+          {:ok, invalid} -> {:halt, {:error, {:invalid_shutdown_option, name, invalid}}}
         end
     end)
   end
@@ -211,34 +214,42 @@ defmodule ExMCP.Transport.Stdio do
       end
 
     try do
-      port = Port.open({:spawn_executable, to_charlist(executable_path)}, port_opts)
-
-      state = %__MODULE__{
-        port: port,
-        os_pid: port_os_pid(port),
-        line_buffer: "",
-        max_frame_bytes:
-          Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes),
-        process_group: Keyword.get(opts, :process_group, false),
-        eof_grace: Keyword.get(opts, :eof_grace, @eof_grace),
-        term_grace: Keyword.get(opts, :term_grace, @term_grace),
-        cleanup_timeout:
-          Keyword.get(opts, :cleanup_timeout, @eof_grace + @term_grace + @shutdown_slack)
-      }
-
-      state = %{state | reaper: start_reaper(state)}
-
-      :telemetry.execute([:ex_mcp, :transport, :connection, :opened], %{}, %{
-        transport: :stdio,
-        command_basename: Path.basename(executable_path),
-        command_hash: LogSummary.fingerprint(executable_path)
-      })
-
-      {:ok, state}
+      Port.open({:spawn_executable, to_charlist(executable_path)}, port_opts)
     catch
-      :error, reason ->
-        Error.connection_error({:spawn_failed, reason})
+      :error, reason -> Error.connection_error({:spawn_failed, reason})
+    else
+      port -> connected(port, executable_path, opts)
     end
+  end
+
+  # Once the port is open, a failure closes it again rather than leaving a
+  # server running without a reaper.
+  defp connected(port, executable_path, opts) do
+    state = %__MODULE__{
+      port: port,
+      os_pid: port_os_pid(port),
+      line_buffer: "",
+      max_frame_bytes: Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes),
+      process_group: Keyword.get(opts, :process_group, false),
+      eof_grace: Keyword.get(opts, :eof_grace, @eof_grace),
+      term_grace: Keyword.get(opts, :term_grace, @term_grace),
+      cleanup_timeout:
+        Keyword.get(opts, :cleanup_timeout, @eof_grace + @term_grace + @shutdown_slack)
+    }
+
+    state = %{state | reaper: start_reaper(state)}
+
+    :telemetry.execute([:ex_mcp, :transport, :connection, :opened], %{}, %{
+      transport: :stdio,
+      command_basename: Path.basename(executable_path),
+      command_hash: LogSummary.fingerprint(executable_path)
+    })
+
+    {:ok, state}
+  catch
+    kind, reason ->
+      close_port(port)
+      Error.connection_error({:spawn_failed, {kind, reason}})
   end
 
   @impl true
