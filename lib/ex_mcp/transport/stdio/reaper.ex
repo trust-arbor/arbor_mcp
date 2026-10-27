@@ -43,6 +43,8 @@ defmodule ExMCP.Transport.Stdio.Reaper do
   # How long reading the child's start time may take when the connection
   # starts (it runs `ps` outside Linux).
   @identity_read_ms 5_000
+  # How long killing a helper that stopped answering may take.
+  @helper_kill_ms 1_000
 
   # Answers one request per line, prefixed with the request's number so a
   # late answer can't be taken for another's: `alive TARGET`, `signal SIG
@@ -71,8 +73,11 @@ defmodule ExMCP.Transport.Stdio.Reaper do
   Starts the reaper of the server `os_pid` behind `port`. Options:
   `:process_group`, `:eof_grace`, `:term_grace` (already fitted to the
   budget) and `:budget` (the shutdown's bound). For tests, `:identity`
-  stands in for the start time read at start, and `:start_time` (a
-  one-arity function of the pid) for the lookups before each signal.
+  stands in for the start time read at start, `:start_time` (a one-arity
+  function of the pid) for the lookups before each signal, `:start_source`
+  (`:ps`) makes them use the helper's `ps` on Linux too, `:helper_env`
+  sets the helper's environment, and `:identity_read_ms` bounds the read
+  at start.
   """
   @spec start(port(), pos_integer(), keyword()) :: pid()
   def start(port, os_pid, opts) when is_integer(os_pid) do
@@ -84,10 +89,13 @@ defmodule ExMCP.Transport.Stdio.Reaper do
         # neither: the helper the shutdown needs, and the server's start
         # time. A server that already exited gets nil, and nil is never
         # signalled.
-        helper = if os_family() == :unix, do: open_helper(), else: :error
+        helper =
+          if os_family() == :unix,
+            do: open_helper(Keyword.get(opts, :helper_env, [])),
+            else: :error
 
         identity =
-          Keyword.get_lazy(opts, :identity, fn -> read_identity(helper, os_pid) end)
+          Keyword.get_lazy(opts, :identity, fn -> read_identity(helper, os_pid, opts) end)
 
         send(ready, {ready, :ready})
         run(port, os_pid, identity, Keyword.put(opts, :helper, helper))
@@ -95,11 +103,12 @@ defmodule ExMCP.Transport.Stdio.Reaper do
 
     # connect/1 waits for that, a bounded time, so even a close/1 right
     # after it has both: a busy machine slows connecting rather than leave
-    # a shutdown without them.
+    # a shutdown without them. Past the bound the reaper carries on alone,
+    # and kills its helper if the read hangs.
     receive do
       {^ready, :ready} -> :ok
     after
-      @identity_read_ms -> :erlang.unalias(ready)
+      Keyword.get(opts, :identity_read_ms, @identity_read_ms) -> :erlang.unalias(ready)
     end
 
     reaper
@@ -153,30 +162,37 @@ defmodule ExMCP.Transport.Stdio.Reaper do
     deadline = ended_at + Keyword.fetch!(opts, :budget)
     opts = Keyword.put(opts, :ended_at, ended_at)
 
-    os_family()
-    |> steps(event)
-    |> Enum.each(&step(&1, port, os_pid, identity, opts, deadline))
+    try do
+      os_family()
+      |> steps(event)
+      |> Enum.each(&step(&1, port, os_pid, identity, opts, deadline))
+    after
+      # An idle helper exits on EOF once its port closes, with the reaper;
+      # one that stopped answering was killed when it did.
+      with {:ok, helper} <- Keyword.get(opts, :helper), do: close_port(helper.port)
+    end
   end
 
   defp now, do: System.monotonic_time(:millisecond)
 
   # The start time when the connection starts: from /proc on Linux, else
   # from the helper's `ps`, given at most @identity_read_ms.
-  defp read_identity(helper, os_pid) do
-    case :os.type() do
-      {:unix, :linux} ->
+  defp read_identity(helper, os_pid, opts) do
+    case {:os.type(), Keyword.get(opts, :start_source)} do
+      {{:unix, :linux}, nil} ->
         linux_start_time(os_pid)
 
-      {:unix, _other} ->
+      {{:unix, _other}, _source} ->
+        read_until = now() + Keyword.get(opts, :identity_read_ms, @identity_read_ms)
+
         with {:ok, helper} <- helper,
-             {:ok, "start " <> start} <-
-               ask(helper, "start #{os_pid}", now() + @identity_read_ms) do
+             {:ok, "start " <> start} <- ask(helper, "start #{os_pid}", read_until) do
           {:ps, String.trim(start)}
         else
           _unreadable -> nil
         end
 
-      {:win32, _name} ->
+      {{:win32, _name}, _source} ->
         nil
     end
   end
@@ -218,23 +234,26 @@ defmodule ExMCP.Transport.Stdio.Reaper do
   # the target is still the connection's own.
   @spec shutdown(pos_integer(), term() | nil, keyword(), integer()) :: result()
   def shutdown(os_pid, identity, opts, deadline) do
-    # The graces run from the end of the connection, as the budget does.
+    # The EOF grace runs from the end of the connection, as the budget does.
     started = Keyword.get_lazy(opts, :ended_at, &now/0)
     term_at = min(started + Keyword.fetch!(opts, :eof_grace), deadline)
-    kill_at = min(term_at + Keyword.fetch!(opts, :term_grace), deadline)
 
-    case Keyword.get_lazy(opts, :helper, &open_helper/0) do
+    case live_helper(opts) do
       {:ok, helper} ->
         target = %{
           pid: os_pid,
           group?: Keyword.get(opts, :process_group, false),
           identity: identity,
           start_time: Keyword.get(opts, :start_time),
-          helper: helper
+          start_source: Keyword.get(opts, :start_source),
+          term_grace: Keyword.fetch!(opts, :term_grace),
+          kill_at: min(term_at + Keyword.fetch!(opts, :term_grace), deadline),
+          helper: helper,
+          deadline: deadline
         }
 
         try do
-          escalate(target, term_at, kill_at, deadline)
+          escalate(target, term_at, deadline)
         after
           close_port(helper.port)
         end
@@ -244,16 +263,31 @@ defmodule ExMCP.Transport.Stdio.Reaper do
     end
   end
 
-  defp escalate(target, term_at, kill_at, deadline) do
+  # The connection's helper, unless it was killed (it stopped answering):
+  # then a new one.
+  defp live_helper(opts) do
+    env = Keyword.get(opts, :helper_env, [])
+
+    case Keyword.get(opts, :helper) do
+      {:ok, %{port: port} = helper} ->
+        if Port.info(port), do: {:ok, helper}, else: open_helper(env)
+
+      _none ->
+        open_helper(env)
+    end
+  end
+
+  defp escalate(target, term_at, deadline) do
     case confirm(target, deadline) do
-      :ours -> after_eof(target, term_at, kill_at, deadline)
+      :ours -> after_eof(target, term_at, deadline)
       other -> other
     end
   end
 
-  defp after_eof(target, term_at, kill_at, deadline) do
+  defp after_eof(target, term_at, deadline) do
     with :running <- exited_by(target, term_at),
          :sent <- signal_if_ours(target, "TERM", deadline) do
+      kill_at = target.kill_at
       after_term(target, kill_at, deadline)
     else
       # Exited during the grace, or gone (and its pid maybe reused) since.
@@ -344,19 +378,24 @@ defmodule ExMCP.Transport.Stdio.Reaper do
     end
   end
 
-  # Polls until the target exits or `until`; `:running` at `until`.
+  # Polls until the target exits or `until`; `:running` at `until`. An
+  # answer may come past `until`, not past the deadline: a helper that
+  # doesn't answer by then is killed, and nothing is confirmed.
   defp exited_by(target, until) do
-    case alive(target.helper, target_id(target), until) do
+    case alive(target.helper, target_id(target), target.deadline) do
       :no ->
         :exited
 
-      _running_or_late ->
-        if System.monotonic_time(:millisecond) >= until do
+      :yes ->
+        if now() >= until do
           :running
         else
           Process.sleep(min(@poll_ms, time_left(until)))
           exited_by(target, until)
         end
+
+      :timeout ->
+        {:unconfirmed, :helper_timeout}
     end
   end
 
@@ -382,14 +421,14 @@ defmodule ExMCP.Transport.Stdio.Reaper do
   end
 
   defp start_time(target, deadline) do
-    case :os.type() do
-      {:unix, :linux} ->
+    case {:os.type(), target.start_source} do
+      {{:unix, :linux}, nil} ->
         case linux_start_time(target.pid) do
           nil -> :none
           start -> {:ok, start}
         end
 
-      _other ->
+      _ps ->
         case ask(target.helper, "start #{target.pid}", deadline) do
           {:ok, "start " <> start} -> {:ok, {:ps, String.trim(start)}}
           {:ok, _none} -> :none
@@ -398,7 +437,11 @@ defmodule ExMCP.Transport.Stdio.Reaper do
     end
   end
 
-  defp open_helper do
+  @doc false
+  # Starts a helper shell, recording its OS pid. As a port program it leads
+  # its own process group, which holds the `ps` it may be waiting on.
+  @spec open_helper([{String.t(), String.t()}]) :: {:ok, map()} | :error
+  def open_helper(env \\ []) do
     case System.find_executable("sh") do
       nil ->
         :error
@@ -409,23 +452,56 @@ defmodule ExMCP.Transport.Stdio.Reaper do
             :binary,
             :exit_status,
             line: 4_096,
-            args: ["-c", @helper_script]
+            args: ["-c", @helper_script],
+            env: Enum.map(env, fn {name, value} -> {~c"#{name}", ~c"#{value}"} end)
           ])
 
-        {:ok, %{port: port, seq: :counters.new(1, [])}}
+        case Port.info(port, :os_pid) do
+          {:os_pid, os_pid} -> {:ok, %{port: port, os_pid: os_pid, seq: :counters.new(1, [])}}
+          nil -> :error
+        end
     end
   catch
     :error, _reason -> :error
   end
 
-  # Sends one request and waits for its answer until `deadline`.
-  defp ask(%{port: port, seq: seq}, request, deadline) do
+  # Sends one request and waits for its answer until `deadline`. A helper
+  # that doesn't answer in time may be stalled, holding this request (a
+  # signal, say) to run later: it is killed, so nothing it holds can run
+  # after the reaper has decided without it.
+  defp ask(%{port: port, seq: seq} = helper, request, deadline) do
     :counters.add(seq, 1, 1)
     n = Integer.to_string(:counters.get(seq, 1))
     Port.command(port, [n, " ", request, "\n"])
-    await_answer(port, n, deadline)
+
+    case await_answer(port, n, deadline) do
+      :timeout ->
+        kill_helper(helper)
+        :timeout
+
+      answer ->
+        answer
+    end
   catch
     :error, _reason -> :error
+  end
+
+  # Kills the helper and its group (a `ps` it waits on), and waits for its
+  # exit to be reported, a bounded time.
+  defp kill_helper(%{port: port, os_pid: os_pid}) do
+    if Port.info(port) do
+      run_bounded("kill", ["-KILL", "--", "-#{os_pid}"], @helper_kill_ms)
+
+      receive do
+        {^port, {:exit_status, _status}} -> :ok
+      after
+        @helper_kill_ms -> :ok
+      end
+
+      close_port(port)
+    end
+
+    :ok
   end
 
   defp await_answer(port, n, deadline) do

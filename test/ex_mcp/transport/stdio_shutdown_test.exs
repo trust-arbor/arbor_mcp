@@ -317,6 +317,98 @@ defmodule ExMCP.Transport.StdioShutdownTest do
       Port.close(port)
     end
 
+    # A `ps` that hangs: it records its pid, then waits.
+    defp hanging_ps(tmp_dir) do
+      ps = Path.join(tmp_dir, "ps")
+      File.write!(ps, "#!/bin/sh\necho $$ > \"$(dirname \"$0\")/ps.pid\"\nexec sleep 30\n")
+      File.chmod!(ps, 0o755)
+      [{"PATH", "#{tmp_dir}:/usr/bin:/bin"}]
+    end
+
+    defp hanging_ps_pid(tmp_dir) do
+      pid_file = Path.join(tmp_dir, "ps.pid")
+      wait_until(fn -> match?({:ok, <<_, _::binary>>}, File.read(pid_file)) end, timeout: 2_000)
+      pid = pid_file |> File.read!() |> String.trim()
+      kill_on_exit(pid)
+      pid
+    end
+
+    test "kills a helper that stops answering, so a signal it holds never runs" do
+      {port, os_pid} = sleeper()
+      {:ok, helper} = Reaper.open_helper()
+      kill_on_exit(helper.os_pid)
+
+      # The check before SIGTERM succeeds without the helper (as /proc does
+      # on Linux), and meanwhile the helper stalls, as a starved one would:
+      # SIGTERM is sent to a helper that can't run it yet.
+      checks = :counters.new(1, [])
+
+      lookup = fn _pid ->
+        :counters.add(checks, 1, 1)
+
+        if :counters.get(checks, 1) == 2,
+          do: {_output, 0} = System.cmd("kill", ["-STOP", "#{helper.os_pid}"])
+
+        :the_server
+      end
+
+      opts = [helper: {:ok, helper}, eof_grace: 0, term_grace: 50, start_time: lookup]
+
+      deadline = System.monotonic_time(:millisecond) + 300
+      assert {:unconfirmed, _reason} = Reaper.shutdown(os_pid, :the_server, opts, deadline)
+
+      # Resumed, a helper still alive would run the signal it was sent.
+      System.cmd("kill", ["-CONT", "#{helper.os_pid}"], stderr_to_stdout: true)
+      wait_until(fn -> not os_alive?(helper.os_pid) end, timeout: 5_000)
+
+      assert_raise ExUnit.AssertionError, fn ->
+        wait_until(fn -> not os_alive?(os_pid) end, timeout: 500)
+      end
+
+      Port.close(port)
+    end
+
+    @tag :tmp_dir
+    test "kills a helper stuck in a ps that hangs, with the ps", %{tmp_dir: tmp_dir} do
+      {port, os_pid} = sleeper()
+      {:ok, helper} = Reaper.open_helper(hanging_ps(tmp_dir))
+      kill_on_exit(helper.os_pid)
+
+      opts = [helper: {:ok, helper}, start_source: :ps, eof_grace: 0, term_grace: 0]
+      deadline = System.monotonic_time(:millisecond) + 300
+
+      assert {:unconfirmed, :identity_timeout} =
+               Reaper.shutdown(os_pid, :the_server, opts, deadline)
+
+      ps = hanging_ps_pid(tmp_dir)
+      wait_until(fn -> not os_alive?(helper.os_pid) and not os_alive?(ps) end, timeout: 2_000)
+      assert os_alive?(os_pid)
+      Port.close(port)
+    end
+
+    @tag :tmp_dir
+    test "kills its helper when reading the start time at connect hangs", %{tmp_dir: tmp_dir} do
+      {port, os_pid} = sleeper()
+
+      reaper =
+        Reaper.start(port, os_pid,
+          helper_env: hanging_ps(tmp_dir),
+          start_source: :ps,
+          identity_read_ms: 300,
+          eof_grace: 0,
+          term_grace: 0,
+          budget: 1_000
+        )
+
+      ps = hanging_ps_pid(tmp_dir)
+      wait_until(fn -> not os_alive?(ps) end, timeout: 2_000)
+
+      # The reaper closes the port.
+      Reaper.close(reaper)
+      await_exit(reaper)
+      refute Port.info(port)
+    end
+
     test "reads a Linux start time past a command name with spaces and parentheses" do
       stat =
         "4242 (my (odd) server) S 1 4242 4242 0 -1 4194560 120 0 0 0 1 2 0 0 20 0 1 0 " <>

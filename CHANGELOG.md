@@ -29,7 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`connect/1` waits, a bounded time, for it and for the server's start
   time), the schedule keeps 100 ms of the budget for the check before each
   signal, and a server that can't be confirmed in time is left unsignalled,
-  with a warning, rather than signalled late. On Windows, `taskkill` runs
+  with a warning, rather than signalled late. A helper that stops answering
+  is killed, with any `ps` it waits on, so no signal it was handed can run
+  after the reaper has decided, and no helper outlives its reaper. On Windows, `taskkill` runs
   only from `close/1`, bounded by the budget, while the open port still
   holds the server's process handle. A server whose connection owner dies
   before closing it may be left running on Windows, with a warning logged.
