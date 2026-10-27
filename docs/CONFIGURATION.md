@@ -83,13 +83,17 @@ Client mode options:
 
 - `:era_probe_timeout` bounds the side-effect-free `server/discover` probe
   exchange, including a synchronous HTTP POST; the default is `2_000`
-  milliseconds.
+  milliseconds. Over stdio the probe is the first message a newly started
+  server reads, so the wait also covers the server starting up (a BEAM under
+  `mix run`, or `npx` or `uvx` on a cold cache, can take seconds); there the
+  default is `:handshake_timeout`, as for a legacy `initialize`.
 - `:handshake_timeout` bounds the legacy `initialize` exchange the same way;
   the default is `10_000` milliseconds.
 - `:establish_timeout` bounds establishing the connection as a whole, probe,
   fallback, handshake and connection retries included; the default is
-  `:handshake_timeout` plus `:era_probe_timeout`, and on expiry
-  `start_link/1` fails with `{:error, :establish_timeout}`.
+  `:handshake_timeout` plus the probe's bound (`:era_probe_timeout` or its
+  default): 12 s, or 20 s over stdio. On expiry `start_link/1` fails with
+  `{:error, :establish_timeout}`.
 - `:era_cache_legacy_ttl` controls how long a legacy observation is reused;
   the default is `300_000` milliseconds. Modern observations do not expire
   and cannot be replaced by automatic fallback.

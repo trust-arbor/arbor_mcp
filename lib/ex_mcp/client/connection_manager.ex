@@ -48,9 +48,7 @@ defmodule ExMCP.Client.ConnectionManager do
   defp establish_timeout(opts) do
     case Keyword.get(opts, :establish_timeout) do
       nil ->
-        {:ok,
-         Keyword.get(opts, :handshake_timeout, @default_handshake_timeout) +
-           EraProbe.timeout(opts)}
+        {:ok, handshake_timeout(opts) + probe_timeout(opts, spawns_server?(opts))}
 
       :infinity ->
         {:ok, :infinity}
@@ -221,7 +219,7 @@ defmodule ExMCP.Client.ConnectionManager do
   end
 
   defp establish_modern_protocol(transport_mod, transport_state, opts, era_identity, pinned?) do
-    case EraProbe.probe(transport_mod, transport_state, opts) do
+    case probe_era(transport_mod, transport_state, opts) do
       {:ok, discovery, updated_state} ->
         emit_settled_era(:modern, discovery.protocol_version)
         observe_era(era_identity, :modern, discovery.protocol_version, opts)
@@ -253,7 +251,7 @@ defmodule ExMCP.Client.ConnectionManager do
   end
 
   defp probe_then_maybe_legacy(transport_mod, transport_state, opts, era_identity) do
-    case EraProbe.probe(transport_mod, transport_state, opts) do
+    case probe_era(transport_mod, transport_state, opts) do
       {:ok, discovery, updated_state} ->
         emit_settled_era(:modern, discovery.protocol_version)
         observe_era(era_identity, :modern, discovery.protocol_version, opts)
@@ -311,7 +309,7 @@ defmodule ExMCP.Client.ConnectionManager do
              transport_alive?(transport_mod, transport_state) do
           abandon_legacy_attempt(transport_mod, transport_state, latest_state)
 
-          case EraProbe.probe(transport_mod, transport_state, opts) do
+          case probe_era(transport_mod, transport_state, opts) do
             {:ok, discovery, updated_state} ->
               emit_settled_era(:modern, discovery.protocol_version)
               observe_era(era_identity, :modern, discovery.protocol_version, opts)
@@ -336,10 +334,56 @@ defmodule ExMCP.Client.ConnectionManager do
     }
   end
 
+  # Over stdio the probe is the first message a newly spawned server reads, so
+  # waiting for its answer also waits for the server to start: a BEAM under
+  # `mix run`, or `npx` or `uvx` on a cold cache, can take seconds, and that
+  # says nothing about its era. Unless `:era_probe_timeout` is given, the probe
+  # there gets `:handshake_timeout`, the time a legacy `initialize` gets for
+  # the same first answer. The establishment deadline still caps it.
+  defp probe_era(transport_mod, transport_state, opts) do
+    timeout = probe_timeout(opts, spawned_server?(transport_mod, transport_state))
+    EraProbe.probe(transport_mod, transport_state, Keyword.put(opts, :era_probe_timeout, timeout))
+  end
+
+  defp probe_timeout(opts, true = _spawned_server?),
+    do: Keyword.get_lazy(opts, :era_probe_timeout, fn -> handshake_timeout(opts) end)
+
+  defp probe_timeout(opts, false = _spawned_server?), do: EraProbe.timeout(opts)
+
+  @doc false
+  # Whether `opts` connect to a stdio server, before it is spawned.
+  def spawns_server?(opts) do
+    case prepare_transport_config(opts) do
+      {:ok, config} -> match?([{Stdio, _transport_opts} | _], Keyword.get(config, :transports))
+      _error -> false
+    end
+  end
+
+  @doc false
+  # Whether this transport runs its own server process (stdio, directly or
+  # inside the reliability wrapper).
+  def spawned_server?(Stdio, _transport_state), do: true
+
+  def spawned_server?(ReliabilityWrapper, %ReliabilityWrapper{} = transport_state) do
+    {wrapped_module, _wrapped_state} = ReliabilityWrapper.unwrap(transport_state)
+    wrapped_module == Stdio
+  end
+
+  def spawned_server?(_transport_mod, _transport_state), do: false
+
+  defp handshake_timeout(opts),
+    do: Keyword.get(opts, :handshake_timeout, @default_handshake_timeout)
+
   defp legacy_fallback_evidence?({:json_rpc_error, error}) do
     not modern_specific_error?(error)
   end
 
+  # MCP counts an unanswered probe as a legacy server. Here that is a probe
+  # the transport reports timed out, such as an HTTP POST cut short by the
+  # probe's bound. A stdio probe that runs out of time fails instead as
+  # {:transport_error, :handshake_timeout}, which is deliberately not
+  # evidence: the server may only be slow to start, and its late answer to the
+  # probe would share the pipe with an initialize sent after it.
   defp legacy_fallback_evidence?({:probe_timeout, _reason}), do: true
   defp legacy_fallback_evidence?({:http_probe_rejected, _response}), do: true
   defp legacy_fallback_evidence?(_reason), do: false
@@ -684,7 +728,7 @@ defmodule ExMCP.Client.ConnectionManager do
   # connection's overall deadline caps it further.
   defp do_handshake(transport_mod, transport_state, opts) do
     protocol_version = Keyword.get(opts, :protocol_version)
-    handshake_timeout = Keyword.get(opts, :handshake_timeout, @default_handshake_timeout)
+    handshake_timeout = handshake_timeout(opts)
     establish_deadline = Deadline.on_transport(transport_mod, transport_state)
 
     exchange_deadline =
