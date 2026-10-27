@@ -59,7 +59,7 @@ defmodule Arbor.MCP.Soak.Runner do
       start_ms: now_ms(),
       scenarios: %{},
       closing_sse_pids: MapSet.new(),
-      reconnecting_sse_pids: MapSet.new(),
+      reconnect_incidents: MapSet.new(),
       results: %{},
       failures: [],
       turnover_series: %{},
@@ -991,6 +991,10 @@ defmodule Arbor.MCP.Soak.Runner do
       state = drain_events(state)
       state = unmark_closing_sse(state, scenario)
 
+      state =
+        %{state | reconnect_incidents: MapSet.delete(state.reconnect_incidents, id)}
+        |> checkpoint()
+
       write_event(state, %{
         type: "turnover",
         scenario: id,
@@ -1066,13 +1070,7 @@ defmodule Arbor.MCP.Soak.Runner do
   defp mark_closing_sse(state, _scenario), do: state
 
   defp unmark_closing_sse(state, %{sse_pid: pid}) when is_pid(pid),
-    do:
-      %{
-        state
-        | closing_sse_pids: MapSet.delete(state.closing_sse_pids, pid),
-          reconnecting_sse_pids: MapSet.delete(state.reconnecting_sse_pids, pid)
-      }
-      |> checkpoint()
+    do: %{state | closing_sse_pids: MapSet.delete(state.closing_sse_pids, pid)} |> checkpoint()
 
   defp unmark_closing_sse(state, _scenario), do: state
 
@@ -1349,28 +1347,28 @@ defmodule Arbor.MCP.Soak.Runner do
               is_map(failure.reason) and Map.get(failure.reason, :operation) == :restart
           end)
 
-        {stream_failure?, active?} =
-          Policy.stream_reconnect_transition(
+        {incident_failure?, active?} =
+          Policy.reconnect_incident_transition(
             event,
+            MapSet.member?(state.reconnect_incidents, scenario),
             scenario != nil,
             MapSet.member?(state.closing_sse_pids, source_pid),
-            MapSet.member?(state.reconnecting_sse_pids, source_pid)
+            planned_failure?
           )
 
         state =
           if active?,
             do: %{
               state
-              | reconnecting_sse_pids: MapSet.put(state.reconnecting_sse_pids, source_pid)
+              | reconnect_incidents: MapSet.put(state.reconnect_incidents, scenario)
             },
             else: %{
               state
-              | reconnecting_sse_pids: MapSet.delete(state.reconnecting_sse_pids, source_pid)
+              | reconnect_incidents: MapSet.delete(state.reconnect_incidents, scenario)
             }
 
         state =
-          if Policy.unexpected_client_event?(event, scenario != nil, planned_failure?) or
-               stream_failure? do
+          if incident_failure? do
             record_failure(state, scenario, :unexpected_disconnect, %{
               event: event,
               metadata: inspect(metadata)

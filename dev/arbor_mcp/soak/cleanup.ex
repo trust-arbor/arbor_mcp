@@ -204,8 +204,7 @@ defmodule Arbor.MCP.Soak.Cleanup do
           ops.os_gone?.(scenario.os_pid) ->
             :already_gone
 
-          not match?({:ok, _}, Map.get(scenario, :os_identity)) or
-              observed_identity != scenario.os_identity ->
+          not same_os_child?(observed_identity, Map.get(scenario, :os_identity)) ->
             {:error, {:unverified_os_identity, scenario.os_identity, observed_identity}}
 
           true ->
@@ -278,7 +277,7 @@ defmodule Arbor.MCP.Soak.Cleanup do
   end
 
   defp kill_os_pid(pid, expected) when is_integer(pid) and pid > 0 do
-    if os_identity(pid) == expected do
+    if same_os_child?(os_identity(pid), expected) do
       case System.cmd("/bin/kill", ["-KILL", Integer.to_string(pid)], stderr_to_stdout: true) do
         {_, 0} -> :signalled
         {output, status} -> {:error, {status, String.trim(output)}}
@@ -293,13 +292,22 @@ defmodule Arbor.MCP.Soak.Cleanup do
   defp kill_os_pid(_pid, _expected), do: {:error, :missing_os_pid}
 
   def os_identity(pid) when is_integer(pid) and pid > 0 do
-    with {start, 0} <-
-           System.cmd("/bin/ps", ["-ww", "-o", "lstart=", "-p", Integer.to_string(pid)]),
-         {command, 0} <-
-           System.cmd("/bin/ps", ["-ww", "-o", "command=", "-p", Integer.to_string(pid)]),
-         start when start != "" <- String.trim(start),
-         command when command != "" <- String.trim(command) do
-      {:ok, %{start: start, command: command}}
+    with {output, 0} <-
+           System.cmd("/bin/ps", [
+             "-ww",
+             "-o",
+             "lstart=",
+             "-o",
+             "ppid=",
+             "-o",
+             "pgid=",
+             "-o",
+             "command=",
+             "-p",
+             Integer.to_string(pid)
+           ]),
+         {:ok, identity} <- parse_os_identity(output) do
+      {:ok, identity}
     else
       _ -> {:error, :os_identity_unavailable}
     end
@@ -308,6 +316,39 @@ defmodule Arbor.MCP.Soak.Cleanup do
   end
 
   def os_identity(_pid), do: {:error, :missing_os_pid}
+
+  @doc false
+  def parse_os_identity(output) do
+    case String.split(String.trim(output), ~r/\s+/, parts: 8) do
+      [weekday, month, day, clock, year, parent, group, command] ->
+        with {parent_pid, ""} <- Integer.parse(parent),
+             {group_pid, ""} <- Integer.parse(group),
+             true <- parent_pid > 0 and group_pid > 0 and command != "" do
+          {:ok,
+           %{
+             start: Enum.join([weekday, month, day, clock, year], " "),
+             command: command,
+             parent_pid: parent_pid,
+             group_pid: group_pid
+           }}
+        else
+          _ -> {:error, :invalid_os_identity}
+        end
+
+      _ ->
+        {:error, :invalid_os_identity}
+    end
+  end
+
+  defp same_os_child?(
+         {:ok, %{start: start, command: command, parent_pid: parent, group_pid: group} = current},
+         {:ok, expected}
+       )
+       when is_binary(start) and start != "" and is_binary(command) and command != "" and
+              is_integer(parent) and parent > 0 and is_integer(group) and group > 0,
+       do: current == expected
+
+  defp same_os_child?(_current, _expected), do: false
 
   defp os_gone?(pid) when is_integer(pid) and pid > 0 do
     case System.cmd("/bin/kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true) do

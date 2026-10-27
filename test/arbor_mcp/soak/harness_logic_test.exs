@@ -147,21 +147,30 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
     refute Policy.unexpected_stream_event?(reconnecting, true, true)
     refute Policy.unexpected_stream_event?(reconnecting, false, false)
 
-    assert Policy.stream_reconnect_transition(disconnected, true, false, false) ==
+    incident_events = [
+      disconnected,
+      reconnecting,
+      [:arbor_mcp, :transport, :sse, :connected],
+      [:arbor_mcp, :client, :disconnected],
+      [:arbor_mcp, :client, :reconnect, :attempt],
+      [:arbor_mcp, :client, :reconnect, :error],
+      [:arbor_mcp, :client, :reconnect, :attempt],
+      [:arbor_mcp, :client, :reconnect, :success]
+    ]
+
+    {reported, active?} =
+      Enum.map_reduce(incident_events, false, fn event, active? ->
+        Policy.reconnect_incident_transition(event, active?, true, false, false)
+      end)
+
+    assert reported == [true, false, false, false, false, false, false, false]
+    refute active?
+
+    assert Policy.reconnect_incident_transition(disconnected, active?, true, false, false) ==
              {true, true}
 
-    assert Policy.stream_reconnect_transition(reconnecting, true, false, true) ==
-             {false, true}
-
-    assert Policy.stream_reconnect_transition(
-             [:arbor_mcp, :transport, :sse, :connected],
-             true,
-             false,
-             true
-           ) == {false, false}
-
-    assert Policy.stream_reconnect_transition(reconnecting, true, false, false) ==
-             {true, true}
+    assert Policy.reconnect_incident_transition(disconnected, false, true, true, false) ==
+             {false, false}
   end
 
   test "failed cleanup forces listener and child teardown and remains a failure" do
@@ -174,7 +183,7 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
       port: 43210,
       subprocess: :test_child,
       os_pid: 76543,
-      os_identity: {:ok, %{start: "birth", command: "child"}}
+      os_identity: {:ok, %{start: "birth", command: "child", parent_pid: 111, group_pid: 222}}
     }
 
     cleanup = %{
@@ -251,7 +260,7 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
     original = %{
       subprocess: :first_child,
       os_pid: 76543,
-      os_identity: {:ok, %{start: "birth", command: "child"}}
+      os_identity: {:ok, %{start: "birth", command: "child", parent_pid: 111, group_pid: 222}}
     }
 
     unavailable = %{
@@ -269,7 +278,9 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
 
     assert Cleanup.track_child(:replacement_child, original, %{
              get_os_pid: fn _handle -> 888 end,
-             os_identity: fn 888 -> {:ok, %{start: "later", command: "child"}} end
+             os_identity: fn 888 ->
+               {:ok, %{start: "later", command: "child", parent_pid: 111, group_pid: 222}}
+             end
            }).os_pid == 888
   end
 
@@ -277,7 +288,7 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
     child = %{
       subprocess: :child,
       os_pid: 76543,
-      os_identity: {:ok, %{start: "original", command: "child"}}
+      os_identity: {:ok, %{start: "original", command: "child", parent_pid: 111, group_pid: 222}}
     }
 
     common = %{
@@ -292,12 +303,23 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
       Cleanup.force_child(
         child,
         Map.put(common, :os_identity, fn _ ->
-          {:ok, %{start: "replacement", command: "child"}}
+          {:ok, %{start: "replacement", command: "child", parent_pid: 111, group_pid: 222}}
         end)
       )
 
     assert match?({:error, {:unverified_os_identity, _, _}}, reused.signal)
     refute reused.os_gone
+
+    different_group =
+      Cleanup.force_child(
+        child,
+        Map.put(common, :os_identity, fn _ ->
+          {:ok, %{start: "original", command: "child", parent_pid: 111, group_pid: 333}}
+        end)
+      )
+
+    assert match?({:error, {:unverified_os_identity, _, _}}, different_group.signal)
+    refute different_group.os_gone
 
     unavailable =
       Cleanup.force_child(
@@ -309,6 +331,21 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
 
     assert match?({:error, {:unverified_os_identity, _, _}}, unavailable.signal)
     refute unavailable.os_gone
+  end
+
+  test "OS identity parser retains parent and process group alongside start and command" do
+    assert Cleanup.parse_os_identity(
+             "Mon Oct 26 18:00:00 2026 321 456 /usr/bin/elixir -e child\n"
+           ) ==
+             {:ok,
+              %{
+                start: "Mon Oct 26 18:00:00 2026",
+                parent_pid: 321,
+                group_pid: 456,
+                command: "/usr/bin/elixir -e child"
+              }}
+
+    assert Cleanup.parse_os_identity("unavailable") == {:error, :invalid_os_identity}
   end
 
   test "listener port confirmation distinguishes bound from reusable" do

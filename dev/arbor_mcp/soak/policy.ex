@@ -140,11 +140,19 @@ defmodule Arbor.MCP.Soak.Policy do
       ]
   end
 
-  def stream_reconnect_transition(event, owned_stream?, closing?, active?) do
+  def reconnect_incident_transition(event, active?, owned?, closing?, planned_failure?) do
+    stream_event? = unexpected_stream_event?(event, owned?, closing?)
+    client_event? = unexpected_client_event?(event, owned?, planned_failure?)
+
     cond do
-      event == [:arbor_mcp, :transport, :sse, :connected] -> {false, false}
-      unexpected_stream_event?(event, owned_stream?, closing?) and not active? -> {true, true}
-      true -> {false, active?}
+      client_event? and event == [:arbor_mcp, :client, :reconnect, :success] ->
+        {not active?, false}
+
+      stream_event? or client_event? ->
+        {not active?, true}
+
+      true ->
+        {false, active?}
     end
   end
 

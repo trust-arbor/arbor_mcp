@@ -23,8 +23,8 @@ while its client remains live and requires exactly one disconnect, reconnect
 attempt, and reconnect success before a ping. Any other disconnect or reconnect
 attempt is a failure. The harness also attributes SSE-client reconnect telemetry
 to each legacy HTTP stream's process and reports one failure per unplanned
-GET-stream reconnect episode, even when both disconnect and reconnect telemetry
-are emitted.
+incident across both SSE stream and client reconnect telemetry. Individual
+telemetry events remain in `events.jsonl`.
 BEAM binds a client to one server process, and modern HTTP
 is stateless, so those transports skip this reconnect operation.
 The `--rate` option
@@ -66,9 +66,12 @@ and subscription calls. A cycle also
 closes subscriptions and confirms the old client and owned server terminate.
 If normal cleanup fails, it force-stops the listener and confirms the bound
 port can be reused; for stdio it retains the child OS PID and requires a
-subprocess reaping receipt. Before signalling a child, it verifies the saved
-process start time and command against the current PID; if OS identity cannot be
-confirmed, cleanup fails without signalling that PID. The last known child PID
+subprocess reaping receipt. Immediately before signalling a child, it checks a
+single `ps` snapshot against the saved start time, command, parent PID, and
+process group. If identity cannot be confirmed, cleanup fails without signalling
+that PID. macOS has no pidfd, so a child could still exit and its PID be reused
+between the final `ps` check and `/bin/kill`; this residual risk cannot be
+eliminated by the harness's PID-based fallback. The last known child PID
 and identity survive an inconclusive lookup during restart. Host listeners use
 an OS-selected ephemeral port known before startup, so a failed port-info call
 can still be followed by listener shutdown and a port-free check. Any
