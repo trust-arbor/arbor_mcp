@@ -295,6 +295,40 @@ defmodule ExMCP.Transport.HTTP.BoundedClientTest do
   end
 
   describe "an absolute :deadline" do
+    test "expires even when a ready event stream keeps returning data" do
+      bypass = Bypass.open()
+      test = self()
+
+      Bypass.expect_once(bypass, "POST", "/mcp", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.resp(200, "data: {}\n\n")
+      end)
+
+      consumer =
+        {nil,
+         fn
+           {:data, _chunk, _deadline}, acc ->
+             send(test, {:stream_data, self()})
+
+             receive do
+               :release_stream -> {:ok, acc}
+             end
+
+           :done, _acc ->
+             {:ok, ""}
+         end}
+
+      deadline = System.monotonic_time(:millisecond) + 100
+      task = Task.async(fn -> request(bypass, deadline: deadline, event_stream: consumer) end)
+
+      assert_receive {:stream_data, receiver}, 1_000
+      Process.sleep(150)
+      send(receiver, :release_stream)
+
+      assert {:error, {:http_receive_failed, :timeout}} = Task.await(task)
+    end
+
     test "refuses a request whose deadline has already passed, before connecting" do
       bypass = Bypass.open()
       test_pid = self()
