@@ -104,14 +104,101 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
     assert Map.has_key?(cache, "tool_p1") and Map.has_key?(cache, "tool_p2")
   end
 
+  test "a 401 challenge on a notification POST after disconnect/1 does not crash the client" do
+    client = start_client(auth_provider: {Provider, test_pid: self()})
+
+    :ok = Client.send_cancelled(client, "req-1", "delayed_auth")
+    assert_receive {:notification_held, handler}, 2_000
+
+    assert :ok = Client.disconnect(client)
+
+    send(handler, :release_401)
+
+    refute_receive :authenticated, 500
+    assert Process.alive?(client)
+  end
+
+  test "cursor page completing before first page retains both pages' tools in cache" do
+    client = start_client()
+
+    p_first = Task.async(fn -> Client.list_tools(client, timeout: 5_000) end)
+    {nil, first_handler} = receive_list_started_with_cursor()
+
+    p_cursor = Task.async(fn -> Client.list_tools(client, cursor: "c1", timeout: 5_000) end)
+    {"c1", cursor_handler} = receive_list_started_with_cursor()
+
+    # Release cursor handler first
+    send(cursor_handler, :release)
+    assert {:ok, _} = Task.await(p_cursor, 2_000)
+
+    # Release first handler second
+    send(first_handler, :release)
+    assert {:ok, _} = Task.await(p_first, 2_000)
+
+    cache = :sys.get_state(client).transport_state.tool_headers
+    assert Map.has_key?(cache, "tool_c1")
+    assert Map.has_key?(cache, "tool_first")
+  end
+
+  test "cursor page 401 retry carrying captured older generation does not merge into newer generation" do
+    {:ok, counter} = Agent.start_link(fn -> 0 end)
+    client = start_client(auth_provider: {Provider, test_pid: self()}, cursor_counter: counter)
+
+    # Establish generation 1 with a first page
+    p_gen1_first = Task.async(fn -> Client.list_tools(client, timeout: 5_000) end)
+    {nil, gen1_first_handler} = receive_list_started_with_cursor()
+    send(gen1_first_handler, :release)
+    assert {:ok, _} = Task.await(p_gen1_first, 2_000)
+
+    cache = :sys.get_state(client).transport_state.tool_headers
+    assert Map.has_key?(cache, "tool_first")
+
+    # Start cursor page for generation 1 (captures generation 1)
+    p_cursor = Task.async(fn -> Client.list_tools(client, cursor: "hold_401", timeout: 5_000) end)
+    assert_receive {:cursor_hold_started, cursor_handler}, 2_000
+
+    # In the meantime, start and complete a fresh first page (generation 2)
+    p_gen2_first = Task.async(fn -> Client.list_tools(client, timeout: 5_000) end)
+    {nil, gen2_first_handler} = receive_list_started_with_cursor()
+
+    send(
+      gen2_first_handler,
+      {:release_tools, [%{"name" => "tool_gen2", "inputSchema" => %{"type" => "object"}}]}
+    )
+
+    assert {:ok, _} = Task.await(p_gen2_first, 2_000)
+
+    cache = :sys.get_state(client).transport_state.tool_headers
+    assert Map.has_key?(cache, "tool_gen2")
+    refute Map.has_key?(cache, "tool_first")
+
+    # Release cursor request: it gets 401, client reauthenticates and retries
+    send(cursor_handler, :release)
+    assert_receive :authenticated, 2_000
+    assert {:ok, _} = Task.await(p_cursor, 5_000)
+
+    # Stale generation 1 cursor retry must NOT have merged into generation 2
+    cache = :sys.get_state(client).transport_state.tool_headers
+    assert Map.has_key?(cache, "tool_gen2")
+    refute Map.has_key?(cache, "tool_stale_hold")
+    refute Map.has_key?(cache, "tool_first")
+  end
+
   defp receive_list_started do
     assert_receive {:list_started, _cursor, handler}, 2_000
     handler
   end
 
+  defp receive_list_started_with_cursor do
+    assert_receive {:list_started, cursor, handler}, 2_000
+    {cursor, handler}
+  end
+
   defp start_client(opts \\ []) do
     bypass = Bypass.open()
     test_pid = self()
+    cursor_counter = Keyword.get(opts, :cursor_counter)
+    opts = Keyword.delete(opts, :cursor_counter)
 
     Bypass.stub(bypass, "GET", "/mcp", fn conn ->
       conn
@@ -121,7 +208,11 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
 
     Bypass.stub(bypass, "POST", "/mcp", fn conn ->
       {:ok, body, conn} = Plug.Conn.read_body(conn)
-      respond(conn, Jason.decode!(body), test_pid)
+      respond(conn, Jason.decode!(body), test_pid, cursor_counter)
+    end)
+
+    Bypass.stub(bypass, "DELETE", "/mcp", fn conn ->
+      Plug.Conn.resp(conn, 204, "")
     end)
 
     {:ok, client} =
@@ -140,7 +231,9 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
     client
   end
 
-  defp respond(conn, %{"method" => "initialize", "id" => id}, _test_pid) do
+  defp respond(conn, message, test_pid, counter)
+
+  defp respond(conn, %{"method" => "initialize", "id" => id}, _test_pid, _counter) do
     conn
     |> Plug.Conn.put_resp_header("mcp-session-id", "test-session")
     |> json(%{
@@ -154,24 +247,66 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
     })
   end
 
-  defp respond(conn, %{"method" => "tools/list", "id" => id, "params" => params}, test_pid) do
+  defp respond(
+         conn,
+         %{"method" => "tools/list", "id" => id, "params" => params},
+         test_pid,
+         counter
+       ) do
     cursor = params["cursor"]
-    send(test_pid, {:list_started, cursor, self()})
+    auth = Plug.Conn.get_req_header(conn, "authorization")
 
-    receive do
-      :release -> :ok
-    after
-      2_000 -> :ok
+    case {cursor, auth} do
+      {"hold_401", ["Bearer fresh"]} ->
+        tools = [%{"name" => "tool_stale_hold", "inputSchema" => %{"type" => "object"}}]
+        json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"tools" => tools}})
+
+      {"hold_401", _stale_auth} ->
+        attempt = if counter, do: Agent.get_and_update(counter, &{&1 + 1, &1 + 1}), else: 1
+
+        if attempt == 1 do
+          send(test_pid, {:cursor_hold_started, self()})
+
+          receive do
+            :release -> :ok
+          after
+            2_000 -> :ok
+          end
+        end
+
+        conn
+        |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
+        |> Plug.Conn.resp(401, "")
+
+      _ ->
+        send(test_pid, {:list_started, cursor, self()})
+
+        receive do
+          :release ->
+            tools = [
+              %{"name" => "tool_#{cursor || "first"}", "inputSchema" => %{"type" => "object"}}
+            ]
+
+            json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"tools" => tools}})
+
+          {:release_tools, tools} ->
+            json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"tools" => tools}})
+        after
+          2_000 ->
+            tools = [
+              %{"name" => "tool_#{cursor || "first"}", "inputSchema" => %{"type" => "object"}}
+            ]
+
+            json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"tools" => tools}})
+        end
     end
-
-    tools = [%{"name" => "tool_#{cursor}", "inputSchema" => %{"type" => "object"}}]
-    json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"tools" => tools}})
   end
 
   defp respond(
          conn,
          %{"method" => "tools/call", "id" => id, "params" => %{"name" => name}},
-         test_pid
+         test_pid,
+         _counter
        )
        when name in ["late", "other"] do
     send(test_pid, {:tool_call_started, name, self(), id})
@@ -188,7 +323,12 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
     end
   end
 
-  defp respond(conn, %{"method" => "tools/call", "id" => id, "params" => params}, test_pid) do
+  defp respond(
+         conn,
+         %{"method" => "tools/call", "id" => id, "params" => params},
+         test_pid,
+         _counter
+       ) do
     name = params["name"]
     send(test_pid, {:tool_call_started, name, self()})
 
@@ -228,7 +368,12 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
     end
   end
 
-  defp respond(conn, %{"method" => "notifications/cancelled" = method} = message, test_pid) do
+  defp respond(
+         conn,
+         %{"method" => "notifications/cancelled" = method} = message,
+         test_pid,
+         _counter
+       ) do
     params = Map.get(message, "params", %{})
     send(test_pid, {:notification, method, params})
 
@@ -243,12 +388,27 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
           |> Plug.Conn.resp(401, "")
         end
 
+      "delayed_auth" ->
+        send(test_pid, {:notification_held, self()})
+
+        receive do
+          :release_401 ->
+            conn
+            |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
+            |> Plug.Conn.resp(401, "")
+        after
+          2_000 ->
+            conn
+            |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
+            |> Plug.Conn.resp(401, "")
+        end
+
       _other ->
         Plug.Conn.resp(conn, 202, "")
     end
   end
 
-  defp respond(conn, %{"method" => method} = message, test_pid) do
+  defp respond(conn, %{"method" => method} = message, test_pid, _counter) do
     send(test_pid, {:notification, method, Map.get(message, "params", %{})})
     Plug.Conn.resp(conn, 202, "")
   end

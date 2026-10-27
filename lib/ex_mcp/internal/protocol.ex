@@ -556,8 +556,19 @@ defmodule ExMCP.Internal.Protocol do
   end
 
   def parse_message_unvalidated(data) when is_binary(data) do
-    JSONRPC.parse_unvalidated(data)
+    case Jason.decode(data) do
+      {:ok, decoded} -> parse_message_unvalidated(decoded)
+      {:error, _reason} -> {:error, :invalid_message}
+    end
   end
+
+  # JSON-RPC lets a request or notification leave out params, and MCP's ping
+  # and list_changed notifications usually do. A response that also names a
+  # method stays a response.
+  def parse_message_unvalidated(%{"method" => _method} = message)
+      when not is_map_key(message, "params") and not is_map_key(message, "result") and
+             not is_map_key(message, "error"),
+      do: JSONRPC.parse_unvalidated(Map.put(message, "params", %{}))
 
   def parse_message_unvalidated(message), do: JSONRPC.parse_unvalidated(message)
 

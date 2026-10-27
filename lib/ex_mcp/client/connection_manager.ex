@@ -702,16 +702,47 @@ defmodule ExMCP.Client.ConnectionManager do
 
     transport_state = Deadline.put_on_transport(transport_mod, transport_state, exchange_deadline)
 
+    # The client's declared capabilities (the :capabilities option), as a
+    # modern client sends with every request. Servers that respect declared
+    # capabilities never send a client that declares none an elicitation,
+    # sampling or roots request.
+    capabilities = initialize_capabilities(opts)
+
     transport_mod
-    |> exchange_initialize(transport_state, protocol_version, exchange_deadline)
+    |> exchange_initialize(transport_state, protocol_version, capabilities, exchange_deadline)
     |> restore_deadline(transport_mod, establish_deadline)
   end
 
-  defp exchange_initialize(transport_mod, transport_state, protocol_version, deadline) do
+  # An in-process client may be configured with atom keys; over the wire the
+  # same map arrives with string keys, so they're normalized to strings for
+  # the initialize params a server (or its handler) reads.
+  defp initialize_capabilities(opts) do
+    opts
+    |> Keyword.get(:capabilities, %{})
+    |> stringify_capability_keys()
+  end
+
+  defp stringify_capability_keys(value) when is_map(value) do
+    Map.new(value, fn {key, nested} -> {to_string(key), stringify_capability_keys(nested)} end)
+  end
+
+  defp stringify_capability_keys(value) when is_list(value),
+    do: Enum.map(value, &stringify_capability_keys/1)
+
+  defp stringify_capability_keys(value), do: value
+
+  defp exchange_initialize(
+         transport_mod,
+         transport_state,
+         protocol_version,
+         capabilities,
+         deadline
+       ) do
     case send_initialize_request(
            transport_mod,
            transport_state,
-           protocol_version
+           protocol_version,
+           capabilities
          ) do
       {:ok, state_after_send, response_data} ->
         # Non-SSE HTTP mode - response came back immediately
@@ -756,11 +787,12 @@ defmodule ExMCP.Client.ConnectionManager do
   defp send_initialize_request(
          transport_mod,
          transport_state,
-         protocol_version
+         protocol_version,
+         capabilities
        ) do
     client_info = VersionInfo.client_info()
 
-    request = Protocol.encode_initialize(client_info, %{}, protocol_version)
+    request = Protocol.encode_initialize(client_info, capabilities, protocol_version)
 
     with {:ok, outbound_request} <- encode_for_transport(transport_mod, request) do
       case transport_mod.send_message(outbound_request, transport_state) do

@@ -1459,6 +1459,7 @@ defmodule ExMCP.Client do
 
     NotificationListener.close_all(state.notification_listeners, :disconnected)
     reset_notification_worker(state)
+    clear_async_post_monitors(state)
 
     # Update state to disconnected. The manual_disconnect flag ensures a
     # late {:transport_closed, _} message does not trigger auto-reconnection.
@@ -1548,12 +1549,14 @@ defmodule ExMCP.Client do
         # Reply with cancelled error and remove from pending
         GenServer.reply(from, {:error, :cancelled})
         new_pending = Map.delete(state.pending_requests, request_id)
+        updated_state = RequestHandler.forget_request_progress_token(updated_state, request_id)
         {:reply, :ok, %{updated_state | pending_requests: new_pending}}
 
       {from, :single} ->
         # Reply with cancelled error and remove from pending
         GenServer.reply(from, {:error, :cancelled})
         new_pending = Map.delete(state.pending_requests, request_id)
+        updated_state = RequestHandler.forget_request_progress_token(updated_state, request_id)
         {:reply, :ok, %{updated_state | pending_requests: new_pending}}
 
       _ ->
@@ -1591,6 +1594,15 @@ defmodule ExMCP.Client do
 
   @impl GenServer
   def handle_info({:transport_message, message}, state) do
+    RequestHandler.parse_transport_message(message, state)
+  end
+
+  # A notification or request on a legacy POST's event stream (see
+  # ExMCP.Transport.HTTP.PostStream). Acknowledged on receipt, so a slow
+  # handler doesn't hold up the stream, and at most one more message from it
+  # waits here meanwhile.
+  def handle_info({:http_post_stream_message, task, ref, message}, state) do
+    send(task, {:http_post_stream_ack, ref})
     RequestHandler.parse_transport_message(message, state)
   end
 
@@ -1709,20 +1721,78 @@ defmodule ExMCP.Client do
   # transport-state fields the POST changed (session rotation, OAuth token
   # refresh), which are merged back into our copy of the transport state.
   def handle_info({:async_post_result, result, meta}, state) when is_map(meta) do
-    state = merge_async_transport_state(state, meta)
-    handle_async_post_result(result, meta, state)
+    task_ref = Map.get(meta, :task_ref)
+
+    if retired_async_post_result?(state, meta) do
+      if not is_nil(task_ref), do: Process.demonitor(task_ref, [:flush])
+      {:noreply, state}
+    else
+      state =
+        state
+        |> merge_async_transport_state(meta)
+        |> untrack_async_post_task(task_ref)
+
+      handle_async_post_result(result, meta, state)
+    end
   end
 
   # Legacy 2-tuple shape (no metadata) kept for compatibility.
   def handle_info({:async_post_result, result}, state) do
-    handle_async_post_result(result, %{}, state)
+    if state.connection_status == :disconnected or is_nil(state.transport_state) do
+      {:noreply, state}
+    else
+      handle_async_post_result(result, %{}, state)
+    end
   end
 
   # Async POST task registration: maps the task's monitor ref to the request
-  # id it serves so a crashed task can fail that request.
+  # id it serves, then tells the task it may start. Handshaking ensures the
+  # client records the monitor before the task can deliver a result or exit,
+  # avoiding races with fast completions or crashes.
+  def handle_info({:async_post_task, ref, request_id, task_pid}, state)
+      when is_reference(ref) and is_pid(task_pid) do
+    if state.connection_status == :disconnected or is_nil(state.transport_state) do
+      Process.demonitor(ref, [:flush])
+      Process.exit(task_pid, :kill)
+      {:noreply, state}
+    else
+      tasks = Map.put(state.async_post_tasks || %{}, ref, {task_pid, request_id})
+      send(task_pid, {:start_async_post, ref})
+      {:noreply, %{state | async_post_tasks: tasks}}
+    end
+  end
+
+  # Legacy 2-tuple shape (no task_pid) kept for unit tests and compatibility.
   def handle_info({:async_post_task, ref, request_id}, state) when is_reference(ref) do
     tasks = Map.put(state.async_post_tasks || %{}, ref, request_id)
     {:noreply, %{state | async_post_tasks: tasks}}
+  end
+
+  # One of this client's legacy POST tasks got a 401 or 403: answered here,
+  # in turn with every other challenge, and the task sends its request again
+  # with the token.
+  def handle_info(
+        {:http_post_auth_challenge, task, ref, challenge},
+        %{transport_mod: HTTP, transport_state: %HTTP{} = transport_state} = state
+      )
+      when is_pid(task) and is_map(challenge) do
+    if own_post_task?(state, task) and state.connection_status != :disconnected do
+      {result, transport_state} = answer_stream_challenge(transport_state, challenge)
+      send(task, {:http_post_auth_result, ref, result})
+      {:noreply, %{state | transport_state: transport_state}}
+    else
+      send(task, {:http_post_auth_result, ref, {:error, :stream_retired}})
+      {:noreply, state}
+    end
+  end
+
+  def handle_info(
+        {:http_post_auth_challenge, task, ref, _challenge},
+        state
+      )
+      when is_pid(task) and is_reference(ref) do
+    send(task, {:http_post_auth_result, ref, {:error, :stream_retired}})
+    {:noreply, state}
   end
 
   def handle_info(
@@ -1802,14 +1872,20 @@ defmodule ExMCP.Client do
   # request the task was serving instead of leaving it to hang until timeout.
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{async_post_tasks: tasks} = state)
       when is_map(tasks) and is_map_key(tasks, ref) do
-    {request_id, remaining} = Map.pop(tasks, ref)
+    {entry, remaining} = Map.pop(tasks, ref)
+    request_id = async_task_request_id(entry)
     state = %{state | async_post_tasks: remaining}
 
-    if reason == :normal do
-      {:noreply, state}
-    else
-      Logger.error("Async POST task exited: #{inspect(reason)}")
-      {:noreply, fail_async_post_request(state, request_id, reason)}
+    cond do
+      state.connection_status == :disconnected ->
+        {:noreply, state}
+
+      reason == :normal ->
+        {:noreply, state}
+
+      true ->
+        Logger.error("Async POST task exited: #{inspect(reason)}")
+        {:noreply, fail_async_post_request(state, request_id, reason)}
     end
   end
 
@@ -1866,6 +1942,8 @@ defmodule ExMCP.Client do
   # :timeout option (scheduled by RequestHandler). Stale timers for requests
   # that already completed find no pending entry and are ignored.
   def handle_info({:request_timeout, request_id}, state) do
+    state = RequestHandler.forget_request_progress_token(state, request_id)
+
     case Map.get(state.pending_requests, request_id) do
       {from, :single, _method} ->
         GenServer.reply(from, {:error, :timeout})
@@ -1964,9 +2042,10 @@ defmodule ExMCP.Client do
   defp handle_async_post_result({:error, {:reauthenticate, message}}, meta, state) do
     request_id = Map.get(meta, :request_id)
 
-    if is_nil(request_id) or Map.has_key?(state.pending_requests, request_id),
-      do: resend_authenticated(message, meta, state),
-      else: {:noreply, state}
+    if (is_nil(request_id) or Map.has_key?(state.pending_requests, request_id)) and
+         state.connection_status != :disconnected and not is_nil(state.transport_state),
+       do: resend_authenticated(message, meta, state),
+       else: {:noreply, state}
   end
 
   # The caller receives the failure, as from a synchronous send, so it is not
@@ -1981,11 +2060,12 @@ defmodule ExMCP.Client do
   defp resend_authenticated(message, meta, state) do
     request_id = Map.get(meta, :request_id)
     deadline = Map.get(meta, :deadline)
+    page_info = Map.get(meta, :tool_list)
     previous = Deadline.on_transport(HTTP, state.transport_state)
     transport = Deadline.put_on_transport(HTTP, state.transport_state, deadline)
     restore = &%{state | transport_state: Deadline.put_on_transport(HTTP, &1, previous)}
 
-    case HTTP.send_authenticated(message, transport) do
+    case HTTP.send_authenticated(message, transport, page_info: page_info) do
       {:ok, transport, response_data} ->
         RequestHandler.handle_post_response(response_data, request_id, restore.(transport))
 
@@ -2003,7 +2083,7 @@ defmodule ExMCP.Client do
          kind,
          data
        )
-       when kind in [:first, :cursor],
+       when not is_nil(kind),
        do: %{state | transport_state: HTTP.cache_tool_list(transport, kind, data)}
 
   defp cache_tool_list(state, _kind, _data), do: state
@@ -2020,7 +2100,7 @@ defmodule ExMCP.Client do
     changes = Map.get(meta, :state_changes) || %{}
 
     if map_size(changes) > 0 and is_map(state.transport_state) and
-         known_async_post_request?(state, Map.get(meta, :request_id)) do
+         known_async_post_request?(state, meta) do
       %{state | transport_state: Map.merge(state.transport_state, changes)}
     else
       state
@@ -2049,11 +2129,96 @@ defmodule ExMCP.Client do
     end
   end
 
-  defp known_async_post_request?(%{async_post_tasks: tasks}, request_id) when is_map(tasks) do
-    Enum.any?(tasks, fn {_ref, id} -> id == request_id end)
+  defp own_post_task?(state, task) do
+    Enum.any?(state.async_post_tasks || %{}, fn
+      {_ref, {pid, _request_id}} -> pid == task
+      {_ref, pid} when is_pid(pid) -> pid == task
+      _other -> false
+    end)
   end
 
-  defp known_async_post_request?(_state, _request_id), do: false
+  defp answer_stream_challenge(%HTTP{access_token: current} = transport_state, challenge)
+       when is_binary(current) and current != :erlang.map_get(:token, challenge) do
+    # Another stream replaced the rejected token. That answers a 401; a 403
+    # needs the challenged scopes, which a refresh alone doesn't add.
+    if challenge.status == 401 or
+         scopes_granted?(transport_state.auth_provider_state, challenge.scopes),
+       do: {{:ok, current}, transport_state},
+       else: run_stream_challenge(transport_state, challenge)
+  end
+
+  defp answer_stream_challenge(%HTTP{auth_provider: nil} = transport_state, _challenge),
+    do: {{:error, :no_auth_provider}, transport_state}
+
+  defp answer_stream_challenge(transport_state, challenge),
+    do: run_stream_challenge(transport_state, challenge)
+
+  defp scopes_granted?(%{granted_scopes: granted}, [_ | _] = scopes) when is_list(granted),
+    do: Enum.all?(scopes, &(&1 in granted))
+
+  defp scopes_granted?(_provider_state, _scopes), do: false
+
+  defp run_stream_challenge(%HTTP{auth_provider: provider} = transport_state, challenge) do
+    callback = if challenge.status == 401, do: :handle_unauthorized, else: :handle_forbidden
+    args = [challenge.www_authenticate, challenge.scopes, transport_state.auth_provider_state]
+
+    case apply(provider, callback, args) do
+      {:ok, token, provider_state} when is_binary(token) ->
+        changes = %{access_token: token, auth_provider_state: provider_state}
+        {{:ok, token}, merge_modern_stream_auth_state(transport_state, changes)}
+
+      {:error, reason, provider_state} ->
+        {{:error, reason}, %{transport_state | auth_provider_state: provider_state}}
+
+      {:error, reason} ->
+        {{:error, reason}, transport_state}
+
+      other ->
+        {{:error, {:invalid_provider_response, other}}, transport_state}
+    end
+  end
+
+  defp async_task_request_id({_pid, request_id}), do: request_id
+  defp async_task_request_id(request_id), do: request_id
+
+  defp known_async_post_request?(%{async_post_tasks: tasks}, meta)
+       when is_map(tasks) and is_map(meta) do
+    task_ref = Map.get(meta, :task_ref)
+    request_id = Map.get(meta, :request_id)
+
+    cond do
+      not is_nil(task_ref) ->
+        is_map_key(tasks, task_ref)
+
+      not is_nil(request_id) ->
+        Enum.any?(tasks, fn {_ref, entry} -> async_task_request_id(entry) == request_id end)
+
+      true ->
+        false
+    end
+  end
+
+  defp known_async_post_request?(_state, _meta), do: false
+
+  defp retired_async_post_result?(%{connection_status: :disconnected}, _meta), do: true
+
+  defp retired_async_post_result?(state, %{task_ref: ref}) when not is_nil(ref),
+    do: not is_map_key(state.async_post_tasks || %{}, ref)
+
+  defp retired_async_post_result?(%{async_post_tasks: tasks} = state, meta)
+       when map_size(tasks) > 0 do
+    not known_async_post_request?(state, meta) and
+      not Map.has_key?(state.pending_requests, Map.get(meta, :request_id))
+  end
+
+  defp retired_async_post_result?(_state, _meta), do: false
+
+  defp untrack_async_post_task(state, nil), do: state
+
+  defp untrack_async_post_task(state, ref) do
+    Process.demonitor(ref, [:flush])
+    %{state | async_post_tasks: Map.delete(state.async_post_tasks || %{}, ref)}
+  end
 
   # Modern streamable HTTP cancels an ordinary request by closing only that
   # request's response stream. Other transports retain the protocol
@@ -2087,6 +2252,8 @@ defmodule ExMCP.Client do
   # timeout, answered as a synchronous send was, and is cancelled on the
   # server: the client's own timeout timer finds nothing left to cancel.
   defp fail_async_post_request(state, request_id, reason, deadline \\ nil) do
+    state = RequestHandler.forget_request_progress_token(state, request_id)
+
     timed_out? =
       reason != :deadline_expired and is_integer(deadline) and Deadline.expired?(deadline)
 
@@ -2211,6 +2378,8 @@ defmodule ExMCP.Client do
     if is_struct(state.receiver_task, Task) && Process.alive?(state.receiver_task.pid) do
       Process.exit(state.receiver_task.pid, :shutdown)
     end
+
+    clear_async_post_monitors(state)
 
     previous_status = state.connection_status
 
@@ -2478,6 +2647,7 @@ defmodule ExMCP.Client do
     # Callers still waiting on the client exit with it, as for any other
     # pending call; only the connection's callback tasks are stopped.
     stop_callback_work(state, nil)
+    clear_async_post_monitors(state)
 
     state
     |> Map.get(:notification_listeners, %{})
@@ -2488,6 +2658,12 @@ defmodule ExMCP.Client do
     close_transport(state)
     :ok
   end
+
+  defp clear_async_post_monitors(%{async_post_tasks: tasks}) when is_map(tasks) do
+    Enum.each(Map.keys(tasks), &Process.demonitor(&1, [:flush]))
+  end
+
+  defp clear_async_post_monitors(_state), do: :ok
 
   defp close_notification_listeners(state, reason) do
     NotificationListener.close_all(state.notification_listeners, reason)
