@@ -31,7 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signal, and a server that can't be confirmed in time is left unsignalled,
   with a warning, rather than signalled late. A helper that stops answering
   is killed, with any `ps` it waits on, so no signal it was handed can run
-  after the reaper has decided, and no helper outlives its reaper. The TERM
+  after the reaper has decided, and no helper outlives its reaper. It is
+  killed through `/bin/sh` (or `/bin/kill`), not whatever `PATH` holds, and
+  a helper whose exit can't be confirmed is logged as an error. The TERM
   grace runs from when SIGTERM actually goes out, however long its check
   took, as far as the budget allows. On Windows, `taskkill` runs
   only from `close/1`, bounded by the budget, while the open port still

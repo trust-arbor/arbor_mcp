@@ -494,18 +494,52 @@ defmodule ExMCP.Transport.Stdio.Reaper do
   # exit to be reported, a bounded time.
   defp kill_helper(%{port: port, os_pid: os_pid}) do
     if Port.info(port) do
-      run_bounded("kill", ["-KILL", "--", "-#{os_pid}"], @helper_kill_ms)
+      send_helper_kill(os_pid)
 
+      # The exit is what proves nothing the helper holds can still run.
       receive do
-        {^port, {:exit_status, _status}} -> :ok
+        {^port, {:exit_status, _status}} ->
+          :ok
       after
-        @helper_kill_ms -> :ok
+        @helper_kill_ms ->
+          Logger.error(
+            "stdio reaper helper #{os_pid} did not exit when killed: it may still be " <>
+              "alive with queued signals for its server"
+          )
       end
 
       close_port(port)
     end
 
     :ok
+  end
+
+  # SIGKILL to the helper's group, not depending on PATH: the builtin `kill`
+  # of /bin/sh, else /bin/kill.
+  defp send_helper_kill(os_pid) do
+    group = "-#{os_pid}"
+
+    case run_absolute("/bin/sh", ["-c", ~s(kill -s KILL -- "$1"), "sh", group]) do
+      {_output, 0} -> :ok
+      _failed -> run_absolute("/bin/kill", ["-s", "KILL", "--", group])
+    end
+  end
+
+  defp run_absolute(path, args) do
+    task = Task.async(fn -> cmd_absolute(path, args) end)
+
+    case Task.yield(task, @helper_kill_ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      _timeout -> :timeout
+    end
+  end
+
+  defp cmd_absolute(path, args) do
+    if File.exists?(path),
+      do: System.cmd(path, args, stderr_to_stdout: true),
+      else: {"", 127}
+  rescue
+    _error -> {"", 1}
   end
 
   defp await_answer(port, n, deadline) do
