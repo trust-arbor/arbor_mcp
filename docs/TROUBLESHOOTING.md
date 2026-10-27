@@ -93,8 +93,10 @@ ExMCP.Client.start_link(
 ```
 
 `:prefer_modern` falls back to legacy `initialize` only when a live peer gives
-positive evidence that it is legacy-compatible. A timeout, authentication
-failure, transport break, cached-modern failure, recognized modern error, or
+positive evidence that it is legacy-compatible: a non-modern JSON-RPC error,
+an HTTP `400`, `404` or `405` rejection, or, over HTTP, no answer to the probe
+within `:era_probe_timeout`. A stdio probe timeout, authentication failure,
+transport break, cached-modern failure, recognized modern error, or
 unsupported modern revision is surfaced instead of being silently downgraded.
 Use `:prefer_legacy` for a deliberate rollback, or `reset_era_cache: true` once
 after an operator-controlled endpoint upgrade. Strict `:modern_only` and

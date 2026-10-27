@@ -104,11 +104,18 @@ Client mode options:
   cannot be identified from its connected state. Never include raw secrets;
   ExMCP hashes the configured identity.
 
-Fallback is deliberately narrow. A modern timeout, transport failure,
-recognized modern error, authentication error, or cached-modern probe failure
-does not trigger `initialize`. Similarly, `:prefer_legacy` probes modern only
-after a protocol-level legacy failure while the transport remains usable.
-Strict modes never fall back.
+Fallback is deliberately narrow. `:prefer_modern` initializes after the probe
+only on evidence of a legacy server, as MCP 2026-07-28 defines it: a JSON-RPC
+error that is not a recognized modern one, an UnsupportedProtocolVersionError
+(`-32022`) whose `supported` list names only legacy revisions, an HTTP `400`,
+`404` or `405` rejection of the probe, or an HTTP probe that gets no answer
+within `:era_probe_timeout`. Each HTTP POST stands alone, so a late answer to
+the probe cannot reach the `initialize` that follows. A stdio probe that gets
+no answer is not evidence: the answer could still arrive on the same pipe.
+Any other recognized modern error, an authentication error, a transport
+failure, or a cached-modern probe failure does not trigger `initialize`.
+Similarly, `:prefer_legacy` probes modern only after a protocol-level legacy
+failure while the transport remains usable. Strict modes never fall back.
 
 `protocol_version` is a legacy revision preference, not an era switch or a
 statement of the latest upstream MCP revision. The

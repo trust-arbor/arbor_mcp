@@ -238,10 +238,13 @@ wire shape.
 
 With `:prefer_modern`, ExMCP sends a bounded `server/discover` probe first. It
 falls back to `initialize` only when the response is recognized as evidence of
-a legacy peer and the transport is still usable. A recognized modern error,
-unsupported modern revision, timeout, authentication failure, or broken
-transport is surfaced instead of being silently downgraded. `:modern_only`
-never falls back.
+a legacy peer and the transport is still usable. Over HTTP, a probe that gets
+no answer within `:era_probe_timeout` is such evidence too, as MCP 2026-07-28
+says: each POST stands alone, so a late answer to the probe cannot reach the
+`initialize` that follows. A recognized modern error, unsupported modern
+revision, stdio probe timeout, authentication failure, or broken transport is
+surfaced instead of being silently downgraded. `:modern_only` never falls
+back.
 
 Successful modern observations are pinned by endpoint and relevant transport
 configuration. Legacy observations expire (five minutes by default) so an

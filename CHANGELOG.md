@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The configuration, transport and troubleshooting guides said a probe
+  timeout never leads to `initialize`. Over HTTP, under the preference
+  modes, it is legacy evidence, as MCP 2026-07-28 says, and has been since
+  the modern era landed: each POST stands alone, so a late answer cannot
+  reach the `initialize` that follows. The guides now say so and that a
+  stdio probe timeout is not evidence; behavior is unchanged. Backport of
+  the HTTP part of ArborMCP `fd72323`.
+
 - A client in the default `:prefer_modern` mode could not connect to an
   ExMCP server running `protocol_mode: :legacy_only`, the documented
   rollback, over any transport. The server answers the `server/discover`
