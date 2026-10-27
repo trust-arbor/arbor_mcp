@@ -11,7 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Forced runtime shutdown now reserves enough of its existing stop budget to
   kill owned processes and confirm their termination under load, reducing
-  spurious `:shutdown_cleanup_unconfirmed` results.
+  spurious `:shutdown_cleanup_unconfirmed` results. The forced phase is capped
+  at one quarter of the budget, leaving at least three quarters for graceful
+  shutdown. At 500 ms, the graceful phase is 460 ms (425 ms in the initial
+  uncapped patch, 475 ms with the original 25 ms margin); at 1,500 ms, it is
+  1,425 ms (1,475 ms originally).
 
 ## [2.0.0-rc.6] — 2026-10-26
 

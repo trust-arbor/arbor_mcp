@@ -619,18 +619,28 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
                    when reason in [:normal, :shutdown]
   end
 
-  test "force point reserves bounded time for confirmation" do
-    for {budget, margin} <- [{80, 40}, {500, 75}, {1_500, 75}] do
-      {root, _ref, table, _guard, observer} = runtime(budget)
-      observer_monitor = Process.monitor(observer)
-      started = Deadline.now()
-      assert {:ok, _control, cutoff} = ShutdownControl.prepare(table, :normal, started)
-      assert {:ok, :normal, ^cutoff, force_at} = ShutdownControl.command(table)
-      assert force_at == cutoff - margin
-      assert force_at >= started
-      assert Runtime.stop(root) in [:ok, {:error, :shutdown_cleanup_unconfirmed}]
-      assert_receive {:DOWN, ^observer_monitor, :process, ^observer, :normal}, 2_000
-    end
+  test "tiny stop budgets retain at least three quarters for graceful shutdown" do
+    for {budget, margin} <- [{1, 0}, {10, 2}, {40, 10}],
+        do: assert_force_margin(budget, margin)
+  end
+
+  test "medium and large stop budgets reserve bounded forced cleanup time" do
+    for {budget, margin} <- [{80, 20}, {100, 25}, {500, 40}, {1_500, 75}, {5_000, 75}],
+        do: assert_force_margin(budget, margin)
+  end
+
+  defp assert_force_margin(budget, margin) do
+    {root, _ref, table, _guard, observer} = runtime(budget)
+    observer_monitor = Process.monitor(observer)
+    started = Deadline.now()
+    assert {:ok, _control, cutoff} = ShutdownControl.prepare(table, :normal, started)
+    assert {:ok, :normal, ^cutoff, force_at} = ShutdownControl.command(table)
+    assert force_at == cutoff - margin
+    assert force_at - started >= budget - div(budget, 4)
+    # A 500 ms stop leaves 460 ms graceful, including a 450 ms terminate/2.
+    if budget == 500, do: assert(force_at - started > 450)
+    assert Runtime.stop(root) in [:ok, {:error, :shutdown_cleanup_unconfirmed}]
+    assert_receive {:DOWN, ^observer_monitor, :process, ^observer, :normal}, 2_000
   end
 
   defp forced_cleanup_sample(budget) do

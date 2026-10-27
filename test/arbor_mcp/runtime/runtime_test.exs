@@ -884,7 +884,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     assert_receive {:terminating_handler, :bounded_stop, _scheduler, :shutdown}, 1_000
     assert Task.await(stop, 1_000) in [:ok, {:error, :shutdown_cleanup_unconfirmed}]
     elapsed = System.monotonic_time(:millisecond) - started
-    # The 100 ms budget now reserves its last 50 ms for forced confirmation.
+    # The 100 ms budget reserves its last 25 ms for forced confirmation.
     assert elapsed >= 40
     assert elapsed < 450
 

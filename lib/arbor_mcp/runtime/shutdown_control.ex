@@ -9,8 +9,9 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControl do
   @attempts 64
   @tick_ms 10
   # Give the guard and observer time to kill owned processes, receive their
-  # DOWNs, and record completion before the first stop cutoff. Keep most of a
-  # longer budget available for graceful Supervisor.stop.
+  # DOWNs, and record completion before the first stop cutoff. The quarter-
+  # budget bound leaves at least three quarters for graceful Supervisor.stop,
+  # including custom timeouts shorter than the preferred force margin.
   @force_margin_floor_ms 40
   @force_margin_cap_ms 75
 
@@ -615,13 +616,17 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControl do
 
   defp cutoff(control), do: :atomics.get(control.cells, 1)
 
-  defp force_at(control),
-    do:
-      cutoff(control) -
-        min(
-          control.budget,
-          min(@force_margin_cap_ms, max(@force_margin_floor_ms, div(control.budget, 2)))
-        )
+  defp force_at(control) do
+    # Prefer 40 ms for mid-size budgets, then grow by one sixteenth until the
+    # 75 ms ceiling. For small budgets, the quarter bound takes precedence.
+    margin =
+      min(
+        div(control.budget, 4),
+        min(@force_margin_cap_ms, max(@force_margin_floor_ms, div(control.budget, 16)))
+      )
+
+    cutoff(control) - margin
+  end
 
   defp owned(control),
     do: :ets.match_object(control.ledger, {{:owned_slot, :_}, :_, :_, :_, :_, :_})
