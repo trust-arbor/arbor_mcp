@@ -22,10 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   supervisor kills, say) dies first, before or during `close/1`. A signal
   goes only to the process the connection started, checked by its start
   time, so a server that exited on its own, whose pid may since name
-  another process, is left alone. On Windows, `taskkill` runs on `close/1`
-  or when the connection's owner dies, bounded by the budget. Negative
-  graces, a non-positive budget and an explicit `nil` are rejected before
-  the server starts. Backport of 2.x #109.
+  another process, is left alone; a process group is still stopped when its
+  leader has exited and left children in it. On Windows, `taskkill` runs
+  only from `close/1`, bounded by the budget, while the open port still
+  holds the server's process handle. A server whose connection owner dies
+  before closing it may be left running on Windows, with a warning logged.
+  Negative graces, a non-positive budget and an explicit `nil` are rejected
+  before the server starts. Backport of 2.x #109.
 - A client's default close limit (`Deadline.cleanup_timeout/1`) covers a stdio
   server's shutdown budget plus 500 ms: 3_000 ms with the stdio defaults. Other
   transports keep 1_000 ms.

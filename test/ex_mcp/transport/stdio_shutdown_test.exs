@@ -278,16 +278,18 @@ defmodule ExMCP.Transport.StdioShutdownTest do
 
     # Windows can't be run here, so its decisions are tested as logic.
     test "decides what each end of the connection calls for" do
-      assert Reaper.action(:unix, :close) == :shutdown
-      assert Reaper.action(:unix, {:port_down, :normal}) == :shutdown
-      assert Reaper.action(:unix, {:port_down, :killed}) == :shutdown
-      assert Reaper.action(:unix, :server_exited) == :none
+      assert Reaper.steps(:unix, :close) == [:close_port, :shutdown]
+      assert Reaper.steps(:unix, {:port_down, :normal}) == [:shutdown]
+      assert Reaper.steps(:unix, {:port_down, :killed}) == [:shutdown]
+      assert Reaper.steps(:unix, :server_exited) == []
 
-      assert Reaper.action(:win32, :close) == :taskkill
-      assert Reaper.action(:win32, {:port_down, :killed}) == :taskkill
-      assert Reaper.action(:win32, {:port_down, :shutdown}) == :taskkill
-      assert Reaper.action(:win32, {:port_down, :normal}) == :none
-      assert Reaper.action(:win32, :server_exited) == :none
+      # taskkill only while the open port still holds the process handle,
+      # so the pid can't have been handed on yet.
+      assert Reaper.steps(:win32, :close) == [:taskkill, :close_port]
+      assert Reaper.steps(:win32, {:port_down, :killed}) == [:warn_left_running]
+      assert Reaper.steps(:win32, {:port_down, :shutdown}) == [:warn_left_running]
+      assert Reaper.steps(:win32, {:port_down, :normal}) == []
+      assert Reaper.steps(:win32, :server_exited) == []
     end
 
     test "gives up on a command that outlasts its bound" do

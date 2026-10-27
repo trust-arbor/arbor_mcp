@@ -20,15 +20,21 @@ defmodule ExMCP.Transport.Stdio.Reaper do
   # this connection, by its start time recorded at connect, and when that
   # can't be checked nothing is sent. A group is ours while its leader is,
   # or, once the leader is gone, while the group has members: a pid isn't
-  # handed out while a process group with that id exists. Windows has no cheap check: taskkill runs only on close/1 or
-  # when the owner died abnormally, when the server was still ours to stop,
-  # never after the server exited.
+  # handed out while a process group with that id exists.
+  #
+  # Windows has no cheap check, but a pid isn't reused there while a handle
+  # to the process is open, and the open port holds one. So taskkill runs
+  # only on close/1, before the reaper closes the port. When the port has
+  # already closed because its owner died, the server is left running, with
+  # a warning: its pid may already name another process tree.
+
+  require Logger
 
   @poll_ms 10
   @max_poll_ms 100
 
   @type event :: :close | :server_exited | {:port_down, term()}
-  @type action :: :none | :shutdown | :taskkill
+  @type step :: :close_port | :shutdown | :taskkill | :warn_left_running
 
   @doc """
   Starts the reaper of the server `os_pid` behind `port`. Options:
@@ -61,38 +67,46 @@ defmodule ExMCP.Transport.Stdio.Reaper do
   def server_exited(_no_reaper), do: :ok
 
   @doc """
-  What a reaper does when `event` ends the connection, on `os_family`
-  (`:unix` or `:win32`). `:shutdown` signals only a child it can confirm.
+  The steps a reaper takes, in order, when `event` ends the connection on
+  `os_family` (`:unix` or `:win32`). `:shutdown` signals only a server or
+  group it can confirm as its own.
   """
-  @spec action(:unix | :win32, event()) :: action()
-  def action(_os_family, :server_exited), do: :none
-  def action(:unix, _event), do: :shutdown
-  def action(:win32, :close), do: :taskkill
-  # The server exited, or its owner did normally: either way not ours to kill.
-  def action(:win32, {:port_down, :normal}), do: :none
-  def action(:win32, {:port_down, _abnormal}), do: :taskkill
+  @spec steps(:unix | :win32, event()) :: [step()]
+  def steps(_os_family, :server_exited), do: []
+  def steps(:unix, :close), do: [:close_port, :shutdown]
+  def steps(:unix, {:port_down, _reason}), do: [:shutdown]
+  # The open port holds the process handle, so the pid is still the server's.
+  def steps(:win32, :close), do: [:taskkill, :close_port]
+  # The server exited, or its owner did normally: nothing to stop.
+  def steps(:win32, {:port_down, :normal}), do: []
+  def steps(:win32, {:port_down, _abnormal}), do: [:warn_left_running]
 
   defp run(port, os_pid, identity, opts) do
     monitor = monitor_port(port)
 
     event =
       receive do
-        :close ->
-          close_port(port)
-          :close
-
-        :server_exited ->
-          :server_exited
-
-        {:DOWN, ^monitor, :port, _port, reason} ->
-          {:port_down, reason}
+        :close -> :close
+        :server_exited -> :server_exited
+        {:DOWN, ^monitor, :port, _port, reason} -> {:port_down, reason}
       end
 
-    case action(os_family(), event) do
-      :none -> :ok
-      :shutdown -> shutdown(os_pid, identity, opts)
-      :taskkill -> taskkill(os_pid, Keyword.fetch!(opts, :budget))
-    end
+    os_family()
+    |> steps(event)
+    |> Enum.each(&step(&1, port, os_pid, identity, opts))
+  end
+
+  defp step(:close_port, port, _os_pid, _identity, _opts), do: close_port(port)
+  defp step(:shutdown, _port, os_pid, identity, opts), do: shutdown(os_pid, identity, opts)
+
+  defp step(:taskkill, _port, os_pid, _identity, opts),
+    do: taskkill(os_pid, Keyword.fetch!(opts, :budget))
+
+  defp step(:warn_left_running, _port, os_pid, _identity, _opts) do
+    Logger.warning(
+      "stdio server #{os_pid} may be left running: its connection's owner died before " <>
+        "closing it, and on Windows its pid can no longer be confirmed"
+    )
   end
 
   defp shutdown(os_pid, identity, opts) do

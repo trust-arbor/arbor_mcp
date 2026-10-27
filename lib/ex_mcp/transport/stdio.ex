@@ -32,6 +32,12 @@ defmodule ExMCP.Transport.Stdio do
     it plus 500 ms. The shutdown is run by a process started with the
     connection, which acts when the port closes, so it completes even if the
     process that owns the connection dies first, before or during `close/1`.
+    It signals only the process (or process group) the connection started:
+    a server that exited on its own is left alone. On Windows, which has no
+    cheap way to confirm a pid, `taskkill` runs only from `close/1`, while
+    the port still holds the server's process handle. A server whose
+    connection owner dies before closing it may therefore be left running
+    on Windows, and a warning is logged.
 
   The command is resolved against the `PATH` the child will see (an explicit
   `PATH` in `:env`, else the inherited one), not the VM's own. When the VM
@@ -76,8 +82,6 @@ defmodule ExMCP.Transport.Stdio do
   @kill_allowance 50
   # What close/1 allows past the budget for the shutdown to be confirmed.
   @reply_allowance 500
-  # How long close/1 waits for the reaper to close the port.
-  @port_close_wait 1_000
   @default_max_frame_bytes 1_048_576
   defstruct [
     :port,
@@ -501,11 +505,15 @@ defmodule ExMCP.Transport.Stdio do
     # A state built without connect/1 has no reaper yet.
     reaper = state.reaper || start_reaper(state)
 
+    # The reaper sends SIGKILL (or runs taskkill) within the cleanup budget;
+    # close/1 allows it a little more to confirm, and returns either way.
+    deadline = System.monotonic_time(:millisecond) + state.cleanup_timeout + @reply_allowance
+
     # Close the port before killing the reader: port_close exits the port
     # with reason :normal, which linked processes ignore, whereas killing
     # the port's owner (the reader, in push mode) first would cascade a
     # :killed exit through the port to its other linked processes.
-    close_port_through(reaper, port)
+    close_port_through(reaper, port, deadline)
 
     if is_pid(reader_pid) and Process.alive?(reader_pid) do
       # The reader is a plain spawn_link receive loop that does not trap
@@ -516,9 +524,7 @@ defmodule ExMCP.Transport.Stdio do
       Process.exit(reader_pid, :kill)
     end
 
-    # The reaper sends SIGKILL (or runs taskkill) within the cleanup budget;
-    # close/1 allows it a little more to confirm, and returns either way.
-    await_reaper(reaper, state.cleanup_timeout + @reply_allowance)
+    await_reaper(reaper, time_left(deadline))
     :ok
   end
 
@@ -543,24 +549,27 @@ defmodule ExMCP.Transport.Stdio do
 
   defp start_reaper(_state), do: nil
 
-  # The reaper closes the port itself, so it knows the close was asked for
-  # (on Windows that is what tells it apart from the server exiting).
-  defp close_port_through(nil, port), do: close_port(port)
+  # The reaper closes the port itself, so it knows the close was asked for.
+  # On Windows it runs taskkill first, while the open port still holds the
+  # server's process handle, so close/1 leaves the port open until then.
+  defp close_port_through(nil, port, _deadline), do: close_port(port)
 
-  defp close_port_through(reaper, port) when is_port(port) do
+  defp close_port_through(reaper, port, deadline) when is_port(port) do
     monitor = :erlang.monitor(:port, port)
     Reaper.close(reaper)
 
     receive do
       {:DOWN, ^monitor, :port, _port, _reason} -> :ok
     after
-      @port_close_wait ->
+      time_left(deadline) ->
         :erlang.demonitor(monitor, [:flush])
         close_port(port)
     end
   end
 
-  defp close_port_through(_reaper, _no_port), do: :ok
+  defp close_port_through(_reaper, _no_port, _deadline), do: :ok
+
+  defp time_left(deadline), do: max(deadline - System.monotonic_time(:millisecond), 0)
 
   defp await_reaper(nil, _budget), do: :ok
 
