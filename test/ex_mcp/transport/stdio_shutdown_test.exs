@@ -212,13 +212,19 @@ defmodule ExMCP.Transport.StdioShutdownTest do
   end
 
   test "connect rejects an explicit nil shutdown option before starting the server" do
-    ports = length(Port.list())
+    # A port connect/1 opened is linked to the caller, this test.
+    linked_ports = fn ->
+      {:links, links} = Process.info(self(), :links)
+      Enum.count(links, &is_port/1)
+    end
+
+    ports = linked_ports.()
 
     for name <- [:eof_grace, :term_grace, :cleanup_timeout] do
       assert {:error, {:invalid_shutdown_option, ^name, nil}} =
                Stdio.connect([{name, nil}, command: ["/bin/sh", "-c", "exec sleep 30"]])
     end
 
-    assert length(Port.list()) == ports
+    assert linked_ports.() == ports
   end
 end
