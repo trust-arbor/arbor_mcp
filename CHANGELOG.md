@@ -23,7 +23,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   POST tasks are handed back to the client process to re-send synchronously.
   Concurrent 401 challenges now run a single authentication flow and share
   fresh credentials rather than executing concurrent token refreshes (backport of
-  2.x #110: `3065dc3` and `adcf5f4`).
+  2.x #110: `3065dc3` and `adcf5f4`). (Note: running authentication inside
+  the client GenServer serializes refreshes and avoids provider stampedes;
+  a provider callback that hangs stalls the client GenServer, an accepted trade-off
+  consistent with 2.x and `fix/1x-backports-b`.)
+- Stale results, challenges, and `:DOWN` notifications from retired or untracked
+  async POST tasks are ignored on disconnect and reconnect, preventing 401 crashes
+  against a nil transport and preventing stale tool listings from polluting
+  the active connection's header cache.
+- Async POST tasks use a start/ack handshake so that monitors and request mappings
+  are registered in the client GenServer before task execution starts, eliminating
+  races where fast completions or abnormal exits could precede task registration.
+- Concurrent `tools/list` cursor pages no longer have their tool headers wiped if
+  the first page completes after cursor pages, and listing generation counters
+  ensure fresh first pages legitimately reset the cache while stale pages are discarded.
+- Settled requests release their `progressToken` upon completion, error, timeout,
+  or cancellation, and all progress tokens are cleared on disconnect.
 - Legacy SSE async POST responses are matched by the request the POST carried
   rather than solely by the `id` echoed in the response body. Responses with a
   null or different id answer the caller instead of timing out, and responses
