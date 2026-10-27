@@ -368,6 +368,10 @@ defmodule ExMCP.Authorization.OAuthFlow do
 
   # Private helpers
 
+  # nil means no scope parameter, so the authorization server applies its
+  # default scopes, as before the list-shape check was added.
+  defp validate_scope_list(nil), do: :ok
+
   defp validate_scope_list(scopes) do
     if proper_scope_list?(scopes), do: :ok, else: {:error, :invalid_scopes}
   end

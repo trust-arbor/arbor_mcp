@@ -16,7 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Authorization code flow now returns `{:error, :invalid_scopes}` when
   `:scopes` is not a proper list of strings, including lists with an invalid
-  tail, instead of accepting `nil` or raising for invalid values.
+  tail, instead of raising for invalid values. `nil` still omits the `scope`
+  parameter, so the authorization server applies its default scopes.
 
 ## [1.7.3] - 2026-10-26
 

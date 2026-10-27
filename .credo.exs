@@ -24,6 +24,10 @@
       color: true,
       checks: %{
         enabled: [
+          # Credo 1.7.19: the per-check exclusions below also skip future
+          # violations of those checks in the 40 listed legacy files. This is
+          # an accepted 1.x maintenance trade-off to avoid style-only churn;
+          # new files and other checks remain covered.
           # Consistency Checks
           {Credo.Check.Consistency.ExceptionNames, []},
           {Credo.Check.Consistency.LineEndings, []},

@@ -94,10 +94,22 @@ defmodule ExMCP.Authorization.OAuthFlowTest do
       authorization_endpoint: "https://auth.example.com/authorize"
     }
 
-    for scopes <- [%{}, nil, "mcp:read", [123], ["read" | :bad]] do
+    for scopes <- [%{}, "mcp:read", [123], ["read" | :bad]] do
       assert {:error, :invalid_scopes} =
                OAuthFlow.start_authorization_flow(Map.put(params, :scopes, scopes))
     end
+  end
+
+  test "start_authorization_flow/1 omits the scope parameter for nil scopes" do
+    assert {:ok, auth_url, _state} =
+             OAuthFlow.start_authorization_flow(%{
+               client_id: "client-1",
+               redirect_uri: "http://127.0.0.1:8080/callback",
+               authorization_endpoint: "https://auth.example.com/authorize",
+               scopes: nil
+             })
+
+    refute Map.has_key?(URI.decode_query(URI.parse(auth_url).query), "scope")
   end
 
   test "start_authorization_flow/1 records whether RFC 9207 iss is required" do
