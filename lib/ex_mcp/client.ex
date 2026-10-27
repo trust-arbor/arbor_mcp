@@ -2604,6 +2604,10 @@ defmodule ExMCP.Client do
       state.health_check_id != nil ->
         Logger.warning("MCP health check ping unanswered; treating transport as closed")
         state = %{state | health_check_id: nil, health_check_ref: nil}
+        # The transport is still open (a stdio server may only have hung):
+        # close it before moving on, so a reconnect cannot run a second
+        # server beside it.
+        state = abandon_transport(state)
         handle_transport_down(:health_check_timeout, state)
 
       true ->

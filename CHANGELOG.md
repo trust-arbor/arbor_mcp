@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A health check that gave up on a hung server dropped the connection
+  without closing it, so a stdio server kept running and a reconnect started
+  a second one beside it. The transport is now closed first, as the other
+  teardown paths already did. Backport of the health-check part of ArborMCP
+  `9bdc531`.
+
 - The configuration, transport and troubleshooting guides said a probe
   timeout never leads to `initialize`. Over HTTP, under the preference
   modes, it is legacy evidence, as MCP 2026-07-28 says, and has been since
