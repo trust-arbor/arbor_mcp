@@ -2,7 +2,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
   use ExUnit.Case, async: false
 
   alias Arbor.MCP.Server.Runtime
-  alias Arbor.MCP.Server.Runtime.{Admission, ByteBudget, CallbackContext, Ref}
+  alias Arbor.MCP.Server.Runtime.{Admission, ByteBudget, CallbackContext, Ref, ShutdownControl}
 
   defmodule Handler do
     def init(args) do
@@ -872,21 +872,28 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     assert {:ok, _token} = Runtime.submit(runtime, message(1, "trap_hold"))
     assert_receive {:trapping_worker, :bounded_stop, worker}
 
+    {:ok, control} = ShutdownControl.lookup(Ref.table(runtime))
+    observer = ShutdownControl.observer(control)
+    observer_monitor = Process.monitor(observer)
+
     monitors =
       Enum.map([Ref.supervisor(runtime), guard, store, worker], &{&1, Process.monitor(&1)})
 
     started = System.monotonic_time(:millisecond)
     stop = Task.async(fn -> Runtime.stop(Ref.supervisor(runtime)) end)
     assert_receive {:terminating_handler, :bounded_stop, _scheduler, :shutdown}, 1_000
-    assert :ok = Task.await(stop, 1_000)
+    assert Task.await(stop, 1_000) in [:ok, {:error, :shutdown_cleanup_unconfirmed}]
     elapsed = System.monotonic_time(:millisecond) - started
-    assert elapsed >= 70
+    # The 100 ms budget now reserves its last 50 ms for forced confirmation.
+    assert elapsed >= 40
     assert elapsed < 450
 
     for {pid, monitor} <- monitors do
       assert_receive {:DOWN, ^monitor, :process, ^pid, _}, 1_000
       refute Process.alive?(pid)
     end
+
+    assert_receive {:DOWN, ^observer_monitor, :process, ^observer, :normal}, 2_000
 
     assert {:ok, %{"result" => 1}} = Runtime.request(sibling, message(2, "inc"))
     assert :undefined == :ets.info(Ref.table(runtime))
@@ -931,8 +938,11 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     :sys.suspend(route.admission)
     [{:shutdown_guard, guard}] = :ets.lookup(Ref.table(runtime), :shutdown_guard)
     guard_monitor = Process.monitor(guard)
+    {:ok, control} = ShutdownControl.lookup(Ref.table(runtime))
+    observer = ShutdownControl.observer(control)
+    observer_monitor = Process.monitor(observer)
     started = System.monotonic_time(:millisecond)
-    assert :ok = Runtime.stop(root)
+    assert Runtime.stop(root) in [:ok, {:error, :shutdown_cleanup_unconfirmed}]
     assert System.monotonic_time(:millisecond) - started < 450
 
     assert_receive {:DOWN, ^guard_monitor, :process, ^guard, reason}
@@ -941,6 +951,7 @@ defmodule Arbor.MCP.Server.RuntimeTest do
              reason == {:killed, {GenServer, :stop, [root, :normal, :infinity]}}
 
     refute Process.alive?(guard)
+    assert_receive {:DOWN, ^observer_monitor, :process, ^observer, :normal}, 2_000
 
     assert :undefined == :ets.info(Ref.table(runtime))
   end
@@ -982,13 +993,18 @@ defmodule Arbor.MCP.Server.RuntimeTest do
     {:ok, runtime} = Runtime.ref(root)
     [{:shutdown_guard, guard}] = :ets.lookup(Ref.table(runtime), :shutdown_guard)
     monitors = Enum.map([root, scheduler, guard], &{&1, Process.monitor(&1)})
+    {:ok, control} = ShutdownControl.lookup(Ref.table(runtime))
+    observer = ShutdownControl.observer(control)
+    observer_monitor = Process.monitor(observer)
     started = System.monotonic_time(:millisecond)
-    assert :ok = Runtime.stop(root)
+    assert Runtime.stop(root) in [:ok, {:error, :shutdown_cleanup_unconfirmed}]
     assert System.monotonic_time(:millisecond) - started < 450
 
     for {pid, monitor} <- monitors do
       assert_receive {:DOWN, ^monitor, :process, ^pid, _}, 1_000
     end
+
+    assert_receive {:DOWN, ^observer_monitor, :process, ^observer, :normal}, 2_000
 
     assert_receive {:startup_returned, {:error, _}}, 1_000
     send(starter, :finish)

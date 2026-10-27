@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Forced runtime shutdown now reserves enough of its existing stop budget to
+  kill owned processes and confirm their termination under load, reducing
+  spurious `:shutdown_cleanup_unconfirmed` results.
+
 ## [2.0.0-rc.6] — 2026-10-26
 
 ### Added

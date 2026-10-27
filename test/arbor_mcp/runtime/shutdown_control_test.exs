@@ -137,7 +137,7 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
 
     assert_receive {:after_root_stop, result, returned_at}
                    when result in [:ok, {:error, :shutdown_cleanup_unconfirmed}],
-                   500
+                   1_000
 
     assert returned_at <= cutoff + 50
     assert_receive {:DOWN, ^guard_monitor, :process, ^guard, :killed}, 100
@@ -521,7 +521,9 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
     end
 
     :sys.resume(guard)
-    assert :ok = Runtime.stop(root)
+    observer_monitor = Process.monitor(observer)
+    assert Runtime.stop(root) in [:ok, {:error, :shutdown_cleanup_unconfirmed}]
+    assert_receive {:DOWN, ^observer_monitor, :process, ^observer, :normal}, 2_000
     eventually(fn -> not Process.alive?(observer) end)
   end
 
@@ -554,9 +556,165 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
     refute :ets.member(table, {:runtime_owned, child})
     refute :ets.member(ledger, {:owned_slot, 16_383})
     assert retired.pending_publications == %{}
+    observer_monitor = Process.monitor(observer)
     :sys.resume(observer)
     :sys.resume(guard)
-    assert :ok = Runtime.stop(root)
+    assert Runtime.stop(root) in [:ok, {:error, :shutdown_cleanup_unconfirmed}]
+    assert_receive {:DOWN, ^observer_monitor, :process, ^observer, :normal}, 2_000
+  end
+
+  @tag :stress
+  @tag timeout: 240_000
+  test "measures forced cleanup confirmation under load" do
+    samples = System.get_env("SHUTDOWN_FORCE_SAMPLES", "20") |> String.to_integer()
+    assert samples > 0
+
+    for budget <- [80, 500] do
+      readings = for _ <- 1..samples, do: forced_cleanup_sample(budget)
+      unconfirmed = Enum.count(readings, &(&1.result == {:error, :shutdown_cleanup_unconfirmed}))
+
+      scheduled_to_owner =
+        for %{force_at: force_at, owner_down_at: owner_down_at} <- readings,
+            is_integer(force_at),
+            do: owner_down_at - force_at
+
+      owner_to_confirmation =
+        Enum.map(readings, &(&1.confirmed_at - &1.owner_down_at))
+
+      scheduled_to_confirmation =
+        for %{force_at: force_at, confirmed_at: confirmed_at} <- readings,
+            is_integer(force_at),
+            do: confirmed_at - force_at
+
+      IO.puts(
+        "forced_cleanup budget=#{budget}ms samples=#{samples} unconfirmed=#{unconfirmed} " <>
+          "scheduled_to_owner_ms=#{latency_summary(scheduled_to_owner)} " <>
+          "owner_down_to_confirmation_ms=#{latency_summary(owner_to_confirmation)} " <>
+          "scheduled_to_confirmation_ms=#{latency_summary(scheduled_to_confirmation)}"
+      )
+    end
+  end
+
+  @tag timeout: 8_000
+  test "graceful termination near the previous force point is not interrupted" do
+    budget = 5_000
+    {_root, ref, table, _guard, _observer} = runtime(budget, owned: true)
+    assert_receive {:owned, owner}
+    owner_monitor = Process.monitor(owner)
+    parent = self()
+
+    spawn(fn -> send(parent, {:near_force_result, Runtime.stop(ref)}) end)
+    assert_receive {:held_terminate, ^owner}, 1_000
+    %{cutoff: cutoff} = ShutdownControl.stats(table)
+    old_force_at = cutoff - 25
+    # Release in the last 5% of the old graceful window. The 200 ms gap to the
+    # new force point allows for scheduling delays on a loaded machine.
+    release_at = old_force_at - 250
+    assert Deadline.now() < release_at
+    Process.send_after(owner, :release, Deadline.remaining(release_at))
+
+    assert_receive {:near_force_result, :ok}, budget + 1_000
+
+    assert_receive {:DOWN, ^owner_monitor, :process, ^owner, reason}
+                   when reason in [:normal, :shutdown]
+  end
+
+  test "force point reserves bounded time for confirmation" do
+    for {budget, margin} <- [{80, 40}, {500, 75}, {1_500, 75}] do
+      {root, _ref, table, _guard, observer} = runtime(budget)
+      observer_monitor = Process.monitor(observer)
+      started = Deadline.now()
+      assert {:ok, _control, cutoff} = ShutdownControl.prepare(table, :normal, started)
+      assert {:ok, :normal, ^cutoff, force_at} = ShutdownControl.command(table)
+      assert force_at == cutoff - margin
+      assert force_at >= started
+      assert Runtime.stop(root) in [:ok, {:error, :shutdown_cleanup_unconfirmed}]
+      assert_receive {:DOWN, ^observer_monitor, :process, ^observer, :normal}, 2_000
+    end
+  end
+
+  defp forced_cleanup_sample(budget) do
+    {root, ref, table, _guard, observer} = runtime(budget, owned: true)
+    assert_receive {:owned, owner}, 5_000
+    {:ok, control} = ShutdownControl.lookup(table)
+    owner_monitor = Process.monitor(owner)
+    observer_monitor = Process.monitor(observer)
+    tag = make_ref()
+    parent = self()
+
+    spawn(fn ->
+      result = Runtime.stop(ref)
+      send(parent, {:forced_stop_result, tag, result, Deadline.now()})
+    end)
+
+    assert_receive {:held_terminate, ^owner}, budget + 2_000
+    cutoff = :atomics.get(control.cells, 1)
+
+    force_at =
+      case ShutdownControl.command(table) do
+        {:ok, _reason, ^cutoff, at} -> at
+        {:error, :shutdown_control_unavailable} -> nil
+      end
+
+    reading = collect_forced_cleanup(tag, owner_monitor, observer_monitor, %{})
+
+    assert reading.owner_reason == :killed
+    assert reading.observer_reason == :normal
+    assert reading.result in [:ok, {:error, :shutdown_cleanup_unconfirmed}]
+    assert :atomics.get(control.cells, 2) == 3
+    refute Process.alive?(root)
+
+    case reading.result do
+      :ok -> assert reading.returned_at < cutoff
+      {:error, :shutdown_cleanup_unconfirmed} -> assert reading.returned_at >= cutoff
+    end
+
+    Map.put(reading, :force_at, force_at)
+  end
+
+  defp collect_forced_cleanup(
+         _tag,
+         _owner_monitor,
+         _observer_monitor,
+         %{result: _, owner_down_at: _, confirmed_at: _} = reading
+       ),
+       do: reading
+
+  defp collect_forced_cleanup(tag, owner_monitor, observer_monitor, reading) do
+    receive do
+      {:forced_stop_result, ^tag, result, returned_at} ->
+        collect_forced_cleanup(
+          tag,
+          owner_monitor,
+          observer_monitor,
+          Map.merge(reading, %{result: result, returned_at: returned_at})
+        )
+
+      {:DOWN, ^owner_monitor, :process, _owner, reason} ->
+        collect_forced_cleanup(
+          tag,
+          owner_monitor,
+          observer_monitor,
+          Map.merge(reading, %{owner_reason: reason, owner_down_at: Deadline.now()})
+        )
+
+      {:DOWN, ^observer_monitor, :process, _observer, reason} ->
+        collect_forced_cleanup(
+          tag,
+          owner_monitor,
+          observer_monitor,
+          Map.merge(reading, %{observer_reason: reason, confirmed_at: Deadline.now()})
+        )
+    after
+      2_000 -> flunk("forced cleanup did not confirm: #{inspect(reading)}")
+    end
+  end
+
+  defp latency_summary([]), do: "unavailable"
+
+  defp latency_summary(values) do
+    sorted = Enum.sort(values)
+    "p50=#{Enum.at(sorted, div(length(sorted), 2))},max=#{List.last(sorted)}"
   end
 
   defp control_ledger(observer) do

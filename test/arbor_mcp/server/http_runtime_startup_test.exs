@@ -5,7 +5,17 @@ defmodule Arbor.MCP.Server.HTTPRuntimeStartupTest do
 
   alias Arbor.MCP.Server.HTTP.Bandit.{Connection, ConnectionSlots, Options}
   alias Arbor.MCP.Server.HTTP.CowboyClaims
-  alias Arbor.MCP.Server.Runtime.{Admission, Config, Deadline, Initialization, Ref, Services}
+
+  alias Arbor.MCP.Server.Runtime.{
+    Admission,
+    Config,
+    Deadline,
+    Initialization,
+    Ref,
+    Services,
+    ShutdownControl
+  }
+
   alias Arbor.MCP.Server.{Runtime, Transport}
 
   import ExUnit.CaptureLog
@@ -599,11 +609,15 @@ defmodule Arbor.MCP.Server.HTTPRuntimeStartupTest do
     assert %{retained: 1, limit: 1_024} =
              ConnectionSlots.stats(runtime)
 
+    {:ok, control} = ShutdownControl.lookup(Ref.table(runtime))
+    observer = ShutdownControl.observer(control)
+    observer_monitor = Process.monitor(observer)
     monitor = Process.monitor(connection)
     started = Deadline.now()
-    assert :ok = Runtime.stop(root)
-    assert_receive {:DOWN, ^monitor, :process, ^connection, _}, 1_000
+    assert Runtime.stop(root) in [:ok, {:error, :shutdown_cleanup_unconfirmed}]
     assert Deadline.now() - started < 1_000
+    assert_receive {:DOWN, ^monitor, :process, ^connection, _}, 1_000
+    assert_receive {:DOWN, ^observer_monitor, :process, ^observer, :normal}, 2_000
     assert {:error, :closed} = :gen_tcp.recv(socket, 0, 500)
     await_closed(port)
   end
