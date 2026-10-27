@@ -1620,13 +1620,20 @@ defmodule ExMCP.Client do
         } = state
       )
       when is_map(challenge) do
-    if HTTP.stream_owner?(transport_state, request_id, stream_pid) do
-      {result, transport_state} = answer_stream_challenge(transport_state, challenge)
-      send(stream_pid, {:modern_http_stream_auth_result, ref, result})
-      {:noreply, %{state | transport_state: transport_state}}
-    else
-      send(stream_pid, {:modern_http_stream_auth_result, ref, {:error, :stream_retired}})
-      {:noreply, state}
+    cond do
+      not HTTP.stream_owner?(transport_state, request_id, stream_pid) ->
+        send(stream_pid, {:modern_http_stream_auth_result, ref, {:error, :stream_retired}})
+        {:noreply, state}
+
+      # The request's caller has given up: don't refresh or sign in for it.
+      Deadline.expired?(Map.get(challenge, :deadline)) ->
+        send(stream_pid, {:modern_http_stream_auth_result, ref, {:error, :timeout}})
+        {:noreply, state}
+
+      true ->
+        {result, transport_state} = answer_stream_challenge(transport_state, challenge)
+        send(stream_pid, {:modern_http_stream_auth_result, ref, result})
+        {:noreply, %{state | transport_state: transport_state}}
     end
   end
 

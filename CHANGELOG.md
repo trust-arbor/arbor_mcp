@@ -45,7 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   modern request streams. `send_message/2` and the client still return the
   error shapes they did. Concurrent modern request streams rejected together
   run one refresh or flow: the client answers their auth challenges one at a
-  time, and reuses a token another stream already got.
+  time, and reuses a token another stream already got. A stream waits for
+  that answer no longer than its request's deadline, and the client runs no
+  provider for a request whose deadline has passed.
 
 ## [1.7.3] - 2026-10-26
 

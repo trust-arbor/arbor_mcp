@@ -490,4 +490,74 @@ defmodule ExMCP.Client.ModernHTTPStreamAuthTest do
 
     assert_received {:modern_http_stream_auth_result, ^ref, {:error, :stream_retired}}
   end
+
+  test "a stream waits for its challenge's answer only until its request's deadline" do
+    bypass = Bypass.open()
+
+    Bypass.stub(bypass, "POST", "/mcp", fn conn ->
+      conn
+      |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
+      |> Plug.Conn.resp(401, "")
+    end)
+
+    {:ok, transport_state} =
+      HTTP.connect(
+        url: "http://127.0.0.1:#{bypass.port}/mcp",
+        protocol_version: "2026-07-28",
+        auth_provider: {Provider, test_pid: self()}
+      )
+
+    transport_state = HTTP.settle_protocol_era(transport_state, :modern, "2026-07-28")
+    request = Jason.encode!(%{"jsonrpc" => "2.0", "id" => 51, "method" => "tools/call"})
+    deadline = System.monotonic_time(:millisecond) + 300
+
+    assert {:ok, transport_state} =
+             HTTP.open_stream(request, transport_state, self(), deadline: deadline)
+
+    stream_pid = Map.fetch!(transport_state.modern_streams, 51)
+
+    # The client is busy and never answers; the request's deadline ends the
+    # wait instead of the 10 minute bound.
+    assert_receive {:modern_http_stream_auth_challenge, ^stream_pid, 51, _ref, challenge}, 2_000
+
+    assert_receive {:modern_http_stream_closed, ^stream_pid, 51,
+                    {:authentication_failed, :timeout}},
+                   2_000
+
+    # The client sees the deadline too, and refuses a challenge past it.
+    assert challenge.deadline == deadline
+  end
+
+  test "a challenge whose request is past its deadline runs no provider" do
+    stream_pid = self()
+
+    transport_state = %HTTP{
+      headers: [{"Authorization", "Bearer old"}],
+      access_token: "old",
+      auth_provider: Provider,
+      auth_provider_state: %{test_pid: self(), generation: 1},
+      modern_streams: %{7 => stream_pid}
+    }
+
+    ref = make_ref()
+    past = System.monotonic_time(:millisecond) - 1
+
+    challenge = %{
+      status: 401,
+      www_authenticate: "Bearer",
+      scopes: [],
+      token: "old",
+      deadline: past
+    }
+
+    assert {:noreply, client_state} =
+             Client.handle_info(
+               {:modern_http_stream_auth_challenge, stream_pid, 7, ref, challenge},
+               client_state(transport_state)
+             )
+
+    assert_received {:modern_http_stream_auth_result, ^ref, {:error, :timeout}}
+    refute_received {:provider_challenge, _, _}
+    assert client_state.transport_state.auth_provider_state.generation == 1
+  end
 end

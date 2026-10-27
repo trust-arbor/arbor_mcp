@@ -1256,13 +1256,13 @@ defmodule ExMCP.Transport.HTTP do
       # challenges of all its streams one at a time.
       state
       |> apply_provider_token()
-      |> start_stream(message, request_id, stream_kind, parent)
+      |> start_stream(message, request_id, stream_kind, parent, opts)
     end
   end
 
   def open_stream(_message, _state, _parent, _opts), do: {:error, :modern_http_stream_required}
 
-  defp start_stream(state, message, request_id, stream_kind, parent) do
+  defp start_stream(state, message, request_id, stream_kind, parent, opts) do
     url = build_url(state, "")
     headers = RequestHeaders.build(message, state)
 
@@ -1282,6 +1282,7 @@ defmodule ExMCP.Transport.HTTP do
              max_response_bytes: state.max_response_bytes,
              max_buffer_bytes: state.max_stream_buffer_bytes,
              auth_provider: state.auth_provider,
+             deadline: Keyword.get(opts, :deadline),
              header_sanitizer: fn retry_headers ->
                sanitize_http_request("POST", url, retry_headers, state)
              end

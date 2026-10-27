@@ -25,10 +25,9 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
     :ex_mcp_modern_stream_15
   ]
 
-  # How long a stream waits for the client to answer its auth challenge. A
-  # browser flow can take minutes; the caller's own timeout cancels the
-  # stream sooner, and a dead client is noticed through the parent monitor,
-  # so this only bounds a lost answer.
+  # How long a stream waits for the client to answer its auth challenge, at
+  # most: a browser flow can take minutes. A request's own deadline ends the
+  # wait sooner, and a dead client is noticed through the parent monitor.
   @auth_wait_ms 600_000
 
   # Request headers carry the connection's credentials, the body the
@@ -57,6 +56,8 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
     :consumer_ack_timeout,
     # {ref, timer} while the client process answers an auth challenge.
     :auth_wait,
+    # The request's absolute deadline (monotonic ms), or nil.
+    :deadline,
     auth_attempts: 0,
     buffer: "",
     completed?: false,
@@ -101,7 +102,8 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
       max_buffer_bytes: Keyword.fetch!(opts, :max_buffer_bytes),
       auth_provider: Keyword.get(opts, :auth_provider),
       header_sanitizer: Keyword.get(opts, :header_sanitizer),
-      consumer_ack_timeout: positive_limit(Keyword.get(opts, :consumer_ack_timeout), 5_000)
+      consumer_ack_timeout: positive_limit(Keyword.get(opts, :consumer_ack_timeout), 5_000),
+      deadline: Keyword.get(opts, :deadline)
     }
 
     {:ok, state, {:continue, :open}}
@@ -412,7 +414,8 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
   # would refresh, and a rotating refresh token used twice fails (and the
   # provider may then start a browser flow). The client process answers every
   # stream's challenges in turn and reuses a token another stream already
-  # obtained, so the stream waits for its answer, at most @auth_wait_ms.
+  # obtained, so the stream waits for its answer: until its request's
+  # deadline, and at most @auth_wait_ms.
   defp maybe_retry_with_auth(status, response_headers, state)
        when status in [401, 403] and not is_nil(state.auth_provider) and
               state.auth_attempts < 2 do
@@ -423,7 +426,8 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
       status: status,
       www_authenticate: www_auth,
       scopes: extract_scopes(www_auth),
-      token: bearer_token(state.headers)
+      token: bearer_token(state.headers),
+      deadline: state.deadline
     }
 
     send(
@@ -431,11 +435,16 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
       {:modern_http_stream_auth_challenge, self(), state.request_id, ref, challenge}
     )
 
-    timer = Process.send_after(self(), {:auth_timeout, ref}, @auth_wait_ms)
+    timer = Process.send_after(self(), {:auth_timeout, ref}, auth_wait(state.deadline))
     {:await_auth, %{state | request_ref: nil, auth_wait: {ref, timer}}}
   end
 
   defp maybe_retry_with_auth(_status, _response_headers, _state), do: :no_retry
+
+  defp auth_wait(deadline) when is_integer(deadline),
+    do: min(max(deadline - System.monotonic_time(:millisecond), 0), @auth_wait_ms)
+
+  defp auth_wait(_no_deadline), do: @auth_wait_ms
 
   defp retry_with_auth({:ok, token}, state) when is_binary(token) do
     case sanitize_retry_headers(put_bearer_header(state.headers, token), state) do

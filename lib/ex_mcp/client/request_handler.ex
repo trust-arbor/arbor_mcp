@@ -361,9 +361,15 @@ defmodule ExMCP.Client.RequestHandler do
   defp send_request_message(request, state), do: transmit(request, state)
 
   defp open_request_stream(request, state, transport_state) do
+    # The caller's deadline, or the client's default timeout for the request,
+    # bounds how long the stream waits for an auth challenge's answer.
+    deadline =
+      Deadline.on_transport(HTTP, transport_state) ||
+        System.monotonic_time(:millisecond) + (state.default_timeout || 5_000)
+
     with {:ok, encoded} <- encode_for_transport(HTTP, request) do
       encoded
-      |> HTTP.open_stream(transport_state, self(), stream_kind: :request)
+      |> HTTP.open_stream(transport_state, self(), stream_kind: :request, deadline: deadline)
       |> with_transport_state(state)
     end
   end
