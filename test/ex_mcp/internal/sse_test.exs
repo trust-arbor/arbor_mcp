@@ -49,6 +49,13 @@ defmodule ExMCP.Internal.SSETest do
       assert SSE.parse_complete("retry: -1\ndata: one\n\n") == [%{data: "one"}]
       assert SSE.parse_complete("retry: 999junk\ndata: two\n\n") == [%{data: "two"}]
     end
+
+    test "the space after a field's colon is optional" do
+      assert SSE.parse_complete("id:e1\nretry:250\nevent:message\ndata:x\n\n") ==
+               [%{id: "e1", retry: 250, event: "message", data: "x"}]
+
+      assert SSE.parse_complete("id:  two spaces\n\n") == [%{id: " two spaces"}]
+    end
   end
 
   describe "parse_stream/1" do

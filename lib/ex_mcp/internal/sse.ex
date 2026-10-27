@@ -47,20 +47,28 @@ defmodule ExMCP.Internal.SSE do
         data = String.trim_leading(line, "data:")
         Map.update(acc, :data, data, fn existing -> existing <> data end)
 
-      String.starts_with?(line, "id: ") ->
-        Map.put(acc, :id, String.trim_leading(line, "id: "))
+      # The space after a field's colon is optional.
+      String.starts_with?(line, "id:") ->
+        Map.put(acc, :id, field_value(line, "id:"))
 
-      String.starts_with?(line, "retry: ") ->
-        case Integer.parse(String.trim_leading(line, "retry: ")) do
+      String.starts_with?(line, "retry:") ->
+        case Integer.parse(field_value(line, "retry:")) do
           {ms, ""} when ms >= 0 -> Map.put(acc, :retry, ms)
           _ -> acc
         end
 
-      String.starts_with?(line, "event: ") ->
-        Map.put(acc, :event, String.trim_leading(line, "event: "))
+      String.starts_with?(line, "event:") ->
+        Map.put(acc, :event, field_value(line, "event:"))
 
       true ->
         acc
+    end
+  end
+
+  defp field_value(line, name) do
+    case binary_part(line, byte_size(name), byte_size(line) - byte_size(name)) do
+      " " <> value -> value
+      value -> value
     end
   end
 
