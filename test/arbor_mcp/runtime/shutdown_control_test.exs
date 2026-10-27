@@ -631,6 +631,7 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
 
   defp assert_force_margin(budget, margin) do
     {root, _ref, table, _guard, observer} = runtime(budget)
+    root_monitor = Process.monitor(root)
     observer_monitor = Process.monitor(observer)
     started = Deadline.now()
     assert {:ok, _control, cutoff} = ShutdownControl.prepare(table, :normal, started)
@@ -639,7 +640,19 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
     assert force_at - started >= budget - div(budget, 4)
     # A 500 ms stop leaves 460 ms graceful, including a 450 ms terminate/2.
     if budget == 500, do: assert(force_at - started > 450)
-    assert Runtime.stop(root) in [:ok, {:error, :shutdown_cleanup_unconfirmed}]
+
+    case Runtime.stop(root) do
+      {:error, :runtime_unavailable} ->
+        # prepare/3 already started shutdown. A 1 ms root may have exited
+        # before this second stop call, which is successful cleanup.
+        refute Process.alive?(root)
+        assert_receive {:DOWN, ^root_monitor, :process, ^root, _reason}, 2_000
+
+      result ->
+        assert result in [:ok, {:error, :shutdown_cleanup_unconfirmed}]
+    end
+
+    Process.demonitor(root_monitor, [:flush])
     assert_receive {:DOWN, ^observer_monitor, :process, ^observer, :normal}, 2_000
   end
 
