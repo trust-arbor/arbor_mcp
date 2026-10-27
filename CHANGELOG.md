@@ -33,11 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is killed, with any `ps` it waits on, so no signal it was handed can run
   after the reaper has decided, and no helper outlives its reaper. It is
   killed through `/bin/sh` (or `/bin/kill`), not whatever `PATH` holds, and
-  a helper whose exit can't be confirmed is logged as an error. The TERM
-  grace runs from when SIGTERM actually goes out, however long its check
-  took, as far as the budget allows. On Windows, `taskkill` runs
-  only from `close/1`, bounded by the budget, while the open port still
-  holds the server's process handle. A server whose connection owner dies
+  a helper whose exit can't be confirmed is logged as an error. Killing a
+  helper must happen even once the budget is spent, so a stalled helper can
+  push `close/1` up to 300 ms past `:cleanup_timeout` (100 ms each for the
+  kill, its fallback and the wait for its exit). The TERM grace runs from
+  when SIGTERM actually goes out, however long its check took, as far as the
+  budget allows. On Windows, `taskkill` runs only from `close/1`, bounded by
+  the budget, while the open port still holds the server's process handle. A server whose connection owner dies
   before closing it may be left running on Windows, with a warning logged.
   Negative graces, a non-positive budget and an explicit `nil` are rejected
   before the server starts. Backport of 2.x #109.

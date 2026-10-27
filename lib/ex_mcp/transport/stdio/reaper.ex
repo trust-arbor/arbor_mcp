@@ -46,8 +46,10 @@ defmodule ExMCP.Transport.Stdio.Reaper do
   # Kept back from the end of the budget for the check before SIGKILL and
   # SIGKILL itself (Stdio.shutdown_schedule/1 leaves room for them).
   @kill_reserve 150
-  # How long killing a helper that stopped answering may take.
-  @helper_kill_ms 1_000
+  # Killing a helper that stopped answering must happen even once the
+  # budget is spent: each of its three steps (the kill, its fallback, the
+  # wait for the exit) then gets this much at least.
+  @helper_kill_floor_ms 100
 
   # Answers one request per line, prefixed with the request's number so a
   # late answer can't be taken for another's: `alive TARGET`, `signal SIG
@@ -480,7 +482,7 @@ defmodule ExMCP.Transport.Stdio.Reaper do
 
     case await_answer(port, n, deadline) do
       :timeout ->
-        kill_helper(helper)
+        kill_helper(helper, deadline)
         :timeout
 
       answer ->
@@ -492,16 +494,19 @@ defmodule ExMCP.Transport.Stdio.Reaper do
 
   # Kills the helper and its group (a `ps` it waits on), and waits for its
   # exit to be reported, a bounded time.
-  defp kill_helper(%{port: port, os_pid: os_pid}) do
+  # Each step gets what is left of the budget, and at least
+  # @helper_kill_floor_ms: safety comes before the deadline here, which can
+  # therefore be overrun by up to three times the floor.
+  defp kill_helper(%{port: port, os_pid: os_pid}, deadline) do
     if Port.info(port) do
-      send_helper_kill(os_pid)
+      send_helper_kill(os_pid, deadline)
 
       # The exit is what proves nothing the helper holds can still run.
       receive do
         {^port, {:exit_status, _status}} ->
           :ok
       after
-        @helper_kill_ms ->
+        kill_step_ms(deadline) ->
           Logger.error(
             "stdio reaper helper #{os_pid} did not exit when killed: it may still be " <>
               "alive with queued signals for its server"
@@ -516,19 +521,22 @@ defmodule ExMCP.Transport.Stdio.Reaper do
 
   # SIGKILL to the helper's group, not depending on PATH: the builtin `kill`
   # of /bin/sh, else /bin/kill.
-  defp send_helper_kill(os_pid) do
+  defp send_helper_kill(os_pid, deadline) do
     group = "-#{os_pid}"
+    shell_kill = ["-c", ~s(kill -s KILL -- "$1"), "sh", group]
 
-    case run_absolute("/bin/sh", ["-c", ~s(kill -s KILL -- "$1"), "sh", group]) do
+    case run_absolute("/bin/sh", shell_kill, kill_step_ms(deadline)) do
       {_output, 0} -> :ok
-      _failed -> run_absolute("/bin/kill", ["-s", "KILL", "--", group])
+      _failed -> run_absolute("/bin/kill", ["-s", "KILL", "--", group], kill_step_ms(deadline))
     end
   end
 
-  defp run_absolute(path, args) do
+  defp kill_step_ms(deadline), do: max(time_left(deadline), @helper_kill_floor_ms)
+
+  defp run_absolute(path, args, timeout_ms) do
     task = Task.async(fn -> cmd_absolute(path, args) end)
 
-    case Task.yield(task, @helper_kill_ms) || Task.shutdown(task, :brutal_kill) do
+    case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
       {:ok, result} -> result
       _timeout -> :timeout
     end

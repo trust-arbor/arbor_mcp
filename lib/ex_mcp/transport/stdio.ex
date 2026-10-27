@@ -29,7 +29,10 @@ defmodule ExMCP.Transport.Stdio do
   - `:cleanup_timeout` - subprocess shutdown budget, defaulting to
     `eof_grace + term_grace + 400` (default: 2_500). SIGKILL goes out within
     it, the graces shortened if they don't fit, and `close/1` returns within
-    it plus 500 ms. The shutdown is run by a process started with the
+    it plus 500 ms. One case can run past the budget: a shutdown helper that
+    stops answering is killed even once the budget is spent, and that takes
+    at most 300 ms more (100 ms each for the kill, its fallback and the wait
+    for the helper's exit). The shutdown is run by a process started with the
     connection, which acts when the port closes, so it completes even if the
     process that owns the connection dies first, before or during `close/1`.
     It signals only the process (or process group) the connection started:

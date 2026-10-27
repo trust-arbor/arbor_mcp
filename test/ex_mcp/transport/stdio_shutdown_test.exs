@@ -368,6 +368,41 @@ defmodule ExMCP.Transport.StdioShutdownTest do
       Port.close(port)
     end
 
+    test "cleans up a stalled helper only slightly past an exhausted budget" do
+      {port, os_pid} = sleeper()
+      {:ok, helper} = Reaper.open_helper()
+      kill_on_exit(helper.os_pid)
+      {_output, 0} = System.cmd("kill", ["-STOP", "#{helper.os_pid}"])
+
+      # Neither its answers nor its exit reach the reaper: it looks stalled
+      # for good, and its kill can't be confirmed.
+      elsewhere = spawn(fn -> receive(do: (:never -> :ok)) end)
+      on_exit(fn -> Process.exit(elsewhere, :kill) end)
+      Port.connect(helper.port, elsewhere)
+
+      opts = [
+        helper: {:ok, helper},
+        eof_grace: 0,
+        term_grace: 0,
+        start_time: fn _pid -> :the_server end
+      ]
+
+      started = System.monotonic_time(:millisecond)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:unconfirmed, _reason} =
+                   Reaper.shutdown(os_pid, :the_server, opts, started + 50)
+        end)
+
+      # The 50 ms budget, then at most 100 ms for each of the three kill
+      # steps, and slack for a busy machine.
+      assert System.monotonic_time(:millisecond) - started < 50 + 300 + 250
+      assert log =~ "did not exit when killed"
+      wait_until(fn -> not os_alive?(helper.os_pid) end, timeout: 2_000)
+      Port.close(port)
+    end
+
     @tag :tmp_dir
     test "kills a helper stuck in a ps that hangs, with the ps", %{tmp_dir: tmp_dir} do
       {port, os_pid} = sleeper()
