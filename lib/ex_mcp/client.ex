@@ -170,7 +170,8 @@ defmodule ExMCP.Client do
     any legacy fallback, `initialize` and `notifications/initialized`, and
     connection retries under `:retry_policy`. Defaults to
     `:handshake_timeout` plus the probe's bound, `:era_probe_timeout` or its
-    default: 12 s, or 20 s over stdio. On expiry `start_link/1`
+    default: 12 s, or 20 s for a stdio client that opens with the probe
+    (`:prefer_modern` or `:modern_only`). On expiry `start_link/1`
     fails with `{:error, :establish_timeout}`, and each reconnection attempt is
     bounded the same way. A failed attempt closes the transport it opened, so
     a spawned stdio server does not outlive it; ending an HTTP session it

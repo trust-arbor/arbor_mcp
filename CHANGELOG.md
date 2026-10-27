@@ -104,12 +104,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loaded host. A slow legacy server's error answer, which `:prefer_modern`
   falls back on, came too late as well. Over stdio the probe now waits as
   long as a legacy `initialize` does, `:handshake_timeout` (10 s by
-  default), unless `:era_probe_timeout` is given, and the default
-  `:establish_timeout` counts that bound: `:handshake_timeout` plus the
-  probe's bound, 20 s over stdio. HTTP keeps the 2 s probe and the 12 s
-  default. **Behavior change:** under `:modern_only` a stdio server that
-  never answers now fails after `:handshake_timeout` rather than 2 s, with
-  the same error. Backport of ArborMCP `87b4353` and `8d1f0b6` (its
+  default), unless `:era_probe_timeout` is given. HTTP keeps the 2 s probe.
+  **Default change, to accept deliberately:** for a stdio client that opens
+  with the probe (`:prefer_modern` or `:modern_only`) and sets no
+  `:establish_timeout`, the default establishment bound is now
+  `:handshake_timeout` plus the probe's bound, 20 s, instead of 12 s: a 10 s
+  probe needs room for the legacy fallback that may follow it. Every other
+  client, `:legacy_only` and `:prefer_legacy` over stdio included, keeps
+  12 s, and an explicit `:establish_timeout` always wins. **Behavior
+  change:** under `:modern_only` a stdio server that never answers now fails
+  after `:handshake_timeout` rather than 2 s, with the same error. Backport of ArborMCP `87b4353` and `8d1f0b6` (its
   establishment default).
 
 - Nested atom keys in a client's declared capabilities are now normalized

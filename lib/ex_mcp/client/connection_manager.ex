@@ -48,7 +48,7 @@ defmodule ExMCP.Client.ConnectionManager do
   defp establish_timeout(opts) do
     case Keyword.get(opts, :establish_timeout) do
       nil ->
-        {:ok, handshake_timeout(opts) + probe_timeout(opts, spawns_server?(opts))}
+        {:ok, handshake_timeout(opts) + probe_timeout(opts, probes_spawned_server?(opts))}
 
       :infinity ->
         {:ok, :infinity}
@@ -507,6 +507,14 @@ defmodule ExMCP.Client.ConnectionManager do
     do: Keyword.get_lazy(opts, :era_probe_timeout, fn -> handshake_timeout(opts) end)
 
   defp probe_timeout(opts, false = _spawned_server?), do: EraProbe.timeout(opts)
+
+  # The default establishment bound counts the longer stdio probe only for a
+  # client that opens with the probe; :legacy_only and :prefer_legacy open
+  # with initialize and keep the default they had.
+  defp probes_spawned_server?(opts) do
+    mode = Keyword.get(opts, :protocol_mode) || VersionRegistry.protocol_mode()
+    mode in [:prefer_modern, :modern_only] and spawns_server?(opts)
+  end
 
   @doc false
   # Whether `opts` connect to a stdio server, before it is spawned.

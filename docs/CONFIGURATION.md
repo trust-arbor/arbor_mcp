@@ -92,7 +92,9 @@ Client mode options:
 - `:establish_timeout` bounds establishing the connection as a whole, probe,
   fallback, handshake and connection retries included; the default is
   `:handshake_timeout` plus the probe's bound (`:era_probe_timeout` or its
-  default): 12 s, or 20 s over stdio. On expiry `start_link/1` fails with
+  default): 12 s, or 20 s for a stdio client that opens with the probe
+  (`:prefer_modern` or `:modern_only`); `:legacy_only` and `:prefer_legacy`
+  keep 12 s. On expiry `start_link/1` fails with
   `{:error, :establish_timeout}`.
 - `:era_cache_legacy_ttl` controls how long a legacy observation is reused;
   the default is `300_000` milliseconds. Modern observations do not expire

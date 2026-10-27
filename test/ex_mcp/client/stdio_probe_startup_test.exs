@@ -112,6 +112,33 @@ defmodule ExMCP.Client.StdioProbeStartupTest do
     end
   end
 
+  describe "the default establishment bound" do
+    # Only a client that opens with the probe gets the longer stdio bound;
+    # one that opens with initialize keeps :handshake_timeout plus 2 s. With
+    # a second attempt, a server that never answers keeps it trying until
+    # that bound.
+    test "stays at handshake plus 2 s for legacy_only", %{tmp_dir: tmp_dir} do
+      %{legacy_only: %{result: result, elapsed_ms: elapsed_ms}} =
+        connect_concurrently(tmp_dir, :mute, [:legacy_only],
+          handshake_timeout: 4_000,
+          retry_policy: [
+            max_attempts: 2,
+            initial_delay: 10,
+            jitter: false,
+            should_retry?: &__MODULE__.always/1
+          ]
+        )
+
+      assert {:error, :establish_timeout} = result
+      # 6 s, short of the 8 s (twice the handshake) a probing client gets.
+      assert elapsed_ms >= 6_000, "gave up after #{elapsed_ms} ms"
+      assert elapsed_ms < 7_500, "took #{elapsed_ms} ms"
+    end
+  end
+
+  @doc false
+  def always(_reason), do: true
+
   describe "a server that never answers" do
     test "fails at the handshake bound, and only after it", %{tmp_dir: tmp_dir} do
       %{modern_only: %{result: result, methods: methods, starts: starts, elapsed_ms: elapsed_ms}} =
