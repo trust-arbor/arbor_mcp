@@ -21,9 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is still stopped when the process owning the connection (a client its
   supervisor kills, say) dies first, before or during `close/1`. A signal
   goes only to the process the connection started, checked by its start
-  time, so a server that exited on its own, whose pid may since name
-  another process, is left alone; a process group is still stopped when its
-  leader has exited and left children in it. On Windows, `taskkill` runs
+  time just before every signal, so a server that exited on its own, whose
+  pid may since name another process, is left alone; a process group is
+  still stopped when its leader has exited and left children in it. The
+  checks are cheap and end at the shutdown's deadline: a helper shell started
+  with the connection answers them without starting a process per check
+  (`connect/1` waits, a bounded time, for it and for the server's start
+  time), the schedule keeps 100 ms of the budget for the check before each
+  signal, and a server that can't be confirmed in time is left unsignalled,
+  with a warning, rather than signalled late. On Windows, `taskkill` runs
   only from `close/1`, bounded by the budget, while the open port still
   holds the server's process handle. A server whose connection owner dies
   before closing it may be left running on Windows, with a warning logged.

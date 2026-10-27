@@ -80,6 +80,9 @@ defmodule ExMCP.Transport.Stdio do
   @shutdown_slack 400
   # Kept back from the cleanup budget for sending SIGKILL.
   @kill_allowance 50
+  # Kept back for checking, just before each signal, that its target is
+  # still the connection's own (two signals: SIGTERM, SIGKILL).
+  @check_allowance 100
   # What close/1 allows past the budget for the shutdown to be confirmed.
   @reply_allowance 500
   @default_max_frame_bytes 1_048_576
@@ -169,7 +172,7 @@ defmodule ExMCP.Transport.Stdio do
   # The EOF and SIGTERM graces close/1 waits, shortened if need be so that
   # SIGKILL goes out within the cleanup budget.
   def shutdown_schedule(%__MODULE__{} = state) do
-    available = max(state.cleanup_timeout - @kill_allowance, 0)
+    available = max(state.cleanup_timeout - @kill_allowance - 2 * @check_allowance, 0)
     eof_grace = min(state.eof_grace, available)
     {eof_grace, min(state.term_grace, available - eof_grace)}
   end
@@ -585,28 +588,6 @@ defmodule ExMCP.Transport.Stdio do
     end
   end
 
-  # A server that exits on its own is not signalled by anyone, so what it
-  # left running in its group would outlive the connection. The group keeps
-  # the leader's pid as its id after the leader is gone; a pid is not reused
-  # while a group with that id still has members, so the risk accepted here
-  # is only a group that emptied and whose id was handed to a new group
-  # leader within the grace period. Runs in its own process so neither the
-  # client nor the reader waits for it.
-  defp reap_group(%__MODULE__{process_group: true, os_pid: os_pid, eof_grace: eg, term_grace: tg})
-       when is_integer(os_pid) do
-    spawn(fn -> Reaper.stop_group(os_pid, eg, tg) end)
-    :ok
-  end
-
-  defp reap_group(%__MODULE__{}), do: :ok
-
-  defp reap_group(os_pid) when is_integer(os_pid) do
-    spawn(fn -> Reaper.stop_group(os_pid, @eof_grace, @term_grace) end)
-    :ok
-  end
-
-  defp reap_group(_other), do: :ok
-
   # Tolerate a port that is nil or already closed (e.g. the spawned process
   # exited on its own before close/1 was called).
   defp close_port(port) do
@@ -663,14 +644,12 @@ defmodule ExMCP.Transport.Stdio do
     # (the current port owner). Transferring from the caller instead of from
     # inside the reader avoids a race where the port dies before the reader
     # is scheduled, which would crash the subscriber through the link.
-    # What the reader needs once the server exits: its group, if it leads
-    # one, and its reaper.
-    exit_info = {if(state.process_group, do: state.os_pid), state.reaper}
+    reaper = state.reaper
 
     reader =
       spawn_link(fn ->
         receive do
-          :port_transferred -> stdio_reader_loop(port, "", pid, state.max_frame_bytes, exit_info)
+          :port_transferred -> stdio_reader_loop(port, "", pid, state.max_frame_bytes, reaper)
         end
       end)
 
@@ -707,7 +686,6 @@ defmodule ExMCP.Transport.Stdio do
 
       {port, {:exit_status, status}} when port == state.port ->
         Reaper.server_exited(state.reaper)
-        reap_group(state)
         Error.connection_error({:process_exited, status})
 
       {port, :eof} when port == state.port ->
@@ -775,7 +753,7 @@ defmodule ExMCP.Transport.Stdio do
 
   # Internal reader process for push mode.
   # Reads port data, buffers lines, parses JSON, pushes to subscriber.
-  defp stdio_reader_loop(port, line_buffer, subscriber, max_frame_bytes, exit_info) do
+  defp stdio_reader_loop(port, line_buffer, subscriber, max_frame_bytes, reaper) do
     receive do
       {^port, {:data, data}} ->
         binary_data =
@@ -789,7 +767,7 @@ defmodule ExMCP.Transport.Stdio do
         case append_frame(line_buffer, binary_data, max_frame_bytes) do
           {:ok, new_buffer} ->
             remaining = process_buffer(new_buffer, subscriber, max_frame_bytes)
-            stdio_reader_loop(port, remaining, subscriber, max_frame_bytes, exit_info)
+            stdio_reader_loop(port, remaining, subscriber, max_frame_bytes, reaper)
 
           {:error, :frame_too_large} ->
             Kernel.send(subscriber, {:transport_closed, :frame_too_large})
@@ -797,10 +775,9 @@ defmodule ExMCP.Transport.Stdio do
         end
 
       {^port, {:exit_status, status}} ->
-        {group, reaper} = exit_info
+        # The reaper stops what the server left in its group, if it led one.
         Reaper.server_exited(reaper)
         Kernel.send(subscriber, {:transport_closed, {:process_exited, status}})
-        reap_group(group)
 
       {^port, :eof} ->
         Kernel.send(subscriber, {:transport_closed, :eof})

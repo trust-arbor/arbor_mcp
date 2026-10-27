@@ -56,13 +56,15 @@ defmodule ExMCP.Transport.StdioShutdownTest do
   end
 
   describe "shutdown_schedule/1" do
-    test "keeps the graces that fit the budget, with time left for SIGKILL" do
+    test "keeps the graces that fit the budget, with time left for checks and SIGKILL" do
       assert Stdio.shutdown_schedule(%Stdio{}) == {2_000, 100}
 
+      # 250 ms are kept back: 100 ms to check before each of the two
+      # signals, and 50 ms for SIGKILL.
       assert Stdio.shutdown_schedule(%Stdio{eof_grace: 5_000, cleanup_timeout: 600}) ==
-               {550, 0}
+               {350, 0}
 
-      assert Stdio.shutdown_schedule(%Stdio{eof_grace: 400, cleanup_timeout: 500}) == {400, 50}
+      assert Stdio.shutdown_schedule(%Stdio{eof_grace: 200, cleanup_timeout: 500}) == {200, 50}
     end
 
     test "connect rejects unusable shutdown options" do
@@ -267,6 +269,54 @@ defmodule ExMCP.Transport.StdioShutdownTest do
       assert os_alive?(os_pid)
     end
 
+    # The lookup says the pid is the server's at first, then that another
+    # process has it: the server exited and its pid was handed on.
+    defp reused_after_first_check do
+      checks = :counters.new(1, [])
+
+      fn _pid ->
+        :counters.add(checks, 1, 1)
+        if :counters.get(checks, 1) == 1, do: :the_server, else: :another_process
+      end
+    end
+
+    for group? <- [false, true] do
+      test "checks its target again just before each signal (process_group: #{group?})" do
+        {port, os_pid} = sleeper()
+        deadline = System.monotonic_time(:millisecond) + 2_000
+
+        opts = [
+          process_group: unquote(group?),
+          eof_grace: 50,
+          term_grace: 50,
+          start_time: reused_after_first_check()
+        ]
+
+        assert Reaper.shutdown(os_pid, :the_server, opts, deadline) == :exited
+        assert os_alive?(os_pid)
+        Port.close(port)
+      end
+    end
+
+    test "sends nothing when a check can't finish before the deadline" do
+      {port, os_pid} = sleeper()
+      started = System.monotonic_time(:millisecond)
+
+      slow = fn _pid ->
+        Process.sleep(5_000)
+        :the_server
+      end
+
+      opts = [eof_grace: 50, term_grace: 50, start_time: slow]
+
+      assert {:unconfirmed, :identity_timeout} =
+               Reaper.shutdown(os_pid, :the_server, opts, started + 300)
+
+      assert System.monotonic_time(:millisecond) - started < 1_500
+      assert os_alive?(os_pid)
+      Port.close(port)
+    end
+
     test "reads a Linux start time past a command name with spaces and parentheses" do
       stat =
         "4242 (my (odd) server) S 1 4242 4242 0 -1 4194560 120 0 0 0 1 2 0 0 20 0 1 0 " <>
@@ -281,7 +331,8 @@ defmodule ExMCP.Transport.StdioShutdownTest do
       assert Reaper.steps(:unix, :close) == [:close_port, :shutdown]
       assert Reaper.steps(:unix, {:port_down, :normal}) == [:shutdown]
       assert Reaper.steps(:unix, {:port_down, :killed}) == [:shutdown]
-      assert Reaper.steps(:unix, :server_exited) == []
+      # What the server left in its group, with process_group: true.
+      assert Reaper.steps(:unix, :server_exited) == [:stop_group]
 
       # taskkill only while the open port still holds the process handle,
       # so the pid can't have been handed on yet.
