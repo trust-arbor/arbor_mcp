@@ -368,11 +368,13 @@ defmodule ExMCP.Authorization.OAuthFlow do
 
   # Private helpers
 
-  defp validate_scope_list(scopes) when is_list(scopes) do
-    if Enum.all?(scopes, &is_binary/1), do: :ok, else: {:error, :invalid_scopes}
+  defp validate_scope_list(scopes) do
+    if proper_scope_list?(scopes), do: :ok, else: {:error, :invalid_scopes}
   end
 
-  defp validate_scope_list(_), do: {:error, :invalid_scopes}
+  defp proper_scope_list?([]), do: true
+  defp proper_scope_list?([scope | rest]) when is_binary(scope), do: proper_scope_list?(rest)
+  defp proper_scope_list?(_), do: false
 
   defp build_auth_query_params(params, code_challenge, state) do
     base_params = [
