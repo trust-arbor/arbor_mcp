@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The server read the `Accept` header by looking for the text
+  `text/event-stream`, so a modern request that asked for progress or request
+  logs got an event stream even from a client that refused one with
+  `text/event-stream;q=0`, and JSON from one that wrote `Text/Event-Stream`.
+  Both decision points — the modern request-owned stream and the legacy
+  standalone GET — now parse the header's media ranges: an event stream needs
+  `text/event-stream` named with a quality above zero, in any case. A comma
+  or semicolon inside a quoted parameter value, escaped quotes included,
+  separates nothing, so a range keeps its own `q`; a quoted or malformed
+  `q`, or an unterminated quoted string, doesn't opt in, and JSON is always a
+  valid answer. A wildcard such as `*/*` still gets JSON, since the MCP spec
+  asks clients to list `text/event-stream` (backport of 2.x PR #144 commits
+  `4462ba3` and `a887ff2`).
+
 ### Changed
 
 - `jose` `>= 1.11.13` is required and locked. 1.11.13 fixes five advisories:
