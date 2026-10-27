@@ -48,6 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   time, and reuses a token another stream already got. A stream waits for
   that answer no longer than its request's deadline, and the client runs no
   provider for a request whose deadline has passed.
+- Auth provider callbacks run inside the `ExMCP.Client` process: for
+  synchronous HTTP, as before, and now also when the client answers a
+  modern request stream's 401 or 403. While one runs, the client handles
+  nothing else, and a callback must not call the client it authenticates.
+  Called directly, the client refuses the call for a stream's challenge with
+  `{:error, :auth_provider_called_client}`; elsewhere the call exits with
+  `:calling_self`. Called through another process, the call deadlocks until
+  a timeout. See "Where callbacks run" in `ExMCP.Authorization.Provider`.
 
 ## [1.7.3] - 2026-10-26
 

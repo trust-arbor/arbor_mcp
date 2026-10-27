@@ -50,6 +50,23 @@ defmodule ExMCP.Authorization.Provider do
         url: "https://api.example.com/mcp",
         auth_provider: {MyAuthProvider, api_key: "sk-..."}
       )
+
+  ## Where callbacks run
+
+  With `ExMCP.Client`, the callbacks run inside the client process itself
+  whenever it sends a request synchronously (HTTP without an open SSE
+  stream) and when it answers a modern request stream's 401 or 403, one
+  challenge at a time. While a callback runs, which for a browser sign-in
+  can take minutes, the client handles nothing else.
+
+  A callback must therefore not call the client it authenticates:
+
+  - A direct call (`ExMCP.Client.list_tools(client)` from the callback, say)
+    is a call to itself. For a stream's challenge the client turns it into
+    `{:error, :auth_provider_called_client}`. Elsewhere it exits with
+    `:calling_self`, which stops the client.
+  - A call through another process that in turn calls the client deadlocks
+    until one of the calls times out.
   """
 
   @type state :: any()

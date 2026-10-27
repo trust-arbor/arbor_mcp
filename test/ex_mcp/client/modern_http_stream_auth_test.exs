@@ -86,6 +86,25 @@ defmodule ExMCP.Client.ModernHTTPStreamAuthTest do
     def handle_forbidden(_www_auth, _scopes, state), do: {:error, :forbidden, state}
   end
 
+  defmodule SelfCallingProvider do
+    @moduledoc false
+    # Calls the client it authenticates, which runs it.
+    @behaviour ExMCP.Authorization.Provider
+
+    @impl true
+    def init(_config), do: {:ok, %{}}
+
+    @impl true
+    def get_token(state), do: {:ok, nil, state}
+
+    @impl true
+    def handle_unauthorized(_www_auth, _scopes, state),
+      do: GenServer.call(self(), :list_tools)
+
+    @impl true
+    def handle_forbidden(_www_auth, _scopes, state), do: {:error, :forbidden, state}
+  end
+
   defmodule ToolServer do
     @moduledoc false
     use ExMCP.Server.Handler
@@ -559,5 +578,33 @@ defmodule ExMCP.Client.ModernHTTPStreamAuthTest do
     assert_received {:modern_http_stream_auth_result, ^ref, {:error, :timeout}}
     refute_received {:provider_challenge, _, _}
     assert client_state.transport_state.auth_provider_state.generation == 1
+  end
+
+  test "a provider that calls the client it authenticates gets an error, not a client crash" do
+    stream_pid = self()
+
+    transport_state = %HTTP{
+      headers: [],
+      auth_provider: SelfCallingProvider,
+      auth_provider_state: %{},
+      modern_streams: %{7 => stream_pid}
+    }
+
+    ref = make_ref()
+    challenge = %{status: 401, www_authenticate: "Bearer", scopes: [], token: nil}
+
+    # The test runs the handler, so it is the client the provider calls.
+    capture = fn ->
+      assert {:noreply, _client_state} =
+               Client.handle_info(
+                 {:modern_http_stream_auth_challenge, stream_pid, 7, ref, challenge},
+                 client_state(transport_state)
+               )
+    end
+
+    assert ExUnit.CaptureLog.capture_log(capture) =~ "called the client it authenticates"
+
+    assert_received {:modern_http_stream_auth_result, ^ref,
+                     {:error, :auth_provider_called_client}}
   end
 end

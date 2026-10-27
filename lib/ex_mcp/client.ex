@@ -2015,7 +2015,7 @@ defmodule ExMCP.Client do
     callback = if challenge.status == 401, do: :handle_unauthorized, else: :handle_forbidden
     args = [challenge.www_authenticate, challenge.scopes, transport_state.auth_provider_state]
 
-    case apply(provider, callback, args) do
+    case call_provider(provider, callback, args) do
       {:ok, token, provider_state} when is_binary(token) ->
         changes = %{access_token: token, auth_provider_state: provider_state}
         {{:ok, token}, merge_modern_stream_auth_state(transport_state, changes)}
@@ -2028,6 +2028,20 @@ defmodule ExMCP.Client do
       other ->
         {{:error, {:invalid_provider_response, other}}, transport_state}
     end
+  end
+
+  # The provider runs in this process, so a call it makes to this client is
+  # a call to itself (see ExMCP.Authorization.Provider): it would exit and
+  # take the client down. It is refused instead.
+  defp call_provider(provider, callback, args) do
+    apply(provider, callback, args)
+  catch
+    :exit, {:calling_self, _call} ->
+      Logger.error(
+        "Auth provider #{inspect(provider)} called the client it authenticates from #{callback}/3"
+      )
+
+      {:error, :auth_provider_called_client, List.last(args)}
   end
 
   defp merge_modern_stream_auth_state(transport_state, changes) do
