@@ -33,7 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tools/list` page only, so a tool on a later page of a paginated list
   skipped the check. The server now follows the cursors until it finds the
   tool, for up to 100 pages and one `handler_call_timeout` in all, and fails
-  the request closed past either bound. Backport of 2.x #114.
+  the request closed past either bound, when a page is ready only after the
+  deadline, and when the timeout isn't one `GenServer.call/3` takes.
+  Backport of 2.x #114.
 - The default OAuth provider renews an access token with its refresh
   token, before the token expires and when the server rejects it, instead
   of running the browser flow again (which also found the same

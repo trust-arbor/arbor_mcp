@@ -423,14 +423,19 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   @max_tool_pages 100
 
   defp load_tools_for_header_validation(server_pid, conn, tool_name) do
-    deadline =
-      case call_timeout(conn) do
-        timeout when is_integer(timeout) -> System.monotonic_time(:millisecond) + timeout
-        _infinity -> :infinity
-      end
-
-    load_tool_pages(server_pid, tool_name, nil, @max_tool_pages, deadline)
+    case walk_deadline(call_timeout(conn)) do
+      {:ok, deadline} -> load_tool_pages(server_pid, tool_name, nil, @max_tool_pages, deadline)
+      # A timeout GenServer.call/3 would not take fails closed, as the call did.
+      :error -> {:error, :tool_schema_unavailable}
+    end
   end
+
+  defp walk_deadline(:infinity), do: {:ok, :infinity}
+
+  defp walk_deadline(timeout) when is_integer(timeout) and timeout >= 0,
+    do: {:ok, System.monotonic_time(:millisecond) + timeout}
+
+  defp walk_deadline(_invalid), do: :error
 
   defp load_tool_pages(_server_pid, _tool_name, _cursor, 0, _deadline),
     do: {:error, :tool_schema_unavailable}
@@ -443,19 +448,26 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   end
 
   defp load_tool_page(server_pid, tool_name, cursor, pages, deadline, timeout) do
-    case GenServer.call(server_pid, {:list_tools, cursor}, timeout) |> normalize_list_reply() do
-      {:list, tools, next} ->
-        tools = ResultNormalizer.stringify_keys(tools)
+    page =
+      case GenServer.call(server_pid, {:list_tools, cursor}, timeout) |> normalize_list_reply() do
+        {:list, tools, next} -> {ResultNormalizer.stringify_keys(tools), next}
+        {:result, result} -> {Map.get(ResultNormalizer.stringify_keys(result), "tools", []), nil}
+        {:error, _reason} -> :unavailable
+      end
 
+    # A page that arrived in time but was ready only after the deadline
+    # isn't used either.
+    case {page, remaining_time(deadline)} do
+      {_page, 0} ->
+        {:error, :tool_schema_unavailable}
+
+      {:unavailable, _remaining} ->
+        {:error, :tool_schema_unavailable}
+
+      {{tools, next}, _remaining} ->
         if is_binary(next) and is_nil(find_tool(tools, tool_name)),
           do: load_tool_pages(server_pid, tool_name, next, pages - 1, deadline),
           else: {:ok, tools}
-
-      {:result, result} ->
-        {:ok, Map.get(ResultNormalizer.stringify_keys(result), "tools", [])}
-
-      {:error, _reason} ->
-        {:error, :tool_schema_unavailable}
     end
   rescue
     _error -> {:error, :tool_schema_unavailable}
