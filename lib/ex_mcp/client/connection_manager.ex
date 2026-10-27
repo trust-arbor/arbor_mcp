@@ -242,8 +242,13 @@ defmodule ExMCP.Client.ConnectionManager do
       :modern ->
         establish_modern_protocol(transport_mod, transport_state, opts, era_identity, true)
 
-      :legacy ->
-        establish_legacy_protocol(transport_mod, transport_state, opts, era_identity)
+      {:legacy, version} ->
+        establish_legacy_protocol(
+          transport_mod,
+          transport_state,
+          cached_legacy_opts(opts, version),
+          era_identity
+        )
 
       :miss ->
         probe_then_maybe_legacy(transport_mod, transport_state, opts, era_identity)
@@ -258,12 +263,12 @@ defmodule ExMCP.Client.ConnectionManager do
         {:ok, discovery_as_connection_result(discovery), updated_state}
 
       {:error, probe_error, updated_state} ->
-        if legacy_fallback_evidence?(probe_error) and
-             transport_alive?(transport_mod, updated_state) do
+        with {:ok, legacy_opts} <- legacy_fallback(probe_error, opts),
+             true <- transport_alive?(transport_mod, updated_state) do
           case establish_legacy_protocol(
                  transport_mod,
                  updated_state,
-                 opts,
+                 legacy_opts,
                  era_identity
                ) do
             {:ok, _result, _state} = success ->
@@ -281,7 +286,7 @@ defmodule ExMCP.Client.ConnectionManager do
                 %{probe: probe_error, initialize: initialize_error}}, latest_state}
           end
         else
-          {:error, {:era_probe_failed, probe_error}, updated_state}
+          _no_legacy_evidence -> {:error, {:era_probe_failed, probe_error}, updated_state}
         end
     end
   end
@@ -291,8 +296,13 @@ defmodule ExMCP.Client.ConnectionManager do
       :modern ->
         establish_modern_protocol(transport_mod, transport_state, opts, era_identity, true)
 
-      :legacy ->
-        establish_legacy_protocol(transport_mod, transport_state, opts, era_identity)
+      {:legacy, version} ->
+        establish_legacy_protocol(
+          transport_mod,
+          transport_state,
+          cached_legacy_opts(opts, version),
+          era_identity
+        )
 
       :miss ->
         initialize_then_maybe_modern(transport_mod, transport_state, opts, era_identity)
@@ -316,13 +326,43 @@ defmodule ExMCP.Client.ConnectionManager do
               {:ok, discovery_as_connection_result(discovery), updated_state}
 
             {:error, probe_error, updated_state} ->
-              {:error,
-               {:initialize_and_era_probe_failed,
-                %{initialize: initialize_error, probe: probe_error}}, updated_state}
+              retry_legacy_after_probe(
+                transport_mod,
+                updated_state,
+                opts,
+                era_identity,
+                %{initialize: initialize_error, probe: probe_error}
+              )
           end
         else
           {:error, initialize_error, latest_state}
         end
+    end
+  end
+
+  # The probe after a failed initialize can name the legacy revisions the
+  # server does support. When the initialize offered another one, it is tried
+  # once more with the client's preferred revision among them; otherwise the
+  # initialize failure stands.
+  defp retry_legacy_after_probe(transport_mod, transport_state, opts, era_identity, failures) do
+    with version when is_binary(version) <- offered_legacy_version(failures.probe, opts),
+         true <- version != initialize_version(opts),
+         true <- transport_alive?(transport_mod, transport_state) do
+      case establish_legacy_protocol(
+             transport_mod,
+             transport_state,
+             Keyword.put(opts, :protocol_version, version),
+             era_identity
+           ) do
+        {:ok, _result, _state} = success ->
+          success
+
+        {:error, initialize_error, latest_state} ->
+          {:error, {:initialize_and_era_probe_failed, %{failures | initialize: initialize_error}},
+           latest_state}
+      end
+    else
+      _no_other_version -> {:error, {:initialize_and_era_probe_failed, failures}, transport_state}
     end
   end
 
@@ -373,6 +413,41 @@ defmodule ExMCP.Client.ConnectionManager do
 
   defp handshake_timeout(opts),
     do: Keyword.get(opts, :handshake_timeout, @default_handshake_timeout)
+
+  # The options for the initialize that follows a failed probe, when the
+  # failure is evidence of a legacy server.
+  defp legacy_fallback(probe_error, opts) do
+    case offered_legacy_version(probe_error, opts) do
+      nil -> if legacy_fallback_evidence?(probe_error), do: {:ok, opts}, else: :none
+      version -> {:ok, Keyword.put(opts, :protocol_version, version)}
+    end
+  end
+
+  # MCP says to retry with a version the server's UnsupportedProtocolVersionError
+  # lists. When it lists only legacy revisions (an ExMCP server running
+  # `protocol_mode: :legacy_only` does), the server is legacy and that retry is
+  # an initialize offering the client's preferred revision among them. A list
+  # that also names a modern or an unknown revision is no such evidence: the
+  # server may be modern. A DiscoverResult is never taken as legacy evidence;
+  # its version mismatch arrives wrapped as :invalid_discover_result.
+  defp offered_legacy_version(
+         {:no_mutually_supported_modern_version, %{server: [_ | _] = server_versions}},
+         opts
+       ) do
+    if Enum.all?(server_versions, &(VersionRegistry.era_for(&1) == :legacy)) do
+      Enum.find(
+        [Keyword.get(opts, :protocol_version), VersionRegistry.preferred_version()] ++
+          VersionRegistry.supported_versions(),
+        &(&1 in server_versions)
+      )
+    end
+  end
+
+  defp offered_legacy_version(_probe_error, _opts), do: nil
+
+  # The revision an initialize built from `opts` offers.
+  defp initialize_version(opts),
+    do: Keyword.get(opts, :protocol_version) || VersionRegistry.preferred_version()
 
   defp legacy_fallback_evidence?({:json_rpc_error, error}) do
     not modern_specific_error?(error)
@@ -428,11 +503,21 @@ defmodule ExMCP.Client.ConnectionManager do
           %{era: era, protocol_version: version}
         )
 
-        era
+        if era == :legacy, do: {:legacy, version}, else: era
 
       :miss ->
         :miss
     end
+  end
+
+  # A legacy observation keeps the revision the server negotiated, which may
+  # be an older one the fallback picked from its list; offering it again lets
+  # a server that accepts only that revision be reached on the next connection
+  # too, until the observation expires.
+  defp cached_legacy_opts(opts, version) do
+    if VersionRegistry.era_for(version) == :legacy,
+      do: Keyword.put(opts, :protocol_version, version),
+      else: opts
   end
 
   defp maybe_reset_era_cache(identity, opts) do
@@ -775,12 +860,10 @@ defmodule ExMCP.Client.ConnectionManager do
          capabilities,
          deadline
        ) do
-    case send_initialize_request(
-           transport_mod,
-           transport_state,
-           protocol_version,
-           capabilities
-         ) do
+    request =
+      Protocol.encode_initialize(VersionInfo.client_info(), capabilities, protocol_version)
+
+    case send_initialize_request(transport_mod, transport_state, request) do
       {:ok, state_after_send, response_data} ->
         # Non-SSE HTTP mode - response came back immediately
         response_data
@@ -803,14 +886,36 @@ defmodule ExMCP.Client.ConnectionManager do
             {:error, reason, state_after_send}
         end
 
-      {:error, reason} ->
-        reason = if Deadline.expired?(deadline), do: :handshake_timeout, else: reason
-        {:error, reason, transport_state}
+      # An HTTP server rejects initialize with a 400 carrying the JSON-RPC
+      # error (a modern-only one does), which the other transports deliver
+      # as the response itself: read it the same way. Only an error for this
+      # initialize counts. A null id means the server could not read the
+      # request's id, which a well-formed initialize never causes, and any
+      # other id is someone else's answer (a stale proxy's, say): both stay
+      # the transport error they were.
+      {:error, {:http_error, 400, body}} = error ->
+        initialize_id = request["id"]
+
+        case Protocol.parse_message(body) do
+          {:error, details, ^initialize_id} when is_map(details) ->
+            body
+            |> parse_handshake_response(transport_state)
+            |> with_state(transport_state)
+
+          _other ->
+            {:error, initialize_send_error(error, deadline), transport_state}
+        end
+
+      {:error, _reason} = error ->
+        {:error, initialize_send_error(error, deadline), transport_state}
 
       other ->
         {:error, other, transport_state}
     end
   end
+
+  defp initialize_send_error({:error, reason}, deadline),
+    do: if(Deadline.expired?(deadline), do: :handshake_timeout, else: reason)
 
   defp with_state({:ok, _result, _state} = success, _transport_state), do: success
   defp with_state({:error, reason}, transport_state), do: {:error, reason, transport_state}
@@ -821,16 +926,7 @@ defmodule ExMCP.Client.ConnectionManager do
   defp restore_deadline({:error, reason, transport_state}, transport_mod, deadline),
     do: {:error, reason, Deadline.put_on_transport(transport_mod, transport_state, deadline)}
 
-  defp send_initialize_request(
-         transport_mod,
-         transport_state,
-         protocol_version,
-         capabilities
-       ) do
-    client_info = VersionInfo.client_info()
-
-    request = Protocol.encode_initialize(client_info, capabilities, protocol_version)
-
+  defp send_initialize_request(transport_mod, transport_state, request) do
     with {:ok, outbound_request} <- encode_for_transport(transport_mod, request) do
       case transport_mod.send_message(outbound_request, transport_state) do
         {:ok, new_state, response_data} ->

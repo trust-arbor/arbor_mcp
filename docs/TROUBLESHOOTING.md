@@ -110,6 +110,16 @@ check both client and server `protocol_mode` settings. Do not use
 `protocol_version: "2025-11-25"` to select an era; that option is only the
 legacy revision preference.
 
+When the server answers the `server/discover` probe this way and
+`data.supported` lists only legacy revisions, as a server running
+`protocol_mode: :legacy_only` does, `:prefer_modern` and `:prefer_legacy`
+clients treat that as a legacy server. They send `initialize` offering their
+preferred revision among those listed (the client's legacy
+`:protocol_version` when it is listed). A list that also names a modern or an
+unknown revision is not legacy evidence, and `:modern_only` never falls back:
+those fail with `{:era_probe_failed, {:no_mutually_supported_modern_version,
+%{server: ..., client: ...}}}`.
+
 ### Invalid request metadata
 
 Every MCP 2026-07-28 request must include a `_meta` object with:

@@ -22,6 +22,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A client in the default `:prefer_modern` mode could not connect to an
+  ExMCP server running `protocol_mode: :legacy_only`, the documented
+  rollback, over any transport. The server answers the `server/discover`
+  probe with an UnsupportedProtocolVersionError (-32022) whose `supported`
+  list names only legacy revisions, and the client failed with
+  `{:era_probe_failed, {:no_mutually_supported_modern_version, ...}}` instead
+  of using one of them. MCP says to continue with a listed version, and for
+  a legacy one that is `initialize`: `:prefer_modern` now falls back to it,
+  offering its preferred revision among those listed (its legacy
+  `:protocol_version` when listed), and records the legacy observation.
+  `:prefer_legacy`, whose `initialize` comes first, retries it once with
+  such a revision when the server rejected the one it offered and the probe
+  then names others. A list that also names a modern or an unknown revision
+  is not legacy evidence, `:modern_only` never falls back, and a cached
+  modern observation still never downgrades. A cached legacy observation
+  now also keeps the revision the server negotiated, and the next
+  connection offers that one again, so a server that accepts only an older
+  revision stays reachable until the observation expires. Backport of
+  ArborMCP `47faf39` and `fba618d`.
+- Over HTTP, an `initialize` rejected with a 400 carrying a JSON-RPC error,
+  as an ExMCP `protocol_mode: :modern_only` server sends it, was taken for a
+  transport failure. `:prefer_legacy` therefore never moved forward to the
+  modern era over HTTP, unless an earlier connection had recorded it. The
+  error is now read as the rejection it is, the way the other transports
+  deliver it, when that error carries this `initialize` request's id (any
+  other id, `null` included, stays a transport error): `:prefer_legacy`
+  probes and connects, and **`:legacy_only` now fails with
+  `{:initialize_error, error}`** as it does on the other transports, instead
+  of `{:transport_connect_failed, "{:http_error, 400, ...}"}`. Backport of
+  ArborMCP `fba618d` and `5388272`.
+
 - Over stdio, the modern `server/discover` probe gave a newly spawned server
   only `:era_probe_timeout` (2 s by default) to start and answer. Under the
   default `:prefer_modern`, and under `:modern_only`, a server that took

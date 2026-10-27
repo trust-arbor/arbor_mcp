@@ -248,6 +248,14 @@ configuration. Legacy observations expire (five minutes by default) so an
 upgraded endpoint is eventually probed again. Pass `reset_era_cache: true` for
 an intentional re-probe after an operator-controlled deployment change.
 
+An UnsupportedProtocolVersionError (`-32022`) answer to the probe whose
+`supported` list names only legacy revisions is evidence of a legacy peer:
+MCP says to continue with a listed version, and for a legacy one that means
+`initialize`, offering the client's preferred listed revision. A server
+rolled back to `protocol_mode: :legacy_only` answers the probe that way on
+every transport. A list that also names a modern or unknown revision is not
+such evidence.
+
 ### Phoenix/Plug Server
 
 ```elixir
