@@ -27,7 +27,7 @@ defmodule ExMCP.Integration.LegacyHTTPNotificationsTest do
     @impl true
     def handle_list_tools(_cursor, state) do
       tools =
-        for name <- ["progress", "change"] do
+        for name <- ["progress", "change", "update_resource"] do
           %{name: name, inputSchema: %{type: "object", properties: %{}}}
         end
 
@@ -64,6 +64,18 @@ defmodule ExMCP.Integration.LegacyHTTPNotificationsTest do
     def handle_call_tool("change", _args, state) do
       outcome = Server.notify_tools_changed(self())
       send(state.owner, {:server_list_changed, outcome})
+      {:ok, %{content: []}, state}
+    end
+
+    @impl true
+    def handle_subscribe_resource(_uri, state), do: {:ok, state}
+
+    @impl true
+    def handle_unsubscribe_resource(_uri, state), do: {:ok, state}
+
+    def handle_call_tool("update_resource", _args, state) do
+      outcome = Server.notify_resource_update(self(), "file:///notify-test")
+      send(state.owner, {:server_resource_update, outcome})
       {:ok, %{content: []}, state}
     end
   end
@@ -310,6 +322,33 @@ defmodule ExMCP.Integration.LegacyHTTPNotificationsTest do
                      2_000
 
       assert_receive {:ex_mcp_notification, ^listener, "notifications/tools/list_changed", _},
+                     2_000
+    after
+      :persistent_term.put({DelegatingManager, :owner}, nil)
+      close_pair(pair)
+    end
+  end
+
+  test "a resource update from a callback is persisted by the configured session manager" do
+    :persistent_term.put({DelegatingManager, :owner}, self())
+
+    pair = start_pair(true, plug_opts: [session_manager: DelegatingManager])
+    client = pair.client
+
+    try do
+      assert {:ok, _} = Client.subscribe_resource(client, "file:///notify-test")
+
+      assert {:ok, _} =
+               Client.call_tool(client, "update_resource", %{}, timeout: 5_000, format: :map)
+
+      assert_receive {:server_resource_update, :ok}, 2_000
+
+      session_id = :sys.get_state(client).transport_state.session_id
+
+      # The broadcast persisted the update through the plug's configured
+      # session manager, not the default one.
+      assert_receive {:recorded_event, ^session_id,
+                      %{"method" => "notifications/resources/updated"}},
                      2_000
     after
       :persistent_term.put({DelegatingManager, :owner}, nil)

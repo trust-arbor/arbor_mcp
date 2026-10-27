@@ -2435,20 +2435,22 @@ defmodule ExMCP.HttpPlug do
 
   Subscription lookup is performed directly against ETS, and delivery uses
   independent tasks so backpressure from one client does not block the rest.
-  The event is persisted before live delivery; sessions without a live SSE
+  The event is persisted (under `session_manager`, which defaults to
+  `ExMCP.SessionManager`) before live delivery; sessions without a live SSE
   connection remain subscribed and receive it through Last-Event-ID replay
   after reconnecting. Expired sessions are removed by `ExMCP.SessionManager`.
   """
-  @spec broadcast_resource_update(String.t()) :: %{
+  @spec broadcast_resource_update(String.t(), module()) :: %{
           subscribers: non_neg_integer(),
           delivered: non_neg_integer()
         }
-  def broadcast_resource_update(uri) when is_binary(uri) do
+  def broadcast_resource_update(uri, session_manager \\ ExMCP.SessionManager)
+      when is_binary(uri) and is_atom(session_manager) do
     session_ids = ExMCP.SubscriptionRegistry.sessions(uri)
 
     delivered =
       session_ids
-      |> Task.async_stream(&deliver_resource_update(&1, uri),
+      |> Task.async_stream(&deliver_resource_update(&1, uri, session_manager),
         ordered: false,
         timeout: 5_000,
         on_timeout: :kill_task
@@ -2458,7 +2460,7 @@ defmodule ExMCP.HttpPlug do
     %{subscribers: length(session_ids), delivered: delivered}
   end
 
-  defp deliver_resource_update(session_id, uri) do
+  defp deliver_resource_update(session_id, uri, session_manager) do
     notification = %{
       "jsonrpc" => "2.0",
       "method" => "notifications/resources/updated",
@@ -2467,7 +2469,7 @@ defmodule ExMCP.HttpPlug do
 
     # Append independently of the connection so notifications published during
     # a reconnect gap are available to Last-Event-ID replay.
-    case ExMCP.SessionManager.append_event(session_id, "message", notification) do
+    case session_manager.append_event(session_id, "message", notification) do
       {:ok, event} ->
         deliver_persisted_resource_update(session_id, notification, event.id)
 

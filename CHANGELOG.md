@@ -69,6 +69,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a server that never offered a GET stream: the receiver stops and the
   client drops it without dropping the session (backport of the 2.x fix).
 
+- A notification stored while a legacy session's GET stream was closed never
+  replayed when the stream reopened. The stream's control events (`connected`,
+  `close`, `error`) carried wall-clock ids outside the session's replay
+  sequence, which a client adopted as its `Last-Event-ID` so every persisted
+  event compared as older than it; and a client presenting no `Last-Event-ID`
+  resumed from nothing rather than the beginning of the session's log. Control
+  events now carry no id, and a stream without a `Last-Event-ID` resumes from
+  the beginning of the retained log, so a notification stored during a
+  reconnect gap reaches its session's client when the stream reopens.
+- `ExMCP.Server.notify_resource_update/2`, called from a request callback on
+  a server mounted through `ExMCP.HttpPlug` configured with another
+  `:session_manager`, persisted its broadcast through the default
+  `ExMCP.SessionManager`, so the subscribed session never got the update.
+  `ExMCP.HttpPlug.broadcast_resource_update/2` now takes the session manager
+  (defaulting to `ExMCP.SessionManager`) and the mounted path passes the
+  configured one.
+
 ## [1.7.3] - 2026-10-26
 
 ### Changed

@@ -355,10 +355,11 @@ defmodule ExMCP.Server do
     ExMCP.HttpPlug.deliver_session_notification(session_id, notification, session_manager)
   end
 
-  defp deliver_mounted({:notify_resource_update, uri}, _session_id, _session_manager) do
+  defp deliver_mounted({:notify_resource_update, uri}, _session_id, session_manager) do
     # Resource updates belong to subscribers of the URI across sessions, as
-    # on a transport-aware server.
-    ExMCP.HttpPlug.broadcast_resource_update(uri)
+    # on a transport-aware server, persisted under the session manager the
+    # plug serving them was configured with.
+    ExMCP.HttpPlug.broadcast_resource_update(uri, session_manager)
   end
 
   defp deliver_mounted(cast, session_id, session_manager) do
