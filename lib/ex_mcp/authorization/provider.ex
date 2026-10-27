@@ -59,14 +59,16 @@ defmodule ExMCP.Authorization.Provider do
   challenge at a time. While a callback runs, which for a browser sign-in
   can take minutes, the client handles nothing else.
 
-  A callback must therefore not call the client it authenticates:
+  A callback must therefore not call the client it authenticates, directly
+  or indirectly: not from the callback itself, and not from a `Task` or any
+  other process the callback waits on. The client is busy running the
+  callback, so the call deadlocks until one side times out.
 
-  - A direct call (`ExMCP.Client.list_tools(client)` from the callback, say)
-    is a call to itself. For a stream's challenge the client turns it into
-    `{:error, :auth_provider_called_client}`. Elsewhere it exits with
-    `:calling_self`, which stops the client.
-  - A call through another process that in turn calls the client deadlocks
-    until one of the calls times out.
+  The client catches only the plainest case, and only on a best-effort
+  basis: a direct call from the callback answering a stream's challenge is
+  refused with `{:error, :auth_provider_called_client}`. Elsewhere a direct
+  call exits with `:calling_self`, which stops the client. An indirect call
+  is not detected.
   """
 
   @type state :: any()
