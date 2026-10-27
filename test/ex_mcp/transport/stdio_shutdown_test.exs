@@ -409,6 +409,33 @@ defmodule ExMCP.Transport.StdioShutdownTest do
       refute Port.info(port)
     end
 
+    @tag :tmp_dir
+    test "starts the TERM grace when TERM goes out, after a slow check", %{tmp_dir: tmp_dir} do
+      status = Path.join(tmp_dir, "status")
+      # Takes 150 ms to clean up after SIGTERM, then exits 0.
+      script =
+        "trap 'kill $c; sleep 0.15; echo clean > \"$1\"; exit 0' TERM; sleep 30 & c=$!; wait $c"
+
+      port = Port.open({:spawn_executable, "/bin/sh"}, args: ["-c", script, "sh", status])
+      {:os_pid, os_pid} = Port.info(port, :os_pid)
+      kill_on_exit(os_pid)
+
+      # The check before SIGTERM takes 800 ms, longer than the 600 ms TERM grace.
+      checks = :counters.new(1, [])
+
+      lookup = fn _pid ->
+        :counters.add(checks, 1, 1)
+        if :counters.get(checks, 1) == 2, do: Process.sleep(800)
+        :the_server
+      end
+
+      opts = [eof_grace: 0, term_grace: 600, start_time: lookup]
+      deadline = System.monotonic_time(:millisecond) + 3_000
+
+      assert Reaper.shutdown(os_pid, :the_server, opts, deadline) == :stopped
+      assert File.read!(status) == "clean\n"
+    end
+
     test "reads a Linux start time past a command name with spaces and parentheses" do
       stat =
         "4242 (my (odd) server) S 1 4242 4242 0 -1 4194560 120 0 0 0 1 2 0 0 20 0 1 0 " <>

@@ -43,6 +43,9 @@ defmodule ExMCP.Transport.Stdio.Reaper do
   # How long reading the child's start time may take when the connection
   # starts (it runs `ps` outside Linux).
   @identity_read_ms 5_000
+  # Kept back from the end of the budget for the check before SIGKILL and
+  # SIGKILL itself (Stdio.shutdown_schedule/1 leaves room for them).
+  @kill_reserve 150
   # How long killing a helper that stopped answering may take.
   @helper_kill_ms 1_000
 
@@ -247,7 +250,6 @@ defmodule ExMCP.Transport.Stdio.Reaper do
           start_time: Keyword.get(opts, :start_time),
           start_source: Keyword.get(opts, :start_source),
           term_grace: Keyword.fetch!(opts, :term_grace),
-          kill_at: min(term_at + Keyword.fetch!(opts, :term_grace), deadline),
           helper: helper,
           deadline: deadline
         }
@@ -287,7 +289,9 @@ defmodule ExMCP.Transport.Stdio.Reaper do
   defp after_eof(target, term_at, deadline) do
     with :running <- exited_by(target, term_at),
          :sent <- signal_if_ours(target, "TERM", deadline) do
-      kill_at = target.kill_at
+      # The TERM grace runs from when TERM went out, however long its check
+      # took, as far as the budget leaves time to check and send KILL.
+      kill_at = min(now() + target.term_grace, deadline - @kill_reserve)
       after_term(target, kill_at, deadline)
     else
       # Exited during the grace, or gone (and its pid maybe reused) since.
