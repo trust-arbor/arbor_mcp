@@ -425,12 +425,12 @@ defmodule ExMCP.Transport.HTTP do
   # authentication its response asks for. The client re-sends a request this
   # way when an async POST hands back an auth challenge, so only one
   # authentication runs at a time.
-  @spec send_authenticated(term(), t()) ::
+  @spec send_authenticated(term(), t(), keyword()) ::
           {:ok, t()} | {:ok, t(), term()} | {:error, term()}
-  def send_authenticated(message, %__MODULE__{} = state) do
+  def send_authenticated(message, %__MODULE__{} = state, opts \\ []) do
     case perform_and_maybe_auth(message, state) do
-      {:ok, response} -> handle_http_response(response, state, message)
-      {:ok, response, new_state} -> handle_http_response(response, new_state, message)
+      {:ok, response} -> handle_http_response(response, state, message, opts)
+      {:ok, response, new_state} -> handle_http_response(response, new_state, message, opts)
       {:error, reason} -> {:error, reason}
     end
   end
@@ -993,7 +993,7 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  defp handle_http_response({status_line, headers, body}, state, request_body) do
+  defp handle_http_response({status_line, headers, body}, state, request_body, opts \\ []) do
     # Convert charlist to binary if needed (httpc returns charlists by default)
     body_binary = if is_list(body), do: List.to_string(body), else: body
     {_, status_code, _} = status_line
@@ -1012,7 +1012,7 @@ defmodule ExMCP.Transport.HTTP do
         # Always parse the response body — per MCP spec, POST responses
         # contain the result even in SSE mode. The SSE stream is for
         # server-initiated messages (notifications, progress updates).
-        handle_non_sse_response(body_binary, headers, state, request_body)
+        handle_non_sse_response(body_binary, headers, state, request_body, opts)
 
       {_, 202, _} ->
         # 202 Accepted - notification was accepted, no response body expected
@@ -1028,15 +1028,15 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  defp handle_non_sse_response(body, headers, state, request_body) do
+  defp handle_non_sse_response(body, headers, state, request_body, opts) do
     content_type = Headers.get(headers, "content-type") || ""
 
     if String.contains?(content_type, "text/event-stream") do
-      handle_sse_post_response(body, state, request_body)
+      handle_sse_post_response(body, state, request_body, opts)
     else
       case Jason.decode(body) do
         {:ok, response} ->
-          state = cache_tool_headers(state, request_body, response)
+          state = cache_tool_headers(state, request_body, response, opts)
           {:ok, %{state | last_response: response}, Jason.encode!(response)}
 
         {:error, reason} ->
@@ -1045,24 +1045,17 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  defp cache_tool_headers(state, request_body, %{"result" => %{"tools" => tools}})
+  defp cache_tool_headers(
+         state,
+         request_body,
+         %{"result" => %{"tools" => tools}},
+         opts
+       )
        when is_list(tools) do
     case Jason.decode(request_body) do
       {:ok, %{"method" => "tools/list"} = request} ->
-        page_info =
-          if get_in(request, ["params", "cursor"]) do
-            {:cursor, state.tool_listing_generation || 0}
-          else
-            gen = (state.tool_listing_generation || 0) + 1
-            {:first, gen}
-          end
-
-        state =
-          case page_info do
-            {:first, gen} -> %{state | tool_listing_generation: gen}
-            _ -> state
-          end
-
+        page_info = resolve_tool_list_page(request, state, opts)
+        state = maybe_advance_listing_generation(state, page_info)
         apply_tool_list_cache(state, page_info, tools)
 
       _other ->
@@ -1072,16 +1065,39 @@ defmodule ExMCP.Transport.HTTP do
     _invalid -> state
   end
 
-  defp cache_tool_headers(state, _request_body, _response), do: state
+  defp cache_tool_headers(state, _request_body, _response, _opts), do: state
+
+  defp resolve_tool_list_page(request, state, opts) do
+    case Keyword.get(opts, :page_info) do
+      nil ->
+        if get_in(request, ["params", "cursor"]) do
+          {:cursor, state.tool_listing_generation || 0}
+        else
+          gen = (state.tool_listing_generation || 0) + 1
+          {:first, gen}
+        end
+
+      captured_page_info ->
+        captured_page_info
+    end
+  end
+
+  defp maybe_advance_listing_generation(state, {:first, gen}) when is_integer(gen) do
+    if gen > (state.tool_listing_generation || 0),
+      do: %{state | tool_listing_generation: gen},
+      else: state
+  end
+
+  defp maybe_advance_listing_generation(state, _page_info), do: state
 
   # Process SSE-formatted POST response.
   # Extracts JSON data, retry fields, and event IDs.
   # If no JSON result is found (just priming events), the response
   # will come via GET SSE stream — start/ensure SSE is connected.
-  defp handle_sse_post_response(body, state, request_body) do
+  defp handle_sse_post_response(body, state, request_body, opts) do
     events = SSE.parse_complete(body)
     state = apply_sse_event_metadata(events, state)
-    handle_sse_json_data(sse_json_data(events), state, request_body)
+    handle_sse_json_data(sse_json_data(events), state, request_body, opts)
   end
 
   defp apply_sse_event_metadata(events, state) do
@@ -1112,12 +1128,12 @@ defmodule ExMCP.Transport.HTTP do
     |> Enum.join("")
   end
 
-  defp handle_sse_json_data("", state, _request_body), do: reconnect_deferred_sse(state)
+  defp handle_sse_json_data("", state, _request_body, _opts), do: reconnect_deferred_sse(state)
 
-  defp handle_sse_json_data(json_data, state, request_body) do
+  defp handle_sse_json_data(json_data, state, request_body, opts) do
     case Jason.decode(json_data) do
       {:ok, response} ->
-        state = cache_tool_headers(state, request_body, response)
+        state = cache_tool_headers(state, request_body, response, opts)
         {:ok, %{state | last_response: response}, Jason.encode!(response)}
 
       {:error, _reason} ->

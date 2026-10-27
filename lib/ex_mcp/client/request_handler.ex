@@ -574,7 +574,10 @@ defmodule ExMCP.Client.RequestHandler do
             GenServer.reply(from, {:error, error})
 
             {:noreply,
-             %{state | pending_requests: Map.delete(state.pending_requests, request_id)}}
+             forget_request_progress_token(
+               %{state | pending_requests: Map.delete(state.pending_requests, request_id)},
+               request_id
+             )}
 
           {from, :single} ->
             error = request_stream_error(reason)
@@ -582,7 +585,10 @@ defmodule ExMCP.Client.RequestHandler do
             GenServer.reply(from, {:error, error})
 
             {:noreply,
-             %{state | pending_requests: Map.delete(state.pending_requests, request_id)}}
+             forget_request_progress_token(
+               %{state | pending_requests: Map.delete(state.pending_requests, request_id)},
+               request_id
+             )}
 
           _not_pending ->
             {:noreply, state}

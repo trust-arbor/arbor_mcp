@@ -2009,20 +2009,15 @@ defmodule ExMCP.Client do
      fail_async_post_request(state, Map.get(meta, :request_id), reason, Map.get(meta, :deadline))}
   end
 
-  defp resend_authenticated(_message, _meta, %{transport_state: nil} = state),
-    do: {:noreply, state}
-
-  defp resend_authenticated(_message, _meta, %{connection_status: :disconnected} = state),
-    do: {:noreply, state}
-
   defp resend_authenticated(message, meta, state) do
     request_id = Map.get(meta, :request_id)
     deadline = Map.get(meta, :deadline)
+    page_info = Map.get(meta, :tool_list)
     previous = Deadline.on_transport(HTTP, state.transport_state)
     transport = Deadline.put_on_transport(HTTP, state.transport_state, deadline)
     restore = &%{state | transport_state: Deadline.put_on_transport(HTTP, &1, previous)}
 
-    case HTTP.send_authenticated(message, transport) do
+    case HTTP.send_authenticated(message, transport, page_info: page_info) do
       {:ok, transport, response_data} ->
         RequestHandler.handle_post_response(response_data, request_id, restore.(transport))
 

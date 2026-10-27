@@ -37,8 +37,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Concurrent `tools/list` cursor pages no longer have their tool headers wiped if
   the first page completes after cursor pages, and listing generation counters
   ensure fresh first pages legitimately reset the cache while stale pages are discarded.
+  The captured listing generation is carried through authenticated retries of cursor
+  requests, preventing pages from older generations from merging into a newer generation's
+  cache.
 - Settled requests release their `progressToken` upon completion, error, timeout,
-  or cancellation, and all progress tokens are cleared on disconnect.
+  cancellation, or modern stream closure, and all progress tokens are cleared on disconnect.
+  (Note on protocol design: once request A completes, request B may reuse A's progress token,
+  and a late notification of A's still in flight then reaches B. The MCP specification requires
+  tokens to be unique only among active requests, so this race is inherent to the protocol,
+  and 2.x behaves the same.)
 - Legacy SSE async POST responses are matched by the request the POST carried
   rather than solely by the `id` echoed in the response body. Responses with a
   null or different id answer the caller instead of timing out, and responses
