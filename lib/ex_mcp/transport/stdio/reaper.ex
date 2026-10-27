@@ -18,9 +18,9 @@ defmodule ExMCP.Transport.Stdio.Reaper do
   # pid can be handed to an unrelated process. So on Unix every signal is
   # sent only after checking that the pid still names the child started for
   # this connection, by its start time recorded at connect, and when that
-  # can't be checked nothing is sent. A group is signalled once its leader
-  # was confirmed, since a group id isn't reused while the group has
-  # members. Windows has no cheap check: taskkill runs only on close/1 or
+  # can't be checked nothing is sent. A group is ours while its leader is,
+  # or, once the leader is gone, while the group has members: a pid isn't
+  # handed out while a process group with that id exists. Windows has no cheap check: taskkill runs only on close/1 or
   # when the owner died abnormally, when the server was still ours to stop,
   # never after the server exited.
 
@@ -96,8 +96,10 @@ defmodule ExMCP.Transport.Stdio.Reaper do
   end
 
   defp shutdown(os_pid, identity, opts) do
-    if same_child?(os_pid, identity) do
-      target = if Keyword.get(opts, :process_group, false), do: {:group, os_pid}, else: os_pid
+    group? = Keyword.get(opts, :process_group, false)
+
+    if ours?(os_pid, identity, group?) do
+      target = if group?, do: {:group, os_pid}, else: os_pid
 
       unless exited_within?(target, Keyword.fetch!(opts, :eof_grace)) do
         signal(target, identity, "TERM")
@@ -111,8 +113,17 @@ defmodule ExMCP.Transport.Stdio.Reaper do
     :ok
   end
 
-  # The leader was confirmed when the shutdown began, and a group id isn't
-  # reused while the group has members.
+  # The server is ours while the pid's start time still matches. Its group
+  # is ours while its leader is, and once the leader is gone (exited, with
+  # children left), while the group has members: a pid isn't handed out
+  # while a process group with that id exists.
+  defp ours?(os_pid, identity, false), do: same_child?(os_pid, identity)
+
+  defp ours?(os_pid, identity, true),
+    do: same_child?(os_pid, identity) or (not alive?(os_pid) and alive?({:group, os_pid}))
+
+  # The group was confirmed when the shutdown began, and its id isn't reused
+  # while it has members.
   defp signal({:group, _os_pid} = target, _identity, signal), do: kill(signal, target)
 
   defp signal(os_pid, identity, signal) do
