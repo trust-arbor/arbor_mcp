@@ -340,15 +340,20 @@ defmodule Arbor.MCP.Soak.Cleanup do
     end
   end
 
-  defp same_os_child?(
-         {:ok, %{start: start, command: command, parent_pid: parent, group_pid: group} = current},
-         {:ok, expected}
-       )
-       when is_binary(start) and start != "" and is_binary(command) and command != "" and
-              is_integer(parent) and parent > 0 and is_integer(group) and group > 0,
-       do: current == expected
+  defp same_os_child?({:ok, current}, {:ok, expected}) do
+    valid_os_identity?(current) and valid_os_identity?(expected) and
+      (current.parent_pid == expected.parent_pid or current.parent_pid == 1) and
+      Map.delete(current, :parent_pid) == Map.delete(expected, :parent_pid)
+  end
 
   defp same_os_child?(_current, _expected), do: false
+
+  defp valid_os_identity?(%{start: start, command: command, parent_pid: parent, group_pid: group}) do
+    is_binary(start) and start != "" and is_binary(command) and command != "" and
+      is_integer(parent) and parent > 0 and is_integer(group) and group > 0
+  end
+
+  defp valid_os_identity?(_identity), do: false
 
   defp os_gone?(pid) when is_integer(pid) and pid > 0 do
     case System.cmd("/bin/kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true) do

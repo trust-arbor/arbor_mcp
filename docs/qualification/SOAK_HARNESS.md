@@ -68,8 +68,9 @@ If normal cleanup fails, it force-stops the listener and confirms the bound
 port can be reused; for stdio it retains the child OS PID and requires a
 subprocess reaping receipt. Immediately before signalling a child, it checks a
 single `ps` snapshot against the saved start time, command, parent PID, and
-process group. If identity cannot be confirmed, cleanup fails without signalling
-that PID. macOS has no pidfd, so a child could still exit and its PID be reused
+process group. A child reparented to PID 1 is accepted when the other identity
+fields still match. If identity cannot be confirmed, cleanup fails without
+signalling that PID. macOS has no pidfd, so a child could still exit and its PID be reused
 between the final `ps` check and `/bin/kill`; this residual risk cannot be
 eliminated by the harness's PID-based fallback. The last known child PID
 and identity survive an inconclusive lookup during restart. Host listeners use

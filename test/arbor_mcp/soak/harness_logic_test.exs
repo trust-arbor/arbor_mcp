@@ -333,6 +333,41 @@ defmodule Arbor.MCP.Soak.HarnessLogicTest do
     refute unavailable.os_gone
   end
 
+  test "forced child cleanup accepts a reparented child only with the original identity" do
+    identity = %{start: "original", command: "child", parent_pid: 111, group_pid: 222}
+    child = %{subprocess: :child, os_pid: 76543, os_identity: {:ok, identity}}
+    receipt_count = make_ref()
+
+    ops = %{
+      close_child: fn _ -> {:error, :timeout} end,
+      child_receipt: fn _ ->
+        count = Process.get(receipt_count, 0)
+        Process.put(receipt_count, count + 1)
+        if count == 0, do: {:error, :unconfirmed}, else: :reaped
+      end,
+      os_identity: fn _ -> {:ok, %{identity | parent_pid: 1}} end,
+      os_gone?: fn _ -> false end,
+      kill_os_pid: fn pid, expected ->
+        send(self(), {:signalled_child, pid, expected})
+        :signalled
+      end,
+      wait_ms: 0
+    }
+
+    assert %{signal: :signalled, os_gone: true} = Cleanup.force_child(child, ops)
+    assert_receive {:signalled_child, 76543, {:ok, ^identity}}
+
+    wrong_group =
+      Cleanup.force_child(child, %{
+        ops
+        | child_receipt: fn _ -> {:error, :unconfirmed} end,
+          os_identity: fn _ -> {:ok, %{identity | parent_pid: 1, group_pid: 333}} end,
+          kill_os_pid: fn _, _ -> flunk("must not signal a different process group") end
+      })
+
+    assert match?({:error, {:unverified_os_identity, _, _}}, wrong_group.signal)
+  end
+
   test "OS identity parser retains parent and process group alongside start and command" do
     assert Cleanup.parse_os_identity(
              "Mon Oct 26 18:00:00 2026 321 456 /usr/bin/elixir -e child\n"
