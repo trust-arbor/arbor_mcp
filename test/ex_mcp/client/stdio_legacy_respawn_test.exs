@@ -147,6 +147,9 @@ defmodule ExMCP.Client.StdioLegacyRespawnTest do
     for {era, expected} <- [
           oversized: "{:era_probe_failed, {:transport_error, :frame_too_large}}",
           malformed: "{:era_probe_failed, {:unexpected_response, ",
+          # Over the limit with no newline, then an exit: still too large,
+          # not silence.
+          oversized_exit: "{:era_probe_failed, {:transport_error, :frame_too_large}}",
           partial:
             "{:era_probe_failed, {:transport_error, {:connection_error, {:unfinished_frame, {:process_exited, 5}}}}}"
         ] do

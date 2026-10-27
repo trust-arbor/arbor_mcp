@@ -27,6 +27,7 @@ defmodule ExMCP.Test.ScriptedStdioServer do
   #   oversized answers server/discover with a 20 kB line
   #   malformed answers server/discover with a line that is not JSON
   #   partial writes part of an answer to server/discover, then exits
+  #   oversized_exit writes 10 kB with no newline, then exits
 
   @script ~S"""
   printf 'start\n' >> "$3"
@@ -79,10 +80,13 @@ defmodule ExMCP.Test.ScriptedStdioServer do
         printf '{"jsonrpc":"2.0","id":%s,"result":{"pad":"%s"}}\n' "$id" "$pad" ;;
       malformed:server/discover)
         printf '{this is not JSON\n' ;;
+      oversized_exit:server/discover)
+        head -c 10000 /dev/zero | tr '\0' x
+        exit 6 ;;
       partial:server/discover)
         printf '{"jsonrpc":"2.0","id":%s,"res' "$id"
         exit 5 ;;
-      mute:*|once:*|garbage:*|oversized:*|malformed:*|partial:*|silent:server/discover) ;;
+      mute:*|once:*|garbage:*|oversized:*|oversized_exit:*|malformed:*|partial:*|silent:server/discover) ;;
       *)
         printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id" ;;
     esac

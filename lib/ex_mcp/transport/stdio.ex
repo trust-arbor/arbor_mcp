@@ -606,8 +606,11 @@ defmodule ExMCP.Transport.Stdio do
 
       {port, {:exit_status, status}} when port == state.port ->
         reap_group(state)
-        unread = pending_output(port, state.line_buffer)
-        Error.connection_error(exit_reason(unread, {:process_exited, status}))
+
+        case pending_output(port, state.line_buffer, state.max_frame_bytes) do
+          {:ok, unread} -> Error.connection_error(exit_reason(unread, {:process_exited, status}))
+          {:error, :frame_too_large} = error -> error
+        end
 
       {port, :eof} when port == state.port ->
         Error.connection_error(:eof)
@@ -617,16 +620,22 @@ defmodule ExMCP.Transport.Stdio do
   end
 
   # The port can report the exit before the last of the output, so whatever
-  # output is still queued belongs with what was buffered.
-  defp pending_output(port, buffer) do
+  # output is still queued belongs with what was buffered, within the same
+  # frame limit as any other read: more than that is :frame_too_large.
+  defp pending_output(port, buffer, limit) do
     receive do
-      {^port, {:data, {:eol, line}}} -> pending_output(port, buffer <> line <> "\n")
-      {^port, {:data, {:noeol, line}}} -> pending_output(port, buffer <> line)
-      {^port, {:data, data}} when is_binary(data) -> pending_output(port, buffer <> data)
+      {^port, {:data, data}} ->
+        with {:ok, buffer} <- append_frame(buffer, port_data(data), limit),
+             do: pending_output(port, buffer, limit)
     after
-      0 -> buffer
+      0 -> {:ok, buffer}
     end
   end
+
+  defp port_data({:eol, line}), do: line <> "\n"
+  defp port_data({:noeol, line}), do: line
+  defp port_data(data) when is_binary(data), do: data
+  defp port_data(_data), do: ""
 
   # Output that looks like a frame and was not read as one is not silence:
   # part of a frame (or, should the exit be reported first, a whole one the
