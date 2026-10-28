@@ -82,10 +82,12 @@ defmodule Arbor.MCP.HttpPlug do
   legacy session or read a stored task, and how subscriptions are authorized
   and limited. Set `:principal_id` (and `:tenant_id`) to a string, or to a
   function or `{module, function, extra_args}` resolver called with
-  `conn, request, token_claims`. What the host sets always wins: a resolver
-  that returns `nil`, or `principal_id: nil` itself, runs the request without
-  a principal. Otherwise a validated token's principal is its `sub` claim (or
-  the `principal_id` claim a token verifier returns), unchanged.
+  `conn, request, token_claims`. What the host sets always wins. To run
+  requests without a principal on purpose, use a resolver that returns `nil`.
+  A literal `principal_id: nil` is the same as leaving the option out, so a
+  config value that is unexpectedly `nil` can't drop the token's binding.
+  Otherwise a validated token's principal is its `sub` claim (or the
+  `principal_id` claim a token verifier returns), unchanged.
 
   A token without `sub` is refused with `401 invalid_token`. An introspection
   response (RFC 7662) may leave `sub` out, and then nothing tells one user's
@@ -261,8 +263,6 @@ defmodule Arbor.MCP.HttpPlug do
       max_mrtr_bytes: Keyword.get(opts, :max_mrtr_bytes, 1_048_576),
       require_replay_protection: Keyword.get(opts, :require_replay_protection, false),
       principal_id: Keyword.get(opts, :principal_id),
-      # `principal_id: nil` is a choice too: no principal, whatever the token.
-      principal_id_configured: Keyword.has_key?(opts, :principal_id),
       client_principals: client_principals!(Keyword.get(opts, :client_principals, false)),
       tenant_id: Keyword.get(opts, :tenant_id),
       authorize_subscription_filter: Keyword.get(opts, :authorize_subscription_filter),
@@ -2314,22 +2314,17 @@ defmodule Arbor.MCP.HttpPlug do
       {:error, :invalid_mrtr_identity}
   end
 
-  # A principal the host configures wins, whatever it resolves to. A mount
-  # configured with `principal_id: nil` runs without one.
-  defp resolve_principal(conn, request, token_info, opts) do
-    principal_id = Map.get(opts, :principal_id)
+  # A principal the host configures wins, whatever a resolver returns (nil
+  # too). A literal `principal_id: nil` is no configuration at all, so a
+  # config value that is unexpectedly nil can't drop the token's binding.
+  defp resolve_principal(conn, request, token_info, %{principal_id: principal_id})
+       when not is_nil(principal_id),
+       do: {:ok, resolve_identity_value(principal_id, conn, request, token_info, nil)}
 
-    cond do
-      Map.get(opts, :principal_id_configured, false) or not is_nil(principal_id) ->
-        {:ok, resolve_identity_value(principal_id, conn, request, token_info, nil)}
+  defp resolve_principal(_conn, _request, token_info, opts) when is_map(token_info),
+    do: token_principal(token_info, opts)
 
-      is_map(token_info) ->
-        token_principal(token_info, opts)
-
-      true ->
-        {:ok, nil}
-    end
-  end
+  defp resolve_principal(_conn, _request, _no_token, _opts), do: {:ok, nil}
 
   # The principal of a token this plug validated is its subject. RFC 9068 JWT
   # access tokens always carry `sub`, but an introspection response (RFC 7662)

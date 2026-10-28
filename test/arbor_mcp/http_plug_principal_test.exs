@@ -239,9 +239,37 @@ defmodule Arbor.MCP.HttpPlugPrincipalTest do
   end
 
   describe "the host's :principal_id" do
-    test "wins when it is a literal nil", %{runtime: runtime} do
-      for client_principals <- [false, true], token <- ["machine", "with-sub", "ada"] do
-        opts = mount(runtime, principal_id: nil, client_principals: client_principals)
+    # A config value that is unexpectedly nil must not drop the token binding.
+    test "is unset when it is a literal nil, so the token decides", %{runtime: runtime} do
+      opts = mount(runtime, principal_id: nil)
+      assert %{status: 200} = post(opts, collect(1), "with-sub")
+      assert_receive {:collect, "ada-subject", nil}, 2_000
+
+      capture_log(fn ->
+        assert %{status: 401} = conn = post(opts, collect(2), "machine")
+        assert_invalid_token(conn)
+      end)
+
+      opts = mount(runtime, principal_id: nil, client_principals: true)
+      assert %{status: 200} = post(opts, collect(3), "machine")
+      assert_receive {:collect, "client:app-client", nil}, 2_000
+
+      capture_log(fn ->
+        assert %{status: 401} = conn = post(opts, collect(4), "sub-in-client-namespace")
+        assert_invalid_token(conn)
+      end)
+
+      refute_received {:collect, _principal, _responses}
+    end
+
+    test "runs without a principal when a resolver returns nil", %{runtime: runtime} do
+      for client_principals <- [false, true],
+          principal_id <- [
+            fn _conn, _request, _claims -> nil end,
+            {__MODULE__, :no_principal, []}
+          ],
+          token <- ["machine", "with-sub", "ada"] do
+        opts = mount(runtime, principal_id: principal_id, client_principals: client_principals)
         assert %{status: 200} = post(opts, collect(1), token)
         assert_receive {:collect, nil, nil}, 2_000
       end
@@ -301,6 +329,9 @@ defmodule Arbor.MCP.HttpPlugPrincipalTest do
 
   # Introspected claims have atom keys; a verifier's may have string keys.
   defp username(_conn, _request, claims), do: claims[:username] || claims["username"]
+
+  @doc false
+  def no_principal(_conn, _request, _claims), do: nil
 
   defp assert_invalid_token(conn) do
     assert [challenge] = get_resp_header(conn, "www-authenticate")
