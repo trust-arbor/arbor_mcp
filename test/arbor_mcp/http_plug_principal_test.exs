@@ -207,7 +207,7 @@ defmodule Arbor.MCP.HttpPlugPrincipalTest do
           end
         end)
 
-      assert log =~ "reserved"
+      assert log =~ "reserves for client principals"
       refute log =~ "app-client"
       refute_received {:collect, _principal, _responses}
       refute_received {:hold, _principal, _worker}
