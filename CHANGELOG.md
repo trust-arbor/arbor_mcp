@@ -24,11 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[:ex_mcp, :client, :era, :fallback]` event carries `respawned: true`.
   `:modern_only` never respawns. The fresh process starts only once the
   stdio shutdown has seen the old one gone (with `process_group: true`,
-  everything left in its group too). A server process that cannot be
-  confirmed stopped (its pid could not be checked before a signal, it was
-  still running after SIGKILL, or the shutdown did not finish within
-  `:cleanup_timeout` plus 500 ms) is never replaced, by a retry or a
-  reconnect either: `start_link/1` returns
+  everything left in its group too), and so does any reconnect, however the
+  old connection ended: a server that exits can leave its group running
+  through the shutdown's grace, and the reconnect used to start beside it.
+  A server process that cannot be confirmed stopped (its pid could not be
+  checked before a signal, it was still running after SIGKILL, or the
+  shutdown did not finish within `:cleanup_timeout` plus 500 ms) is never
+  replaced, by a retry or a reconnect either: `start_link/1` returns
   `{:error, {:transport_connect_failed, {:probed_server_stop_unconfirmed, ...}}}`
   or `{:error, {:transport_connect_failed, {:cleanup_failed, ...}}}`, the
   cleanup given as `{:error, {:server_stop_unconfirmed, reason}}`, and a

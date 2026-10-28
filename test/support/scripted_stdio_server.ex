@@ -34,6 +34,8 @@ defmodule ExMCP.Test.ScriptedStdioServer do
   #   orphans like exits, but first leaves a process in its group that
   #           ignores EOF and SIGTERM (only SIGKILL stops it)
   #   deaf    like silent, but ignores EOF and SIGTERM
+  #   departs a legacy server that, once initialized, exits on its next
+  #           request, leaving a process in its group like orphans
 
   @script ~S"""
   printf 'start\n' >> "$3"
@@ -73,12 +75,12 @@ defmodule ExMCP.Test.ScriptedStdioServer do
         printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32022,"message":"Unsupported protocol version","data":{"supported":["2026-07-28"],"requested":"2025-11-25"}}}\n' "$id" ;;
       legacy:server/discover)
         printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"Method not found"}}\n' "$id" ;;
-      legacy:initialize|exits:initialize|banner:initialize|notifies:initialize|silent:initialize|orphans:initialize|deaf:initialize)
+      legacy:initialize|exits:initialize|banner:initialize|notifies:initialize|silent:initialize|orphans:initialize|deaf:initialize|departs:initialize)
         sleep "$5"
         printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-11-25","capabilities":{},"serverInfo":{"name":"scripted-legacy","version":"1"}}}\n' "$id" ;;
       exits:server/discover)
         exit 3 ;;
-      orphans:server/discover)
+      orphans:server/discover|departs:other)
         (trap '' TERM; exec sleep 60) </dev/null >/dev/null 2>&1 &
         printf '%s\n' "$!" >> "$log.pids"
         exit 3 ;;

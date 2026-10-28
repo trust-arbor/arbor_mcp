@@ -214,10 +214,12 @@ defmodule ExMCP.Client do
 
   Over stdio each connection runs its own server process, and none is
   started while an earlier one may still be running. A server counts as
-  stopped only once the transport saw it gone (see `ExMCP.Transport.Stdio`).
-  When the old server's stop (after a health check gave up on it, say) or
-  a reconnect attempt's cannot be confirmed, the client stops reconnecting,
-  settles in `:disconnected` and emits
+  stopped only once the transport saw it gone (see `ExMCP.Transport.Stdio`),
+  and with `process_group: true` whatever it left in its group too. However
+  the old connection ended (the server exited, the transport broke, or a
+  health check gave up on it), the reconnect waits for that. When the old
+  server's stop or a reconnect attempt's cannot be confirmed, the client
+  stops reconnecting, settles in `:disconnected` and emits
   `[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]`.
 
   Explicit `disconnect/1` or `stop/2` calls never trigger reconnection.
@@ -2143,19 +2145,33 @@ defmodule ExMCP.Client do
 
   # The transport may still be open (a stdio server that only hung), so it
   # is closed here, and a server that cannot be confirmed stopped keeps
-  # handle_transport_down/2 from reconnecting beside it.
+  # handle_transport_down/2 from reconnecting beside it. The closed
+  # transport is dropped, so it is not closed again.
   defp abandon_transport(state) do
     state = retire_links(state)
 
+    spawned_server? =
+      ConnectionManager.spawned_server?(state.transport_mod, state.transport_state)
+
     case close_transport(state) do
-      {:error, _reason} = unconfirmed ->
-        if ConnectionManager.spawned_server?(state.transport_mod, state.transport_state),
-          do: %{state | server_stop: unconfirmed},
-          else: state
+      {:error, _reason} = unconfirmed when spawned_server? ->
+        %{state | server_stop: unconfirmed, transport_state: nil}
 
       _closed ->
-        state
+        %{state | transport_state: nil}
     end
+  end
+
+  # A stdio server must be confirmed stopped before anything reconnects,
+  # however its connection ended: one that exited on its own may have left
+  # its group running (process_group: true) through the shutdown's grace,
+  # and one still running may hold what its replacement needs.
+  defp stop_spawned_server(%{transport_state: nil} = state), do: state
+
+  defp stop_spawned_server(state) do
+    if ConnectionManager.spawned_server?(state.transport_mod, state.transport_state),
+      do: abandon_transport(state),
+      else: state
   end
 
   # Remembers the links of the transport and receiver this client is about
@@ -2243,6 +2259,11 @@ defmodule ExMCP.Client do
     end
 
     previous_status = state.connection_status
+
+    # Pending callers have their answer; a reconnect waits for the old
+    # server's stop (already done when the transport was abandoned).
+    state =
+      if reconnect_allowed?(state, previous_status), do: stop_spawned_server(state), else: state
 
     # The health check is re-armed by the reconnect success path; leaving the
     # old timer running would double up once the client is ready again.

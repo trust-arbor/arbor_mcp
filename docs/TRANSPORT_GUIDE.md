@@ -264,10 +264,12 @@ transport's shutdown saw it gone, and with `process_group: true` everything
 left in its group too, within `:cleanup_timeout`. A server that cannot be
 confirmed stopped (its pid could not be checked before a signal, it was
 still running after SIGKILL, or the shutdown did not finish in time) is
-never replaced, by the respawn, a retry or a reconnect, nor after a health
-check gives up on it: the connection fails, or the client stops
-reconnecting, and `[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]` is
-emitted.
+never replaced, by the respawn, a retry or a reconnect: the connection
+fails, or the client stops reconnecting, and
+`[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]` is emitted. A
+reconnect waits for the old server's stop however the old connection
+ended: the server exited (it may have left its group running), the
+transport broke, or a health check gave up on it.
 
 Successful modern observations are pinned by endpoint and relevant transport
 configuration. Legacy observations expire (five minutes by default) so an
