@@ -126,7 +126,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedgerTest do
     Enum.each(producers, &send(&1, :go))
     outcomes = results(60)
     admitted = for {_, {:ok, ticket}} <- outcomes, do: ticket
-    assert length(admitted) > 0 and length(admitted) < 20
+    assert admitted != [] and length(admitted) < 20
     assert Ledger.stats(ref).bytes <= 1_800
     assert Ledger.stats(ref).frames == length(admitted)
     Enum.each(admitted, &assert(:ok == Ledger.release(&1)))

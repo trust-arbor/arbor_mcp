@@ -138,6 +138,8 @@ flowchart TD
   C -->|"eligible protocol failure + live transport"| D
   D -->|"valid discovery"| F["Pin modern era"]
   D -->|"evidence of legacy + fallback allowed"| C
+  D -->|"prefer_modern stdio: child exited or silent"| R["Reap child, start a fresh one"]
+  R -->|"once"| C
   D -->|"ambiguous, transport, or strict-mode failure"| G["Fail connection"]
   E --> H["Legacy request/result rules"]
   F --> I["Modern metadata/result rules"]
@@ -149,7 +151,7 @@ The four modes are intentionally policies rather than protocol versions:
 |---|---|---|---|
 | `:legacy_only` | Legacy | `initialize` | Never |
 | `:prefer_legacy` | Both | `initialize` | To modern only after an eligible protocol failure on a live transport |
-| `:prefer_modern` | Both | `server/discover` | To legacy only with positive compatibility evidence on a live transport |
+| `:prefer_modern` | Both | `server/discover` | To legacy only with positive compatibility evidence on a live transport, or over stdio on a fresh process when the probed one exited or stayed silent |
 | `:modern_only` | Modern | `server/discover` | Never |
 
 On the server, both `:prefer_legacy` and `:prefer_modern` accept either era;
@@ -181,7 +183,18 @@ validates the era on each request instead.
 
 This separation prevents a failed modern probe from becoming an unsafe silent
 downgrade. Fallback requires both a recognized compatibility signal and a
-still-usable transport. A cached modern peer failing its next probe is surfaced
+still-usable transport. The one exception is stdio under `:prefer_modern`: a
+server that exits without answering the probe (Python `mcp` 1.8 and earlier)
+or does not answer it within its bound is closed, and once that close is
+confirmed a fresh process from the same options is initialized, once per
+attempt. That probed pipe, which a late answer could still reach, carries
+nothing more, and a modern-only server then fails on `initialize` with the
+versions it supports. Malformed output (a JSON-looking line that is not
+valid JSON-RPC, a message other than a notification that is not the
+answer, or a cut-off or oversized frame) is not such a case and fails the
+connection; valid notifications and non-JSON banner and log lines are no
+answer. A reconnect never starts a stdio server while an earlier one is not
+confirmed stopped. A cached modern peer failing its next probe is surfaced
 as an error until the operator clears that observation or changes policy.
 
 ## Internal Functional Cores

@@ -981,7 +981,7 @@ defmodule Arbor.MCP.Transport.StdioIsolationTest do
               (String.starts_with?(trimmed, "{") || String.starts_with?(trimmed, "["))
           end)
 
-        assert length(json_lines) >= 1, "Should find at least one JSON line"
+        assert json_lines != [], "Should find at least one JSON line"
 
         # Get the first JSON line
         json_line = hd(json_lines)

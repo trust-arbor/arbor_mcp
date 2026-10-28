@@ -393,7 +393,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
     next =
       eventually(fn ->
         {:ok, %{events: events}} = SessionManager.replay_page(sessions, lease, nil, [])
-        if event = Enum.find(events, &(&1.data["id"] != request["id"])), do: event.data
+        event = Enum.find(events, &(&1.data["id"] != request["id"]))
+        if event, do: event.data
       end)
 
     assert %{status: 202} = post(opts, id, response(next["id"], %{"new" => true}))
@@ -1043,7 +1044,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
   defp reverse_request(sessions, lease, method \\ "ping") do
     eventually(fn ->
       {:ok, %{events: events}} = SessionManager.replay_page(sessions, lease, nil, [])
-      if event = Enum.find(events, &(&1.data["method"] == method)), do: event.data
+      event = Enum.find(events, &(&1.data["method"] == method))
+      if event, do: event.data
     end)
   end
 

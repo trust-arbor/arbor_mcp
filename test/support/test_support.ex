@@ -65,7 +65,7 @@ defmodule Arbor.MCP.TestSupport do
 
     orphaned_test_processes = find_orphaned_test_processes()
 
-    if length(orphaned_test_processes) > 0 do
+    if orphaned_test_processes != [] do
       Logger.warning("Found #{length(orphaned_test_processes)} orphaned test processes")
 
       Enum.each(orphaned_test_processes, fn {name, pid} ->

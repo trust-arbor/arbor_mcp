@@ -23,8 +23,8 @@ defmodule Arbor.MCP.Server.Transport do
 
   require Logger
 
-  alias Arbor.MCP.Server.{Runtime, StdioServer}
   alias Arbor.MCP.Server.HTTP.{Bandit, Config, Cowboy, CowboyClaims}
+  alias Arbor.MCP.Server.{Runtime, StdioServer}
   alias Arbor.MCP.Server.Runtime.{Admission, Initialization, Ref}
 
   @doc """

@@ -235,7 +235,7 @@ defmodule Arbor.MCP.Integration.EverythingHTTPInteropTest do
             )
 
           contents = result["contents"] || []
-          assert length(contents) > 0
+          assert contents != []
 
           first = hd(contents)
           assert first["uri"] == "demo://resource/dynamic/text/1"
@@ -292,7 +292,7 @@ defmodule Arbor.MCP.Integration.EverythingHTTPInteropTest do
             )
 
           messages = result["messages"] || []
-          assert length(messages) > 0
+          assert messages != []
 
           first = hd(messages)
           assert first["role"] == "user"

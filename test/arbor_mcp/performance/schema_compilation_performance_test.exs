@@ -8,6 +8,8 @@ defmodule Arbor.MCP.Performance.SchemaCompilationPerformanceTest do
 
   @moduletag :performance
 
+  @validation_batches 21
+
   defp log_performance(message) do
     if System.get_env("VERBOSE_PERFORMANCE_TESTS") do
       IO.puts(message)
@@ -54,28 +56,35 @@ defmodule Arbor.MCP.Performance.SchemaCompilationPerformanceTest do
       # Pre-compile the schema (this happens at compile time in real usage)
       assert {:ok, compiled_schema} = SchemaPolicy.compile(@test_schema)
 
-      # Measure validation performance (this happens at runtime)
-      {time_microseconds, results} =
-        :timer.tc(fn ->
-          for _ <- 1..100 do
-            SchemaPolicy.validate(@test_data, compiled_schema)
-          end
-        end)
+      # Measure validation performance (this happens at runtime). One batch of
+      # 100 also absorbs every scheduler stall that lands in it, so the bound
+      # applies to the median of many batches, which a few stalls cannot move.
+      per_validation =
+        for _ <- 1..@validation_batches do
+          {time_microseconds, results} =
+            :timer.tc(fn ->
+              for _ <- 1..100 do
+                SchemaPolicy.validate(@test_data, compiled_schema)
+              end
+            end)
 
-      # Verify all validations succeeded
-      assert Enum.all?(results, &(&1 == :ok))
+          # Verify all validations succeeded
+          assert Enum.all?(results, &(&1 == :ok))
+          time_microseconds / 1000 / 100
+        end
 
-      time_ms = time_microseconds / 1000
-      avg_per_validation = time_ms / 100
+      sorted = Enum.sort(per_validation)
+      median = Enum.at(sorted, div(length(sorted), 2))
 
-      log_performance("\n📊 Validation Performance (100 iterations):")
-      log_performance("  Total time: #{Float.round(time_ms, 2)} ms")
-      log_performance("  Average per validation: #{Float.round(avg_per_validation, 4)} ms")
-      log_performance("  Validations per second: #{Float.round(1000 / avg_per_validation, 0)}")
+      log_performance("\n📊 Validation Performance (#{@validation_batches} x 100 iterations):")
+      log_performance("  Median per validation: #{Float.round(median, 4)} ms")
+      log_performance("  Fastest batch: #{Float.round(hd(sorted), 4)} ms per validation")
+      log_performance("  Validations per second: #{Float.round(1000 / median, 0)}")
 
       # Assert reasonable performance (should be very fast with pre-compiled schemas)
-      assert avg_per_validation < 0.1,
-             "Expected sub-0.1ms per validation, got #{avg_per_validation} ms"
+      assert median < 0.1,
+             "Expected sub-0.1ms per validation, got a median of #{median} ms " <>
+               "(per-batch: #{inspect(Enum.map(sorted, &Float.round(&1, 4)))})"
     end
 
     test "schema compilation is one-time cost" do

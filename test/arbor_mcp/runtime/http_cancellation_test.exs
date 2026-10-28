@@ -600,6 +600,16 @@ defmodule Arbor.MCP.Server.Runtime.HTTPCancellationTest do
       end
     end)
 
+    # The Gateway asks the Controller to deliver that member without waiting;
+    # the Controller's answer is the next native event on the Gateway.
+    [delivery] = Map.keys(:sys.get_state(gateway).controls)
+
+    native_event(gateway, HTTPGateway, fn ->
+      receive do
+        {[:alias | ^delivery], _reply} = event -> event
+      end
+    end)
+
     native_event(route.scheduler, Scheduler, fn ->
       receive do
         {:DOWN, ^task_ref, :process, ^first_worker, _reason} = event -> event

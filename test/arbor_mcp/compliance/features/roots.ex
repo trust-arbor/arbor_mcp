@@ -51,7 +51,7 @@ defmodule Arbor.MCP.Compliance.Features.Roots do
 
       # Validate we got roots
       assert is_list(roots)
-      assert length(roots) > 0
+      assert roots != []
 
       # Validate each root structure
       for root <- roots do
@@ -116,10 +116,10 @@ defmodule Arbor.MCP.Compliance.Features.Roots do
       roots_without_name = Enum.reject(roots, &Map.has_key?(&1, :name))
 
       # Should have at least one root with a name
-      assert length(roots_with_name) > 0, "Expected at least one root with a name"
+      assert roots_with_name != [], "Expected at least one root with a name"
 
       # Should have at least one root without a name (to test optionality)
-      assert length(roots_without_name) > 0, "Expected at least one root without a name"
+      assert roots_without_name != [], "Expected at least one root without a name"
 
       # Validate roots with names
       for root <- roots_with_name do

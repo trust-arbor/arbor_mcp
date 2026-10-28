@@ -326,6 +326,26 @@ defmodule Arbor.MCP.Server.ResultNormalizer do
   end
 
   @doc """
+  Shapes a `c:Arbor.MCP.Server.Handler.handle_read_resource/2` value into a
+  `resources/read` result.
+
+  A handler answers with one content item, a list of them, or the whole
+  result when it also sets fields such as cache hints. A map with `text` or
+  `blob` is one content item, even beside a `contents` key. Any other map
+  whose `contents` is a list is the whole result, whatever other keys it
+  has. Every other value is wrapped as `%{"contents" => [...]}`.
+  """
+  @spec read_result(term()) :: map()
+  def read_result(%{} = item)
+      when is_map_key(item, :text) or is_map_key(item, "text") or is_map_key(item, :blob) or
+             is_map_key(item, "blob"),
+      do: %{"contents" => [item]}
+
+  def read_result(%{contents: contents} = result) when is_list(contents), do: result
+  def read_result(%{"contents" => contents} = result) when is_list(contents), do: result
+  def read_result(contents), do: %{"contents" => List.wrap(contents)}
+
+  @doc """
   Builds a paginated list result such as `%{"tools" => [...], "nextCursor" => ...}`.
   """
   @spec paginated(String.t(), list(), String.t() | nil) :: map()

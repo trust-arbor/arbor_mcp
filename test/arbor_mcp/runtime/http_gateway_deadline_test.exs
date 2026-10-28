@@ -3,7 +3,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayDeadlineTest do
   alias Arbor.MCP.Server.Runtime
 
   alias Arbor.MCP.Server.Runtime.{
+    Admission,
     CallbackContext,
+    Deadline,
     HTTPGateway,
     HTTPWriterBinding,
     HTTPWriterProxy,
@@ -47,14 +49,24 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayDeadlineTest do
 
     {:ok, runtime} = Runtime.ref(root)
     assert_receive :http_handler_init
-    {:ok, binding} = HTTPWriterProxy.capture(runtime, timeout: 40)
+    # Entry is the fast step: capture, submit and dispatch must land inside
+    # the cutoff, which at 40 ms they did not on a loaded machine. The held
+    # call is the far-past step: it never returns on its own.
+    {:ok, binding} = HTTPWriterProxy.capture(runtime, timeout: 250)
     {:ok, proof} = HTTPWriterBinding.validate(binding, runtime)
-    {:ok, _token} = HTTPGateway.submit(runtime, binding, %{message(7) | "method" => "hold"})
+    {:ok, {domain, _}} = HTTPWriterBinding.address(binding)
+    {:ok, token} = HTTPGateway.submit(runtime, binding, %{message(7) | "method" => "hold"})
     assert_receive {:gateway_entry, 7, _worker, entered, cutoff}
     assert cutoff == proof.deadline
     assert entered < cutoff
-    Process.sleep(50)
-    {effect, wire} = checkout(binding)
+
+    # The registry wakes this writer once the timeout error is queued on the
+    # failure tail. Checking out before then can land in the gap after the
+    # cutoff where the invocation reads as closed.
+    assert_receive {:mcp_http_output_wake, ^domain, nonce}, 2_000
+    assert Deadline.now() >= cutoff
+    assert :ok = HTTPWriterRegistry.acknowledge_wake(domain, nonce)
+    assert {:ok, effect, wire} = HTTPWriterRegistry.checkout(binding)
 
     assert %{"id" => 7, "error" => %{"code" => -32603, "message" => "Request timeout"}} =
              Jason.decode!(wire)
@@ -64,40 +76,39 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGatewayDeadlineTest do
     assert {:error, :http_invocation_closed} =
              HTTPWriterRegistry.prepare(binding, "{\"result\":1}")
 
-    {:ok, {domain, _}} = HTTPWriterBinding.address(binding)
     assert %{in_flight: 1, bytes: bytes} = HTTPWriterRegistry.stats(domain)
     assert bytes > byte_size(wire)
+    gateway = trace_release(runtime)
     assert :ok = HTTPWriterRegistry.complete(effect, :ok)
-    wait(fn -> match?(%{frames: 0}, HTTPWriterRegistry.stats(domain)) end)
+    # complete/2 records the receipt and wakes the registry, whose next pass
+    # drops the frame. This round trip returns only after that pass.
+    _ = :sys.get_state(HTTPWriterRegistry.guardian(domain))
+    assert %{frames: 0} = HTTPWriterRegistry.stats(domain)
     assert :empty = HTTPWriterRegistry.checkout(binding)
-    wait(fn -> match?(%{reserved: 0}, Runtime.stats!(runtime)) end)
+    # Once the output settles, the gateway finishes the job and frees its slot
+    # with a synchronous Admission.release/2. Its return is the sync point.
+    assert_receive {:trace, ^gateway, :call, {Admission, :release, [_table, ^token]}}, 2_000
+    assert_receive {:trace, ^gateway, :return_from, {Admission, :release, 2}, _result}, 2_000
+    assert %{reserved: 0} = Runtime.stats!(runtime)
     assert {:ok, %{"result" => 0}} = Runtime.request(runtime, message(8))
     refute_receive :http_handler_init, 5
   end
 
   defp message(id), do: %{"jsonrpc" => "2.0", "id" => id, "method" => "read"}
 
-  defp checkout(binding) do
-    wait(fn ->
-      case HTTPWriterRegistry.checkout(binding) do
-        {:ok, effect, wire} -> {effect, wire}
-        :empty -> nil
-        error -> flunk("HTTP checkout failed: #{inspect(error)}")
-      end
+  defp trace_release(runtime) do
+    {:ok, gateway} = HTTPGateway.address(runtime)
+    release = {Admission, :release, 2}
+
+    # Registered first, so the global pattern is removed even if enabling
+    # the trace below fails.
+    on_exit(fn ->
+      :erlang.trace_pattern(release, false, [:global])
+      if Process.alive?(gateway), do: :erlang.trace(gateway, false, [:call])
     end)
-  end
 
-  defp wait(fun, remaining \\ 200)
-  defp wait(_fun, 0), do: flunk("HTTP gateway state not reached")
-
-  defp wait(fun, remaining) do
-    case fun.() do
-      result when result not in [nil, false] ->
-        result
-
-      _ ->
-        Process.sleep(5)
-        wait(fun, remaining - 1)
-    end
+    assert 1 == :erlang.trace_pattern(release, [{:_, [], [{:return_trace}]}], [:global])
+    assert 1 == :erlang.trace(gateway, true, [:call])
+    gateway
   end
 end

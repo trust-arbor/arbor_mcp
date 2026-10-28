@@ -111,25 +111,36 @@ defmodule Arbor.MCP.Internal.SessionStoreDetsLifecycleTest do
   end
 
   test "one original operation cutoff covers consecutive calls without refreshing", %{path: path} do
-    {:ok, store} = DETS.open(%{storage_path: path, storage_io_timeout_ms: 80})
+    # Opening is not under test, so it gets the default I/O budget. The
+    # operation below is charged the short 80 ms cutoff.
+    {:ok, opened} = DETS.open(%{storage_path: path})
+    store = %{opened | io_timeout_ms: 80}
     worker = :dets.info(store.sessions, :owner)
+    :erlang.trace(store.owner, true, [:receive])
     :erlang.suspend_process(worker)
 
     try do
       before = System.monotonic_time(:millisecond)
 
-      assert {:error, :storage_io_timeout} ==
-               storage_result(fn ->
-                 DETS.with_deadline(store, fn ->
-                   Process.sleep(35)
-                   DETS.lookup(store, :sessions, :missing)
-                 end)
-               end)
+      {cutoff, entered, result, returned} =
+        DETS.with_deadline(store, fn ->
+          cutoff = Process.get({DETS, store.token})
+          entered = System.monotonic_time(:millisecond)
+          # Time passes inside the one operation. A refreshed cutoff would be
+          # at least this much later than the charged one.
+          Process.sleep(35)
+          result = storage_result(fn -> DETS.lookup(store, :sessions, :missing) end)
+          {cutoff, entered, result, System.monotonic_time(:millisecond)}
+        end)
 
-      elapsed = System.monotonic_time(:millisecond) - before
-      assert elapsed >= 65
-      assert elapsed < 110
+      # The operation was charged 80 ms when it began, the blocked lookup
+      # carried that same cutoff to the owner, and it timed out no earlier.
+      assert (cutoff - 80) in before..entered
+      assert {:error, :storage_io_timeout} == result
+      assert_lookup_cutoff(store.owner, cutoff)
+      assert returned >= cutoff
     after
+      if Process.alive?(store.owner), do: :erlang.trace(store.owner, false, [:receive])
       resume_if_alive(worker)
     end
 
@@ -358,6 +369,11 @@ defmodule Arbor.MCP.Internal.SessionStoreDetsLifecycleTest do
 
   defp resume_if_alive(pid) do
     if Process.alive?(pid), do: :erlang.resume_process(pid)
+  end
+
+  defp assert_lookup_cutoff(owner, cutoff) do
+    assert_receive {:trace, ^owner, :receive, {:"$gen_call", _from, request}}, 1_000
+    assert {_token, _gate, ^cutoff, :lookup, _arguments} = request
   end
 
   defp assert_eventually(check, remaining \\ 1_000)

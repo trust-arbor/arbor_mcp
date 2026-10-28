@@ -195,7 +195,10 @@ Arbor.ACP.Client.disconnect(client)
 ArborMCP version `2.0.0-rc.6` and the MCP wire revision are separate identifiers.
 The latest stable wire revision in this source is `2026-07-28`.
 `:prefer_modern` permits evidence-based legacy fallback; `:modern_only` and
-`:legacy_only` select an era explicitly. Retained legacy Roots, Sampling and
+`:legacy_only` select an era explicitly. Over stdio, `:prefer_modern` also
+starts a server again for `initialize` when it exits on the `server/discover`
+probe or never answers it, as Python `mcp` 1.8 and earlier stdio servers do,
+and the probe waits `:handshake_timeout` for a server to start. Retained legacy Roots, Sampling and
 protocol Logging APIs still serve pinned legacy revisions.
 
 ## Public operation contracts in the replacement candidate

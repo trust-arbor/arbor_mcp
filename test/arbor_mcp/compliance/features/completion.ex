@@ -127,7 +127,7 @@ defmodule Arbor.MCP.Compliance.Features.Completion do
       assert is_list(completions)
 
       # Should return some default suggestions
-      assert length(completions) > 0
+      assert completions != []
 
       # All suggestions should be valid paths
       for completion <- completions do

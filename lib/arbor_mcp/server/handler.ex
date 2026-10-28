@@ -291,6 +291,80 @@ defmodule Arbor.MCP.Server.Handler do
           {:input_required, %{String.t() => map()}, state()}
           | {:input_required, %{String.t() => map()}, request_state :: term(), state()}
 
+  @typedoc """
+  A map with string keys, as decoded JSON has. The server stringifies atom
+  keys before it sends a result, so a callback may answer with either form.
+  A typespec cannot name a string key, so Dialyzer checks this form only as
+  a map with string keys.
+  """
+  @type string_keyed :: %{optional(String.t()) => term()}
+
+  @typedoc """
+  A `resource_link` content block, which a prompt message may carry (MCP
+  2025-06-18 and later). `t:Arbor.MCP.Types.content/0` does not include it.
+  """
+  @type resource_link :: %{
+          required(:type) => :resource_link | String.t(),
+          required(:uri) => String.t(),
+          required(:name) => String.t(),
+          optional(:title) => String.t(),
+          optional(:description) => String.t(),
+          optional(:mimeType) => String.t(),
+          optional(:annotations) => Arbor.MCP.Types.annotations(),
+          optional(:size) => non_neg_integer(),
+          optional(:icons) => [Arbor.MCP.Types.icon()],
+          optional(:_meta) => map()
+        }
+
+  @typedoc "One message of a GetPromptResult. `role` may be an atom or a string."
+  @type prompt_message ::
+          %{
+            required(:role) => Arbor.MCP.Types.role() | String.t(),
+            required(:content) => Arbor.MCP.Types.content() | resource_link() | string_keyed()
+          }
+          | string_keyed()
+
+  @typedoc "The `c:handle_get_prompt/3` success value: a whole GetPromptResult."
+  @type get_prompt_result ::
+          %{
+            required(:messages) => [prompt_message()],
+            optional(:description) => String.t(),
+            optional(:_meta) => map()
+          }
+          | string_keyed()
+
+  @typedoc "One item of a ReadResourceResult's `contents`."
+  @type resource_contents :: Arbor.MCP.Types.resource_contents() | string_keyed()
+
+  @typedoc """
+  The `c:handle_read_resource/2` success value: one content item, a list of
+  them, or a whole ReadResourceResult, which may also carry the cache hints
+  `ttlMs` and `cacheScope`.
+  """
+  @type read_resource_result ::
+          resource_contents()
+          | [resource_contents()]
+          | %{
+              required(:contents) => [resource_contents()],
+              optional(:ttlMs) => non_neg_integer(),
+              optional(:cacheScope) => :public | :private | String.t(),
+              optional(:_meta) => map()
+            }
+
+  @typedoc "The `c:handle_complete/3` and `c:handle_complete/4` success value: a CompleteResult."
+  @type complete_result ::
+          %{
+            required(:completion) =>
+              %{
+                required(:values) => [String.t()],
+                optional(:total) => non_neg_integer(),
+                optional(:hasMore) => boolean()
+              }
+              | string_keyed(),
+            optional(:_meta) => map()
+          }
+          | string_keyed()
+
   @doc """
   Handles the initialize request from a client.
 
@@ -391,11 +465,19 @@ defmodule Arbor.MCP.Server.Handler do
               | {:error, any(), state()}
 
   @doc """
-  Handles reading a resource.
+  Handles a `resources/read` request.
+
+  The success value is one content item (`%{uri, text}` or `%{uri, blob}`),
+  a list of those items, or the whole read result `%{contents: [...]}` when
+  the handler also sets fields such as cache hints. Keys may be atoms or
+  strings. The server wraps an item or a list as `%{"contents" => [...]}`;
+  a map with `text` or `blob` is always an item. Any other map whose
+  `contents` is a list is sent as the whole result, with any other keys it
+  has. The modern era adds `resultType`, and `ttlMs` and
+  `cacheScope` when the result leaves them off.
   """
   @callback handle_read_resource(uri :: String.t(), state()) ::
-              {:ok, Arbor.MCP.Types.resource_contents() | Arbor.MCP.Server.MRTR.InputRequired.t(),
-               state()}
+              {:ok, read_resource_result() | Arbor.MCP.Server.MRTR.InputRequired.t(), state()}
               | {:error, any(), state()}
               | input_required_return()
 
@@ -410,11 +492,16 @@ defmodule Arbor.MCP.Server.Handler do
               | {:error, any(), state()}
 
   @doc """
-  Handles getting a prompt.
+  Handles a `prompts/get` request.
+
+  The success value is the whole GetPromptResult, `%{messages: [message]}`
+  with an optional `description`. Each message is `%{role, content}`, and
+  its content may be any content block, including a `resource_link`. Keys
+  may be atoms or strings. The server sends that map as the JSON-RPC
+  result. The modern era adds `resultType` after the callback returns.
   """
   @callback handle_get_prompt(name :: String.t(), arguments :: map(), state()) ::
-              {:ok, Arbor.MCP.Types.prompt_message() | Arbor.MCP.Server.MRTR.InputRequired.t(),
-               state()}
+              {:ok, get_prompt_result() | Arbor.MCP.Server.MRTR.InputRequired.t(), state()}
               | {:error, any(), state()}
               | input_required_return()
 
@@ -429,8 +516,8 @@ defmodule Arbor.MCP.Server.Handler do
 
   ## Return Value
     `{:ok, %{completion: %{values: [String.t()], total: n, hasMore: boolean}}, state}`,
-    with at most 100 values. Define `handle_complete/4` to also receive the
-    values of the other arguments.
+    with at most 100 values. Keys may be atoms or strings. Define
+    `handle_complete/4` to also receive the values of the other arguments.
 
   ## Example
 
@@ -444,7 +531,7 @@ defmodule Arbor.MCP.Server.Handler do
   whose arguments declare `complete:` advertise it for you.
   """
   @callback handle_complete(ref :: map(), argument :: map(), state()) ::
-              {:ok, result :: map(), state()} | {:error, any(), state()}
+              {:ok, complete_result(), state()} | {:error, any(), state()}
 
   @doc """
   Like `handle_complete/3`, and also receives the request's `context`
@@ -457,7 +544,7 @@ defmodule Arbor.MCP.Server.Handler do
   @doc api: :public
   """
   @callback handle_complete(ref :: map(), argument :: map(), context :: map(), state()) ::
-              {:ok, result :: map(), state()} | {:error, any(), state()}
+              {:ok, complete_result(), state()} | {:error, any(), state()}
 
   @doc """
   Handles a sampling create message request.

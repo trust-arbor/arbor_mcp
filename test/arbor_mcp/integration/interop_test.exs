@@ -164,7 +164,7 @@ defmodule Arbor.MCP.Integration.InteropTest do
       try do
         {:ok, result} = Arbor.MCP.Client.get_prompt(client, "simple_prompt", %{}, timeout: 10_000)
         messages = result["messages"] || result[:messages] || []
-        assert length(messages) > 0
+        assert messages != []
 
         first_message = hd(messages)
         role = first_message["role"] || first_message[:role]

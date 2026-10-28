@@ -188,6 +188,32 @@ defmodule Arbor.MCP.MessageProcessorTest do
       do: {:error, "Resource not found: #{uri}", state}
   end
 
+  defmodule ReadHandlerServer do
+    use Arbor.MCP.Server.Handler
+
+    @impl true
+    def init(_args), do: {:ok, %{}}
+
+    @impl true
+    def handle_read_resource("file:///item", state),
+      do: {:ok, %{uri: "file:///item", text: "a"}, state}
+
+    def handle_read_resource("file:///text-with-contents", state),
+      do: {:ok, %{uri: "file:///text-with-contents", text: "hello", contents: []}, state}
+
+    def handle_read_resource("file:///string-blob-with-contents", state),
+      do:
+        {:ok, %{"uri" => "file:///string-blob-with-contents", "blob" => "YQ==", "contents" => []},
+         state}
+
+    def handle_read_resource("file:///whole", state),
+      do: {:ok, %{contents: [%{uri: "file:///whole", text: "a"}], ttlMs: 5_000}, state}
+
+    def handle_read_resource("file:///whole-with-uri", state),
+      do:
+        {:ok, %{contents: [%{uri: "file:///whole-with-uri", text: "a"}], uri: "file:///a"}, state}
+  end
+
   defmodule FailingInitHandlerServer do
     use Arbor.MCP.Server.Handler
 
@@ -350,6 +376,51 @@ defmodule Arbor.MCP.MessageProcessorTest do
         request |> MessageProcessor.new() |> MessageProcessor.process(%{handler: HandlerServer})
 
       assert conn.response["result"]["completion"]["values"] == ["prompt:par"]
+    end
+
+    test "resources/read wraps a content item and passes a whole result through" do
+      read = fn uri ->
+        conn =
+          4
+          |> protocol_request("resources/read", %{"uri" => uri})
+          |> MessageProcessor.new()
+          |> MessageProcessor.process(%{handler: ReadHandlerServer})
+
+        conn.response["result"]
+      end
+
+      assert read.("file:///item") == %{
+               "contents" => [%{"uri" => "file:///item", "text" => "a"}]
+             }
+
+      # text or blob marks a content item, even beside a contents key.
+      assert read.("file:///text-with-contents") == %{
+               "contents" => [
+                 %{"uri" => "file:///text-with-contents", "text" => "hello", "contents" => []}
+               ]
+             }
+
+      assert read.("file:///string-blob-with-contents") == %{
+               "contents" => [
+                 %{
+                   "uri" => "file:///string-blob-with-contents",
+                   "blob" => "YQ==",
+                   "contents" => []
+                 }
+               ]
+             }
+
+      # This path used to wrap every value, nesting a whole result inside
+      # its own contents list.
+      assert read.("file:///whole") == %{
+               "contents" => [%{"uri" => "file:///whole", "text" => "a"}],
+               "ttlMs" => 5_000
+             }
+
+      assert read.("file:///whole-with-uri") == %{
+               "contents" => [%{"uri" => "file:///whole-with-uri", "text" => "a"}],
+               "uri" => "file:///a"
+             }
     end
 
     test "passes handler_opts to temporary handler GenServers" do

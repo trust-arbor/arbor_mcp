@@ -1358,7 +1358,7 @@ defmodule Arbor.MCP.SessionManager do
         release_initialization_claim(acc, session_id)
       end)
 
-    if length(expired_sessions) > 0 do
+    if expired_sessions != [] do
       Logger.debug("Cleaned up #{length(expired_sessions)} expired sessions")
     end
 

@@ -416,36 +416,69 @@ defmodule Arbor.MCP.MessageProcessor.MethodHandlers do
   defp validate_tool_request_headers(_conn, _server_pid, _tool_name, _params), do: :ok
 
   # The tool may be on any page of tools/list, so follow the cursors until it
-  # turns up. A list that runs past the bound fails closed.
+  # turns up, stopping at the first page that has it. A list that runs past
+  # the page bound, or past one handler call timeout for the whole walk,
+  # fails closed: a slow handler can't hold a tools/call for a timeout per
+  # page.
   @max_tool_pages 100
 
-  defp load_tools_for_header_validation(server_pid, conn, tool_name),
-    do: load_tool_pages(server_pid, conn, tool_name, nil, @max_tool_pages)
+  defp load_tools_for_header_validation(server_pid, conn, tool_name) do
+    case walk_deadline(call_timeout(conn)) do
+      {:ok, deadline} -> load_tool_pages(server_pid, tool_name, nil, @max_tool_pages, deadline)
+      # A timeout GenServer.call/3 would not take fails closed, as the call did.
+      :error -> {:error, :tool_schema_unavailable}
+    end
+  end
 
-  defp load_tool_pages(_server_pid, _conn, _tool_name, _cursor, 0),
+  defp walk_deadline(:infinity), do: {:ok, :infinity}
+
+  defp walk_deadline(timeout) when is_integer(timeout) and timeout >= 0,
+    do: {:ok, System.monotonic_time(:millisecond) + timeout}
+
+  defp walk_deadline(_invalid), do: :error
+
+  defp load_tool_pages(_server_pid, _tool_name, _cursor, 0, _deadline),
     do: {:error, :tool_schema_unavailable}
 
-  defp load_tool_pages(server_pid, conn, tool_name, cursor, pages) do
-    case GenServer.call(server_pid, {:list_tools, cursor}, call_timeout(conn))
-         |> normalize_list_reply() do
-      {:list, tools, next} ->
-        tools = ResultNormalizer.stringify_keys(tools)
+  defp load_tool_pages(server_pid, tool_name, cursor, pages, deadline) do
+    case remaining_time(deadline) do
+      0 -> {:error, :tool_schema_unavailable}
+      timeout -> load_tool_page(server_pid, tool_name, cursor, pages, deadline, timeout)
+    end
+  end
 
-        if is_binary(next) and is_nil(find_tool(tools, tool_name)),
-          do: load_tool_pages(server_pid, conn, tool_name, next, pages - 1),
-          else: {:ok, tools}
+  defp load_tool_page(server_pid, tool_name, cursor, pages, deadline, timeout) do
+    page =
+      case GenServer.call(server_pid, {:list_tools, cursor}, timeout) |> normalize_list_reply() do
+        {:list, tools, next} -> {ResultNormalizer.stringify_keys(tools), next}
+        {:result, result} -> {Map.get(ResultNormalizer.stringify_keys(result), "tools", []), nil}
+        {:error, _reason} -> :unavailable
+      end
 
-      {:result, result} ->
-        {:ok, Map.get(ResultNormalizer.stringify_keys(result), "tools", [])}
-
-      {:error, _reason} ->
+    # A page that arrived in time but was ready only after the deadline
+    # isn't used either.
+    case {page, remaining_time(deadline)} do
+      {_page, 0} ->
         {:error, :tool_schema_unavailable}
+
+      {:unavailable, _remaining} ->
+        {:error, :tool_schema_unavailable}
+
+      {{tools, next}, _remaining} ->
+        if is_binary(next) and is_nil(find_tool(tools, tool_name)),
+          do: load_tool_pages(server_pid, tool_name, next, pages - 1, deadline),
+          else: {:ok, tools}
     end
   rescue
     _error -> {:error, :tool_schema_unavailable}
   catch
     :exit, _reason -> {:error, :tool_schema_unavailable}
   end
+
+  defp remaining_time(:infinity), do: :infinity
+
+  defp remaining_time(deadline),
+    do: max(deadline - System.monotonic_time(:millisecond), 0)
 
   defp find_tool(tools, name) when is_list(tools) do
     Enum.find(tools, &(Map.get(&1, "name") == name))
@@ -532,9 +565,9 @@ defmodule Arbor.MCP.MessageProcessor.MethodHandlers do
     end
   end
 
-  defp handle_resource_reply(conn, {:ok, contents}, id) do
-    contents = ResultNormalizer.stringify_keys(List.wrap(contents))
-    put_success(conn, %{"contents" => contents}, id)
+  defp handle_resource_reply(conn, {:ok, value}, id) do
+    result = value |> ResultNormalizer.read_result() |> ResultNormalizer.stringify_keys()
+    put_success(conn, result, id)
   end
 
   defp handle_resource_reply(conn, {:error, %Error.ProtocolError{} = error}, id),

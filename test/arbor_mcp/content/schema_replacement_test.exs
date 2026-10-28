@@ -1,5 +1,10 @@
 defmodule Arbor.MCP.Content.SchemaReplacementTest do
-  use ExUnit.Case, async: true
+  # These tests are about what schemas mean, not about how long checking may
+  # take. Validation and resolution run under wall-clock Task.yield limits,
+  # and under load compiling a draft schema exceeded the 1 s resolution limit.
+  # Synchronous modules run alone, so the generous limits below apply to this
+  # module only. SchemaPolicyTest and SchemaDialectTest cover the deadlines.
+  use ExUnit.Case, async: false
 
   alias Arbor.MCP.Server.Internal.DSLArguments
 
@@ -31,6 +36,24 @@ defmodule Arbor.MCP.Content.SchemaReplacementTest do
         {:ok, ToolResult.structured("value", %{count: args.count}), state}
       end)
     end
+  end
+
+  setup do
+    previous = Application.fetch_env(:arbor_mcp, :json_schema)
+    configured = Application.get_env(:arbor_mcp, :json_schema, [])
+
+    Application.put_env(
+      :arbor_mcp,
+      :json_schema,
+      Keyword.merge(configured, resolve_timeout_ms: 30_000, validation_timeout_ms: 30_000)
+    )
+
+    on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:arbor_mcp, :json_schema, value)
+        :error -> Application.delete_env(:arbor_mcp, :json_schema)
+      end
+    end)
   end
 
   test "tagged compilation and optional nil are distinct from boolean false" do

@@ -148,7 +148,7 @@ defmodule Arbor.MCP.Compliance.ServerStreamableHTTPComplianceTest do
       response_session_ids = get_resp_header(conn2, "mcp-session-id")
 
       # Server should echo back the session ID (or at minimum include one)
-      assert length(response_session_ids) >= 1,
+      assert response_session_ids != [],
              "Server MUST include Mcp-Session-Id in subsequent responses"
     end
 

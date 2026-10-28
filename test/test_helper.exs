@@ -105,7 +105,7 @@ excluded_tags =
   |> Enum.filter(fn {_tag, excluded} -> excluded end)
   |> Enum.map(fn {tag, _} -> tag end)
 
-if length(excluded_tags) > 0 do
+if excluded_tags != [] do
   IO.puts("\n⚠️  Test tags excluded by default: #{inspect(excluded_tags)}")
   IO.puts("   Use --include <tag> to run specific test categories\n")
 end

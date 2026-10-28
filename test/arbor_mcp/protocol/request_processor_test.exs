@@ -1,6 +1,7 @@
 defmodule Arbor.MCP.Protocol.RequestProcessorTest do
   use ExUnit.Case, async: true
 
+  alias Arbor.MCP.Internal.VersionRegistry
   alias Arbor.MCP.Protocol.RequestProcessor
 
   defmodule TestHandler do
@@ -308,6 +309,64 @@ defmodule Arbor.MCP.Protocol.RequestProcessorTest do
       assert response["error"]["code"] == -32600
       assert response["error"]["message"] =~ "Unsupported protocol version"
       assert response["error"]["data"]["supported_versions"]
+    end
+
+    test "an explicit protocol mode advertises only the versions it accepts", %{
+      minimal_state: state
+    } do
+      request = %{
+        "method" => "initialize",
+        "id" => 125,
+        "params" => %{"protocolVersion" => "1999-01-01"}
+      }
+
+      for mode <- [:prefer_modern, :prefer_legacy] do
+        state = Map.put(state, :protocol_mode, mode)
+        {:response, response, ^state} = RequestProcessor.process(request, state)
+        versions = VersionRegistry.supported_versions(mode)
+
+        assert response["error"]["code"] == -32600
+        assert response["error"]["data"]["supported"] == versions
+        assert response["error"]["data"]["supported_versions"] == versions
+      end
+    end
+
+    test "legacy_only does not advertise the modern revision", %{minimal_state: state} do
+      request = %{
+        "method" => "initialize",
+        "id" => 126,
+        "params" => %{"protocolVersion" => "2026-07-28"}
+      }
+
+      state = Map.put(state, :protocol_mode, :legacy_only)
+      {:response, response, ^state} = RequestProcessor.process(request, state)
+
+      assert response["error"]["data"]["supported"] == [
+               "2025-11-25",
+               "2025-06-18",
+               "2025-03-26",
+               "2024-11-05"
+             ]
+
+      refute "2026-07-28" in response["error"]["data"]["supported"]
+    end
+
+    # initialize opens a legacy session, so a mode that also accepts the
+    # modern era still cannot agree 2026-07-28 through it.
+    test "initialize never agrees a modern revision", %{minimal_state: state} do
+      request = %{
+        "method" => "initialize",
+        "id" => 127,
+        "params" => %{"protocolVersion" => "2026-07-28"}
+      }
+
+      for mode <- [:prefer_modern, :prefer_legacy] do
+        state = Map.put(state, :protocol_mode, mode)
+        {:response, response, ^state} = RequestProcessor.process(request, state)
+
+        refute response["result"], "#{mode} answered #{inspect(response)}"
+        assert response["error"]["code"] == -32600
+      end
     end
   end
 

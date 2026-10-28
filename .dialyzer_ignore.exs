@@ -43,8 +43,10 @@
   {"test/arbor_mcp/compliance/features/roots.ex", :guard_fail},
   {"test/arbor_mcp/compliance/features/transport.ex", :pattern_match},
 
-  # Compliance handler files with intentional callback mismatches for testing different protocol versions
-  {"test/arbor_mcp/compliance/handlers/handler20241105.ex", :callback_type_mismatch},
+  # Version fixtures still fail handle_initialize/2: they advertise a
+  # `:completion` capability (and experimental boolean flags) rather than
+  # `server_capabilities/0`. prompts/get on these modules matches
+  # `get_prompt_result/0`, so the 2024-11-05 filter is gone.
   {"test/arbor_mcp/compliance/handlers/handler20250326.ex", :callback_type_mismatch},
   {"test/arbor_mcp/compliance/handlers/handler20250618.ex", :callback_type_mismatch},
 

@@ -254,7 +254,7 @@ defmodule Arbor.MCP.ResourcesComplianceTest do
 
       assert %{resources: resources} = result
       assert is_list(resources)
-      assert length(resources) > 0
+      assert resources != []
     end
 
     test "resources have required structure", %{client: client} do
@@ -418,7 +418,7 @@ defmodule Arbor.MCP.ResourcesComplianceTest do
 
       assert %{resourceTemplates: templates} = result
       assert is_list(templates)
-      assert length(templates) > 0
+      assert templates != []
 
       template = hd(templates)
       assert Map.has_key?(template, :uriTemplate)

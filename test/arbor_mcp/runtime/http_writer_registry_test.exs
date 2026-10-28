@@ -527,6 +527,32 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistryTest do
     eventually(fn -> HTTPWriterRegistry.stats(domain).frames == 0 end)
   end
 
+  test "a request keepalive enters IO when admitted and never overtakes pending output" do
+    domain = domain()
+    binding = writer_binding(domain)
+    assert {:ok, keepalive, ":\r\n\r\n"} = HTTPWriterRegistry.enter_request_keepalive(binding)
+
+    # No queued window exists in which a failure tail or retirement could drop
+    # the comment after it was admitted but before its write.
+    assert %{frames: 1, queued: 0, in_flight: 1} = HTTPWriterRegistry.stats(domain)
+    assert {:error, :http_output_busy} = HTTPWriterRegistry.enter_request_keepalive(binding)
+
+    {:ok, response} = HTTPWriterRegistry.prepare(binding, "response")
+    :ok = HTTPWriterRegistry.publish(response)
+    assert {:error, :http_write_in_flight} = HTTPWriterRegistry.checkout(binding)
+    assert :ok = HTTPWriterRegistry.complete(keepalive, :ok)
+
+    # A pending response always wins over a later comment.
+    assert {:error, :http_output_busy} = HTTPWriterRegistry.enter_request_keepalive(binding)
+    assert {:ok, checked, "response"} = HTTPWriterRegistry.checkout(binding)
+    assert :ok = HTTPWriterRegistry.complete(checked, :ok)
+    eventually(fn -> HTTPWriterRegistry.stats(domain).frames == 0 end)
+
+    HTTPWriterRegistry.retire(binding)
+    assert {:error, :http_invocation_closed} = HTTPWriterRegistry.enter_request_keepalive(binding)
+    assert HTTPWriterRegistry.stats(domain).frames == 0
+  end
+
   defp blocked_device do
     parent = self()
 

@@ -295,6 +295,35 @@ defmodule Arbor.MCP.Transport.HTTP.BoundedClientTest do
   end
 
   describe "an absolute :deadline" do
+    test "expires when an event stream consumer returns after the deadline" do
+      bypass = Bypass.open()
+
+      Bypass.expect_once(bypass, "POST", "/mcp", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.resp(200, "data: {}\n\n")
+      end)
+
+      consumer =
+        {nil,
+         fn
+           {:data, _chunk, deadline}, acc ->
+             receive do
+             after
+               max(deadline - System.monotonic_time(:millisecond) + 100, 0) ->
+                 {:ok, acc}
+             end
+
+           :done, _acc ->
+             {:ok, ""}
+         end}
+
+      deadline = System.monotonic_time(:millisecond) + 2_000
+
+      assert {:error, {:http_receive_failed, %Mint.TransportError{reason: :timeout}}} =
+               request(bypass, deadline: deadline, event_stream: consumer)
+    end
+
     test "refuses a request whose deadline has already passed, before connecting" do
       bypass = Bypass.open()
       test_pid = self()

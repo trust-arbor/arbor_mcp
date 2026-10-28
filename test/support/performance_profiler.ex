@@ -527,7 +527,7 @@ defmodule Arbor.MCP.Testing.PerformanceProfiler do
       current_throughput: current_summary.throughput_ops_per_sec,
       throughput_change_percent: throughput_change,
       regressions: regressions,
-      has_regression: length(regressions) > 0
+      has_regression: regressions != []
     }
   end
 end

@@ -108,7 +108,8 @@ defmodule Arbor.MCP.Authorization.OAuthFlow do
       %{client_id: params.client_id}
     )
 
-    with :ok <- reject_custom_state(params),
+    with :ok <- validate_scope_list(params.scopes),
+         :ok <- reject_custom_state(params),
          :ok <- validate_additional_params(params),
          :ok <- Validator.validate_redirect_uri(redirect_uri),
          :ok <- Validator.validate_https_endpoint(auth_endpoint),
@@ -367,6 +368,22 @@ defmodule Arbor.MCP.Authorization.OAuthFlow do
 
   # Private helpers
 
+  # nil means "no scope parameter", so the authorization server applies its
+  # default scopes, as before the list-shape check was added.
+  defp validate_scope_list(nil), do: :ok
+
+  defp validate_scope_list(scopes) do
+    if proper_list_of_strings?(scopes), do: :ok, else: {:error, :invalid_scopes}
+  end
+
+  defp proper_list_of_strings?([]), do: true
+
+  defp proper_list_of_strings?([item | rest]) when is_binary(item) do
+    proper_list_of_strings?(rest)
+  end
+
+  defp proper_list_of_strings?(_other), do: false
+
   defp build_auth_query_params(params, code_challenge, state) do
     base_params = [
       {"response_type", "code"},
@@ -379,7 +396,7 @@ defmodule Arbor.MCP.Authorization.OAuthFlow do
 
     # Add scope if present
     base_params =
-      if params[:scopes] && length(params.scopes) > 0 do
+      if proper_list_of_strings?(params[:scopes]) && params.scopes != [] do
         base_params ++ [{"scope", Enum.join(params.scopes, " ")}]
       else
         base_params

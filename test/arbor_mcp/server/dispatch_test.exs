@@ -7,7 +7,7 @@ defmodule Arbor.MCP.Server.DispatchTest do
 
   use ExUnit.Case, async: true
 
-  alias Arbor.MCP.Server.Dispatch
+  alias Arbor.MCP.Server.{Dispatch, ResultNormalizer}
 
   defmodule FullHandler do
     use Arbor.MCP.Server.Handler
@@ -105,12 +105,64 @@ defmodule Arbor.MCP.Server.DispatchTest do
     def handle_call_tool(_name, _args, state), do: {:error, "no tools", state}
   end
 
+  # resources/read answers keyed by URI: one content item, a list of items,
+  # or the whole result.
+  defmodule ReadHandler do
+    use Arbor.MCP.Server.Handler
+
+    @impl true
+    def handle_list_tools(_cursor, state), do: {:ok, [], nil, state}
+
+    @impl true
+    def handle_call_tool(_name, _args, state), do: {:error, "no tools", state}
+
+    @impl true
+    def handle_read_resource("file:///text", state),
+      do: {:ok, %{uri: "file:///text", text: "a"}, state}
+
+    def handle_read_resource("file:///blob", state),
+      do: {:ok, %{"uri" => "file:///blob", "blob" => "YQ=="}, state}
+
+    def handle_read_resource("file:///list", state),
+      do: {:ok, [%{uri: "file:///list", text: "a"}, %{uri: "file:///list", blob: "YQ=="}], state}
+
+    def handle_read_resource("file:///text-with-contents", state),
+      do: {:ok, %{uri: "file:///text-with-contents", text: "hello", contents: []}, state}
+
+    def handle_read_resource("file:///string-blob-with-contents", state),
+      do:
+        {:ok, %{"uri" => "file:///string-blob-with-contents", "blob" => "YQ==", "contents" => []},
+         state}
+
+    def handle_read_resource("file:///whole", state),
+      do: {:ok, %{contents: [%{uri: "file:///whole", text: "a"}], ttlMs: 5_000}, state}
+
+    def handle_read_resource("file:///whole-with-uri", state),
+      do:
+        {:ok, %{contents: [%{uri: "file:///whole-with-uri", text: "a"}], uri: "file:///a"}, state}
+
+    def handle_read_resource("file:///string-whole-with-uri", state),
+      do:
+        {:ok,
+         %{
+           "contents" => [%{"uri" => "file:///string-whole-with-uri", "text" => "a"}],
+           "uri" => "file:///a"
+         }, state}
+  end
+
   defp request(method, params) do
     %{"jsonrpc" => "2.0", "method" => method, "params" => params, "id" => 1}
   end
 
   defp dispatch(method, params \\ %{}, handler \\ FullHandler, state \\ %{level: nil}) do
     Dispatch.dispatch(request(method, params), handler, state)
+  end
+
+  defp read(uri) do
+    assert {:response, %{"result" => result}, _state} =
+             dispatch("resources/read", %{"uri" => uri}, ReadHandler, %{})
+
+    ResultNormalizer.stringify_keys(result)
   end
 
   describe "method coverage" do
@@ -284,6 +336,60 @@ defmodule Arbor.MCP.Server.DispatchTest do
       params = %{"name" => "bare_map", "arguments" => %{}}
       assert {:response, %{"result" => result}, _state} = dispatch("tools/call", params)
       assert result == %{"content" => %{"value" => 42}}
+    end
+
+    test "resources/read wraps one content item or a list of them" do
+      assert read("file:///text") == %{
+               "contents" => [%{"uri" => "file:///text", "text" => "a"}]
+             }
+
+      assert read("file:///blob") == %{
+               "contents" => [%{"uri" => "file:///blob", "blob" => "YQ=="}]
+             }
+
+      assert read("file:///list") == %{
+               "contents" => [
+                 %{"uri" => "file:///list", "text" => "a"},
+                 %{"uri" => "file:///list", "blob" => "YQ=="}
+               ]
+             }
+    end
+
+    test "resources/read wraps an item with text or blob even beside a contents key" do
+      assert read("file:///text-with-contents") == %{
+               "contents" => [
+                 %{"uri" => "file:///text-with-contents", "text" => "hello", "contents" => []}
+               ]
+             }
+
+      assert read("file:///string-blob-with-contents") == %{
+               "contents" => [
+                 %{
+                   "uri" => "file:///string-blob-with-contents",
+                   "blob" => "YQ==",
+                   "contents" => []
+                 }
+               ]
+             }
+    end
+
+    test "resources/read passes a whole result through, whatever other keys it has" do
+      assert read("file:///whole") == %{
+               "contents" => [%{"uri" => "file:///whole", "text" => "a"}],
+               "ttlMs" => 5_000
+             }
+
+      # A uri beside a contents list is not a content item: wrapping it sent
+      # one item with neither text nor blob.
+      assert read("file:///whole-with-uri") == %{
+               "contents" => [%{"uri" => "file:///whole-with-uri", "text" => "a"}],
+               "uri" => "file:///a"
+             }
+
+      assert read("file:///string-whole-with-uri") == %{
+               "contents" => [%{"uri" => "file:///string-whole-with-uri", "text" => "a"}],
+               "uri" => "file:///a"
+             }
     end
 
     test "roots/list wraps the handler list" do

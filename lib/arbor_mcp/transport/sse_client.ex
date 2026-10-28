@@ -297,7 +297,7 @@ defmodule Arbor.MCP.Transport.SSEClient do
 
           {:error, reason, new_state} ->
             BoundedStream.cancel(ref)
-            Lifetime.deliver(state.parent, {:sse_error, self(), reason})
+            Lifetime.deliver(new_state.parent, {:sse_error, self(), reason})
             {:stop, :normal, new_state}
         end
 
@@ -533,21 +533,32 @@ defmodule Arbor.MCP.Transport.SSEClient do
       event_type: event_type
     })
 
-    # Send to parent
-    Lifetime.deliver(
-      state.parent,
-      {:sse_event, self(),
-       %{
-         type: event_type,
-         data: data,
-         id: id
-       }}
-    )
+    message = {:sse_event, self(), %{type: event_type, data: data, id: id}}
+    Lifetime.deliver(state.parent, message)
+    await_ack(message, state, System.monotonic_time(:millisecond) + state.consumer_ack_timeout)
+  end
+
+  # The consumer can change while an event waits for its acknowledgement. The
+  # HTTP transport opens the GET stream from the client process and reads it
+  # from a receiver task started afterwards, so an event the server writes as
+  # soon as the stream opens (an Arbor server's `connected` event) reaches a
+  # process that doesn't read the stream. Waiting for that process's ack
+  # stalled the stream until the ack deadline closed it, and every later
+  # event was lost. The event now goes to the new consumer, under the same
+  # deadline.
+  defp await_ack(message, state, deadline) do
+    parent = state.parent
 
     receive do
-      {:sse_event_ack, parent} when parent == state.parent -> :ok
+      {:sse_event_ack, ^parent} ->
+        {:ok, state}
+
+      {:change_parent, new_parent} when new_parent != parent ->
+        Lifetime.deliver(new_parent, message)
+        await_ack(message, %{state | parent: new_parent}, deadline)
     after
-      state.consumer_ack_timeout -> {:error, :stream_consumer_timeout}
+      max(deadline - System.monotonic_time(:millisecond), 0) ->
+        {:error, :stream_consumer_timeout, state}
     end
   end
 
@@ -563,8 +574,8 @@ defmodule Arbor.MCP.Transport.SSEClient do
       # reconnect timer and Last-Event-ID state from being applied.
       if Map.get(event, "data") not in [nil, ""] do
         case process_event(event, acc) do
-          :ok -> {:cont, {:ok, maybe_put_last_event_id(acc, id)}}
-          {:error, reason} -> {:halt, {:error, reason, acc}}
+          {:ok, acc} -> {:cont, {:ok, maybe_put_last_event_id(acc, id)}}
+          {:error, _reason, _acc} = error -> {:halt, error}
         end
       else
         {:cont, {:ok, maybe_put_last_event_id(acc, id)}}

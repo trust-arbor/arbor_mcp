@@ -1,10 +1,24 @@
 defmodule Arbor.MCP.Server.RuntimeServicesTest do
   use ExUnit.Case, async: false
 
+  # How long past its charged cutoff a forced stop may take to return. On a
+  # loaded machine forced stops returned up to 615 ms late; a stop that waits
+  # on the blocked process instead of its budget never returns at all.
+  @stop_return_margin_ms 1_000
+
   alias Arbor.MCP.Server.{HandlerServer, ReplayCache, Runtime, Subscriptions}
-  alias Arbor.MCP.Server.Runtime.{Admission, Ref, ServiceAdapter, Services}
+
+  alias Arbor.MCP.Server.Runtime.{
+    Admission,
+    Ref,
+    ServiceAdapter,
+    Services,
+    ShutdownControl
+  }
+
   alias Arbor.MCP.Tasks
   alias Arbor.MCP.Tasks.{Extension, Store}
+  alias Arbor.MCP.Test.ShutdownProbe
 
   defmodule Handler do
     def init(parent), do: {:ok, %{parent: parent, counter: 0}}
@@ -634,18 +648,13 @@ defmodule Arbor.MCP.Server.RuntimeServicesTest do
     assert_receive {:service_initializing, service, _table, guard, _owned}
     {:ok, task_binding} = Services.resolve(runtime, :tasks)
     {:ok, subscription_binding} = Services.resolve(runtime, :subscriptions)
-    started = System.monotonic_time(:millisecond)
-    assert :ok = Runtime.stop(runtime)
+    service_monitor = Process.monitor(service)
+    others = Enum.map([guard, task_binding.server, subscription_binding.server], &monitor/1)
+    stop_within_budget(runtime, 80)
     assert_receive {:service_terminating, ^service}
-    assert System.monotonic_time(:millisecond) - started < 450
-
-    eventually(fn ->
-      Enum.all?(
-        [service, guard, task_binding.server, subscription_binding.server],
-        &(not Process.alive?(&1))
-      )
-    end)
-
+    # It never leaves terminate on its own: the budget's forced cleanup ended it.
+    assert_receive {:DOWN, ^service_monitor, :process, ^service, :killed}
+    for {pid, ref} <- others, do: assert_receive({:DOWN, ^ref, :process, ^pid, _reason}, 1_000)
     assert {:ok, %{"result" => 0}} = Runtime.request(sibling, request(1, "read"))
   end
 
@@ -680,10 +689,12 @@ defmodule Arbor.MCP.Server.RuntimeServicesTest do
 
     assert_receive {:blocked_listener, ^listener}
     [{:shutdown_guard, guard}] = :ets.lookup(Ref.table(runtime), :shutdown_guard)
-    started = System.monotonic_time(:millisecond)
-    assert :ok = Runtime.stop(runtime)
-    assert System.monotonic_time(:millisecond) - started < 450
-    eventually(fn -> not Process.alive?(listener) and not Process.alive?(guard) end)
+    {^listener, listener_monitor} = monitor(listener)
+    {^guard, guard_monitor} = monitor(guard)
+    stop_within_budget(runtime, 80)
+    # A trapping authorizer that never returns is only ended by force.
+    assert_receive {:DOWN, ^listener_monitor, :process, ^listener, :killed}
+    assert_receive {:DOWN, ^guard_monitor, :process, ^guard, _reason}, 1_000
     Task.await(publication, 1_000)
     assert {:ok, %{"result" => 0}} = Runtime.request(sibling, request(1, "read"))
   end
@@ -751,6 +762,18 @@ defmodule Arbor.MCP.Server.RuntimeServicesTest do
   defp receive_response(transport) do
     assert_receive {:transport_message, response}, 1_000
     if transport == :test, do: Jason.decode!(response), else: response
+  end
+
+  defp monitor(pid), do: {pid, Process.monitor(pid)}
+
+  # The blocked process can only be ended by force. ShutdownProbe checks the
+  # shutdown contract against traced instants: the 80 ms cutoff is charged
+  # when stop is entered, :ok only after the observer's confirmation, an
+  # unconfirmed result only at or after the cutoff, and either result within
+  # @stop_return_margin_ms of it.
+  defp stop_within_budget(runtime, budget) do
+    {:ok, control} = ShutdownControl.lookup(Ref.table(runtime))
+    ShutdownProbe.stop_forced(runtime, control, budget, @stop_return_margin_ms)
   end
 
   defp eventually(predicate, attempts \\ 150)

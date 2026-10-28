@@ -114,7 +114,7 @@ defmodule Arbor.MCP.CancellationTest do
         end)
 
       # Wait for request to be tracked
-      wait_until(fn -> length(Client.get_pending_requests(client)) > 0 end)
+      wait_until(fn -> Client.get_pending_requests(client) != [] end)
 
       # Check we have a pending request
       pending = Client.get_pending_requests(client)
@@ -212,7 +212,7 @@ defmodule Arbor.MCP.CancellationTest do
         end)
 
       # Wait for request to be tracked
-      wait_until(fn -> length(Client.get_pending_requests(client)) > 0 end)
+      wait_until(fn -> Client.get_pending_requests(client) != [] end)
 
       # Get the pending request ID from the client
       [request_id] = Client.get_pending_requests(client)
@@ -285,7 +285,7 @@ defmodule Arbor.MCP.CancellationTest do
           Client.call_tool(client, "slow_tool", %{})
         end)
 
-      wait_until(fn -> length(Client.get_pending_requests(client)) > 0 end)
+      wait_until(fn -> Client.get_pending_requests(client) != [] end)
       [request_id] = Client.get_pending_requests(client)
 
       send_server_notification(server, "notifications/cancelled", %{"requestId" => request_id})

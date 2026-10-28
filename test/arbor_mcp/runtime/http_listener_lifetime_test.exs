@@ -1,5 +1,6 @@
 defmodule Arbor.MCP.Server.Runtime.HTTPListenerLifetimeTest do
   use ExUnit.Case, async: false
+  alias Arbor.MCP.HttpPlug.RuntimeWriter
   alias Arbor.MCP.Server.Runtime
 
   alias Arbor.MCP.Server.Runtime.{
@@ -178,6 +179,54 @@ defmodule Arbor.MCP.Server.Runtime.HTTPListenerLifetimeTest do
 
     eventually(fn -> not Process.alive?(HTTPWriterRegistry.guardian(domain)) end)
     assert Process.alive?(socket)
+  end
+
+  test "a listener frame refused by the completion tail is reported, other refusals still raise" do
+    {_root, runtime, _domain} = runtime()
+    socket = socket()
+    {binding, listener, _proof} = establish(runtime, socket)
+    owner = socket()
+    {:ok, gateway} = HTTPGateway.address(runtime)
+
+    assert :ok =
+             as_gateway(gateway, fn ->
+               HTTPWriterRegistry.attach_listener(listener, owner, "registration", 91)
+             end)
+
+    conn =
+      Plug.Test.conn(:post, "/mcp")
+      |> Plug.Conn.put_private(:arbor_mcp_runtime, runtime)
+      |> Plug.Conn.put_private(:arbor_mcp_http_binding, binding)
+      |> Plug.Conn.send_chunked(200)
+
+    assert {:ok, _conn} = call(socket, fn -> keepalive(conn, listener) end)
+    refute call(socket, fn -> HTTPWriterRegistry.listener_tail?(listener, runtime) end)
+
+    # The Listener authorizes its fixed completion: ordinary frames are now
+    # refused exactly like a closed invocation, which chunk/2 cannot tell apart.
+    assert {:ok, _completion} =
+             call(owner, fn -> HTTPWriterRegistry.authorize_listener_completion(listener) end)
+
+    assert call(socket, fn -> HTTPWriterRegistry.listener_tail?(listener, runtime) end)
+    refute HTTPWriterRegistry.listener_tail?(listener, runtime)
+    assert {:error, :http_listener_tail} = call(socket, fn -> keepalive(conn, listener) end)
+
+    assert {:raised, RuntimeWriter.AdmissionError} =
+             call(socket, fn -> raised(fn -> RuntimeWriter.chunk(conn, ":\r\n\r\n") end) end)
+
+    assert :ok = call(socket, fn -> HTTPWriterRegistry.retire(binding) end)
+    refute call(socket, fn -> HTTPWriterRegistry.listener_tail?(listener, runtime) end)
+
+    assert {:raised, RuntimeWriter.AdmissionError} =
+             call(socket, fn -> raised(fn -> keepalive(conn, listener) end) end)
+  end
+
+  defp keepalive(conn, listener), do: RuntimeWriter.listener_chunk(conn, listener, ":\r\n\r\n")
+
+  defp raised(operation) do
+    operation.()
+  rescue
+    exception -> {:raised, exception.__struct__}
   end
 
   defp runtime(opts \\ []) do

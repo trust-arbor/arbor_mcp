@@ -57,9 +57,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   defp establish_timeout(opts) do
     case Keyword.get(opts, :establish_timeout) do
       nil ->
-        {:ok,
-         Keyword.get(opts, :handshake_timeout, @default_handshake_timeout) +
-           EraProbe.timeout(opts)}
+        {:ok, handshake_timeout(opts) + probe_timeout(opts, spawns_server?(opts))}
 
       :infinity ->
         {:ok, :infinity}
@@ -80,9 +78,43 @@ defmodule Arbor.MCP.Client.ConnectionManager do
       do_establish_connection(state, opts)
     end
 
-    retry_opts = Retry.mcp_defaults(retry_policy)
+    retry_opts =
+      retry_policy
+      |> Retry.mcp_defaults()
+      |> never_retry_unconfirmed_cleanup(spawns_server?(opts))
+
     Retry.with_retry(connection_operation, retry_opts)
   end
+
+  # Each attempt starts a new transport, for stdio a new server process. That
+  # never happens while one an earlier attempt opened may still be running,
+  # whatever the policy's own :should_retry? says: it could hold the port or
+  # lock the new one needs.
+  defp never_retry_unconfirmed_cleanup(retry_opts, false = _spawns_server?), do: retry_opts
+
+  defp never_retry_unconfirmed_cleanup(retry_opts, true = _spawns_server?) do
+    should_retry? = Keyword.fetch!(retry_opts, :should_retry?)
+
+    Keyword.put(retry_opts, :should_retry?, fn reason ->
+      not cleanup_unconfirmed?(reason) and should_retry?.(reason)
+    end)
+  end
+
+  @doc false
+  # Whether a failed establishment left something it opened, a server
+  # process above all, not confirmed stopped.
+  def cleanup_unconfirmed?({:probed_server_stop_unconfirmed, _details}), do: true
+  def cleanup_unconfirmed?({:cleanup_failed, _reason, {:error, _cleanup}}), do: true
+  def cleanup_unconfirmed?(_reason), do: false
+
+  @doc false
+  # The part of a spawned server's close result that says whether the server
+  # itself stopped. A reliability component that would not stop is the
+  # wrapper's failure, not the server's.
+  def server_stop_result(:ok), do: :ok
+  def server_stop_result({:error, {:reliability_cleanup, _reason}}), do: :ok
+  def server_stop_result({:error, _reason} = error), do: error
+  def server_stop_result(other), do: {:error, other}
 
   defp do_establish_connection(state, opts) do
     opts = maybe_default_legacy_sse_opts(opts)
@@ -100,6 +132,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
          {:ok, result, state_after_protocol} <-
            transport_mod
            |> establish_protocol(transport_state, opts, era_identity)
+           |> respawn_for_legacy(transport_mod, transport_manager_opts, opts)
            |> close_on_failure(transport_mod),
          state_after_protocol =
            Deadline.put_on_transport(transport_mod, state_after_protocol, nil),
@@ -127,8 +160,12 @@ defmodule Arbor.MCP.Client.ConnectionManager do
       ConnectionScope.established()
       {:ok, new_state}
     else
+      # Unconfirmed cleanup outranks the deadline: callers (a retry, a
+      # reconnect) must see it to keep from starting another server.
       {:error, reason} ->
-        if Deadline.expired?(deadline), do: {:error, :establish_timeout}, else: {:error, reason}
+        if Deadline.expired?(deadline) and not cleanup_unconfirmed?(reason),
+          do: {:error, :establish_timeout},
+          else: {:error, reason}
 
       error ->
         {:error, "Unexpected error during connection: #{inspect(error)}"}
@@ -148,10 +185,23 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   # SSE client) and closing an earlier snapshot would leave that behind.
   defp close_on_failure({:ok, _result, _state} = success, _transport_mod), do: success
 
+  # A failure with no open transport left to close.
+  defp close_on_failure({:error, _reason} = failure, _transport_mod), do: failure
+
+  # A spawned server that cannot be confirmed stopped is reported with the
+  # failure, as {:cleanup_failed, reason, cleanup}, so no retry starts
+  # another beside it.
   defp close_on_failure({:error, reason, latest_state}, transport_mod) do
     ConnectionScope.transport(transport_mod, latest_state)
-    close_quietly(transport_mod, with_cleanup_deadline(transport_mod, latest_state))
-    {:error, reason}
+
+    cleanup = close_quietly(transport_mod, with_cleanup_deadline(transport_mod, latest_state))
+
+    with true <- spawned_server?(transport_mod, latest_state),
+         {:error, _server} = unconfirmed <- server_stop_result(cleanup) do
+      {:error, {:cleanup_failed, reason, unconfirmed}}
+    else
+      _confirmed_or_not_spawned -> {:error, reason}
+    end
   end
 
   # Cleanup gets its own budget, whatever is left of the establishment
@@ -188,17 +238,14 @@ defmodule Arbor.MCP.Client.ConnectionManager do
     result
   rescue
     exception ->
-      ConnectionScope.closed(
-        transport_mod,
-        transport_state,
-        {:error, {:cleanup_exception, exception.__struct__}}
-      )
-
-      :ok
+      result = {:error, {:cleanup_exception, exception.__struct__}}
+      ConnectionScope.closed(transport_mod, transport_state, result)
+      result
   catch
     :exit, reason ->
-      ConnectionScope.closed(transport_mod, transport_state, {:error, {:cleanup_exit, reason}})
-      :ok
+      result = {:error, {:cleanup_exit, reason}}
+      ConnectionScope.closed(transport_mod, transport_state, result)
+      result
   end
 
   defp establish_protocol(transport_mod, transport_state, opts, era_identity) do
@@ -250,7 +297,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   end
 
   defp establish_modern_protocol(transport_mod, transport_state, opts, era_identity, pinned?) do
-    case EraProbe.probe(transport_mod, transport_state, opts) do
+    case probe_era(transport_mod, transport_state, opts) do
       {:ok, discovery, updated_state} ->
         emit_settled_era(:modern, discovery.protocol_version)
         observe_era(era_identity, :modern, discovery.protocol_version, opts)
@@ -273,8 +320,13 @@ defmodule Arbor.MCP.Client.ConnectionManager do
       :modern ->
         establish_modern_protocol(transport_mod, transport_state, opts, era_identity, true)
 
-      :legacy ->
-        establish_legacy_protocol(transport_mod, transport_state, opts, era_identity)
+      {:legacy, version} ->
+        establish_legacy_protocol(
+          transport_mod,
+          transport_state,
+          cached_legacy_opts(opts, version),
+          era_identity
+        )
 
       :miss ->
         probe_then_maybe_legacy(transport_mod, transport_state, opts, era_identity)
@@ -282,19 +334,19 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   end
 
   defp probe_then_maybe_legacy(transport_mod, transport_state, opts, era_identity) do
-    case EraProbe.probe(transport_mod, transport_state, opts) do
+    case probe_era(transport_mod, transport_state, opts) do
       {:ok, discovery, updated_state} ->
         emit_settled_era(:modern, discovery.protocol_version)
         observe_era(era_identity, :modern, discovery.protocol_version, opts)
         {:ok, discovery_as_connection_result(discovery), updated_state}
 
       {:error, probe_error, updated_state} ->
-        if legacy_fallback_evidence?(probe_error) and
-             transport_alive?(transport_mod, updated_state) do
+        with {:ok, legacy_opts} <- legacy_fallback(probe_error, opts),
+             true <- transport_alive?(transport_mod, updated_state) do
           case establish_legacy_protocol(
                  transport_mod,
                  updated_state,
-                 opts,
+                 legacy_opts,
                  era_identity
                ) do
             {:ok, _result, _state} = success ->
@@ -312,8 +364,97 @@ defmodule Arbor.MCP.Client.ConnectionManager do
                 %{probe: probe_error, initialize: initialize_error}}, latest_state}
           end
         else
-          {:error, {:era_probe_failed, probe_error}, updated_state}
+          _no_legacy_evidence ->
+            without_legacy_evidence(transport_mod, updated_state, probe_error)
         end
+    end
+  end
+
+  # A stdio server that predates server/discover may exit on the probe
+  # (Python's `mcp` 1.8 and earlier do) or never answer it. That is no
+  # evidence on the probed pipe, which a late reply could still reach, so
+  # do_establish_connection/2 reaps that child and initializes a new one.
+  defp without_legacy_evidence(transport_mod, transport_state, probe_error) do
+    if respawn_for_legacy?(transport_mod, transport_state, probe_error),
+      do: {:respawn_for_legacy, probe_error, transport_state},
+      else: {:error, {:era_probe_failed, probe_error}, transport_state}
+  end
+
+  defp respawn_for_legacy?(transport_mod, transport_state, {:transport_error, reason}) do
+    spawned_server?(transport_mod, transport_state) and probe_unanswered?(reason)
+  end
+
+  defp respawn_for_legacy?(_transport_mod, _transport_state, _probe_error), do: false
+
+  # The only two triggers: the probe timed out, or the child exited with no
+  # answer at all. Malformed, partial or oversized output and any other
+  # framing error are answers of a sort, and fail the connection.
+  defp probe_unanswered?(:handshake_timeout), do: true
+  defp probe_unanswered?({:connection_error, {:process_exited, _status}}), do: true
+  defp probe_unanswered?(_reason), do: false
+
+  # Under :prefer_modern only, once per attempt: the probed child is closed
+  # (EOF, then TERM and KILL) before a fresh one is started from the same
+  # options for the legacy handshake, all within the establishment deadline.
+  # A child that cannot be confirmed stopped may still hold what the fresh
+  # one needs (a port, a lock), so then no second one is started.
+  defp respawn_for_legacy(
+         {:respawn_for_legacy, probe_error, probed_state},
+         transport_mod,
+         transport_manager_opts,
+         opts
+       ) do
+    ConnectionScope.transport(transport_mod, probed_state)
+    deadline = Keyword.get(opts, :establish_deadline)
+
+    closed = close_quietly(transport_mod, with_cleanup_deadline(transport_mod, probed_state))
+
+    if closed != :ok and server_stop_result(closed) == :ok,
+      do:
+        Logger.warning("Respawning although part of the cleanup failed",
+          reason: LogSummary.describe(closed)
+        )
+
+    with {:closed, :ok} <- {:closed, server_stop_result(closed)},
+         :ok <- check_deadline(deadline),
+         :ok <- Lifetime.opening(),
+         :ok <- ConnectionScope.opening(),
+         {:ok, {_transport_mod, respawned}} <- connect_transport(transport_manager_opts) do
+      initialize_respawned(transport_mod, respawned, probe_error, opts, deadline)
+    else
+      {:closed, cleanup} ->
+        {:error, {:probed_server_stop_unconfirmed, %{probe: probe_error, cleanup: cleanup}}}
+
+      {:error, reason} ->
+        {:error, {:era_probe_and_respawn_failed, %{probe: probe_error, respawn: reason}}}
+    end
+  end
+
+  defp respawn_for_legacy(result, _transport_mod, _transport_manager_opts, _opts), do: result
+
+  # Fails with the respawned transport, which close_on_failure/2 then closes.
+  defp initialize_respawned(transport_mod, respawned, probe_error, opts, deadline) do
+    with :ok <- ConnectionScope.transport(transport_mod, respawned),
+         respawned = Deadline.put_on_transport(transport_mod, respawned, deadline),
+         era_identity = EraCache.identity(transport_mod, respawned, opts),
+         {:ok, _result, _state} = success <-
+           establish_legacy_protocol(transport_mod, respawned, opts, era_identity) do
+      :telemetry.execute(
+        [:arbor_mcp, :client, :era, :fallback],
+        %{},
+        %{from: :modern, to: :legacy, reason: probe_failure_class(probe_error), respawned: true}
+      )
+
+      success
+    else
+      {:error, initialize_error, latest_state} ->
+        {:error,
+         {:era_probe_and_initialize_failed,
+          %{probe: probe_error, initialize: initialize_error, respawned: true}}, latest_state}
+
+      {:error, reason} ->
+        {:error, {:era_probe_and_respawn_failed, %{probe: probe_error, respawn: reason}},
+         respawned}
     end
   end
 
@@ -322,8 +463,13 @@ defmodule Arbor.MCP.Client.ConnectionManager do
       :modern ->
         establish_modern_protocol(transport_mod, transport_state, opts, era_identity, true)
 
-      :legacy ->
-        establish_legacy_protocol(transport_mod, transport_state, opts, era_identity)
+      {:legacy, version} ->
+        establish_legacy_protocol(
+          transport_mod,
+          transport_state,
+          cached_legacy_opts(opts, version),
+          era_identity
+        )
 
       :miss ->
         initialize_then_maybe_modern(transport_mod, transport_state, opts, era_identity)
@@ -340,20 +486,50 @@ defmodule Arbor.MCP.Client.ConnectionManager do
              transport_alive?(transport_mod, transport_state) do
           abandon_legacy_attempt(transport_mod, transport_state, latest_state)
 
-          case EraProbe.probe(transport_mod, transport_state, opts) do
+          case probe_era(transport_mod, transport_state, opts) do
             {:ok, discovery, updated_state} ->
               emit_settled_era(:modern, discovery.protocol_version)
               observe_era(era_identity, :modern, discovery.protocol_version, opts)
               {:ok, discovery_as_connection_result(discovery), updated_state}
 
             {:error, probe_error, updated_state} ->
-              {:error,
-               {:initialize_and_era_probe_failed,
-                %{initialize: initialize_error, probe: probe_error}}, updated_state}
+              retry_legacy_after_probe(
+                transport_mod,
+                updated_state,
+                opts,
+                era_identity,
+                %{initialize: initialize_error, probe: probe_error}
+              )
           end
         else
           {:error, initialize_error, latest_state}
         end
+    end
+  end
+
+  # The probe after a failed initialize can name the legacy revisions the
+  # server does support. When the initialize offered another one, it is tried
+  # once more with the client's preferred revision among them; otherwise the
+  # initialize failure stands.
+  defp retry_legacy_after_probe(transport_mod, transport_state, opts, era_identity, failures) do
+    with version when is_binary(version) <- offered_legacy_version(failures.probe, opts),
+         true <- version != initialize_version(opts),
+         true <- transport_alive?(transport_mod, transport_state) do
+      case establish_legacy_protocol(
+             transport_mod,
+             transport_state,
+             Keyword.put(opts, :protocol_version, version),
+             era_identity
+           ) do
+        {:ok, _result, _state} = success ->
+          success
+
+        {:error, initialize_error, latest_state} ->
+          {:error, {:initialize_and_era_probe_failed, %{failures | initialize: initialize_error}},
+           latest_state}
+      end
+    else
+      _no_other_version -> {:error, {:initialize_and_era_probe_failed, failures}, transport_state}
     end
   end
 
@@ -366,10 +542,93 @@ defmodule Arbor.MCP.Client.ConnectionManager do
     }
   end
 
+  # Over stdio the probe is the first message a newly spawned server reads, so
+  # waiting for its answer also waits for the server to start: a BEAM under
+  # `mix run`, or `npx` or `uvx` on a cold cache, can take seconds, and that
+  # says nothing about its era. Unless `:era_probe_timeout` is given, the probe
+  # there gets `:handshake_timeout`, the time a legacy `initialize` gets for
+  # the same first answer. The establishment deadline still caps it.
+  defp probe_era(transport_mod, transport_state, opts) do
+    timeout = probe_timeout(opts, spawned_server?(transport_mod, transport_state))
+    EraProbe.probe(transport_mod, transport_state, Keyword.put(opts, :era_probe_timeout, timeout))
+  end
+
+  defp probe_timeout(opts, true = _spawned_server?),
+    do: Keyword.get_lazy(opts, :era_probe_timeout, fn -> handshake_timeout(opts) end)
+
+  defp probe_timeout(opts, false = _spawned_server?), do: EraProbe.timeout(opts)
+
+  @doc false
+  # Whether `opts` connect to a stdio server, before it is spawned.
+  def spawns_server?(opts) do
+    case prepare_transport_config(opts) do
+      {:ok, config} -> match?([{Stdio, _transport_opts} | _], Keyword.get(config, :transports))
+      _error -> false
+    end
+  end
+
+  @doc false
+  # Whether this transport runs its own server process (stdio, directly or
+  # inside the reliability wrapper).
+  def spawned_server?(Stdio, _transport_state), do: true
+
+  def spawned_server?(ReliabilityWrapper, %ReliabilityWrapper{} = transport_state) do
+    {wrapped_module, _wrapped_state} = ReliabilityWrapper.unwrap(transport_state)
+    wrapped_module == Stdio
+  end
+
+  def spawned_server?(_transport_mod, _transport_state), do: false
+
+  defp handshake_timeout(opts),
+    do: Keyword.get(opts, :handshake_timeout, @default_handshake_timeout)
+
+  # The options for the initialize that follows a failed probe, when the
+  # failure is evidence of a legacy server.
+  defp legacy_fallback(probe_error, opts) do
+    case offered_legacy_version(probe_error, opts) do
+      nil -> if legacy_fallback_evidence?(probe_error), do: {:ok, opts}, else: :none
+      version -> {:ok, Keyword.put(opts, :protocol_version, version)}
+    end
+  end
+
+  # MCP says to retry with a version the server's UnsupportedProtocolVersionError
+  # lists. When it lists only legacy revisions (an Arbor server running
+  # `protocol_mode: :legacy_only` does), the server is legacy and that retry is
+  # an initialize offering the client's preferred revision among them. A list
+  # that also names a modern or an unknown revision is no such evidence: the
+  # server may be modern. A DiscoverResult is never taken as legacy evidence;
+  # its version mismatch arrives wrapped as :invalid_discover_result.
+  defp offered_legacy_version(
+         {:no_mutually_supported_modern_version, %{server: [_ | _] = server_versions}},
+         opts
+       ) do
+    if Enum.all?(server_versions, &(VersionRegistry.era_for(&1) == :legacy)) do
+      Enum.find(
+        [Keyword.get(opts, :protocol_version), VersionRegistry.preferred_version()] ++
+          VersionRegistry.supported_versions(),
+        &(&1 in server_versions)
+      )
+    end
+  end
+
+  defp offered_legacy_version(_probe_error, _opts), do: nil
+
+  # The revision an initialize built from `opts` offers.
+  defp initialize_version(opts),
+    do: Keyword.get(opts, :protocol_version) || VersionRegistry.preferred_version()
+
   defp legacy_fallback_evidence?({:json_rpc_error, error}) do
     not modern_specific_error?(error)
   end
 
+  # MCP counts an unanswered probe as a legacy server. Here that is a probe
+  # the transport reports timed out, such as an HTTP POST cut short by the
+  # probe's bound. A stdio probe that runs out of time fails instead as
+  # {:transport_error, :handshake_timeout}, which is deliberately not
+  # evidence on that pipe: the server may only be slow to start, and its late
+  # answer to the probe would share the pipe with an initialize sent after it.
+  # :prefer_modern initializes a fresh process instead (see
+  # without_legacy_evidence/3).
   defp legacy_fallback_evidence?({:probe_timeout, _reason}), do: true
   defp legacy_fallback_evidence?({:http_probe_rejected, _response}), do: true
   defp legacy_fallback_evidence?(_reason), do: false
@@ -414,11 +673,21 @@ defmodule Arbor.MCP.Client.ConnectionManager do
           %{era: era, protocol_version: version}
         )
 
-        era
+        if era == :legacy, do: {:legacy, version}, else: era
 
       :miss ->
         :miss
     end
+  end
+
+  # A legacy observation keeps the revision the server negotiated, which may
+  # be an older one the fallback picked from its list; offering it again lets
+  # a server that accepts only that revision be reached on the next connection
+  # too, until the observation expires.
+  defp cached_legacy_opts(opts, version) do
+    if VersionRegistry.era_for(version) == :legacy,
+      do: Keyword.put(opts, :protocol_version, version),
+      else: opts
   end
 
   defp maybe_reset_era_cache(identity, opts) do
@@ -497,6 +766,13 @@ defmodule Arbor.MCP.Client.ConnectionManager do
       {:error, :waiting_for_session} ->
         # SSE not started yet — retry (SSE will start when server provides session ID)
         receive_loop(parent, transport_mod, transport_state)
+
+      {:error, :stream_withdrawn} ->
+        # The server stopped offering the stream this loop reads, such as a
+        # legacy GET stream reopened with 405, while requests and their
+        # responses still work. The connection goes on without a receiver.
+        Lifetime.deliver(parent, {:transport_receiver_stopped, self()})
+        :ok
 
       {:error, :not_supported_in_sync_mode} ->
         # Non-SSE HTTP mode — responses come from send_message directly.
@@ -715,7 +991,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   # connection's overall deadline caps it further.
   defp do_handshake(transport_mod, transport_state, opts) do
     protocol_version = Keyword.get(opts, :protocol_version)
-    handshake_timeout = Keyword.get(opts, :handshake_timeout, @default_handshake_timeout)
+    handshake_timeout = handshake_timeout(opts)
     establish_deadline = Deadline.on_transport(transport_mod, transport_state)
 
     exchange_deadline =
@@ -741,12 +1017,10 @@ defmodule Arbor.MCP.Client.ConnectionManager do
          capabilities,
          deadline
        ) do
-    case send_initialize_request(
-           transport_mod,
-           transport_state,
-           protocol_version,
-           capabilities
-         ) do
+    request =
+      Protocol.encode_initialize(VersionInfo.client_info(), capabilities, protocol_version)
+
+    case send_initialize_request(transport_mod, transport_state, request) do
       {:ok, state_after_send, response_data} ->
         # Non-SSE HTTP mode - response came back immediately
         response_data
@@ -769,14 +1043,36 @@ defmodule Arbor.MCP.Client.ConnectionManager do
             {:error, reason, state_after_send}
         end
 
-      {:error, reason} ->
-        reason = if Deadline.expired?(deadline), do: :handshake_timeout, else: reason
-        {:error, reason, transport_state}
+      # An HTTP server rejects initialize with a 400 carrying the JSON-RPC
+      # error (a modern-only one does), which the other transports deliver
+      # as the response itself: read it the same way. Only an error for this
+      # initialize counts. A null id means the server could not read the
+      # request's id, which a well-formed initialize never causes, and any
+      # other id is someone else's answer (a stale proxy's, say): both stay
+      # the transport error they were.
+      {:error, {:http_error, 400, body}} = error ->
+        initialize_id = request["id"]
+
+        case Protocol.parse_message(body) do
+          {:error, details, ^initialize_id} when is_map(details) ->
+            body
+            |> parse_handshake_response(transport_state)
+            |> with_state(transport_state)
+
+          _other ->
+            {:error, initialize_send_error(error, deadline), transport_state}
+        end
+
+      {:error, _reason} = error ->
+        {:error, initialize_send_error(error, deadline), transport_state}
 
       other ->
         {:error, other, transport_state}
     end
   end
+
+  defp initialize_send_error({:error, reason}, deadline),
+    do: if(Deadline.expired?(deadline), do: :handshake_timeout, else: reason)
 
   defp with_state({:ok, _result, _state} = success, _transport_state), do: success
   defp with_state({:error, reason}, transport_state), do: {:error, reason, transport_state}
@@ -787,16 +1083,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   defp restore_deadline({:error, reason, transport_state}, transport_mod, deadline),
     do: {:error, reason, Deadline.put_on_transport(transport_mod, transport_state, deadline)}
 
-  defp send_initialize_request(
-         transport_mod,
-         transport_state,
-         protocol_version,
-         capabilities
-       ) do
-    client_info = VersionInfo.client_info()
-
-    request = Protocol.encode_initialize(client_info, capabilities, protocol_version)
-
+  defp send_initialize_request(transport_mod, transport_state, request) do
     with {:ok, outbound_request} <- encode_for_transport(transport_mod, request) do
       case transport_mod.send_message(outbound_request, transport_state) do
         {:ok, new_state, response_data} ->

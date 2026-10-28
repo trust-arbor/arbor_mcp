@@ -1,8 +1,8 @@
 defmodule Arbor.MCP.Server.HTTPListenerTest do
   use ExUnit.Case, async: false
 
-  alias Arbor.MCP.Server.{Runtime, Transport}
   alias Arbor.MCP.Server.HTTP.{Bandit, Cowboy}
+  alias Arbor.MCP.Server.{Runtime, Transport}
 
   defmodule Handler do
     use Arbor.MCP.Server.Handler

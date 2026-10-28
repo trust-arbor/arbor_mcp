@@ -431,8 +431,8 @@ defmodule Arbor.MCP.Security.Validation do
   end
 
   defp validate_origin_requirements(%{validate_origin: true, allowed_origins: origins})
-       when is_list(origins) and length(origins) > 0 do
-    :ok
+       when is_list(origins) and origins != [] do
+    if proper_list_of_strings?(origins), do: :ok, else: {:error, :invalid_allowed_origins}
   end
 
   defp validate_origin_requirements(%{validate_origin: true}) do
@@ -440,6 +440,14 @@ defmodule Arbor.MCP.Security.Validation do
   end
 
   defp validate_origin_requirements(_), do: :ok
+
+  defp proper_list_of_strings?([]), do: true
+
+  defp proper_list_of_strings?([item | rest]) when is_binary(item) do
+    proper_list_of_strings?(rest)
+  end
+
+  defp proper_list_of_strings?(_other), do: false
 
   @doc """
   Enforces HTTPS requirement for non-localhost URLs.

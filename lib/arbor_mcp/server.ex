@@ -210,6 +210,13 @@ defmodule Arbor.MCP.Server do
 
   @doc """
   Notifies subscribed clients that the resource list has changed.
+
+  On an HTTP runtime, outside a callback, the change goes to every matching
+  `subscriptions/listen` stream and to every legacy Streamable HTTP session
+  with an open GET stream; a session without one misses it. It returns `:ok`
+  when all of them took it, and `{:error, :partially_delivered}` when some
+  didn't. `notify_tools_changed/1` and `notify_prompts_changed/1` work the
+  same way.
   """
   @spec notify_resources_changed(server()) :: :ok | {:error, atom()}
   def notify_resources_changed(server) do

@@ -73,4 +73,49 @@ defmodule Arbor.MCP.Reliability.CircuitBreakerDeadlineTest do
     refute Process.alive?(worker)
     refute_receive {:circuit_breaker_result, ^worker, _}, 0
   end
+
+  describe "call_with_deadline/3" do
+    # The work outlasts the breaker's configured :timeout: call/3 cuts it
+    # short there, while an operation with its own, longer deadline runs on.
+    test "lets the caller's deadline, not the breaker's :timeout, bound the work" do
+      breaker = start_supervised!({CircuitBreaker, timeout: 100})
+      test_pid = self()
+
+      work = fn ->
+        send(test_pid, {:working, self()})
+
+        receive do
+          :finish -> {:ok, :done}
+        end
+      end
+
+      for {call, expected} <- [
+            {&CircuitBreaker.call(breaker, &1, 5_000), {:error, :timeout}},
+            {&CircuitBreaker.call_with_deadline(breaker, &1, 5_000), {:ok, :done}}
+          ] do
+        caller = Task.async(fn -> call.(work) end)
+        assert_receive {:working, worker}
+        # Past the breaker's 100 ms, then the work finishes.
+        Process.sleep(200)
+        send(worker, :finish)
+        assert Task.await(caller) == expected
+      end
+
+      assert CircuitBreaker.get_stats(breaker).failure_count == 1
+    end
+
+    test "still ends work that outlasts the caller's deadline" do
+      breaker = start_supervised!({CircuitBreaker, timeout: :infinity})
+
+      assert CircuitBreaker.call_with_deadline(
+               breaker,
+               fn ->
+                 receive do
+                   :never -> :ok
+                 end
+               end,
+               100
+             ) == {:error, :timeout}
+    end
+  end
 end

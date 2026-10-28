@@ -144,6 +144,25 @@ defmodule Arbor.MCP.HttpPlugTest do
     end
   end
 
+  # A tools/list whose cursor never ends, 100 ms a page, reporting each page.
+  defmodule SlowEndlessToolServer do
+    use Arbor.MCP.Server.Handler
+
+    @impl true
+    def init(args), do: {:ok, Map.new(args)}
+
+    @impl true
+    def handle_list_tools(cursor, state) do
+      send(state.test_pid, {:runtime_tools_page, cursor})
+      # A handler that is slow on purpose: what is measured is the time.
+      Process.sleep(100)
+      {:ok, [%{"name" => "filler", "inputSchema" => %{"type" => "object"}}], "more", state}
+    end
+
+    @impl true
+    def handle_call_tool(_name, _arguments, state), do: {:ok, %{"content" => []}, state}
+  end
+
   # A tools/list whose cursor never ends.
   defmodule EndlessToolServer do
     use Arbor.MCP.Server.Handler
@@ -1402,6 +1421,49 @@ defmodule Arbor.MCP.HttpPlugTest do
       # A list that never ends fails closed instead of skipping the check.
       assert %{status: 400} = conn = post.(EndlessToolServer, matching)
       assert Jason.decode!(conn.resp_body)["error"]["code"] == -32020
+    end
+
+    # Every mount goes through the runtime, whose x-mcp-header walk runs
+    # inside the request's work: the request's one deadline covers the whole
+    # walk, with no time granted per page (unlike the handler-process path in
+    # MethodHandlers).
+    test "the runtime's x-mcp-header walk stays within the request's deadline" do
+      request =
+        modern_request(
+          "tools/call",
+          %{"name" => "routed_tool", "arguments" => %{"region" => "us-west1", "limit" => 42}},
+          111
+        )
+
+      started = System.monotonic_time(:millisecond)
+
+      conn =
+        put_modern_headers(conn(:post, "/", Jason.encode!(request)), request)
+        |> put_req_header("mcp-param-region", "us-west1")
+        |> put_req_header("content-type", "application/json")
+        |> call_http(
+          mount_opts(
+            handler: SlowEndlessToolServer,
+            handler_args: [test_pid: self()],
+            request_timeout_ms: 300,
+            sse_enabled: false
+          )
+        )
+
+      # The 300 ms deadline plus the runtime's cancel grace, not 100 pages.
+      assert System.monotonic_time(:millisecond) - started < 2_000
+      assert Jason.decode!(conn.resp_body)["error"]["data"]["type"] == "handler_timeout"
+
+      pages =
+        Stream.repeatedly(fn ->
+          receive do
+            {:runtime_tools_page, _cursor} -> 1
+          after
+            0 -> nil
+          end
+        end)
+
+      assert Enum.sum(Enum.take_while(pages, & &1)) <= 5
     end
 
     test "does not expose Mcp-Param values through server logs or telemetry" do

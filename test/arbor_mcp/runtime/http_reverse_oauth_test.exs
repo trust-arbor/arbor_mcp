@@ -327,7 +327,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseOAuthTest do
         {:ok, %{events: events}} =
           SessionManager.replay_page(session.sessions, session.lease, nil, [])
 
-        if event = Enum.find(events, &(&1.data["method"] == "ping")), do: event.data
+        event = Enum.find(events, &(&1.data["method"] == "ping"))
+        if event, do: event.data
       end)
 
     {:ok, gateway} = HTTPGateway.address(host.runtime)

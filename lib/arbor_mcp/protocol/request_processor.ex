@@ -142,9 +142,11 @@ defmodule Arbor.MCP.Protocol.RequestProcessor do
 
   defp process_default_initialize(id, params, state) do
     client_version = Map.get(params, "protocolVersion", VersionRegistry.preferred_version())
-    supported_versions = VersionRegistry.supported_versions()
+    supported_versions = RequestContext.accepted_versions(Map.get(state, :protocol_mode))
 
-    if client_version in supported_versions do
+    # initialize opens a legacy session, so only a legacy revision the mode
+    # accepts can be agreed this way, never a modern one.
+    if client_version in supported_versions and VersionRegistry.era_for(client_version) == :legacy do
       result =
         Initialize.build_initialize_result(params, %{
           "protocolVersion" => client_version,
@@ -160,7 +162,7 @@ defmodule Arbor.MCP.Protocol.RequestProcessor do
         Error.protocol_error(
           -32600,
           "Unsupported protocol version: #{client_version}",
-          %{"supported_versions" => supported_versions}
+          %{"supported" => supported_versions, "supported_versions" => supported_versions}
         )
 
       error_response = ResponseBuilder.build_error_response(error, id)

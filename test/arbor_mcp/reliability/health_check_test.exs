@@ -376,7 +376,7 @@ defmodule Arbor.MCP.Reliability.HealthCheckTest do
       Process.sleep(500)
 
       changes = Agent.get(callback_agent, &Enum.reverse/1)
-      assert length(changes) > 0, "No status changes were recorded"
+      assert changes != [], "No status changes were recorded"
       # Should see transition from unknown to healthy
       assert {:unknown, :healthy} in changes
     end

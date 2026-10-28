@@ -144,7 +144,9 @@ defmodule Arbor.MCP.Server.Context do
   and the test transport the notification is queued on the connection, ahead
   of the callback's result, before this function returns, and refused once the
   request is cancelled; over HTTP the request must own an active SSE response
-  or an addressed legacy session stream.
+  or an addressed legacy session stream. A legacy Streamable HTTP request owns
+  one when its client accepts `text/event-stream`; otherwise its progress goes
+  to its session's GET stream.
   Request-owned SSE acknowledges actual IO before this function returns. Legacy session SSE accepts a durable replay event before
   returning, ordered before the request's final reply; this is not a client-byte
   receipt. A cancelled callback cannot append under a retired phase or lease.

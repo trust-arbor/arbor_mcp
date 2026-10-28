@@ -86,8 +86,9 @@ defmodule Arbor.MCP.Compliance.Features.Tools do
     try do
       # First get available tools
       {:ok, tools_result} = Client.list_tools(test_context.client)
+      assert is_list(tools_result.tools)
 
-      if length(tools_result.tools) > 0 do
+      if tools_result.tools != [] do
         # Call the first available tool
         tool = hd(tools_result.tools)
         {:ok, call_result} = Client.call_tool(test_context.client, tool.name, %{})

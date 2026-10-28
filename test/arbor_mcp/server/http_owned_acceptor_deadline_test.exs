@@ -2,8 +2,8 @@ defmodule Arbor.MCP.Server.HTTPOwnedAcceptorDeadlineTest do
   use ExUnit.Case, async: false
 
   alias Arbor.MCP.Server.HTTP.Cowboy.Owned
-  alias Arbor.MCP.Server.Runtime.{Deadline, Initialization, Ref}
   alias Arbor.MCP.Server.{Runtime, Transport}
+  alias Arbor.MCP.Server.Runtime.{Deadline, Initialization, Ref}
 
   defmodule Handler do
     use Arbor.MCP.Server.Handler

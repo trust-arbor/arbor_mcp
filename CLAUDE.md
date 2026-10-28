@@ -113,7 +113,7 @@ or infer modern behavior from one method in feature code.
 |---|---|---|---|
 | `:legacy_only` | `initialize` | Legacy | Never |
 | `:prefer_legacy` | `initialize` | Both | Probe modern only after an eligible protocol failure on a live transport |
-| `:prefer_modern` | `server/discover` | Both | Initialize only with positive legacy evidence on a live transport |
+| `:prefer_modern` | `server/discover` | Both | Initialize only with positive legacy evidence on a live transport; over stdio, a child that exits on the probe or never answers it is replaced once by a fresh child for `initialize` |
 | `:modern_only` | `server/discover` | Modern | Never |
 
 `1.0.0` defaults to `:prefer_modern`, matching the final rc.8 candidate.
@@ -133,6 +133,11 @@ Era responsibilities:
 - A modern observation is pinned and cannot silently downgrade. Legacy cache
   entries expire so upgraded peers can be discovered. A cached-modern probe
   failure is an operator-visible error.
+- Over stdio under `:prefer_modern`, a probed child that exits or stays silent
+  is closed and replaced by a fresh process for `initialize`, once per
+  attempt and within the establish deadline; the probed pipe is never reused.
+  An HTTP probe timeout is legacy evidence under the preference modes, since
+  each POST is separate. `:modern_only` never falls back or respawns.
 - `Arbor.MCP.Server.RequestContext` validates per-request modern metadata and mode
   compatibility. HandlerServer/stdio connections pin on the first valid
   modern request or legacy `initialize` and must reject later era mixing.
@@ -148,7 +153,8 @@ Era responsibilities:
 When changing protocol code, run focused tests for all four modes and both
 strict-era failure directions. A dual-era success test is insufficient: also
 assert that ambiguous probe failures do not downgrade, cached modern peers do
-not downgrade, and an incompatible request never reaches a Handler callback.
+not downgrade, the stdio respawn happens at most once and never under
+`:modern_only`, and an incompatible request never reaches a Handler callback.
 See `docs/ARCHITECTURE.md`, `docs/TRANSPORT_GUIDE.md`, and
 `docs/getting-started/MIGRATION.md` for the complete model.
 

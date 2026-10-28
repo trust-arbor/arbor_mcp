@@ -73,6 +73,31 @@ defmodule Arbor.MCP.Security.ValidationTest do
     end
   end
 
+  describe "validate_config/1 allowed origins" do
+    test "rejects an improper or non-string allowed origins list" do
+      assert {:error, :invalid_allowed_origins} =
+               Validation.validate_config(%{
+                 validate_origin: true,
+                 allowed_origins: ["https://app.example" | :bad]
+               })
+
+      assert {:error, :invalid_allowed_origins} =
+               Validation.validate_config(%{
+                 validate_origin: true,
+                 allowed_origins: ["https://app.example", :bad]
+               })
+
+      assert {:error, :allowed_origins_required_when_origin_validation_enabled} =
+               Validation.validate_config(%{validate_origin: true, allowed_origins: []})
+
+      assert :ok =
+               Validation.validate_config(%{
+                 validate_origin: true,
+                 allowed_origins: ["https://app.example"]
+               })
+    end
+  end
+
   describe "validate_tls_config/1" do
     test "accepts verify_peer without logging" do
       log =

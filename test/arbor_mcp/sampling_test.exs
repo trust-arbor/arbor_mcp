@@ -323,7 +323,7 @@ defmodule Arbor.MCP.SamplingTest do
   defp valid_model_preferences?(_), do: false
 
   defp valid_sampling_params?(%{"messages" => messages} = params)
-       when is_list(messages) and length(messages) > 0 do
+       when is_list(messages) and messages != [] do
     valid_messages?(messages) and
       valid_model_preferences_param?(params) and
       valid_temperature_param?(params) and

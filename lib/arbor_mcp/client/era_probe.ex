@@ -46,6 +46,9 @@ defmodule Arbor.MCP.Client.EraProbe do
   synchronous HTTP POST included) as well as the wait for the response, and
   the connection's `:establish_deadline` caps it further. A send cut short by
   that bound is a `{:probe_timeout, reason}`, like a response that never came.
+  Over stdio, `Arbor.MCP.Client.ConnectionManager` passes `:handshake_timeout`
+  as the bound unless `:era_probe_timeout` was given, because the wait also
+  covers the newly spawned server starting up.
   """
   @spec probe(module(), term(), keyword()) ::
           {:ok, result(), term()} | {:error, failure(), term()}

@@ -14,7 +14,7 @@ defmodule Arbor.MCP.ClientCompleteTest do
       complete_functions =
         Client.__info__(:functions) |> Enum.filter(fn {name, _arity} -> name == :complete end)
 
-      assert length(complete_functions) >= 1,
+      assert complete_functions != [],
              "Expected complete function to be exported, got: #{inspect(complete_functions)}"
 
       # Verify we have the expected arities

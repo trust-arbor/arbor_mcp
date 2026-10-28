@@ -495,7 +495,7 @@ defmodule Arbor.MCP.Testing.BuildersTest do
 
       # Should have valid content structure
       assert is_list(tool_result["content"])
-      assert length(tool_result["content"]) > 0
+      assert tool_result["content"] != []
 
       # Each content item should be valid
       Enum.each(tool_result["content"], fn content ->

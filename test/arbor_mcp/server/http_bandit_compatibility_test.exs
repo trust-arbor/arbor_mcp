@@ -81,6 +81,7 @@ defmodule Arbor.MCP.Server.HTTPBanditCompatibilityTest do
       {root, listener, port} = start_listener(unquote(ownership))
       socket = listening_socket(port)
       conn = connect(port, unquote(protocol))
+      request = notify_request_stop()
 
       body =
         Jason.encode!(%{
@@ -97,7 +98,8 @@ defmodule Arbor.MCP.Server.HTTPBanditCompatibilityTest do
       headers = [
         {"content-type", "application/json"},
         {"accept", "application/json"},
-        {"mcp-protocol-version", "2025-11-25"}
+        {"mcp-protocol-version", "2025-11-25"},
+        {"x-compatibility-request", request}
       ]
 
       {:ok, conn, ref} = Mint.HTTP.request(conn, "POST", "/mcp", headers, body)
@@ -106,6 +108,11 @@ defmodule Arbor.MCP.Server.HTTPBanditCompatibilityTest do
       result = events |> response_body(ref) |> Jason.decode!()
       assert result["id"] == 1
       assert result["result"]["protocolVersion"] == "2025-11-25"
+      # The client can read the whole response before the server's write
+      # returns; over HTTP/2 the stream hands its frames to the connection
+      # process first. Stopping then reports that write as unsettled IO, so
+      # wait for Bandit to finish the request.
+      assert_receive {:request_stopped, ^request}, 1_000
 
       monitor = Process.monitor(listener)
       socket_monitor = :erlang.monitor(:port, socket)
@@ -224,6 +231,29 @@ defmodule Arbor.MCP.Server.HTTPBanditCompatibilityTest do
     assert response_body(events, ref) =~ "Session ID required"
     refute {:status, ref, 101} in events
     Mint.HTTP.close(conn)
+  end
+
+  # Bandit emits [:bandit, :request, :stop] after the plug, and so its
+  # response write, has returned.
+  defp notify_request_stop do
+    test = self()
+    request = Base.encode16(:crypto.strong_rand_bytes(8))
+    handler = {__MODULE__, request}
+
+    :ok =
+      :telemetry.attach(
+        handler,
+        [:bandit, :request, :stop],
+        fn _event, _measurements, metadata, _config ->
+          with %Plug.Conn{} = conn <- metadata[:conn],
+               [^request] <- Plug.Conn.get_req_header(conn, "x-compatibility-request"),
+               do: send(test, {:request_stopped, request})
+        end,
+        nil
+      )
+
+    on_exit(fn -> :telemetry.detach(handler) end)
+    request
   end
 
   defp start_listener(ownership) do

@@ -327,7 +327,7 @@ defmodule Arbor.MCP.Types.V20251125Test do
             :empty_map
 
           {:type, _, :map, inner_fields}
-          when is_list(inner_fields) and length(inner_fields) > 0 ->
+          when is_list(inner_fields) and inner_fields != [] ->
             :has_fields
 
           _ ->

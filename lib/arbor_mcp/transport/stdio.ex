@@ -393,8 +393,12 @@ defmodule Arbor.MCP.Transport.Stdio do
             receive_frame(state, deadline, opts)
         end
 
-      {:closed, reason, _unfinished} ->
-        Error.connection_error(closed_reason(reason))
+      # Part of a frame before the end is malformed output, not silence.
+      {:closed, reason, unfinished} ->
+        case frame(unfinished) do
+          {:ok, _partial} -> Error.connection_error({:unfinished_frame, closed_reason(reason)})
+          :ignore -> Error.connection_error(closed_reason(reason))
+        end
 
       {:error, :timeout} ->
         {:error, :handshake_timeout}

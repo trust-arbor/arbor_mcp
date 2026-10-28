@@ -21,6 +21,8 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
 
   alias Arbor.MCP.Server.Subscriptions.Origin
 
+  @call_timeout_ms 5_000
+
   def start_link(opts),
     do: GenServer.start_link(__MODULE__, opts, timeout: Initialization.remaining(opts[:table]))
 
@@ -47,15 +49,84 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
   def retire(table, token, reason), do: call(table, {:retire, token, reason})
   def failed(table, token, reason), do: call(table, {:failed, token, reason})
 
-  def http_failure(table, token, binding, format),
-    do: http_control_call(table, {:http_failure, token, binding, format})
+  # Asynchronous: the HTTP gateway is shared by every request of a runtime,
+  # so it never blocks on these. It sends the request and handles the reply,
+  # or the returned deadline, in its own loop (see HTTPGateway). One gateway
+  # sending to one Controller is FIFO, so these keep the order of the
+  # synchronous calls they replace.
+  def deliver_request(table, token, ticket),
+    do: send_control(table, {:deliver, token, ticket}, now() + @call_timeout_ms)
 
-  def http_observation(table, token), do: http_control_call(table, {:http_observation, token})
+  def finish_request(table, token),
+    do: send_control(table, {:finish, token}, now() + @call_timeout_ms)
 
-  defp http_control_call(table, request) do
-    GenServer.call(controller(table), request, 50)
-  catch
-    :exit, _reason -> {:error, :output_unavailable}
+  # edge_result/4 in two requests: the edge prepares the result itself between
+  # them, because a session event's producer has to be the edge.
+  def register_request(table, token, output) do
+    case controller(table) do
+      pid when is_pid(pid) ->
+        send_control(table, {:register, token, output, pid}, now() + @call_timeout_ms)
+
+      _missing ->
+        {:error, :output_unavailable}
+    end
+  end
+
+  def edge_prepared_request(table, token, ticket),
+    do: send_control(table, {:edge_prepared, token, ticket}, now() + @call_timeout_ms)
+
+  #
+  # The failure frame's deadline is the one mark_failure/3 charged, not a
+  # fixed interval. A slow Controller may already have queued that frame when
+  # a short wait expires, and giving up then retired the binding and
+  # discarded it. Once the deadline has passed, no failure frame can be
+  # prepared or written, so giving up there discards nothing.
+  def http_failure_request(table, token, binding, format) do
+    case failure_deadline(table, token) do
+      {:ok, deadline} ->
+        send_control(table, {:http_failure, token, binding, format}, deadline)
+
+      :error ->
+        {:error, :http_failure_expired}
+    end
+  end
+
+  # The observation of a failure frame shares that frame's deadline. Any other
+  # observation gets the ordinary Controller call budget.
+  def http_observation_request(table, token) do
+    deadline =
+      case failure_deadline(table, token) do
+        {:ok, deadline} -> deadline
+        :error -> now() + @call_timeout_ms
+      end
+
+    send_control(table, {:http_observation, token}, deadline)
+  end
+
+  # A retirement the gateway does not wait for.
+  def retire_async(table, token, reason) do
+    case controller(table) do
+      pid when is_pid(pid) -> GenServer.cast(pid, {:retire, token, reason})
+      _missing -> :ok
+    end
+  end
+
+  defp failure_deadline(table, token) do
+    case :ets.lookup(table, {:output_failure, token}) do
+      [{_key, %{deadline: deadline}}] -> {:ok, deadline}
+      _missing -> :error
+    end
+  rescue
+    ArgumentError -> :error
+  end
+
+  defp send_control(table, request, deadline) do
+    with true <- deadline > now(),
+         pid when is_pid(pid) <- controller(table) do
+      {:ok, :gen_server.send_request(pid, request), deadline}
+    else
+      _expired -> {:error, :output_unavailable}
+    end
   end
 
   def http_notification(table, source, binding, deadline),
@@ -189,7 +260,7 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
 
   defp call(table, request) do
     case controller(table) do
-      pid when is_pid(pid) -> GenServer.call(pid, request, 5_000)
+      pid when is_pid(pid) -> GenServer.call(pid, request, @call_timeout_ms)
       _ -> {:error, :output_unavailable}
     end
   catch
@@ -396,30 +467,8 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
   end
 
   def handle_call({:retire, token, reason}, _from, state) do
-    case state.jobs[token] do
-      nil ->
-        :ets.delete(state.table, {:output_commit, token})
-
-        case Admission.current(state.table, token) do
-          {:ok, %{scope: {:connection, connection}}} ->
-            notify_peer(%{output: %{connection: connection}}, reason, state)
-
-          _ ->
-            :ok
-        end
-
-        {:reply, :ok, state}
-
-      job ->
-        if state.writing && state.writing.token == token && state.writing.started? do
-          {:reply, {:error, :output_write_uncertain}, fail_write(:output_write_uncertain, state)}
-        else
-          notify_peer(job, reason, state)
-          OutputLedger.retire_scope(state.ledger, job.scope, reason)
-          settle(job.scheduler, token, {:error, reason})
-          {:reply, :ok, start_write(remove_scope(job.scope, state))}
-        end
-    end
+    {reply, state} = retire_output(token, reason, state)
+    {:reply, reply, state}
   end
 
   def handle_call({:failed, token, reason}, _from, state) do
@@ -546,6 +595,39 @@ defmodule Arbor.MCP.Server.Runtime.OutputController do
          writes: :queue.len(state.writes),
          writing: not is_nil(state.writing)
        }), state}
+
+  @impl true
+  def handle_cast({:retire, token, reason}, state) do
+    {_reply, state} = retire_output(token, reason, state)
+    {:noreply, state}
+  end
+
+  defp retire_output(token, reason, state) do
+    case state.jobs[token] do
+      nil ->
+        :ets.delete(state.table, {:output_commit, token})
+
+        case Admission.current(state.table, token) do
+          {:ok, %{scope: {:connection, connection}}} ->
+            notify_peer(%{output: %{connection: connection}}, reason, state)
+
+          _ ->
+            :ok
+        end
+
+        {:ok, state}
+
+      job ->
+        if state.writing && state.writing.token == token && state.writing.started? do
+          {{:error, :output_write_uncertain}, fail_write(:output_write_uncertain, state)}
+        else
+          notify_peer(job, reason, state)
+          OutputLedger.retire_scope(state.ledger, job.scope, reason)
+          settle(job.scheduler, token, {:error, reason})
+          {:ok, start_write(remove_scope(job.scope, state))}
+        end
+    end
+  end
 
   @impl true
   def handle_info(:reap, state) do

@@ -32,6 +32,14 @@ defmodule Arbor.MCP.Transport.StdioSharedTest do
   test "MCP rejects an unfinished final JSON frame at EOF" do
     state = start(~s(printf '{"text":"unfinished"}'))
 
+    # Reported as cut-off output, not as a server that exited without a word.
+    assert {:error, {:connection_error, {:unfinished_frame, {:process_exited, 0}}}} =
+             Stdio.receive_message(state, 1_000)
+  end
+
+  test "a server that exits after only a banner exited without a frame" do
+    state = start("printf 'starting up'")
+
     assert {:error, {:connection_error, {:process_exited, 0}}} =
              Stdio.receive_message(state, 1_000)
   end

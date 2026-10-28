@@ -115,7 +115,7 @@ defmodule Arbor.MCP.Server.RequestContext do
       ErrorCodes.unsupported_protocol_version(),
       "Unsupported protocol version",
       %{
-        "supported" => supported_versions(protocol_mode),
+        "supported" => accepted_versions(protocol_mode),
         "requested" => requested
       }
     )
@@ -185,6 +185,26 @@ defmodule Arbor.MCP.Server.RequestContext do
       do: {:error, {:protocol_mode_mismatch, mode, era}}
 
   def validate_protocol_mode(_context, _mode), do: :ok
+
+  @doc """
+  The protocol versions a server or mount running `protocol_mode` accepts, in
+  its preference order: the set `validate_protocol_mode/2` lets through, and
+  the `supported` list of an UnsupportedProtocolVersionError.
+
+  No mode (`nil`) restricts nothing, so it accepts every version of both
+  eras, ordered by the application's preferred era.
+  """
+  @spec accepted_versions(Arbor.MCP.Types.protocol_mode() | nil) :: [String.t()]
+  def accepted_versions(mode)
+      when mode in [:legacy_only, :modern_only, :prefer_legacy, :prefer_modern],
+      do: VersionRegistry.supported_versions(mode)
+
+  def accepted_versions(_no_mode),
+    do: VersionRegistry.supported_versions(both_eras(VersionRegistry.protocol_mode()))
+
+  defp both_eras(:legacy_only), do: :prefer_legacy
+  defp both_eras(:modern_only), do: :prefer_modern
+  defp both_eras(mode), do: mode
 
   @doc "Validates that a method belongs to the selected protocol revision."
   @spec validate_method(t()) :: :ok | {:error, context_error()}
@@ -368,13 +388,4 @@ defmodule Arbor.MCP.Server.RequestContext do
     do: %{"reason" => "meta_must_be_object"}
 
   defp validation_error_data(_reason), do: %{"reason" => "invalid_metadata"}
-
-  defp supported_versions(mode)
-       when mode in [:legacy_only, :modern_only, :prefer_legacy, :prefer_modern] do
-    VersionRegistry.supported_versions(mode)
-  end
-
-  defp supported_versions(_mode) do
-    VersionRegistry.supported_versions(VersionRegistry.protocol_mode())
-  end
 end

@@ -80,11 +80,17 @@ defmodule Arbor.MCP.Server.Subscriptions.Delivery do
   def settled?(state), do: state.closing? and is_nil(state.in_flight) and state.queue == []
 
   def offer(ref, method, params, origin, deadline) do
+    # A publication made outside any callback has no origin of its own and
+    # takes the registration's. Compatibility is checked before the origin's
+    # deadline is narrowed to this publication's: an HTTP listener
+    # registration is only compatible with itself, compared whole, so the
+    # narrowed copy never matched and such publications never reached an
+    # HTTP subscription.
     origin = if is_nil(origin), do: ref.registration, else: origin
-    origin = Origin.limit(origin, deadline)
-    deadline = Origin.deadline(origin, deadline)
 
     if Origin.compatible?(origin, ref.registration) do
+      origin = Origin.limit(origin, deadline)
+      deadline = Origin.deadline(origin, deadline)
       message = notification(ref.id, method, params)
 
       Mailbox.offer(ref.mailbox, message, origin, deadline, %{

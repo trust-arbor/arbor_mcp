@@ -189,7 +189,7 @@ defmodule Arbor.MCP.StructuredOutputTest do
 
       # Check unstructured content is present
       assert result.content != nil
-      assert length(result.content) > 0
+      assert result.content != []
       assert result.content |> List.first() |> Map.get(:type) == "text"
 
       # Check structured content is present
@@ -210,7 +210,7 @@ defmodule Arbor.MCP.StructuredOutputTest do
       # Should return map format with content
       assert is_map(result)
       assert result.content != nil
-      assert length(result.content) > 0
+      assert result.content != []
       assert result.content |> List.first() |> Map.get(:type) == "text"
       assert result.content |> List.first() |> Map.get(:text) =~ "Result: 2"
     end
@@ -230,7 +230,7 @@ defmodule Arbor.MCP.StructuredOutputTest do
     test "clients can ignore outputSchema if not supported", %{client: client} do
       # List tools should work even if client doesn't understand outputSchema
       {:ok, %{tools: tools}} = Client.list_tools(client)
-      assert length(tools) > 0
+      assert is_list(tools) and tools != []
 
       # Tool calls should work normally
       {:ok, result} = Client.call_tool(client, "get_weather", %{"location" => "Paris"})

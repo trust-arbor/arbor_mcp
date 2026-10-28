@@ -132,6 +132,10 @@ defmodule Arbor.MCP.Client do
     retired_links: MapSet.new(),
     # Preserve a known cleanup failure until a new connection succeeds.
     cleanup_result: :ok,
+    # Whether the stdio server a dropped connection ran was confirmed
+    # stopped (:ok) or may still be running ({:error, reason}); no new one
+    # is started while it may. Reset when a new connection succeeds.
+    server_stop: :ok,
     # Memoized client handler: nil (not yet initialized), :none (no handler
     # configured) or {module, handler_state}. Initialized once; callback
     # returns update handler_state, so stateful client handlers work.
@@ -190,14 +194,22 @@ defmodule Arbor.MCP.Client do
     included) and waiting for the server's response (default: 10_000).
     On expiry `start_link/1` fails with `{:error, :handshake_timeout}`.
   - `:protocol_mode` - Era policy: `:modern_only`, `:legacy_only`,
-    `:prefer_modern`, or `:prefer_legacy`.
+    `:prefer_modern`, or `:prefer_legacy`. Under `:prefer_modern`, a stdio
+    server that exits without answering the `server/discover` probe, or never
+    answers it, is closed and, once confirmed stopped, started again for a
+    legacy `initialize`, once.
   - `:era_probe_timeout` - Dedicated timeout for the side-effect-free modern
     discovery probe exchange, send included (default: 2_000 milliseconds).
+    Over stdio the probe is the first message a newly started server reads,
+    so the wait for its answer also covers the server starting up; there the
+    default is `:handshake_timeout`, the time `initialize` gets for the same
+    first answer.
   - `:establish_timeout` - Upper bound in milliseconds (or `:infinity`) on
     establishing the connection as a whole: opening the transport, the probe,
     any legacy fallback, `initialize` and `notifications/initialized`, and
     connection retries under `:retry_policy`. Defaults to
-    `:handshake_timeout` plus `:era_probe_timeout`. On expiry `start_link/1`
+    `:handshake_timeout` plus the probe's bound, `:era_probe_timeout` or its
+    default: 12 s, or 20 s over stdio. On expiry `start_link/1`
     fails with `{:error, :establish_timeout}`, and each reconnection attempt is
     bounded the same way. A failed attempt closes the transport it opened, so
     a spawned stdio server does not outlive it; ending an HTTP session it
@@ -234,6 +246,16 @@ defmodule Arbor.MCP.Client do
   `:max_reconnect_attempts` consecutive failures the client gives up and
   settles in `:disconnected`. Requests made while reconnecting return
   `{:error, :not_connected}`.
+
+  Over stdio each connection runs its own server process, and none is
+  started while an earlier one may still be running. When the old server's
+  own stop (after a health check, say) or a failed attempt's cannot be
+  confirmed, including a close that does not finish within the client's
+  cleanup budget, the client stops reconnecting, settles in
+  `:disconnected`, emits `[:arbor_mcp, :client, :reconnect,
+  :cleanup_unconfirmed]`, and `stop/2` returns the cleanup error. A cleanup
+  failure that is not the server's (a worker, a reliability component) is
+  logged and the client reconnects.
 
   Explicit `disconnect/1` or `stop/2` calls never trigger reconnection.
   Passing `reconnect: false` disables the behavior entirely.
@@ -275,6 +297,9 @@ defmodule Arbor.MCP.Client do
   - `[:arbor_mcp, :client, :reconnect, :success]` - reconnected and re-initialized
   - `[:arbor_mcp, :client, :reconnect, :error]` - a single attempt failed
   - `[:arbor_mcp, :client, :reconnect, :timeout]` - gave up after the final attempt
+  - `[:arbor_mcp, :client, :reconnect, :cleanup_unconfirmed]` - stopped
+    reconnecting because a stdio server from an earlier connection or
+    attempt could not be confirmed stopped; metadata `reason`
 
   ## Reliability Options
 
@@ -1468,6 +1493,9 @@ defmodule Arbor.MCP.Client do
     {:initialize_error, %{"code" => ErrorCodes.invalid_request()}}
   end
 
+  defp normalize_connection_error({:probed_server_stop_unconfirmed, _details} = reason),
+    do: {:transport_connect_failed, reason}
+
   defp normalize_connection_error({:cleanup_failed, _reason, {:error, _}} = reason),
     do: {:transport_connect_failed, reason}
 
@@ -2374,6 +2402,17 @@ defmodule Arbor.MCP.Client do
     end
   end
 
+  # The receiver's stream ended for good while the connection stays up: the
+  # server stopped offering its legacy GET stream. Go on without a receiver,
+  # as a connection whose server never offered one does. Its normal exit then
+  # isn't a dead receiver's.
+  def handle_info({:transport_receiver_stopped, pid}, %{receiver_task: %Task{pid: pid}} = state) do
+    Logger.info("The server stopped offering its event stream; continuing without it")
+    {:noreply, %{state | receiver_task: nil}}
+  end
+
+  def handle_info({:transport_receiver_stopped, _pid}, state), do: {:noreply, state}
+
   # The receiver reports a closed transport with {:transport_closed, _}
   # before it exits, so its exit while it is still the receiver means it
   # crashed with the connection (a stdio server, an HTTP session) possibly
@@ -2837,9 +2876,18 @@ defmodule Arbor.MCP.Client do
     {:noreply, handle_transport_down({:transport_forwarder_died, reason}, state)}
   end
 
-  defp abandon_transport(state) do
+  defp abandon_transport(state, close_mode \\ :native) do
     state = retire_links(state)
-    %{state | cleanup_result: remember_cleanup(state.cleanup_result, close_transport(state))}
+    result = close_transport(state, close_mode)
+    state = %{state | cleanup_result: remember_cleanup(state.cleanup_result, result)}
+
+    if ConnectionManager.spawned_server?(state.transport_mod, state.transport_state),
+      do: %{
+        state
+        | server_stop:
+            remember_cleanup(state.server_stop, ConnectionManager.server_stop_result(result))
+      },
+      else: state
   end
 
   # Remembers the links of the transport and receiver this client is about
@@ -2882,13 +2930,19 @@ defmodule Arbor.MCP.Client do
   # Closing is bounded (see Deadline.cleanup_timeout/0): a best-effort
   # session DELETE to a peer that stopped answering must not hold stop/2,
   # disconnect/1 or the client loop for the transport's request timeout.
-  defp close_transport(%{transport_mod: mod, transport_state: transport_state})
+  # `:bounded` runs the close off the client loop and gives up at the
+  # cleanup deadline in a connection scope too, where the native close
+  # otherwise runs in this process: a teardown the client starts on its own
+  # (a health check) must not block it past its cleanup budget.
+  defp close_transport(state, close_mode \\ :native)
+
+  defp close_transport(%{transport_mod: mod, transport_state: transport_state}, close_mode)
        when not is_nil(mod) and not is_nil(transport_state) do
     deadline = cleanup_deadline()
     cleanup_state = Deadline.put_on_transport(mod, transport_state, deadline)
 
     result =
-      if ConnectionScope.current() do
+      if ConnectionScope.current() && close_mode == :native do
         # The explicit bracket already supplies an independent bounded owner;
         # retain its native close-callback caller contract.
         perform_transport_close(mod, cleanup_state)
@@ -2900,7 +2954,7 @@ defmodule Arbor.MCP.Client do
     result
   end
 
-  defp close_transport(_state), do: :ok
+  defp close_transport(_state, _close_mode), do: :ok
 
   defp perform_transport_close(mod, cleanup_state) do
     case mod.close(cleanup_state) do
@@ -3021,12 +3075,58 @@ defmodule Arbor.MCP.Client do
         subscriptions: %{}
     }
 
-    if reconnect_allowed?(cleared_state, previous_status) do
-      schedule_reconnect(cleared_state)
-    else
-      close_notification_listeners(cleared_state, {:transport_closed, reason})
+    cond do
+      not reconnect_allowed?(cleared_state, previous_status) ->
+        close_notification_listeners(cleared_state, {:transport_closed, reason})
+
+      match?({:error, _}, cleared_state.server_stop) ->
+        stop_reconnecting(cleared_state, {:server_stop_unconfirmed, cleared_state.server_stop})
+
+      true ->
+        log_auxiliary_cleanup_failure(cleanup_result)
+        schedule_reconnect(cleared_state)
     end
   end
+
+  # Cleanup that failed for something other than the server process (a
+  # worker, a reliability component) leaves no server running, so the
+  # client reconnects; it says what failed.
+  defp log_auxiliary_cleanup_failure(:ok), do: :ok
+
+  defp log_auxiliary_cleanup_failure({:error, _reason} = failure) do
+    Logger.warning("Reconnecting although part of the cleanup failed",
+      reason: LogSummary.describe(failure)
+    )
+  end
+
+  # A new connection to a stdio server starts a new server process, so none
+  # is started while one an earlier connection or attempt opened may still
+  # be running: it could hold the port or lock the new one needs. The client
+  # stops reconnecting, settles in :disconnected and reports why;
+  # stop/2 returns the cleanup error.
+  defp stop_reconnecting(state, reason) do
+    :telemetry.execute(
+      [:arbor_mcp, :client, :reconnect, :cleanup_unconfirmed],
+      %{attempt: state.reconnect_attempts},
+      %{reason: reason, transport: configured_transport(state), pid: self()}
+    )
+
+    Logger.error("Not reconnecting: an earlier server may still be running",
+      reason: LogSummary.describe(reason)
+    )
+
+    close_notification_listeners(
+      %{
+        state
+        | connection_status: :disconnected,
+          cleanup_result: remember_cleanup(state.cleanup_result, cleanup_error(reason))
+      },
+      {:reconnect_stopped, reason}
+    )
+  end
+
+  defp cleanup_error({:server_stop_unconfirmed, {:error, _} = cleanup}), do: cleanup
+  defp cleanup_error(reason), do: {:error, reason}
 
   # Reply to all pending requests with connection error or cancelled error
   defp reply_pending_with_close_error(reason, state) do
@@ -3353,6 +3453,7 @@ defmodule Arbor.MCP.Client do
               initialized: true,
               reconnect_attempts: 0,
               cleanup_result: :ok,
+              server_stop: :ok,
               health_check_id: nil,
               # A new connection may be to a changed server.
               tool_output_schemas: %{},
@@ -3369,7 +3470,10 @@ defmodule Arbor.MCP.Client do
           %{reason: reason, transport: configured_transport(state), pid: self()}
         )
 
-        handle_reconnect_failure(state, reason)
+        if ConnectionManager.cleanup_unconfirmed?(reason) and
+             ConnectionManager.spawns_server?(state.transport_opts),
+           do: stop_reconnecting(state, reason),
+           else: handle_reconnect_failure(state, reason)
     end
   end
 
@@ -3445,6 +3549,10 @@ defmodule Arbor.MCP.Client do
       state.health_check_id != nil ->
         Logger.warning("MCP health check ping unanswered; treating transport as closed")
         state = %{state | health_check_id: nil, health_check_ref: nil}
+        # The transport is still open (a stdio server may only have hung):
+        # close it before moving on, so a reconnect cannot run a second
+        # server beside it.
+        state = abandon_transport(state, :bounded)
         handle_transport_down(:health_check_timeout, state)
 
       true ->

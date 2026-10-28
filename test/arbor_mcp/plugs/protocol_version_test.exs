@@ -3,6 +3,7 @@ defmodule Arbor.MCP.Plugs.ProtocolVersionTest do
   import Plug.Test
   import Plug.Conn
 
+  alias Arbor.MCP.Internal.VersionRegistry
   alias Arbor.MCP.Plugs.ProtocolVersion
 
   setup do
@@ -143,12 +144,20 @@ defmodule Arbor.MCP.Plugs.ProtocolVersionTest do
       assert body["error"]["message"] == "Invalid Request"
       assert body["error"]["data"]["reason"] =~ "Unsupported protocol version"
 
-      assert body["error"]["data"]["supported_versions"] == [
-               "2025-11-25",
-               "2025-06-18",
-               "2025-03-26",
-               "2024-11-05"
-             ]
+      # Without a configured mode the Plug accepts every version of both
+      # eras, 2026-07-28 included, and lists exactly what it accepts.
+      supported = body["error"]["data"]["supported_versions"]
+      assert supported == Arbor.MCP.Server.RequestContext.accepted_versions(nil)
+      assert "2026-07-28" in supported
+
+      for version <- supported do
+        accepted =
+          conn(:post, "/mcp")
+          |> put_req_header("mcp-protocol-version", version)
+          |> ProtocolVersion.call([])
+
+        refute accepted.halted, "#{version} is listed but rejected"
+      end
     end
 
     test "rejects empty version string" do
@@ -192,6 +201,70 @@ defmodule Arbor.MCP.Plugs.ProtocolVersionTest do
     end
   end
 
+  describe "protocol mode" do
+    test "legacy_only rejects the modern revision and lists only legacy versions" do
+      accepted =
+        conn(:post, "/mcp")
+        |> put_req_header("mcp-protocol-version", "2025-11-25")
+        |> ProtocolVersion.call(protocol_mode: :legacy_only)
+
+      assert accepted.assigns[:mcp_version] == "2025-11-25"
+      refute accepted.halted
+
+      rejected =
+        conn(:post, "/mcp")
+        |> put_req_header("mcp-protocol-version", "2026-07-28")
+        |> ProtocolVersion.call(protocol_mode: :legacy_only)
+
+      assert_mode_versions(rejected, "2026-07-28", :legacy_only)
+    end
+
+    test "modern_only lists only the modern revision for a legacy or unknown header" do
+      accepted =
+        conn(:post, "/mcp")
+        |> put_req_header("mcp-protocol-version", "2026-07-28")
+        |> ProtocolVersion.call(protocol_mode: :modern_only)
+
+      assert accepted.assigns[:mcp_version] == "2026-07-28"
+      refute accepted.halted
+
+      for version <- ["2025-11-25", "2099-01-01"] do
+        rejected =
+          conn(:post, "/mcp")
+          |> put_req_header("mcp-protocol-version", version)
+          |> ProtocolVersion.call(protocol_mode: :modern_only)
+
+        assert_mode_versions(rejected, version, :modern_only)
+      end
+    end
+
+    test "prefer_modern lists modern and legacy revisions for an unknown header" do
+      accepted =
+        conn(:post, "/mcp")
+        |> put_req_header("mcp-protocol-version", "2026-07-28")
+        |> ProtocolVersion.call(protocol_mode: :prefer_modern)
+
+      assert accepted.assigns[:mcp_version] == "2026-07-28"
+      refute accepted.halted
+
+      rejected =
+        conn(:post, "/mcp")
+        |> put_req_header("mcp-protocol-version", "2099-01-01")
+        |> ProtocolVersion.call(protocol_mode: :prefer_modern)
+
+      assert_mode_versions(rejected, "2099-01-01", :prefer_modern)
+    end
+
+    test "prefer_legacy lists legacy revisions before the modern revision" do
+      rejected =
+        conn(:post, "/mcp")
+        |> put_req_header("mcp-protocol-version", "2099-01-01")
+        |> ProtocolVersion.call(protocol_mode: :prefer_legacy)
+
+      assert_mode_versions(rejected, "2099-01-01", :prefer_legacy)
+    end
+  end
+
   describe "helper functions" do
     test "supported_versions/0 returns correct list" do
       assert ProtocolVersion.supported_versions() == [
@@ -205,6 +278,15 @@ defmodule Arbor.MCP.Plugs.ProtocolVersionTest do
     test "default_version/0 returns correct version" do
       assert ProtocolVersion.default_version() == "2025-11-25"
     end
+  end
+
+  defp assert_mode_versions(conn, _version, mode) do
+    assert conn.status == 400
+    assert conn.halted
+    body = Jason.decode!(conn.resp_body)
+
+    assert body["error"]["data"]["supported_versions"] ==
+             VersionRegistry.supported_versions(mode)
   end
 
   describe "init/1" do

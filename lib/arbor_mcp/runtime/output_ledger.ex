@@ -982,24 +982,16 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
       with {:ok, revision, previous} <- read_snapshot(ref) do
         case callback.(previous) do
           {:ok, next, reply} ->
-            if map_size(next.scopes) <= ref.limits.max_output_frames and
-                 metadata_bytes(next) <= ref.limits.max_scope_bytes do
-              match =
-                {{:gate, :"$1", %{generation: :"$2"}},
-                 [
-                   {:"=:=", :"$1", {:const, revision}},
-                   {:"=:=", :"$2", {:const, ref.generation}}
-                 ], [{{:gate, {:const, make_ref()}, {:const, next}}}]}
-
-              cond do
-                deadline <= now() -> {:error, :output_call_expired}
-                next === previous -> reply
-                :ets.select_replace(ref.table, [match]) == 1 -> reply
-                true -> cas_update(ref, callback, deadline, attempts - 1)
-              end
-            else
-              {:error, :output_scope_limit}
-            end
+            apply_cas_transition(
+              ref,
+              callback,
+              deadline,
+              attempts,
+              revision,
+              previous,
+              next,
+              reply
+            )
 
           error ->
             error
@@ -1008,6 +1000,27 @@ defmodule Arbor.MCP.Server.Runtime.OutputLedger do
     end
   rescue
     ArgumentError -> {:error, :output_unavailable}
+  end
+
+  defp apply_cas_transition(ref, callback, deadline, attempts, revision, previous, next, reply) do
+    if map_size(next.scopes) <= ref.limits.max_output_frames and
+         metadata_bytes(next) <= ref.limits.max_scope_bytes do
+      match =
+        {{:gate, :"$1", %{generation: :"$2"}},
+         [
+           {:"=:=", :"$1", {:const, revision}},
+           {:"=:=", :"$2", {:const, ref.generation}}
+         ], [{{:gate, {:const, make_ref()}, {:const, next}}}]}
+
+      cond do
+        deadline <= now() -> {:error, :output_call_expired}
+        next === previous -> reply
+        :ets.select_replace(ref.table, [match]) == 1 -> reply
+        true -> cas_update(ref, callback, deadline, attempts - 1)
+      end
+    else
+      {:error, :output_scope_limit}
+    end
   end
 
   defp read(ref), do: with({:ok, _revision, gate} <- read_snapshot(ref), do: {:ok, gate})

@@ -350,7 +350,7 @@ defmodule Arbor.MCP.PaginationComplianceTest do
 
       assert %{tools: tools} = result
       assert is_list(tools)
-      assert length(tools) > 0
+      assert tools != []
       # Server page size
       assert length(tools) <= 5
 

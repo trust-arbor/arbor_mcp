@@ -366,7 +366,7 @@ defmodule Arbor.MCP.CancellationComprehensiveTest do
 
       # Client should remain functional
       assert {:ok, %{"tools" => tools}} = Client.list_tools(client, format: :map)
-      assert length(tools) > 0
+      assert is_list(tools) and tools != []
     end
 
     test "client handles cancellation of completed requests", %{client: client} do

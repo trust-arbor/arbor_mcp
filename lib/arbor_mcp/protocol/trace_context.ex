@@ -177,7 +177,7 @@ defmodule Arbor.MCP.Protocol.TraceContext do
       true ->
         members = String.split(baggage, ",", trim: false)
 
-        if length(members) < 1 or length(members) > opts[:max_baggage_members] do
+        if members == [] or length(members) > opts[:max_baggage_members] do
           {:error, "baggage"}
         else
           filter_baggage_members(members, MapSet.new(opts[:baggage_allowlist]))

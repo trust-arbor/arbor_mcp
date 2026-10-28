@@ -19,6 +19,17 @@ defmodule Arbor.MCP.Security.DependencyAdvisoryMitigationTest do
     assert Version.compare(locked_version, "1.10.2") in [:eq, :gt]
   end
 
+  test "JOSE requirement and lock exclude versions affected by EEF-CVE-2026-65625 through 65629" do
+    jose_dep = List.keyfind(Project.config()[:deps], :jose, 0)
+    requirement = elem(jose_dep, 1)
+
+    assert Version.match?("1.11.13", requirement)
+    refute Version.match?("1.11.12", requirement)
+
+    locked_version = Lock.read()[:jose] |> elem(2)
+    assert Version.compare(locked_version, "1.11.13") in [:eq, :gt]
+  end
+
   test "Decimal requirement and lock exclude versions affected by EEF-CVE-2026-97853" do
     decimal_dep = List.keyfind(Project.config()[:deps], :decimal, 0)
     requirement = elem(decimal_dep, 1)

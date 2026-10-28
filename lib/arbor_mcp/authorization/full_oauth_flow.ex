@@ -1546,26 +1546,30 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
                active: false
              ),
            {:ok, chunk} <- recv_callback_header_chunk(socket, remaining_ms) do
-        new_size = bytes_read + byte_size(chunk)
+        process_callback_header_chunk(socket, deadline, chunks, bytes_read, chunk)
+      end
+    end
+  end
 
-        if new_size > @max_callback_request_bytes do
-          {:error, :callback_headers_too_large}
-        else
-          chunks = [chunk | chunks]
-          data = chunks |> Enum.reverse() |> IO.iodata_to_binary()
+  defp process_callback_header_chunk(socket, deadline, chunks, bytes_read, chunk) do
+    new_size = bytes_read + byte_size(chunk)
 
-          case :binary.match(data, "\r\n\r\n") do
-            {offset, 4} ->
-              {:ok, binary_part(data, 0, offset + 4)}
+    if new_size > @max_callback_request_bytes do
+      {:error, :callback_headers_too_large}
+    else
+      chunks = [chunk | chunks]
+      data = chunks |> Enum.reverse() |> IO.iodata_to_binary()
 
-            :nomatch ->
-              if valid_callback_line_endings?(data) do
-                do_read_callback_headers(socket, deadline, chunks, new_size)
-              else
-                {:error, :invalid_callback_headers}
-              end
+      case :binary.match(data, "\r\n\r\n") do
+        {offset, 4} ->
+          {:ok, binary_part(data, 0, offset + 4)}
+
+        :nomatch ->
+          if valid_callback_line_endings?(data) do
+            do_read_callback_headers(socket, deadline, chunks, new_size)
+          else
+            {:error, :invalid_callback_headers}
           end
-        end
       end
     end
   end

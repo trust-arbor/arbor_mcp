@@ -45,7 +45,7 @@ defmodule Arbor.MCP.Compliance.Features.ResourceTemplates do
 
       # Validate we got templates
       assert is_list(templates)
-      assert length(templates) > 0
+      assert templates != []
       assert cursor == nil
 
       # Validate each template structure
@@ -90,7 +90,7 @@ defmodule Arbor.MCP.Compliance.Features.ResourceTemplates do
 
       # Extract parameter from template
       params = Regex.scan(~r/\{([^}]+)\}/, template_with_params.uriTemplate)
-      assert length(params) > 0, "Template should have extractable parameters"
+      assert params != [], "Template should have extractable parameters"
     after
       cleanup_test_client(test_context)
     end

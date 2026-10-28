@@ -73,11 +73,11 @@ defmodule Arbor.MCP.HttpPlug.RuntimeSubscriptionStream do
                {:ok, _ticket, wire} <- HTTPWriterRegistry.peek(RuntimeWriter.binding(conn)) do
             case RuntimeWriter.perform_if_ready(conn, effect, wire, &Plug.Conn.chunk/2) do
               {:ok, conn} -> {:ok, conn, kind}
-              {:error, :http_io_not_entered} -> stale_source(conn, context, origin)
+              {:error, :http_io_not_entered} -> stale_source(conn, context, kind, origin)
               _failed -> {:error, :subscription_closed}
             end
           else
-            _closed -> stale_source(conn, context, origin)
+            _closed -> stale_source(conn, context, kind, origin)
           end
         after
           # This synchronous path acknowledges only after actual IO returned,
@@ -94,18 +94,31 @@ defmodule Arbor.MCP.HttpPlug.RuntimeSubscriptionStream do
     end
   end
 
-  defp stale_source(conn, context, origin) do
-    if Origin.valid?(origin),
-      do: {:error, :subscription_closed},
-      else: continue_target(conn, context)
+  # Once the listener has authorized its completion, the tail admits nothing
+  # else: a notification still in flight is dropped while the stream waits
+  # for that completion. A refused completion still ends the stream.
+  defp stale_source(conn, context, kind, origin) do
+    cond do
+      kind != :complete and completion_pending?(conn, context) -> {:ok, conn, :discarded}
+      Origin.valid?(origin) -> {:error, :subscription_closed}
+      true -> continue_target(conn, context)
+    end
   end
 
   defp continue_target(conn, context) do
     case HTTPListenerBinding.validate(context.binding, RuntimeWriter.runtime(conn)) do
-      {:ok, _proof} -> {:ok, conn, :discarded}
-      _closed -> {:error, :subscription_closed}
+      {:ok, _proof} ->
+        {:ok, conn, :discarded}
+
+      _closed ->
+        if completion_pending?(conn, context),
+          do: {:ok, conn, :discarded},
+          else: {:error, :subscription_closed}
     end
   end
+
+  defp completion_pending?(conn, context),
+    do: HTTPWriterRegistry.listener_tail?(context.binding, RuntimeWriter.runtime(conn))
 
   defp prepare_delivery(_conn, _binding, :complete, _message, origin, _deadline),
     do: HTTPWriterRegistry.prepare_listener_completion(Origin.completion(origin))
@@ -128,12 +141,15 @@ defmodule Arbor.MCP.HttpPlug.RuntimeSubscriptionStream do
            {:ok, _},
            HTTPListenerBinding.validate(context.binding, RuntimeWriter.runtime(conn))
          ) do
-      case RuntimeWriter.chunk(conn, ":\r\n\r\n") do
+      case RuntimeWriter.listener_chunk(conn, context.binding, ":\r\n\r\n") do
         {:ok, conn} ->
           stream(conn, %{context | next_keepalive: next_keepalive(context.keepalive)})
 
-        _closed ->
-          conn
+        # The listener authorized its completion after the check above. Only
+        # that completion can follow, so stop keepalives and wait for it; the
+        # listener wait deadline still bounds every later receive.
+        {:error, :http_listener_tail} ->
+          stream(conn, %{context | keepalive: :infinity})
       end
     else
       stream(conn, context)

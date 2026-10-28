@@ -74,6 +74,12 @@ defmodule Arbor.MCP.Internal.OmittedParamsTest do
       end
     end)
 
+    # A legacy client ends its session with a DELETE when it stops.
+    Bypass.stub(bypass, "DELETE", "/mcp", fn conn ->
+      send(test, {:session_deleted, Plug.Conn.get_req_header(conn, "mcp-session-id")})
+      Plug.Conn.resp(conn, 204, "")
+    end)
+
     Bypass.stub(bypass, "GET", "/mcp", fn conn ->
       conn =
         conn
@@ -110,7 +116,15 @@ defmodule Arbor.MCP.Internal.OmittedParamsTest do
         timeout: 5_000
       )
 
+    # End the GET stream first, so stopping the client cannot cut off a
+    # request Bypass is still serving.
+    ref = Process.monitor(stream)
     send(stream, :close)
+    assert_receive {:DOWN, ^ref, :process, ^stream, _reason}, 5_000
+    # Then stop the client while the test still owns Bypass. Left to die with
+    # the test process, its session DELETE raced Bypass's exit-time check.
+    :ok = Client.stop(client)
+    assert_receive {:session_deleted, ["s1"]}
   end
 
   defp json(conn, id, result) do
@@ -127,6 +141,9 @@ defmodule Arbor.MCP.Internal.OmittedParamsTest do
         relay(conn)
 
       :close ->
+        # The client waits this long before it reconnects, which is past the
+        # end of the test.
+        {:ok, conn} = Plug.Conn.chunk(conn, "retry: 60000\n\n")
         conn
     after
       10_000 -> conn

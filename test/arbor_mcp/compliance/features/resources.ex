@@ -73,8 +73,9 @@ defmodule Arbor.MCP.Compliance.Features.Resources do
 
     try do
       {:ok, resources} = Client.list_resources(test_context.client)
+      assert is_list(resources.resources)
 
-      if length(resources.resources) > 0 do
+      if resources.resources != [] do
         resource = hd(resources.resources)
         {:ok, content} = Client.read_resource(test_context.client, resource.uri)
 
@@ -112,8 +113,9 @@ defmodule Arbor.MCP.Compliance.Features.Resources do
 
     try do
       {:ok, resources} = Client.list_resources(test_context.client)
+      assert is_list(resources.resources)
 
-      if length(resources.resources) > 0 do
+      if resources.resources != [] do
         resource_uri = hd(resources.resources).uri
 
         # Subscribe to resource

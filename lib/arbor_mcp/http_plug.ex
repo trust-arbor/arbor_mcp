@@ -110,6 +110,25 @@ defmodule Arbor.MCP.HttpPlug do
   and any requested replay page, then returns. The deprecated GET handshake
   announces its POST alias; the Streamable HTTP GET uses a `connected` event.
   Neither mode starts a standalone global SSEHandler or session manager.
+  Without the option, the `:arbor_mcp, :sse_mode` application environment
+  decides, and the legacy `:arbor_mcp, :test_mode` flag makes it `:oneshot`;
+  pass `sse_mode: :stream` to a test listener whose clients read the GET
+  stream. A `:stream` GET lasts until the Runtime's `:request_timeout_ms`, and
+  an ArborMCP client then opens it again with `Last-Event-ID`; if that GET is
+  refused with 405, the client carries on POST-only.
+
+  In the legacy Streamable HTTP revisions, a request that carries
+  `_meta.progressToken`, from a client that accepts `text/event-stream`, owns
+  its POST response stream, as with the TypeScript SDK's servers. Its progress
+  and its callback's other notifications are written there ahead of the
+  response. `initialize`, batches and requests without a progress token are
+  answered with JSON; their callback's progress, log messages and list changes
+  go to the session's own GET stream. Requests a callback sends to the client,
+  such as `roots/list`, always use that GET stream. Without an open GET stream
+  these return `{:error, :stream_closed}`. Those revisions say a disconnect
+  SHOULD NOT be taken for a cancellation, so a legacy request whose connection
+  goes away runs to its end, under its original deadline, and what it would
+  have written is released; a client cancels with `notifications/cancelled`.
 
   MCP 2026-07-28 does not use that GET stream. A modern
   `subscriptions/listen` POST owns its SSE response directly. The response
@@ -118,11 +137,19 @@ defmodule Arbor.MCP.HttpPlug do
   (default: `15_000`; set `:infinity` to disable).
 
   An ordinary modern request that opts into progress or request logs also owns
-  its POST response stream. `notifications/progress` and
+  its POST response stream. In either era a client accepts an event stream
+  when its `Accept` header names `text/event-stream` with a quality above
+  zero; `text/event-stream;q=0` refuses one, and a wildcard such as `*/*`
+  gets JSON. `notifications/progress` and
   `notifications/message` are written only there, followed by one final
-  JSON-RPC response that closes the stream. A disconnect or chunk failure
-  cancels that request's worker without affecting other
-  requests or subscriptions.
+  JSON-RPC response that closes the stream. SSE comment keepalives are sent
+  every `:request_keepalive_interval_ms` milliseconds (default: `15_000`;
+  set `:infinity` to disable). A failed write cancels that modern request's
+  worker without affecting other requests or subscriptions. The first write
+  after a TCP peer closes usually succeeds, so a write-detected close is
+  usually noticed within two intervals; Cowboy also cancels by terminating the
+  request process when it sees the connection close. JSON responses do not
+  send keepalives.
 
   Mount subscription authorizers are composed with the Runtime service policy;
   both must authorize. Mount queue, message-byte, aggregate-byte and lifetime
@@ -163,6 +190,7 @@ defmodule Arbor.MCP.HttpPlug do
   alias Arbor.MCP.Plugs.ProtectedResourceMetadata
   alias Arbor.MCP.Protocol.{ErrorCodes, Methods}
   alias Arbor.MCP.Server.{AuthInfo, RequestContext, Subscriptions}
+  alias Arbor.MCP.Server.Runtime
 
   alias Arbor.MCP.Server.Runtime.{
     HTTPGateway,
@@ -174,6 +202,7 @@ defmodule Arbor.MCP.HttpPlug do
 
   alias Arbor.MCP.Transport.HTTP.RequestHeaders
   alias Arbor.RPC.{JSONRPC, LogSummary}
+  alias Plug.Conn.Utils, as: ConnUtils
 
   @session_id_max_bytes 128
 
@@ -212,6 +241,8 @@ defmodule Arbor.MCP.HttpPlug do
         subscription_keepalive_interval!(
           Keyword.get(opts, :subscription_keepalive_interval_ms, 15_000)
         ),
+      request_keepalive_interval_ms:
+        request_keepalive_interval!(Keyword.get(opts, :request_keepalive_interval_ms, 15_000)),
       legacy_http_sse: legacy_http_sse,
       legacy_http_sse_path:
         normalize_legacy_http_sse_path(Keyword.get(opts, :legacy_http_sse_path, "/sse")),
@@ -714,12 +745,8 @@ defmodule Arbor.MCP.HttpPlug do
   # Per MCP spec, SSE GET uses the same endpoint as POST.
   # Handle GET requests with Accept: text/event-stream on any path.
   defp do_dispatch("GET", _path, conn, opts) do
-    accepts_sse =
-      conn
-      |> get_req_header("accept")
-      |> Enum.any?(&String.contains?(&1, "text/event-stream"))
-
-    if legacy_http_sse_enabled?(opts) and accepts_sse and mcp_endpoint_path?(conn, opts) do
+    if legacy_http_sse_enabled?(opts) and accepts_event_stream?(conn) and
+         mcp_endpoint_path?(conn, opts) do
       handle_runtime_session_endpoint(conn, opts)
     else
       conn
@@ -1129,14 +1156,12 @@ defmodule Arbor.MCP.HttpPlug do
          _session_id,
          _session_reference
        ) do
-    supported = VersionRegistry.known_versions()
-
+    # The same list, from the same source, the mount's validation uses.
     error_response =
-      JSONRPC.error(
+      RequestContext.error_response(
+        {:unsupported_protocol_version, version},
         request_id,
-        ErrorCodes.unsupported_protocol_version(),
-        "Unsupported MCP protocol version",
-        %{"requested" => version, "supported" => supported}
+        opts.protocol_mode
       )
 
     conn
@@ -1451,6 +1476,7 @@ defmodule Arbor.MCP.HttpPlug do
          {:ok, conn} <- runtime_protocol_version(conn, request, session),
          :ok <- RuntimeWriter.current(conn),
          format = runtime_output_format(conn, request),
+         conn = maybe_prepare_runtime_stream(conn, format, opts, session, request),
          {:ok, _token} <-
            HTTPGateway.submit(runtime, binding, request,
              format: format,
@@ -1460,21 +1486,14 @@ defmodule Arbor.MCP.HttpPlug do
                |> Map.put(:session_id, RuntimeSession.id(session))
                |> runtime_dispatch_opts(conn)
            ),
-         response <- RuntimeWriter.await(conn),
+         wait = runtime_wait(conn, request, opts),
+         {:ok, response, conn} <- await_runtime_output(conn, format, wait),
          :ok <- runtime_response_ready(response) do
-      conn =
-        conn
-        |> Plug.Conn.put_private(
-          :arbor_mcp_http_initialization,
-          not is_nil(RuntimeSession.initialization_request(request))
-        )
-        |> maybe_add_cors_headers(opts)
-        |> add_protocol_version_header()
-        |> maybe_put_session_header(RuntimeSession.id(session))
+      conn = maybe_prepare_runtime_response(conn, format, opts, session, request)
 
       case response do
         {:ok, effect, wire} ->
-          write_runtime_output(conn, effect, wire, format, session, request)
+          write_runtime_output(conn, effect, wire, format, session, request, opts)
 
         {:listener, binding, listener, registration} ->
           Arbor.MCP.HttpPlug.RuntimeSubscriptionStream.serve(
@@ -1486,6 +1505,9 @@ defmodule Arbor.MCP.HttpPlug do
           )
       end
     else
+      {:stream_closed, conn} ->
+        conn
+
       {:error, reason} = error
       when reason in [
              :http_invocation_closed,
@@ -1509,6 +1531,139 @@ defmodule Arbor.MCP.HttpPlug do
   defp runtime_response_ready({:ok, _effect, _wire}), do: :ok
   defp runtime_response_ready({:listener, _binding, _pid, _registration}), do: :ok
   defp runtime_response_ready(error), do: error
+
+  defp maybe_prepare_runtime_stream(conn, :sse, opts, session, request) do
+    conn
+    |> prepare_runtime_response(opts, session, request)
+    |> put_resp_header("content-type", "text/event-stream")
+    |> put_resp_header("x-accel-buffering", "no")
+    |> put_resp_header("cache-control", "no-cache")
+  end
+
+  defp maybe_prepare_runtime_stream(conn, _format, _opts, _session, _request), do: conn
+
+  defp maybe_prepare_runtime_response(conn, :sse, _opts, _session, _request), do: conn
+
+  defp maybe_prepare_runtime_response(conn, _format, opts, session, request),
+    do: prepare_runtime_response(conn, opts, session, request)
+
+  defp prepare_runtime_response(conn, opts, session, request) do
+    conn
+    |> Plug.Conn.put_private(
+      :arbor_mcp_http_initialization,
+      not is_nil(RuntimeSession.initialization_request(request))
+    )
+    |> maybe_add_cors_headers(opts)
+    |> add_protocol_version_header()
+    |> maybe_put_session_header(RuntimeSession.id(session))
+  end
+
+  # Request keepalives find a closed modern stream, whose closure cancels the
+  # request. The legacy revisions say a disconnect SHOULD NOT be taken for a
+  # cancellation, so a legacy request's event stream gets none and runs to its
+  # end. subscriptions/listen has its own keepalive once its listener is set
+  # up, and its stream sends the SSE headers itself; a request keepalive
+  # during a slow listener setup would send them first, so it gets none too.
+  defp runtime_wait(conn, request, opts) do
+    modern? = modern_http_request?(conn, request)
+
+    %{
+      keepalive: request_keepalive_interval(modern?, request, opts),
+      request_id: wait_request_id(request),
+      modern?: modern?
+    }
+  end
+
+  defp request_keepalive_interval(false, _request, _opts), do: :infinity
+
+  defp request_keepalive_interval(true, %{"method" => "subscriptions/listen"}, _opts),
+    do: :infinity
+
+  defp request_keepalive_interval(true, _request, opts), do: opts.request_keepalive_interval_ms
+
+  # A terminal error may echo only an id the Runtime accepts; any other id is
+  # an invalid request, and its error uses a null id.
+  defp wait_request_id(%{"id" => id}) when is_binary(id) or is_integer(id), do: id
+  defp wait_request_id(_request), do: nil
+
+  # Every recursive call is a tail call: a request can wait through one
+  # keepalive per interval for its whole deadline without growing its stack.
+  defp await_runtime_output(conn, :sse, wait) do
+    case RuntimeWriter.await(conn, wait.keepalive) do
+      :idle -> keepalive_runtime_output(conn, wait)
+      response -> sse_runtime_output(conn, response, wait)
+    end
+  end
+
+  defp await_runtime_output(conn, _format, _wait),
+    do: {:ok, RuntimeWriter.await(conn), conn}
+
+  # Once a keepalive or notification has sent the SSE headers, only an output
+  # frame can continue the response: no error status, JSON rejection or
+  # subscription stream may send headers again.
+  defp sse_runtime_output(%{state: :chunked} = conn, {:ok, _effect, _wire} = response, _wait),
+    do: {:ok, response, conn}
+
+  defp sse_runtime_output(%{state: :chunked} = conn, _closed, wait),
+    do: end_closed_stream(conn, wait)
+
+  defp sse_runtime_output(conn, response, _wait), do: {:ok, response, conn}
+
+  # The invocation closed without an output frame (for example on Runtime
+  # stop) after the stream's 200 went out. A connected client still gets a
+  # terminal JSON-RPC error for its request instead of a truncated stream. The
+  # writer registry admits no output for a closed invocation, so this single
+  # fixed-size frame goes straight to the request's own socket, as an adapter
+  # writes its own error response for a request that has not sent headers. A
+  # failed write just ends the stream: the client is gone. Only a modern
+  # request is cancelled with its stream; a legacy one runs to its end.
+  defp end_closed_stream(conn, wait) do
+    if wait.modern?, do: cancel_closed_request(conn)
+
+    error =
+      JSONRPC.error(wait.request_id, ErrorCodes.internal_error(), "Internal server error", %{
+        "type" => "invocation_closed"
+      })
+
+    case chunk_terminal(conn, ["data: ", Jason.encode!(error), "\r\n\r\n"]) do
+      {:ok, conn} -> {:stream_closed, conn}
+      _failed -> {:stream_closed, conn}
+    end
+  end
+
+  defp chunk_terminal(conn, frame) do
+    Plug.Conn.chunk(conn, frame)
+  catch
+    _kind, _reason -> {:error, :http_write_uncertain}
+  end
+
+  defp keepalive_runtime_output(conn, wait) do
+    case RuntimeWriter.request_keepalive(conn) do
+      {:ok, conn} ->
+        await_runtime_output(conn, :sse, wait)
+
+      {:not_entered, conn} ->
+        await_runtime_output(conn, :sse, wait)
+
+      {:closed, conn} ->
+        cancel_closed_request(conn)
+        {:stream_closed, conn}
+
+      {:raised, kind, reason, stacktrace} ->
+        cancel_closed_request(conn)
+        :erlang.raise(kind, reason, stacktrace)
+    end
+  end
+
+  defp cancel_closed_request(conn) do
+    binding = RuntimeWriter.binding(conn)
+
+    with {:ok, proof} <- HTTPWriterBinding.validate(binding, RuntimeWriter.runtime(conn)) do
+      Runtime.cancel_scope(RuntimeWriter.runtime(conn), proof.scope)
+    end
+
+    HTTPWriterRegistry.retire(binding, :request_stream_closed)
+  end
 
   defp runtime_json(body) do
     case Jason.decode(body) do
@@ -1603,8 +1758,33 @@ defmodule Arbor.MCP.HttpPlug do
   defp runtime_output_format(%{private: %{arbor_mcp_legacy_session: _id}}, _request),
     do: :legacy_sse
 
-  defp runtime_output_format(conn, request),
-    do: if(request_stream?(conn, request), do: :sse, else: :json)
+  defp runtime_output_format(conn, request) do
+    if request_stream?(conn, request) or legacy_progress_stream?(conn, request),
+      do: :sse,
+      else: :json
+  end
+
+  # In the legacy Streamable HTTP revisions a server may answer a request's
+  # POST with an event stream that carries the request's own notifications
+  # ahead of its response, as the TypeScript SDK's servers do. A legacy
+  # request that asks for progress, from a client that accepts an event
+  # stream, gets one, so its progress doesn't depend on the session's GET
+  # stream. `initialize` stays JSON, and a client that accepts only JSON keeps
+  # the JSON answer with progress on its session GET stream. Modern requests
+  # are decided by `request_stream?/2` alone.
+  defp legacy_progress_stream?(
+         conn,
+         %{
+           "id" => _id,
+           "method" => method,
+           "params" => %{"_meta" => %{"progressToken" => token}}
+         } = request
+       )
+       when method != "initialize" and not is_nil(token) do
+    not modern_http_request?(conn, request) and accepts_event_stream?(conn)
+  end
+
+  defp legacy_progress_stream?(_conn, _request), do: false
 
   defp runtime_route_policy(%{private: %{arbor_mcp_legacy_session: _id}} = conn, request) do
     members = if is_list(request), do: request, else: [request]
@@ -1739,7 +1919,7 @@ defmodule Arbor.MCP.HttpPlug do
 
   defp decode_runtime_wire(wire), do: Jason.decode!(wire)
 
-  defp write_runtime_output(conn, effect, wire, format, session, request) do
+  defp write_runtime_output(conn, effect, wire, format, session, request, opts) do
     kind = HTTPWriterRegistry.kind(effect)
 
     if kind != :notification and finalize_runtime_session(session, request, wire, conn) != :ok,
@@ -1747,18 +1927,20 @@ defmodule Arbor.MCP.HttpPlug do
 
     initialization_error? = kind == :response and initialization_error?(request, wire)
 
-    conn =
-      if initialization_error?,
-        do:
-          conn |> assign(:suppress_session_header, true) |> delete_resp_header("mcp-session-id"),
-        else: conn
+    conn = if initialization_error?, do: suppress_session_header(conn), else: conn
 
     conn = write_runtime_response(conn, effect, wire, format)
 
     if kind == :notification do
-      case RuntimeWriter.await(conn) do
-        {:ok, effect, wire} -> write_runtime_output(conn, effect, wire, format, session, request)
-        _closed -> raise RuntimeWriter.AdmissionError
+      case await_runtime_output(conn, format, runtime_wait(conn, request, opts)) do
+        {:ok, {:ok, effect, wire}, conn} ->
+          write_runtime_output(conn, effect, wire, format, session, request, opts)
+
+        {:stream_closed, conn} ->
+          conn
+
+        _closed ->
+          raise RuntimeWriter.AdmissionError
       end
     else
       if initialization_error?, do: RuntimeSession.terminate(session)
@@ -1766,6 +1948,15 @@ defmodule Arbor.MCP.HttpPlug do
       conn
     end
   end
+
+  # Headers already sent with a chunked response cannot be withdrawn. No
+  # streamed request is an initialize: a legacy initialize is answered with
+  # JSON, and modern requests have none, so no session header is withdrawn.
+  defp suppress_session_header(%{state: :chunked} = conn),
+    do: assign(conn, :suppress_session_header, true)
+
+  defp suppress_session_header(conn),
+    do: conn |> assign(:suppress_session_header, true) |> delete_resp_header("mcp-session-id")
 
   defp initialization_error?(%{"method" => "initialize"}, wire) when wire != "",
     do: Map.has_key?(decode_runtime_wire(wire), "error")
@@ -1788,7 +1979,7 @@ defmodule Arbor.MCP.HttpPlug do
   defp initialization_error?(_request, _wire), do: false
 
   defp write_runtime_response(conn, effect, "", _format),
-    do: RuntimeWriter.perform(conn, effect, "", &Plug.Conn.send_resp(&1, 202, &2))
+    do: RuntimeWriter.perform(conn, effect, "", &send_accepted/2)
 
   # A successful deprecated POST acknowledges a durable replay commit. The
   # existing physical companion conservatively retains JSON bytes even though
@@ -1827,6 +2018,11 @@ defmodule Arbor.MCP.HttpPlug do
       end
     end)
   end
+
+  # An empty output has nothing to add to a stream whose headers already went
+  # out; the stream then ends when the plug returns.
+  defp send_accepted(%{state: :chunked} = conn, _wire), do: conn
+  defp send_accepted(conn, wire), do: Plug.Conn.send_resp(conn, 202, wire)
 
   defp write_legacy_response(conn, effect, wire, primary) do
     case Arbor.MCP.Server.Runtime.OutputTicket.session(primary) do
@@ -2021,7 +2217,7 @@ defmodule Arbor.MCP.HttpPlug do
   end
 
   defp json_request?(conn) do
-    case Plug.Conn.Utils.content_type(List.first(get_req_header(conn, "content-type"), "")) do
+    case ConnUtils.content_type(List.first(get_req_header(conn, "content-type"), "")) do
       {:ok, "application", subtype, _params} ->
         subtype == "json" or String.ends_with?(subtype, "+json")
 
@@ -3067,11 +3263,74 @@ defmodule Arbor.MCP.HttpPlug do
 
   defp request_stream?(_conn, _request), do: false
 
+  # Whether the client accepts an event stream in either era: its Accept
+  # header names `text/event-stream` with a quality above zero (RFC 9110
+  # section 12.5.1), so `text/event-stream;q=0` refuses one. A wildcard such
+  # as `*/*` or `text/*` doesn't opt in: the MCP spec asks clients to list
+  # `text/event-stream` itself, and JSON is always a valid answer to a POST.
+  # Commas and semicolons inside a quoted parameter value don't separate
+  # anything, so a range's own `q` can't be cut off from it; a header with an
+  # unterminated quoted string doesn't opt in.
   defp accepts_event_stream?(conn) do
     conn
     |> get_req_header("accept")
-    |> Enum.any?(&String.contains?(&1, "text/event-stream"))
+    |> Enum.any?(fn header ->
+      case split_unquoted(header, ?,) do
+        {:ok, ranges} -> Enum.any?(ranges, &event_stream_range?/1)
+        :error -> false
+      end
+    end)
   end
+
+  defp event_stream_range?(range) do
+    with {:ok, [media | params]} <- split_unquoted(range, ?;),
+         "text/event-stream" <- media |> String.trim() |> String.downcase() do
+      positive_quality?(quality(params))
+    else
+      _other -> false
+    end
+  end
+
+  # The weight is the `q` parameter, whose value is a bare qvalue (RFC 9110
+  # section 12.4.2). A range without one has quality 1.
+  defp quality(params) do
+    Enum.find_value(params, "1", fn param ->
+      case String.split(param, "=", parts: 2) do
+        [name, value] -> if String.downcase(String.trim(name)) == "q", do: String.trim(value)
+        _other -> nil
+      end
+    end)
+  end
+
+  # A malformed qvalue, a quoted one included, makes its range unusable, so it
+  # doesn't opt in either.
+  defp positive_quality?(q) do
+    Regex.match?(~r/\A(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)\z/, q) and
+      not Regex.match?(~r/\A0(?:\.0{0,3})?\z/, q)
+  end
+
+  # Splits a header value at `separator` outside quoted strings (RFC 9110
+  # section 5.6.4). Inside one, a backslash escapes the next byte, so an
+  # escaped quote doesn't end it.
+  defp split_unquoted(value, separator), do: split_unquoted(value, separator, false, "", [])
+
+  defp split_unquoted(<<>>, _separator, true, _part, _parts), do: :error
+
+  defp split_unquoted(<<>>, _separator, false, part, parts),
+    do: {:ok, Enum.reverse([part | parts])}
+
+  defp split_unquoted(<<?\\, byte, rest::binary>>, separator, true, part, parts),
+    do: split_unquoted(rest, separator, true, <<part::binary, ?\\, byte>>, parts)
+
+  defp split_unquoted(<<?", rest::binary>>, separator, quoted?, part, parts),
+    do: split_unquoted(rest, separator, not quoted?, <<part::binary, ?">>, parts)
+
+  defp split_unquoted(<<byte, rest::binary>>, separator, false, part, parts)
+       when byte == separator,
+       do: split_unquoted(rest, separator, false, "", [part | parts])
+
+  defp split_unquoted(<<byte, rest::binary>>, separator, quoted?, part, parts),
+    do: split_unquoted(rest, separator, quoted?, <<part::binary, byte>>, parts)
 
   defp process_mcp_request(%{"method" => "subscriptions/listen"} = request, opts) do
     open_http_subscription(request, opts)
@@ -3210,6 +3469,17 @@ defmodule Arbor.MCP.HttpPlug do
   defp subscription_keepalive_interval!(interval) do
     raise ArgumentError,
           ":subscription_keepalive_interval_ms must be a positive integer or :infinity, " <>
+            "got: #{inspect(interval)}"
+  end
+
+  defp request_keepalive_interval!(:infinity), do: :infinity
+
+  defp request_keepalive_interval!(interval) when is_integer(interval) and interval > 0,
+    do: interval
+
+  defp request_keepalive_interval!(interval) do
+    raise ArgumentError,
+          ":request_keepalive_interval_ms must be a positive integer or :infinity, " <>
             "got: #{inspect(interval)}"
   end
 

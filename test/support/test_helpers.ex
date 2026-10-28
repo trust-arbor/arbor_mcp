@@ -370,9 +370,14 @@ defmodule Arbor.MCP.TestHelpers do
   end
 
   # Capture this Runtime's actual listener before registering its exit cleanup.
+  # The cleanup is the only thing that stops the Runtime. Left linked, the
+  # root also shut down when ExUnit ended the test process with :shutdown,
+  # and a root that died during Runtime.stop/1 made it return
+  # {:error, :shutdown_control_unavailable}.
   defp register_cleanup(pid, port) do
     {:ok, %{listener: listener}} = Arbor.MCP.Server.Transport.http_listener(pid)
     socket = listening_socket(port)
+    Process.unlink(pid)
 
     on_exit(fn ->
       root_monitor = Process.monitor(pid)

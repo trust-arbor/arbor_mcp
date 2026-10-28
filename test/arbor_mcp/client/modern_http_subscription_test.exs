@@ -129,6 +129,26 @@ defmodule Arbor.MCP.Client.ModernHTTPSubscriptionTest do
     assert_eventually(fn -> Subscriptions.entries(runtime: runtime) == [] end)
   end
 
+  # Outside a callback a publication has no origin of its own and takes the
+  # subscription's registration. It used to fail that registration's
+  # compatibility check, so it never arrived.
+  test "receives a list change the server sends outside any callback", %{
+    runtime: runtime,
+    client: client
+  } do
+    assert {:ok, subscription} =
+             Client.listen(client, %{"toolsListChanged" => true}, timeout: 2_000)
+
+    assert :ok = Arbor.MCP.Server.notify_tools_changed(runtime)
+
+    assert_receive {:ex_mcp_subscription, ^subscription, "notifications/tools/list_changed",
+                    _params},
+                   1_000
+
+    assert :ok = Subscription.cancel(subscription, "test complete")
+    assert_eventually(fn -> Subscriptions.entries(runtime: runtime) == [] end)
+  end
+
   test "reopens and resynchronizes after an abrupt HTTP response-stream close", %{
     runtime: runtime,
     client: client

@@ -112,13 +112,17 @@ Client mode options:
 
 - `:era_probe_timeout` bounds the side-effect-free `server/discover` probe
   exchange, including a synchronous HTTP POST; the default is `2_000`
-  milliseconds.
+  milliseconds. Over stdio the probe is the first message a newly started
+  server reads, so the wait also covers the server starting up (a BEAM under
+  `mix run`, or `npx` or `uvx` on a cold cache, can take seconds); there the
+  default is `:handshake_timeout`, as for a legacy `initialize`.
 - `:handshake_timeout` bounds the legacy `initialize` exchange the same way;
   the default is `10_000` milliseconds.
 - `:establish_timeout` bounds establishing the connection as a whole, probe,
-  fallback, handshake and connection retries included; the default is
-  `:handshake_timeout` plus `:era_probe_timeout`, and on expiry
-  `start_link/1` fails with `{:error, :establish_timeout}`.
+  fallback, respawn, handshake and connection retries included; the default
+  is `:handshake_timeout` plus the probe's bound (`:era_probe_timeout` or its
+  default): 12 s, or 20 s over stdio. On expiry `start_link/1` fails with
+  `{:error, :establish_timeout}`.
 - `:era_cache_legacy_ttl` controls how long a legacy observation is reused;
   the default is `300_000` milliseconds. Modern observations do not expire
   and cannot be replaced by automatic fallback.
@@ -129,11 +133,44 @@ Client mode options:
   cannot be identified from its connected state. Never include raw secrets;
   ArborMCP hashes the configured identity.
 
-Fallback is deliberately narrow. A modern timeout, transport failure,
-recognized modern error, authentication error, or cached-modern probe failure
-does not trigger `initialize`. Similarly, `:prefer_legacy` probes modern only
-after a protocol-level legacy failure while the transport remains usable.
-Strict modes never fall back.
+Fallback is deliberately narrow. `:prefer_modern` sends `initialize` after
+a probe in exactly these cases:
+
+- **On the same connection**, when the probe's answer is evidence of a
+  legacy server, as MCP 2026-07-28 defines it: a JSON-RPC error that is not
+  a recognized modern one (over stdio, typically a live server's `-32601`),
+  an UnsupportedProtocolVersionError (`-32022`) whose `supported` list names
+  only legacy revisions, as a `protocol_mode: :legacy_only` server sends
+  (`initialize` then offers the client's preferred listed revision), an HTTP
+  `400`, `404` or `405` rejection of the probe, or an HTTP probe that gets
+  no answer within `:era_probe_timeout`. Each HTTP POST stands alone,
+  so a late answer to the probe cannot reach the `initialize` that follows.
+- **On a fresh stdio process**, when the stdio server exits without
+  answering the probe at all, as Python `mcp` 1.8 and earlier do, or the
+  probe gets no answer within its bound. A late answer could still arrive
+  on that pipe, so the client closes the process (EOF, then TERM and KILL)
+  and, once that close is confirmed, starts a fresh one from the same
+  options and initializes it. That happens once per connection attempt,
+  within `:establish_timeout`. When the first process cannot be confirmed
+  stopped, no second one is started, no `:retry_policy` or reconnect starts
+  one either, and `start_link/1` returns
+  `{:error, {:transport_connect_failed, {:probed_server_stop_unconfirmed, %{probe: ..., cleanup: ...}}}}`.
+  A modern-only server fails on that `initialize` with the versions it
+  supports.
+
+Nothing else triggers `initialize`: any other recognized modern error, an
+authentication error, a cached-modern probe failure, any other transport
+failure, and over stdio malformed output all fail the connection.
+Malformed output is a JSON-looking line (one starting with `{` or `[`) that
+is not valid JSON-RPC, a JSON-RPC message other than a notification that is
+not the answer to the probe (a response to another id, say), a frame cut
+off when the server exits, or one larger than `:max_frame_bytes`. Two kinds
+of output are no answer at all: valid JSON-RPC notifications, which the
+probe skips while it waits (a log message, say), and non-JSON lines such as
+banners and logs, which the stdio transport ignores everywhere. A server
+that sends only those and then exits counts as exiting without answering. Similarly, `:prefer_legacy`
+probes modern only after a protocol-level legacy failure while the transport
+remains usable. Strict modes never fall back or respawn.
 
 `protocol_version` is a legacy revision preference, not an era switch or a
 statement of the latest upstream MCP revision. The
@@ -1345,6 +1382,22 @@ Set `:subscription_keepalive_interval_ms` to a positive integer or
 `:infinity`. Disabling keepalives delays detection of a quiet peer disconnect
 until the next notification or server-initiated closure.
 
+Other modern requests that use an SSE response stream also write comment
+keepalives; `subscriptions/listen` uses only the subscription interval above,
+and a legacy request's event stream gets none, since a legacy disconnect is
+not a cancellation.
+Set `:request_keepalive_interval_ms` to a positive integer (default `15_000`)
+or `:infinity`, either on an `Arbor.MCP.HttpPlug` mount or in an owned
+server's `http:` options. A failed write cancels the request handler and
+releases its scheduler and writer capacity. Over TCP the first write after
+the peer closes usually succeeds and only the next one fails, so on Bandit a
+closed stream is usually noticed within two intervals. Cowboy terminates the
+request process as soon as it sees the connection close, which cancels the
+request without waiting for a write, for SSE and JSON responses alike. This
+setting does not change JSON responses or the original request deadline. On
+Bandit, a quiet disconnect on a JSON response is detected only when the server
+writes or the request deadline expires.
+
 ## Legacy notifications (MCP 2024-11-05 through 2025-11-25)
 
 Legacy peers deliver `notifications/tools/list_changed`,
@@ -1503,7 +1556,8 @@ intermediary to apply a smaller header-size limit and reject early.
 For response streams, use an HTTP/1.1-or-newer upstream connection, disable
 request and response buffering, disable transformation/caching, preserve
 `Content-Type: text/event-stream` and `X-Accel-Buffering: no`, and set the
-proxy idle timeout above `:subscription_keepalive_interval_ms`. The automated
+proxy idle timeout above `:subscription_keepalive_interval_ms` and
+`:request_keepalive_interval_ms`. The automated
 proxy-boundary matrix sends literal HTTP bytes through two Cowboy connections
 and a normalizing, buffering forwarding hop. Deployment CI should run the same
 valid/duplicate/oversized/stream cases against the exact Nginx, HAProxy,

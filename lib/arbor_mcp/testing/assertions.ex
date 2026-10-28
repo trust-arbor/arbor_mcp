@@ -237,7 +237,7 @@ defmodule Arbor.MCP.Testing.Assertions do
 
     content_list = result["content"]
     assert is_list(content_list), "Tool result content must be a list"
-    assert length(content_list) > 0, "Tool result must have at least one content item"
+    assert content_list != [], "Tool result must have at least one content item"
 
     Enum.each(content_list, fn content_item ->
       case Protocol.deserialize(content_item) do

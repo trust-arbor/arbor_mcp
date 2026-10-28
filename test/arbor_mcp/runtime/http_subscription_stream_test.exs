@@ -2,6 +2,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPSubscriptionStreamTest do
   use ExUnit.Case, async: false
   alias Arbor.MCP.HttpPlug
   alias Arbor.MCP.Server.Runtime
+  alias Arbor.MCP.Server.SubscriptionListener
 
   alias Arbor.MCP.Server.Runtime.{
     Deadline,
@@ -110,6 +111,64 @@ defmodule Arbor.MCP.Server.Runtime.HTTPSubscriptionStreamTest do
     eventually(fn -> HTTPWriterRegistry.stats(domain).frames == 0 end)
   end
 
+  test "a notification refused by the listener's completion tail is discarded and the completion still arrives" do
+    runtime = runtime(services: [subscriptions: [options: [max_lifetime_ms: 3_000]]])
+    socket = stream(runtime, true)
+    assert_receive {:stream_headers, ^socket, 200}, 1_000
+    assert_receive {:stream_wire, ^socket, acknowledgment}, 1_000
+    assert acknowledgment =~ "notifications/subscriptions/acknowledged"
+    # The socket is now blocked inside a keepalive's actual IO.
+    assert_receive {:keepalive_entered, ^socket}, 1_000
+    {source, _cutoff} = publish(runtime)
+    assert_receive {:published, %{enqueued: 1}, _worker}, 1_000
+    {listener, _cutoff} = ready_listener(socket)
+    # Close while the notification is in flight: the listener authorizes its
+    # fixed completion (the tail) and queues it behind that notification.
+    :ok = SubscriptionListener.close(listener)
+    _ = :sys.get_state(listener)
+    send(socket, :return_io)
+    completion = await_completion(socket)
+    assert completion =~ "\"resultType\":\"complete\""
+    assert_receive {:stream_returned, ^socket, 200}, 1_000
+    settle(source)
+  end
+
+  test "a stream parked in its listener's completion tail waits for the completion without spinning" do
+    runtime =
+      runtime(
+        request_timeout_ms: 250,
+        services: [subscriptions: [options: [max_lifetime_ms: 3_000]]]
+      )
+
+    socket = stream(runtime, true)
+    assert_receive {:stream_headers, ^socket, 200}, 1_000
+    assert_receive {:stream_wire, ^socket, _acknowledgment}, 1_000
+    assert_receive {:keepalive_entered, ^socket}, 1_000
+    {source, _cutoff} = publish(runtime)
+    assert_receive {:published, %{enqueued: 1}, _worker}, 1_000
+    {listener, cutoff} = ready_listener(socket)
+    settle(source)
+    :ok = SubscriptionListener.close(listener)
+    _ = :sys.get_state(listener)
+    # Hold the listener so the completion stays queued behind the in-flight
+    # notification. That notification's own cutoff then passes, so the socket
+    # retires it without asking the listener and has nothing left to write.
+    :ok = :sys.suspend(listener)
+    Process.sleep(max(0, cutoff + 10 - Deadline.now()))
+    waits = trace_waits(socket)
+    send(socket, :return_io)
+    # One wait follows the returned IO and one the retired notification; every
+    # other wait ends a 50 ms receive, so 300 ms allows at most 8. A retry
+    # without that receive makes tens of thousands of waits in this window.
+    assert collect_waits(socket, Deadline.now() + 300, 0) <= 10
+    stop_trace(socket, waits)
+    assert Process.alive?(socket)
+    :ok = :sys.resume(listener)
+    completion = await_completion(socket)
+    assert completion =~ "\"resultType\":\"complete\""
+    assert_receive {:stream_returned, ^socket, 200}, 1_000
+  end
+
   defp runtime(extra) do
     root =
       start_supervised!({Runtime,
@@ -213,6 +272,37 @@ defmodule Arbor.MCP.Server.Runtime.HTTPSubscriptionStreamTest do
 
     HTTPWriterRegistry.complete(effect, :ok)
     HTTPWriterRegistry.retire(binding)
+  end
+
+  defp ready_listener(socket) do
+    eventually(fn ->
+      Enum.find_value(elem(Process.info(socket, :messages), 1), fn
+        {:ex_mcp_subscription_ready, listener, _id, cutoff} -> {listener, cutoff}
+        _other -> nil
+      end)
+    end)
+  end
+
+  defp trace_waits(socket) do
+    waits = {HTTPWriterRegistry, :listener_wait_deadline, 2}
+    1 = :erlang.trace_pattern(waits, true, [:global])
+    1 = :erlang.trace(socket, true, [:call])
+    on_exit(fn -> :erlang.trace_pattern(waits, false, [:global]) end)
+    waits
+  end
+
+  defp stop_trace(socket, waits) do
+    :erlang.trace(socket, false, [:call])
+    :erlang.trace_pattern(waits, false, [:global])
+  end
+
+  defp collect_waits(socket, deadline, count) do
+    receive do
+      {:trace, ^socket, :call, {HTTPWriterRegistry, :listener_wait_deadline, _args}} ->
+        collect_waits(socket, deadline, count + 1)
+    after
+      Deadline.remaining(deadline) -> count
+    end
   end
 
   defp await_completion(socket) do

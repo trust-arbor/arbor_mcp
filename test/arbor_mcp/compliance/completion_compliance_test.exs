@@ -392,7 +392,7 @@ defmodule Arbor.MCP.CompletionComplianceTest do
 
       completion = result.completion
       # Should match file:///src/* resources
-      assert length(completion.values) >= 1
+      assert is_list(completion.values) and completion.values != []
 
       # All results should contain "src"
       Enum.each(completion.values, fn uri ->
@@ -408,7 +408,7 @@ defmodule Arbor.MCP.CompletionComplianceTest do
 
       completion = result.completion
       # Should match config://app/* resources
-      assert length(completion.values) >= 1
+      assert is_list(completion.values) and completion.values != []
 
       Enum.each(completion.values, fn uri ->
         assert String.starts_with?(uri, "config://")
@@ -434,7 +434,7 @@ defmodule Arbor.MCP.CompletionComplianceTest do
 
       completion = result.completion
       # Should include paths from file:// resources
-      assert length(completion.values) >= 0
+      assert is_list(completion.values)
     end
   end
 

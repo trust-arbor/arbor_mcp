@@ -2,9 +2,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPSubscriptionWireTest do
   use ExUnit.Case, async: false
   alias Arbor.MCP.{Client, HttpPlug, SessionManager}
   alias Arbor.MCP.Client.Subscription
-  alias Arbor.MCP.Tasks.Extension
   alias Arbor.MCP.Server.{Context, Runtime, Subscriptions}
   alias Arbor.MCP.Server.Runtime.{HTTPWriterProxy, HTTPWriterRegistry}
+  alias Arbor.MCP.Tasks.Extension
 
   defmodule Handler do
     use Arbor.MCP.Server.Handler

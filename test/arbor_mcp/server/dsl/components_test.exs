@@ -404,19 +404,21 @@ defmodule Arbor.MCP.Server.DSL.ComponentsTest do
   end
 
   test "Test runtime initializes only host and inherited tools share one scheduler state" do
+    # The invocation message is the synchronization point. The default
+    # assert_receive window is 100ms and is not part of what this proves.
     {root, transport} = start_host(:test)
-    assert_receive {:host_initialized, owner}
+    assert_receive {:host_initialized, owner}, 5_000
     assert {:ok, runtime} = Runtime.ref(root)
     assert {:ok, transport} = Test.send_message(tool(1, "shared"), transport)
-    assert_receive {:component_invoked, worker, _args}
+    assert_receive {:component_invoked, worker, _args}, 5_000
     refute worker == owner
-    assert_receive {:transport_message, encoded}
+    assert_receive {:transport_message, encoded}, 5_000
     assert response(encoded)["result"]["structuredContent"]["count"] == 1
     refute_receive {:component_invoked, _, _}, 10
     assert Server.call(runtime, :count) == 1
     assert {:ok, _transport} = Test.send_message(tool(2, "shared", %{"count" => 2}), transport)
-    assert_receive {:component_invoked, _, _args}
-    assert_receive {:transport_message, encoded}
+    assert_receive {:component_invoked, _, _args}, 5_000
+    assert_receive {:transport_message, encoded}, 5_000
     assert response(encoded)["result"]["structuredContent"]["count"] == 3
     assert Server.call(runtime, :count) == 3
     refute_receive {:host_initialized, _}, 10

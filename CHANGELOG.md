@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Under `:prefer_modern`, a stdio server that exits without answering the
+  `server/discover` probe, as Python `mcp` 1.6 and 1.8 stdio servers do, or
+  that does not answer it within its bound is now reached with a legacy
+  `initialize`. The client closes that process (EOF, then TERM and KILL)
+  and, once the close is confirmed, starts a fresh one from the same options
+  and initializes it, once per connection attempt and reconnect, within
+  `:establish_timeout`. The probed pipe carries nothing more, so a late
+  answer to the probe cannot reach the handshake. A process that cannot be
+  confirmed stopped is not replaced: `start_link/1` returns
+  `{:error, {:transport_connect_failed, {:probed_server_stop_unconfirmed, %{probe: ..., cleanup: ...}}}}`,
+  and no `:retry_policy` or reconnect starts another. Malformed output never
+  leads to a respawn: a JSON-looking line (one starting with `{` or `[`)
+  that is not valid JSON-RPC, a message other than a notification that is
+  not the answer to the probe, or a frame cut off or over
+  `:max_frame_bytes`. Valid JSON-RPC notifications, which the probe skips,
+  and non-JSON stdout lines (banners, logs), which the stdio transport
+  ignores everywhere, are no answer, so a server that sends only those and
+  exits is replaced like any other. A modern-only server
+  then fails on `initialize` with the versions it supports, reported as
+  `{:era_probe_and_initialize_failed, %{..., respawned: true}}`. The legacy
+  observation is recorded and the `[:arbor_mcp, :client, :era, :fallback]`
+  event carries `respawned: true`. `:modern_only` never respawns, and
+  `:prefer_legacy` and `:legacy_only` open with `initialize` as before.
+- `Arbor.MCP.Reliability.CircuitBreaker.call_with_deadline/3` runs an
+  operation that has its own deadline through a breaker without the
+  breaker's per-call `:timeout` cutting it short.
+
+### Changed
+
+- `jose` `>= 1.11.13` is required and locked. 1.11.13 fixes five advisories:
+  EEF-CVE-2026-65625 (attacker-chosen AES-GCM tag length), EEF-CVE-2026-65626
+  (RSAES-PKCS1-v1_5 padding oracle), EEF-CVE-2026-65627 (unbounded JWE zip
+  decompression), EEF-CVE-2026-65628 (infinite recursion in
+  `JOSE.JWK.shared_secret/2` on mismatched key types) and EEF-CVE-2026-65629
+  (weak PBKDF2 parameters for password-encrypted private-key export). This
+  library reaches none of them: it only signs and verifies JWS, never decrypts
+  JWE, derives shared secrets or exports password-encrypted keys, and MRTR
+  request state is sealed with `:crypto` directly and checks the tag length.
+  The floor keeps applications' dependency graphs off the affected releases.
+
 ### Fixed
 
 - Forced runtime shutdown now reserves enough of its existing stop budget to
@@ -16,6 +58,237 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shutdown. At 500 ms, the graceful phase is 460 ms (425 ms in the initial
   uncapped patch, 475 ms with the original 25 ms margin); at 1,500 ms, it is
   1,425 ms (1,475 ms originally).
+- An unsupported-version error (`-32022`) lists `supported` as exactly the
+  revisions the mount or server accepts, from the same source its request
+  validation uses (`Arbor.MCP.Server.RequestContext.accepted_versions/1`), in
+  its preference order. An HTTP mount listed every revision the library
+  knows, so a `:legacy_only` mount advertised `2026-07-28` and a
+  `:modern_only` mount the legacy revisions. A mount without `protocol_mode`
+  accepts both eras, and now lists both, ordered by the application's
+  preferred era, where the HTTP error listed only the application mode's
+  revisions and `Arbor.MCP.Plugs.ProtocolVersion` only the legacy ones. The
+  HTTP message is `Unsupported protocol version`, as on the other
+  transports. A legacy `initialize` naming a revision the server lacks is
+  still negotiated, as the legacy revisions specify, over HTTP as over
+  stdio; only a mount that serves no legacy revision rejects it.
+- A client in the default `:prefer_modern` mode could not connect to an
+  Arbor server running `protocol_mode: :legacy_only`, the documented
+  rollback, over any transport. The server answers the `server/discover`
+  probe with an UnsupportedProtocolVersionError (-32022) whose `supported`
+  list names only legacy revisions, and the client failed with
+  `{:era_probe_failed, {:no_mutually_supported_modern_version, ...}}` instead
+  of using one of them. MCP says to continue with a listed version, and for
+  a legacy one that is `initialize`: `:prefer_modern` now falls back to it,
+  offering its preferred revision among those listed (its legacy
+  `:protocol_version` when listed), and records the legacy observation.
+  `:prefer_legacy`, whose `initialize` comes first, retries it once with
+  such a revision when the server rejected the one it offered and the probe
+  then names others. A list that also names a modern or an unknown revision
+  is not legacy evidence, `:modern_only` never falls back, and a cached
+  modern observation still never downgrades. A cached legacy observation
+  now also keeps the revision the server negotiated, and the next
+  connection offers that one again, so a server that accepts only an older
+  revision stays reachable until the observation expires.
+- Over HTTP, an `initialize` rejected with a 400 carrying a JSON-RPC error,
+  as an Arbor `protocol_mode: :modern_only` server sends it, was taken for a
+  transport failure. `:prefer_legacy` therefore never moved forward to the
+  modern era over HTTP, unless an earlier connection had recorded it. The
+  error is now read as the rejection it is, the way the other transports
+  deliver it, when that error carries this `initialize` request's id (any
+  other id, `null` included, is not an answer to it and stays a transport
+  error): `:prefer_legacy` probes and connects, and **`:legacy_only`
+  now fails with `{:initialize_error, error}`** as it does on the other
+  transports, instead of `{:transport_connect_failed, "{:http_error, 400,
+  ...}"}`.
+- A failed connection attempt whose stdio server cannot be confirmed
+  stopped now fails with `{:cleanup_failed, reason, {:error, cleanup}}`,
+  the shape `Arbor.MCP.Client` already uses for unconfirmed cleanup:
+  `start_link/1` returns
+  `{:error, {:transport_connect_failed, {:cleanup_failed, reason, {:error, cleanup}}}}`.
+  A `:retry_policy` never retries it or the stdio respawn refusal, whatever
+  its `:should_retry?`, and an establishment deadline that runs out at the
+  same time no longer hides either behind `:establish_timeout`, so no new
+  server process starts beside one that may still run.
+- Reconnection could start a stdio server beside one that was never
+  stopped. A health check that gave up on a hung server dropped the
+  connection without closing it, so the old server kept running next to
+  the reconnected one; it is now closed first, off the client loop and
+  within the client's cleanup budget, in a connection scope too. And a
+  reconnect went on after an attempt or teardown whose stdio server could
+  not be confirmed stopped. Now, when the server process's own stop is
+  unconfirmed (a close that runs out of the budget included), the client
+  stops reconnecting, settles in `:disconnected`, emits the new
+  `[:arbor_mcp, :client, :reconnect, :cleanup_unconfirmed]` event with the
+  reason, and `stop/2` returns the cleanup error. Other cleanup failures,
+  such as a reliability component that would not stop, are logged and the
+  client reconnects. To tell those apart, `ReliabilityWrapper.close/1` now
+  reports a component that would not stop as
+  `{:error, {:reliability_cleanup, reason}}`.
+- Over stdio, the modern `server/discover` probe gave a newly spawned server
+  only `:era_probe_timeout` (2 s by default) to start and answer. Under the
+  default `:prefer_modern`, and under `:modern_only`, a server that took
+  longer to start failed to connect, and so did every reconnect to it, with
+  `{:era_probe_failed, {:transport_error, :handshake_timeout}}`: a BEAM
+  started with `mix run`, `npx` or `uvx` on a cold cache, or any server on a
+  loaded host. A slow legacy server's error answer, which `:prefer_modern`
+  falls back on, came too late as well. Over stdio the probe now waits as
+  long as a legacy `initialize` does, `:handshake_timeout` (10 s by
+  default), unless `:era_probe_timeout` is given, and the default
+  `:establish_timeout` counts that bound: `:handshake_timeout` plus the
+  probe's bound, 20 s over stdio. HTTP keeps the 2 s probe and the 12 s
+  default. **Behavior change:** under `:modern_only` a stdio server that
+  never answers now fails after `:handshake_timeout` rather than 2 s, with
+  the same error.
+- A stdio server that wrote part of a frame and then exited was reported
+  like one that exited cleanly, `{:connection_error, {:process_exited,
+  status}}`. Cut-off output is now
+  `{:connection_error, {:unfinished_frame, {:process_exited, status}}}`.
+- Inside the reliability wrapper with a circuit breaker, a receive with its
+  own timeout (the era probe's, `initialize`'s) was cut short at the
+  breaker's 5 s per-call `:timeout`, so a wrapped stdio server slower than
+  that to start still failed. The receive's own timeout now bounds it.
+- The configuration, transport and troubleshooting guides said an HTTP probe
+  timeout never leads to `initialize`. Under the preference modes it is
+  legacy evidence, as MCP 2026-07-28 says, and has been since the modern era
+  landed: each POST stands alone, so a late answer cannot reach the
+  `initialize` that follows. The guides now say so; HTTP behavior is
+  unchanged.
+- An ArborMCP client never received anything on an ArborMCP server's legacy
+  Streamable HTTP GET stream: list changes, log messages and progress sent
+  there were lost, and a callback's `Server.list_roots/2`, sampling or
+  elicitation request timed out. The server opens the stream with a
+  `connected` event, which reached the client process before the receiver
+  that reads the stream had started, and the stream waited for an
+  acknowledgement that never came and closed five seconds later. An event now
+  goes to the receiver once it takes over. The client also skips events that
+  aren't MCP `message` events, such as `connected`, where it logged them as
+  unparseable, and keeps its session when the server closes the GET stream,
+  which an ArborMCP server does at its `:request_timeout_ms`: it opens the
+  stream again with `Last-Event-ID`, where it used to reconnect, start a new
+  session and fail every pending request. If the server answers the reopened
+  GET with 405, it no longer offers the stream, and the client carries on
+  POST-only, as with a server that never offered one.
+- An ArborMCP server answered every legacy Streamable HTTP request with JSON,
+  so a request's progress could only travel on the session's GET stream, and
+  `Context.report_progress/3` and `Server.notify_progress/4` returned
+  `{:error, :stream_closed}` to a client without one (`use_sse: false`). As
+  the TypeScript SDK's servers do, a legacy request that carries
+  `_meta.progressToken`, from a client that accepts `text/event-stream`, now
+  gets an event stream that carries its progress, and its callback's other
+  notifications, ahead of the result. `initialize`, batches and a client that
+  accepts only JSON still get JSON, with progress on the session's GET stream.
+- The server read the `Accept` header by looking for the text
+  `text/event-stream`, so a modern request that asked for progress or request
+  logs got an event stream even from a client that refused one with
+  `text/event-stream;q=0`, and JSON from one that wrote
+  `Text/Event-Stream`. Both eras now parse the header's media ranges: an event
+  stream needs `text/event-stream` named with a quality above zero, in any
+  case. A comma or semicolon inside a quoted parameter value, escaped quotes
+  included, separates nothing, so a range keeps its own `q`; a quoted or
+  malformed `q`, or an unterminated quoted string, doesn't opt in. A wildcard
+  such as `*/*` still gets JSON, since the MCP spec asks clients to list
+  `text/event-stream`. The Streamable HTTP GET stream uses the same rule.
+- `Server.notify_tools_changed/1`, `notify_prompts_changed/1` and
+  `notify_resources_changed/1` called outside a callback on an HTTP runtime
+  never reached a modern `subscriptions/listen` stream, though they returned
+  `:ok`. With no origin of its own, the publication took the subscription's
+  registration, and narrowing its deadline before the compatibility check
+  made it no longer equal to that registration. The check now comes first.
+- The same list changes never reached legacy Streamable HTTP sessions. They
+  now go to every legacy session whose GET stream is open at that moment,
+  through its own bounded replay, which its stream writes out; a slow or
+  dead stream holds up neither the others nor the caller. A session with no
+  open GET stream, including one whose client is about to reopen it, misses
+  the change rather than having it queued. The call returns `:ok` only when
+  every matching subscription and every open session took the change, and
+  `{:error, :partially_delivered}` otherwise, where it returned `:ok` whatever
+  happened.
+- A legacy Streamable HTTP request was cancelled when its connection went
+  away, as a modern one is, although the legacy revisions say a disconnect
+  SHOULD NOT be taken for a cancellation (a client cancels with
+  `notifications/cancelled`). It now runs to its end, under its original
+  deadline, and its response, which nothing can carry any more, is released.
+  A modern request is still cancelled with its connection.
+- A legacy session's GET stream raised `RuntimeWriter.AdmissionError` ("MCP
+  HTTP response capacity unavailable"), logged as an error, and dropped its
+  connection without ending the response, when the session was deleted, or
+  its lease or deadline ran out, while the stream was writing a page of its
+  replay. It now ends the response normally; a later stream resumes the rest
+  of the page with `Last-Event-ID`. Other refusals and failed writes still
+  raise.
+- Authorization code flow rejects malformed `:scopes` instead of silently
+  turning a non-list value into an empty scope parameter. An improper list
+  returns `{:error, :invalid_scopes}` instead of raising inside the check. `nil`
+  still omits the `scope` parameter, so the server's default scopes apply.
+- `Arbor.MCP.Security.Validation.validate_config/1` rejects an improper or
+  non-string `:allowed_origins` list when origin validation is enabled.
+  The empty-list check had accepted it, and a later request from another
+  origin then raised `ArgumentError`.
+- A modern `subscriptions/listen` stream over Streamable HTTP now ends with
+  its completion response when the listener closes (maximum lifetime, slow
+  consumer, revoked authorization or server close) while a keepalive or a
+  notification is being written. A keepalive that raced the close aborted the
+  response with "MCP HTTP response capacity unavailable", and a notification
+  still in flight ended the stream without the completion. Once the listener
+  has started closing, the stream stops sending keepalives, drops that
+  notification and waits for the completion.
+- `Arbor.MCP.Server.Handler.handle_get_prompt/3` accepts a GetPromptResult
+  (`%{messages: [...]}`, optional `description`). The callback used to
+  require a single prompt message, so a correct `prompts/get` result failed
+  Dialyzer with `callback_type_mismatch`. A prompt message may carry a
+  `resource_link` content block. `handle_read_resource/2` also accepts a
+  list of contents or the whole read result, including the `ttlMs` and
+  `cacheScope` cache hints. `handle_complete/3` and `handle_complete/4`
+  require a CompleteResult (`%{completion: %{values: [...]}}`). All three
+  callbacks accept string keys as well as atom keys, as the server does.
+  `Handler.Echo` returns that empty completion result.
+- A `resources/read` handler's whole result (`%{contents: [...]}`) is sent
+  as the result even when it has other keys. A map with a `uri` beside its
+  `contents` list used to be sent as one content item with neither `text`
+  nor `blob`. Over HTTP with a handler module, every whole result used to
+  be nested inside its own `contents` list. One content item or a list of
+  them is still wrapped as `contents`, and a map with `text` or `blob` is
+  always an item, even beside a `contents` key.
+- A modern `tools/call` served by a handler process looks for the tool's
+  `x-mcp-header` annotations across the `tools/list` pages within one
+  `handler_call_timeout` in all, instead of one per page. A handler returning
+  up to 100 cursored pages, each just under the default 10 s, could hold the
+  request for about 1,000 s and run its `list_tools` callback 100 times. Past
+  the deadline the request fails closed with `tool_schema_unavailable`, as
+  past the page bound, and so does a page ready only after the deadline or
+  a timeout that `GenServer.call/3` wouldn't take; the walk still ends at
+  the first page that has the tool.
+- POST event streams now stop at the response deadline even when the socket
+  or stream consumer keeps returning data. This ports the 1.x maintenance
+  fix from `87b495e`.
+- Modern HTTP request SSE streams now send configurable comment keepalives
+  (`:request_keepalive_interval_ms`, default 15 seconds) on mounted and owned
+  HTTP servers. A failed write cancels the handler and frees its Runtime
+  capacity. Over TCP the first write after a peer closes usually succeeds and
+  the next one fails, so on Bandit a closed stream is usually noticed within
+  two intervals. Cowboy cancels the request as soon as it sees the connection
+  close, by terminating the request process. `subscriptions/listen` keeps
+  using only `:subscription_keepalive_interval_ms`. A request whose invocation
+  closes after its SSE response started (for example on Runtime stop) now ends
+  with a JSON-RPC error for its id instead of a truncated stream. JSON
+  responses and legacy-era requests, including their request event streams,
+  get no request keepalives.
+- An HTTP request that timed out or failed could reach its client with no
+  response at all when the server was busy. The HTTP gateway gave the
+  output controller only 50 ms to queue the JSON-RPC error. If the
+  controller answered later, the gateway had already closed the request, so
+  the error was discarded. The gateway now waits for the controller's answer
+  until the error's own delivery deadline, after which it could not have been
+  sent anyway. It waits asynchronously, so other requests are not held up
+  while one waits.
+- A busy output controller no longer holds up a runtime's other HTTP
+  requests. The HTTP gateway serves every request of a runtime and used to
+  wait synchronously, for up to 5 s each, for the controller to deliver a
+  result, finish a batch, or publish an error the gateway authors itself.
+  During that wait no other request could even get its 202. These are now
+  asynchronous requests that the gateway settles in its own loop. Each
+  request's later steps still wait for its own answers, so results, batch
+  arrays and errors keep their order.
 
 ## [2.0.0-rc.6] — 2026-10-26
 
@@ -437,7 +710,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Send the OAuth `resource` parameter exactly as published in protected
   resource metadata, including pathless identifiers that must not gain a
   trailing slash from URL normalization.
-
 
 ## [2.0.0-rc.2] — 2026-10-08
 

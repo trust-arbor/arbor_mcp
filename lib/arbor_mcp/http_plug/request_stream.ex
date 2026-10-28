@@ -18,9 +18,10 @@ defmodule Arbor.MCP.HttpPlug.RequestStream do
     {worker, worker_ref} = spawn_monitor(fn -> run_worker(owner, process_fun) end)
     watchdog = start_owner_watchdog(owner, worker)
     conn_module = SSEConnection.resolve(opts)
+    keepalive = Map.fetch!(opts, :request_keepalive_interval_ms)
 
     try do
-      stream(conn, conn_module, worker, worker_ref, request_id)
+      stream(conn, conn_module, worker, worker_ref, request_id, keepalive)
     after
       Process.demonitor(worker_ref, [:flush])
       stop_watchdog(watchdog)
@@ -32,15 +33,13 @@ defmodule Arbor.MCP.HttpPlug.RequestStream do
     send(owner, {:ex_mcp_request_stream_result, self(), process_fun.()})
   end
 
-  defp stream(conn, conn_module, worker, worker_ref, request_id) do
+  defp stream(conn, conn_module, worker, worker_ref, request_id, keepalive) do
     receive do
       {:ex_mcp_request_notification, sender, ref, notification} ->
         handle_notification(
           conn,
           conn_module,
-          worker,
-          worker_ref,
-          request_id,
+          {worker, worker_ref, request_id, keepalive},
           sender,
           ref,
           notification
@@ -51,15 +50,24 @@ defmodule Arbor.MCP.HttpPlug.RequestStream do
 
       {:DOWN, ^worker_ref, :process, ^worker, reason} ->
         write_final(conn, conn_module, worker_error(request_id, reason))
+    after
+      keepalive ->
+        case conn_module.chunk(conn, ":\r\n\r\n") do
+          {:ok, conn} ->
+            stream(conn, conn_module, worker, worker_ref, request_id, keepalive)
+
+          {:error, reason} ->
+            emit_cancelled(reason)
+            stop_worker(worker)
+            conn
+        end
     end
   end
 
   defp handle_notification(
          conn,
          conn_module,
-         worker,
-         worker_ref,
-         request_id,
+         {worker, worker_ref, request_id, keepalive},
          sender,
          ref,
          notification
@@ -69,7 +77,7 @@ defmodule Arbor.MCP.HttpPlug.RequestStream do
         case conn_module.chunk(conn, encode_message(notification)) do
           {:ok, conn} ->
             send(sender, {:ex_mcp_request_notification_ack, ref, :ok})
-            stream(conn, conn_module, worker, worker_ref, request_id)
+            stream(conn, conn_module, worker, worker_ref, request_id, keepalive)
 
           {:error, reason} ->
             send(sender, {:ex_mcp_request_notification_ack, ref, {:error, reason}})

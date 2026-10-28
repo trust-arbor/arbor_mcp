@@ -24,6 +24,7 @@ defmodule Arbor.MCP.Plugs.ProtocolVersion do
   require Logger
 
   alias Arbor.MCP.Internal.VersionRegistry
+  alias Arbor.MCP.Server.RequestContext
 
   @behaviour Plug
 
@@ -32,66 +33,59 @@ defmodule Arbor.MCP.Plugs.ProtocolVersion do
 
   @impl true
   def call(conn, opts) do
+    mode = Keyword.get(opts, :protocol_mode)
     values = get_req_header(conn, "mcp-protocol-version")
 
-    case {values, Keyword.get(opts, :protocol_mode)} do
-      {[version], _mode} when version == "2026-07-28" ->
-        validate_modern_protocol_version(conn, version)
-
+    # This standalone Plug cannot tell a header-optional initialize from any
+    # other request. A missing header keeps the legacy default. An explicit
+    # value is accepted only when the mount's protocol mode enables it, and
+    # the rejection lists that same set. HttpPlug enforces the negotiated
+    # per-session version on later requests.
+    case {values, mode} do
       {values, :modern_only} ->
         validate_modern_only_header(conn, values)
 
-      {_legacy_or_missing, _mode} ->
-        # This standalone Plug cannot determine whether a request is the
-        # lifecycle's header-optional initialize request. It therefore keeps
-        # the specification's backwards-compatible missing-header default,
-        # while always rejecting any explicit malformed, duplicate, or
-        # unsupported value. HttpPlug additionally enforces the negotiated
-        # per-session version on subsequent requests.
-        validate_protocol_version(conn)
-    end
-  end
+      {[], _mode} ->
+        default = default_version()
+        Logger.debug("No MCP-Protocol-Version header found, using default: #{default}")
+        assign(conn, :mcp_version, default)
 
-  defp validate_modern_protocol_version(conn, version) do
-    if VersionRegistry.modern?(version) and VersionRegistry.known?(version) do
-      assign(conn, :mcp_version, version)
-    else
-      reject_version(conn, version, VersionRegistry.known_versions())
+      {[version], mode} ->
+        if explicit_version_accepted?(version, mode) do
+          Logger.debug("Valid MCP-Protocol-Version: #{version}")
+          assign(conn, :mcp_version, version)
+        else
+          reject_version(conn, version, advertised_versions(mode))
+        end
+
+      {_duplicates, mode} ->
+        reject_version(conn, "duplicate", advertised_versions(mode))
     end
   end
 
   defp validate_modern_only_header(conn, [version]) do
-    validate_modern_protocol_version(conn, version)
-  end
-
-  defp validate_modern_only_header(conn, []),
-    do: reject_version(conn, "missing", VersionRegistry.supported_versions(:modern_only))
-
-  defp validate_modern_only_header(conn, _duplicates),
-    do: reject_version(conn, "duplicate", VersionRegistry.supported_versions(:modern_only))
-
-  defp validate_protocol_version(conn) do
-    default = default_version()
-
-    case get_req_header(conn, "mcp-protocol-version") do
-      [] ->
-        Logger.debug("No MCP-Protocol-Version header found, using default: #{default}")
-        assign(conn, :mcp_version, default)
-
-      [version] ->
-        if VersionRegistry.supported?(version) do
-          Logger.debug("Valid MCP-Protocol-Version: #{version}")
-          assign(conn, :mcp_version, version)
-        else
-          reject_version(conn, version)
-        end
-
-      _duplicates ->
-        reject_version(conn, "duplicate")
+    if explicit_version_accepted?(version, :modern_only) do
+      assign(conn, :mcp_version, version)
+    else
+      reject_version(conn, version, advertised_versions(:modern_only))
     end
   end
 
-  defp reject_version(conn, _invalid_version, supported \\ supported_versions()) do
+  defp validate_modern_only_header(conn, []),
+    do: reject_version(conn, "missing", advertised_versions(:modern_only))
+
+  defp validate_modern_only_header(conn, _duplicates),
+    do: reject_version(conn, "duplicate", advertised_versions(:modern_only))
+
+  # The versions a mount accepts and the ones a rejection lists come from
+  # the same place as the rest of the server's validation. No configured
+  # mode restricts nothing: every version of both eras.
+  defp explicit_version_accepted?(version, mode),
+    do: version in RequestContext.accepted_versions(mode)
+
+  defp advertised_versions(mode), do: RequestContext.accepted_versions(mode)
+
+  defp reject_version(conn, _invalid_version, supported) do
     Logger.warning("Invalid MCP-Protocol-Version header")
 
     error_response = %{

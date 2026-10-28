@@ -1,6 +1,11 @@
 defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
   use ExUnit.Case, async: false
 
+  # How long past its charged cutoff a forced stop may take to return. On a
+  # loaded machine forced stops returned up to 615 ms late; a stop that waits
+  # on the held owner instead of its budget never returns at all.
+  @stop_return_margin_ms 1_000
+
   alias Arbor.MCP.Server.Runtime
 
   alias Arbor.MCP.Server.Runtime.{
@@ -11,6 +16,8 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
     ShutdownControl,
     ShutdownGuard
   }
+
+  alias Arbor.MCP.Test.ShutdownProbe
 
   defmodule Handler do
     def init(parent), do: {:ok, parent}
@@ -99,10 +106,9 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
     sibling = runtime(500)
     :ok = :sys.suspend(guard)
     monitors = Enum.map([root, guard, observer, owned], &{&1, Process.monitor(&1)})
-    started = Deadline.now()
-    result = Runtime.stop(ref)
+    {:ok, control} = ShutdownControl.lookup(table)
+    result = ShutdownProbe.stop_forced(ref, control, 180, @stop_return_margin_ms)
     assert result in [:ok, {:error, :shutdown_cleanup_unconfirmed}]
-    assert Deadline.now() - started < 300
     for {pid, monitor} <- monitors, do: assert_receive({:DOWN, ^monitor, :process, ^pid, _}, 300)
     assert :ets.info(table) == :undefined
     {sibling_root, sibling_ref, _, _, _} = sibling
@@ -112,7 +118,7 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
     refute_receive {:EXIT, ^root, _}
   end
 
-  test "guard stalled after graceful root ACK still retires within the first stop cutoff" do
+  test "guard stalled after graceful root ACK still uses the first stop cutoff" do
     {root, ref, table, guard, observer} = runtime(400, owned: true)
     assert_receive {:owned, owner}
     parent = self()
@@ -122,12 +128,20 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
 
     caller =
       spawn(fn ->
+        receive do: (:start -> :ok)
         result = Runtime.stop(ref)
-        returned_at = Deadline.now()
-        send(parent, {:after_root_stop, result, returned_at})
+        send(parent, {:after_root_stop, result})
       end)
 
+    assert 1 ==
+             :erlang.trace_pattern({Runtime, :stop, 1}, [{:_, [], [{:return_trace}]}], [
+               :global
+             ])
+
+    on_exit(fn -> :erlang.trace_pattern({Runtime, :stop, 1}, false, [:global]) end)
+    assert 1 == :erlang.trace(caller, true, [:call, :monotonic_timestamp, {:tracer, self()}])
     caller_monitor = Process.monitor(caller)
+    send(caller, :start)
     assert_receive {:held_terminate, ^owner}
     %{cutoff: cutoff} = ShutdownControl.stats(table)
     :sys.suspend(guard)
@@ -135,11 +149,20 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
     assert_receive {:DOWN, ^root_monitor, :process, ^root, :normal}, 300
     assert Process.alive?(guard)
 
-    assert_receive {:after_root_stop, result, returned_at}
+    assert_receive {:after_root_stop, result}
                    when result in [:ok, {:error, :shutdown_cleanup_unconfirmed}],
                    1_000
 
-    assert returned_at <= cutoff + 50
+    assert_receive {:trace_ts, ^caller, :return_from, {Runtime, :stop, 1}, ^result,
+                    returned_at_native},
+                   1_000
+
+    returned_at = System.convert_time_unit(returned_at_native, :native, :millisecond)
+    assert returned_at <= cutoff + @stop_return_margin_ms
+
+    if result == {:error, :shutdown_cleanup_unconfirmed},
+      do: assert(returned_at >= cutoff)
+
     assert_receive {:DOWN, ^guard_monitor, :process, ^guard, :killed}, 100
     assert_receive {:DOWN, ^observer_monitor, :process, ^observer, :normal}, 100
     assert_receive {:DOWN, ^caller_monitor, :process, ^caller, :normal}, 100
@@ -148,6 +171,8 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
   test "first stop survives abrupt caller death and repeats never renew the deadline" do
     {root, ref, table, guard, observer} = runtime(240)
     :sys.suspend(guard)
+    :sys.suspend(observer)
+    on_exit(fn -> if Process.alive?(observer), do: :sys.resume(observer) end)
     parent = self()
 
     caller =
@@ -159,18 +184,21 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
     assert_receive {:entered, ^caller}
     eventually(fn -> match?(%{stop_records: 1}, ShutdownControl.stats(table)) end)
     %{cutoff: first} = ShutdownControl.stats(table)
+    caller_monitor = Process.monitor(caller)
     Process.exit(caller, :kill)
-    Process.sleep(30)
+    assert_receive {:DOWN, ^caller_monitor, :process, ^caller, :killed}
     assert :ok = ShutdownGuard.request_stop(table, {:shutdown, :later})
     assert %{cutoff: ^first, stop_records: 1} = ShutdownControl.stats(table)
     root_monitor = Process.monitor(root)
     observer_monitor = Process.monitor(observer)
+    :sys.resume(observer)
     assert_receive {:DOWN, ^root_monitor, :process, ^root, _}, 400
     assert_receive {:DOWN, ^observer_monitor, :process, ^observer, _}, 400
   end
 
   test "concurrent public stops retain one reason and bounded token wakes" do
     {root, ref, table, guard, observer} = runtime(800)
+    root_monitor = Process.monitor(root)
     :sys.suspend(guard)
     :sys.suspend(observer)
     parent = self()
@@ -225,6 +253,7 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
             1_000
           )
 
+    assert_receive {:DOWN, ^root_monitor, :process, ^root, _}, 2_000
     refute Process.alive?(root)
   end
 
@@ -378,6 +407,7 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
     {guard, _observer} = runtime_guards(Ref.table(ref))
     :sys.suspend(guard)
     monitor = Process.monitor(caller)
+    root_monitor = Process.monitor(root)
     send(caller, :stop)
 
     assert_receive {:linked_stop, result, {:trap_exit, false}, {:messages, []}}
@@ -385,6 +415,7 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
                    400
 
     assert_receive {:DOWN, ^monitor, :process, ^caller, :normal}
+    assert_receive {:DOWN, ^root_monitor, :process, ^root, _}, 2_000
     refute Process.alive?(root)
   end
 
@@ -460,6 +491,7 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
 
   test "forcing collection kills an authentic child published after the last force snapshot" do
     {root, _ref, table, guard, observer} = runtime(500, owned: true)
+    root_monitor = Process.monitor(root)
     assert_receive {:owned, producer}
     [child] = GenServer.call(producer, {:children, 1, false})
     child_monitor = Process.monitor(child)
@@ -474,6 +506,7 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
     assert forcing.forcing
     assert_receive {:DOWN, ^producer_monitor, :process, ^producer, _}
     assert Process.alive?(child)
+    assert_receive {:DOWN, ^root_monitor, :process, ^root, _}, 2_000
     refute Process.alive?(root)
 
     # The journal write is the constructor's publication window after it passed
@@ -521,9 +554,7 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
     end
 
     :sys.resume(guard)
-    observer_monitor = Process.monitor(observer)
-    assert Runtime.stop(root) in [:ok, {:error, :shutdown_cleanup_unconfirmed}]
-    assert_receive {:DOWN, ^observer_monitor, :process, ^observer, :normal}, 2_000
+    stop_forced(root, table, producer, 500)
     eventually(fn -> not Process.alive?(observer) end)
   end
 
@@ -556,11 +587,9 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
     refute :ets.member(table, {:runtime_owned, child})
     refute :ets.member(ledger, {:owned_slot, 16_383})
     assert retired.pending_publications == %{}
-    observer_monitor = Process.monitor(observer)
     :sys.resume(observer)
     :sys.resume(guard)
-    assert Runtime.stop(root) in [:ok, {:error, :shutdown_cleanup_unconfirmed}]
-    assert_receive {:DOWN, ^observer_monitor, :process, ^observer, :normal}, 2_000
+    stop_forced(root, table, producer, 500)
   end
 
   @tag :stress
@@ -630,9 +659,17 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
   end
 
   defp assert_force_margin(budget, margin) do
-    {root, _ref, table, _guard, observer} = runtime(budget)
+    {root, _ref, table, guard, observer} = runtime(budget)
     root_monitor = Process.monitor(root)
     observer_monitor = Process.monitor(observer)
+    :sys.suspend(guard)
+    :sys.suspend(observer)
+
+    on_exit(fn ->
+      if Process.alive?(guard), do: :sys.resume(guard)
+      if Process.alive?(observer), do: :sys.resume(observer)
+    end)
+
     started = Deadline.now()
     assert {:ok, _control, cutoff} = ShutdownControl.prepare(table, :normal, started)
     assert {:ok, :normal, ^cutoff, force_at} = ShutdownControl.command(table)
@@ -640,6 +677,9 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
     assert force_at - started >= budget - div(budget, 4)
     # A 500 ms stop leaves 460 ms graceful, including a 450 ms terminate/2.
     if budget == 500, do: assert(force_at - started > 450)
+
+    :sys.resume(guard)
+    :sys.resume(observer)
 
     case Runtime.stop(root) do
       {:error, :runtime_unavailable} ->
@@ -738,6 +778,20 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
   defp latency_summary(values) do
     sorted = Enum.sort(values)
     "p50=#{Enum.at(sorted, div(length(sorted), 2))},max=#{List.last(sorted)}"
+  end
+
+  # The owned fixture holds terminate until released, so this stop can only
+  # end it by force. ShutdownProbe checks the shutdown contract against
+  # traced instants: the cutoff is charged when stop is entered, :ok only
+  # after the observer's confirmation, an unconfirmed result only at or after
+  # the cutoff, and either result within @stop_return_margin_ms of it. The
+  # held owner must die :killed.
+  defp stop_forced(root, table, owner, budget) do
+    {:ok, control} = ShutdownControl.lookup(table)
+    owner_monitor = Process.monitor(owner)
+    result = ShutdownProbe.stop_forced(root, control, budget, @stop_return_margin_ms)
+    assert_receive {:DOWN, ^owner_monitor, :process, ^owner, :killed}, 1_000
+    result
   end
 
   defp control_ledger(observer) do

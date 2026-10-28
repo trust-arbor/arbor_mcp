@@ -199,7 +199,7 @@ defmodule Arbor.MCP.Compliance.Features.Transport do
   defp validate_batch_request(batch) do
     # Validate JSON-RPC batch request structure
     assert is_list(batch)
-    assert length(batch) > 0, "Batch request cannot be empty"
+    assert batch != [], "Batch request cannot be empty"
 
     for request <- batch do
       validate_jsonrpc_request(request)
@@ -209,7 +209,7 @@ defmodule Arbor.MCP.Compliance.Features.Transport do
   defp validate_batch_response(batch) do
     # Validate JSON-RPC batch response structure
     assert is_list(batch)
-    assert length(batch) > 0, "Batch response cannot be empty"
+    assert batch != [], "Batch response cannot be empty"
 
     for response <- batch do
       validate_jsonrpc_response(response)

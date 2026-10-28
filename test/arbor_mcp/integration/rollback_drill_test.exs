@@ -210,6 +210,25 @@ defmodule Arbor.MCP.Integration.RollbackDrillTest do
     assert {:ok, %{era: :legacy}} = EraCache.lookup(identity)
   end
 
+  test "a client left on the release default reaches the legacy-only rollback target" do
+    ledger = start_supervised!({Agent, fn -> %{completed: []} end})
+
+    # Deliberately no :protocol_mode. Clients nobody reconfigured for the
+    # rollback run the release default, :prefer_modern, and must still reach
+    # the legacy-only node: its answer to the modern probe lists only legacy
+    # revisions, so they initialize with one of those.
+    client = start_legacy_client(ledger, [])
+    assert {:ok, "2025-11-25"} = Client.negotiated_version(client)
+
+    assert {:ok, result} =
+             Client.call_tool(client, "reconcile", %{"completed" => "Lin"},
+               timeout: 2_000,
+               format: :map
+             )
+
+    assert get_in(result, ["content", Access.at(0), "text"]) == "rc5-reconciled=Lin"
+  end
+
   defp start_server(ledger, opts) do
     {:ok, server} =
       HandlerServer.start_link(
@@ -228,18 +247,18 @@ defmodule Arbor.MCP.Integration.RollbackDrillTest do
     client
   end
 
-  defp start_legacy_client(ledger) do
+  defp start_legacy_client(ledger, client_opts \\ [protocol_mode: :legacy_only]) do
     case System.get_env("EX_MCP_ROLLBACK_RC5_ROOT") do
       nil ->
         legacy_server = start_server(ledger, protocol_mode: :legacy_only)
-        start_client(legacy_server, protocol_mode: :legacy_only)
+        start_client(legacy_server, client_opts)
 
       root ->
-        start_rc5_client(Path.expand(root))
+        start_rc5_client(Path.expand(root), client_opts)
     end
   end
 
-  defp start_rc5_client(root) do
+  defp start_rc5_client(root, client_opts) do
     mixfile = Path.join(root, "mix.exs")
     app_file = Path.join(root, "_build/prod/lib/ex_mcp/ebin/ex_mcp.app")
 
@@ -250,11 +269,12 @@ defmodule Arbor.MCP.Integration.RollbackDrillTest do
 
     {:ok, client} =
       Client.start_link(
-        transport: :stdio,
-        command: [elixir, @rc5_fixture],
-        env: [{"ERL_LIBS", Path.join(root, "_build/prod/lib")}],
-        protocol_mode: :legacy_only,
-        health_check_interval: nil
+        [
+          transport: :stdio,
+          command: [elixir, @rc5_fixture],
+          env: [{"ERL_LIBS", Path.join(root, "_build/prod/lib")}],
+          health_check_interval: nil
+        ] ++ client_opts
       )
 
     on_exit(fn -> disconnect_client(client) end)

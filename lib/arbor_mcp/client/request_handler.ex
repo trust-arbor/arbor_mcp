@@ -11,12 +11,12 @@ defmodule Arbor.MCP.Client.RequestHandler do
   alias Arbor.MCP.Client.{Deadline, InputDispatcher, MRTR, NotificationListener, ResponseCache}
   alias Arbor.MCP.Error
   alias Arbor.MCP.Internal.{Maps, Protocol, RequestParams, VersionRegistry}
-  alias Arbor.RPC.{JSONRPC, LogSummary}
   alias Arbor.MCP.Protocol.{ErrorCodes, ResponseBuilder, ResultEnvelope}
   alias Arbor.MCP.Tasks.Extension, as: TasksExtension
   alias Arbor.MCP.Transport.HTTP
   alias Arbor.MCP.Transport.HTTP.LegacySSE
   alias Arbor.MCP.Transport.HTTP.ToolHeaders
+  alias Arbor.RPC.{JSONRPC, LogSummary}
 
   # Extra time allowed past a caller-enforced timeout before the client
   # cleans up its own pending-request bookkeeping.

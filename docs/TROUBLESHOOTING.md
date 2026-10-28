@@ -126,12 +126,32 @@ Arbor.MCP.Client.start_link(
 ```
 
 `:prefer_modern` falls back to legacy `initialize` only when a live peer gives
-positive evidence that it is legacy-compatible. A timeout, authentication
-failure, transport break, cached-modern failure, recognized modern error, or
-unsupported modern revision is surfaced instead of being silently downgraded.
+positive evidence that it is legacy-compatible: a non-modern JSON-RPC error,
+an HTTP `400`, `404` or `405` rejection, or, over HTTP, no answer to the probe
+within `:era_probe_timeout`. An authentication failure, transport break,
+cached-modern failure, recognized modern error, or unsupported modern
+revision is surfaced instead of being silently downgraded. Over stdio a
+server that exits without answering the probe, or never answers it, is
+closed, started again and initialized, once. One that cannot be confirmed
+stopped is never replaced, by a retry or a reconnect either: `start_link/1`
+returns
+`{:error, {:transport_connect_failed, {:probed_server_stop_unconfirmed, ...}}}`,
+and a client that was reconnecting stops, settles in `:disconnected` and
+emits `[:arbor_mcp, :client, :reconnect, :cleanup_unconfirmed]`.
 Use `:prefer_legacy` for a deliberate rollback, or `reset_era_cache: true` once
 after an operator-controlled endpoint upgrade. Strict `:modern_only` and
 `:legacy_only` modes never fall back.
+
+Over stdio, a `:modern_only` `start_link/1` that fails with
+`{:transport_connect_failed, "{:era_probe_failed, {:transport_error, :handshake_timeout}}"}`
+means the spawned server did not answer the probe within its bound,
+`:handshake_timeout` (10 s) unless `:era_probe_timeout` is set. The wait
+includes the server's own start-up, so raise `:handshake_timeout` for a
+server that takes longer than that to start, and check its stderr for a
+server that never reads stdin. Under `:prefer_modern` the same server is
+started again for `initialize`, and an error reading
+`{:era_probe_and_initialize_failed, %{..., respawned: true}}` reports both
+attempts.
 
 ### Error `-32022`: unsupported protocol version
 
@@ -142,6 +162,16 @@ agree. Inspect the error's `data.requested` and `data.supported` values, then
 check both client and server `protocol_mode` settings. Do not use
 `protocol_version: "2025-11-25"` to select an era; that option is only the
 legacy revision preference.
+
+When the server answers the `server/discover` probe this way and
+`data.supported` lists only legacy revisions, as a server running
+`protocol_mode: :legacy_only` does, `:prefer_modern` and `:prefer_legacy`
+clients treat that as a legacy server. They send `initialize` offering their
+preferred revision among those listed (the client's legacy
+`:protocol_version` when it is listed). A list that also names a modern or an
+unknown revision is not legacy evidence, and `:modern_only` never falls back:
+those fail with `{:era_probe_failed, {:no_mutually_supported_modern_version,
+%{server: ..., client: ...}}}`.
 
 ### Invalid request metadata
 

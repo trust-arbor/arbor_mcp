@@ -134,15 +134,6 @@ defmodule Arbor.MCP.Server.Dispatch do
     end
   end
 
-  # A handler returns the contents, or the whole result when it sets more,
-  # such as cache hints. Every content item has a uri; a result has none.
-  defp read_result(%{} = result)
-       when (is_map_key(result, :contents) or is_map_key(result, "contents")) and
-              not is_map_key(result, :uri) and not is_map_key(result, "uri"),
-       do: result
-
-  defp read_result(contents), do: %{"contents" => List.wrap(contents)}
-
   defp handle(ctx, state) do
     ctx.method
     |> do_dispatch(ctx, state)
@@ -387,7 +378,7 @@ defmodule Arbor.MCP.Server.Dispatch do
 
   defp do_dispatch("resources/read", ctx, state) do
     uri = Map.get(ctx.params, "uri")
-    on_ok = &read_result/1
+    on_ok = &ResultNormalizer.read_result/1
 
     case registered_resource(Registry.current(), uri) do
       {:ok, entry, args} ->

@@ -23,6 +23,7 @@ defmodule Arbor.MCP.Server.HTTP.Config do
     :subscription_max_queue_bytes,
     :subscription_max_lifetime_ms,
     :subscription_keepalive_interval_ms,
+    :request_keepalive_interval_ms,
     :sse_mode,
     :validate_origin,
     :body_limit,

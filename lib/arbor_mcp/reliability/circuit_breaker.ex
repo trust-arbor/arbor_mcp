@@ -53,12 +53,27 @@ defmodule Arbor.MCP.Reliability.CircuitBreaker do
   """
   @spec call(GenServer.server(), (-> any()), timeout()) :: any()
   def call(server, fun, timeout) do
+    admit(server, fun, &effective_timeout(&1, timeout))
+  end
+
+  @doc """
+  Like `call/3`, for an operation that carries its own deadline, such as a
+  receive with a timeout: `timeout` alone bounds the execution, and the
+  breaker's configured `:timeout`, meant for operations without one, does not
+  cut it short.
+  """
+  @spec call_with_deadline(GenServer.server(), (-> any()), timeout()) :: any()
+  def call_with_deadline(server, fun, timeout) do
+    admit(server, fun, fn _config_timeout -> timeout end)
+  end
+
+  defp admit(server, fun, execution_timeout) do
     case GenServer.call(server, :acquire, 5000) do
       {:error, :circuit_open} = error ->
         error
 
       {:ok, config_timeout} ->
-        outcome = run_protected(fun, effective_timeout(config_timeout, timeout))
+        outcome = run_protected(fun, execution_timeout.(config_timeout))
         GenServer.cast(server, {:report, outcome})
         outcome_to_result(outcome)
     end

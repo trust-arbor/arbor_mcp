@@ -112,6 +112,6 @@ defmodule Arbor.MCP.Server.Handler.Echo do
 
   @impl true
   def handle_complete(_ref, _argument, state) do
-    {:ok, %{completion: []}, state}
+    {:ok, %{completion: %{values: [], total: 0, hasMore: false}}, state}
   end
 end

@@ -343,6 +343,10 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
        runtime: Ref.new(opts[:supervisor], table),
        table: table,
        jobs: %{},
+       # Controller requests in flight, by request id. Their replies and
+       # deadlines arrive in this loop, so one slow answer never holds up
+       # another request.
+       controls: %{},
        reverse: HTTPReverse.init(table)
      }}
   end
@@ -384,34 +388,13 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
       ) do
     case state.jobs[token] do
       %{batch?: true} ->
-        case OutputController.deliver(state.table, token, ticket) do
-          :ok ->
-            state = put_in(state.jobs[token].output?, true)
-
-            state =
-              if state.jobs[token].initializing? and
-                   Map.has_key?(result, "error"),
-                 do: put_in(state.jobs[token].remaining, []),
-                 else: state
-
-            {:noreply, state}
-
-          {:error, reason} ->
-            {:noreply, fail(token, reason, state)}
-        end
+        request = OutputController.deliver_request(state.table, token, ticket)
+        kind = {:member, Map.has_key?(result, "error")}
+        {:noreply, await_control(token, kind, request, state)}
 
       %{} ->
-        case OutputController.deliver(state.table, token, ticket) do
-          :ok ->
-            {:noreply,
-             put_in(
-               state.jobs[token].observation,
-               HTTPWriteTicket.observation(OutputTicket.http(ticket))
-             )}
-
-          {:error, reason} ->
-            {:noreply, fail(token, reason, state)}
-        end
+        request = OutputController.deliver_request(state.table, token, ticket)
+        {:noreply, await_control(token, {:response, ticket}, request, state)}
 
       nil ->
         {:noreply, state}
@@ -480,11 +463,52 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
     {:noreply, settle_reverse(state)}
   end
 
-  def handle_info({:DOWN, monitor, :process, _socket, _reason}, state) do
+  # A DOWN is either a Controller request whose server died or a socket.
+  def handle_info({:DOWN, _monitor, :process, _pid, _reason} = message, state) do
+    case control_reply(message, state.controls) do
+      {request, reply} -> {:noreply, settle_control(request, reply, state)}
+      :none -> socket_down(message, state)
+    end
+  end
+
+  def handle_info({:http_control_deadline, request}, state) do
+    case state.controls do
+      %{^request => _control} ->
+        # The reply may already be queued; otherwise the request is abandoned
+        # and a late reply is dropped.
+        reply =
+          case :gen_server.receive_response(request, 0) do
+            {:reply, reply} -> reply
+            _timeout_or_down -> {:error, :output_unavailable}
+          end
+
+        {:noreply, settle_control(request, reply, state)}
+
+      _settled ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_info(message, state) when map_size(state.controls) > 0 do
+    case control_reply(message, state.controls) do
+      {request, reply} -> {:noreply, settle_control(request, reply, state)}
+      :none -> {:noreply, state}
+    end
+  end
+
+  def handle_info(_message, state), do: {:noreply, state}
+
+  # The request's connection went away. A modern request is cancelled with
+  # it. The legacy Streamable HTTP revisions say a disconnect SHOULD NOT be
+  # taken for a cancellation (a client cancels with notifications/cancelled),
+  # so a request on a legacy session runs to its end, under its original
+  # deadline; with its writer retired, what it would have written is
+  # released.
+  defp socket_down({:DOWN, monitor, :process, _socket, _reason}, state) do
     state =
       Enum.reduce(state.jobs, state, fn {token, job}, state ->
         if job.socket_monitor == monitor and not job.notification_only? do
-          Runtime.cancel_scope(state.runtime, job.scope)
+          if is_nil(job.lease), do: Runtime.cancel_scope(state.runtime, job.scope)
           HTTPWriterRegistry.retire(job.binding, :writer_down)
           state = put_in(state.jobs[token].socket_down?, true)
           finish(token, state)
@@ -495,8 +519,6 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
 
     {:noreply, state}
   end
-
-  def handle_info(_message, state), do: {:noreply, state}
 
   @impl true
   def handle_call({:establish_session_stream, binding}, {writer, _tag}, state) do
@@ -555,7 +577,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
         cancellation_generation: nil,
         observation: nil,
         socket_monitor: Process.monitor(retained.socket),
-        socket_down?: false
+        socket_down?: false,
+        pending: [],
+        deferred: []
       })
 
     state = put_in(state.jobs[token], job)
@@ -586,7 +610,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
           cancellation_generation: nil,
           observation: nil,
           socket_monitor: Process.monitor(retained.socket),
-          socket_down?: false
+          socket_down?: false,
+          pending: [],
+          deferred: []
         })
 
       {reverse, loans} =
@@ -609,7 +635,11 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
     end
   end
 
-  defp advance(token, state) do
+  # A job's lifecycle steps wait for its outstanding Controller requests, as
+  # they did when those requests were synchronous calls.
+  defp advance(token, state), do: gated(token, :advance, state, &advance_now/2)
+
+  defp advance_now(token, state) do
     case state.jobs[token] do
       %{done?: true} ->
         finish(token, state)
@@ -619,10 +649,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
 
       %{remaining: []} = job ->
         if job.batch? and job.output? do
-          case OutputController.finish(state.table, token) do
-            :ok -> capture_observation(token, state)
-            {:error, reason} -> fail(token, reason, state)
-          end
+          request = OutputController.finish_request(state.table, token)
+          await_control(token, :finish, request, state)
         else
           finish(token, state)
         end
@@ -708,17 +736,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
     }
 
     with {:ok, reservation} <- Admission.promote(state.table, token, invalid, kind: :rpc),
-         :ok <- bind(job, token, reservation, state),
-         :ok <-
-           OutputController.edge_result(
-             state.table,
-             token,
-             output,
-             Arbor.RPC.JSONRPC.error(nil, -32600, "Invalid Request")
-           ) do
-      state = put_in(state.jobs[token].bound?, true)
-      state = put_in(state.jobs[token].output?, true)
-      if job.batch?, do: advance(token, state), else: state
+         :ok <- bind(job, token, reservation, state) do
+      error = Arbor.RPC.JSONRPC.error(nil, -32600, "Invalid Request")
+      edge_result(token, output, error, {:invalid_member, job.batch?}, state)
     else
       {:error, reason} -> fail(token, reason, state)
     end
@@ -813,10 +833,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
         output = Keyword.fetch!(work_opts, :output)
         response = subscription_error(request["id"], invalid)
 
-        case OutputController.edge_result(state.table, token, output, response) do
-          :ok -> put_in(state.jobs[token].output?, true)
-          {:error, reason} -> fail(token, reason, state)
-        end
+        edge_result(token, output, response, :subscription_error, state)
     end
   end
 
@@ -929,7 +946,10 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
   defp bind(%{binding: binding}, token, _reservation, _state),
     do: HTTPWriterRegistry.bind_dispatched(binding, token)
 
-  defp fail(token, reason, state) do
+  defp fail(token, reason, state),
+    do: gated(token, {:fail, reason}, state, &fail_now(&1, reason, &2))
+
+  defp fail_now(token, reason, state) do
     case state.jobs[token] do
       %{binding: binding} ->
         case HTTPWriterRegistry.in_flight_observation(binding) do
@@ -958,16 +978,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
 
       %{binding: binding, format: format} ->
         OutputController.mark_failure(state.table, token, safe_failure(reason))
-
-        case OutputController.http_failure(state.table, token, binding, format) do
-          :ok ->
-            capture_observation(token, put_in(state.jobs[token].failed?, true))
-
-          _unavailable ->
-            OutputController.retire(state.table, token, :http_invocation_failed)
-            HTTPWriterRegistry.retire(binding, :http_invocation_failed)
-            finish(token, state)
-        end
+        state = put_in(state.jobs[token].failed?, true)
+        request = OutputController.http_failure_request(state.table, token, binding, format)
+        await_control(token, :failure, request, state)
 
       _missing ->
         finish(token, state)
@@ -977,7 +990,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
   defp safe_failure(reason) when reason in [:handler_timeout, :request_cancelled], do: reason
   defp safe_failure(_reason), do: :http_invocation_failed
 
-  defp finish(token, state) do
+  defp finish(token, state), do: gated(token, :finish, state, &finish_now/2)
+
+  defp finish_now(token, state) do
     case state.jobs[token] do
       %{response_loans: loans} when map_size(loans) > 0 ->
         put_in(state.jobs[token].done?, true)
@@ -1051,9 +1066,152 @@ defmodule Arbor.MCP.Server.Runtime.HTTPGateway do
   end
 
   defp capture_observation(token, state) do
-    case OutputController.http_observation(state.table, token) do
-      {:ok, observation} -> put_in(state.jobs[token].observation, observation)
-      _settled -> finish(token, state)
+    request = OutputController.http_observation_request(state.table, token)
+    await_control(token, :observation, request, state)
+  end
+
+  # Controller requests are asynchronous. The reply, or its deadline, comes
+  # back through handle_info and is settled here.
+  defp await_control(token, kind, {:ok, request, deadline}, state) do
+    timer =
+      Process.send_after(self(), {:http_control_deadline, request}, max(0, deadline - now()))
+
+    state = put_in(state.controls[request], %{token: token, kind: kind, timer: timer})
+
+    case state.jobs[token] do
+      %{pending: pending} -> put_in(state.jobs[token].pending, pending ++ [request])
+      _missing -> state
     end
   end
+
+  defp await_control(token, kind, {:error, _reason} = error, state),
+    do: settle_kind(token, kind, error, state)
+
+  defp control_reply(message, controls) do
+    Enum.find_value(controls, :none, fn {request, _control} ->
+      case :gen_server.check_response(message, request) do
+        {:reply, reply} -> {request, reply}
+        {:error, _reason} -> {request, {:error, :output_unavailable}}
+        :no_reply -> nil
+      end
+    end)
+  end
+
+  defp settle_control(request, reply, state) do
+    {control, controls} = Map.pop(state.controls, request)
+    Process.cancel_timer(control.timer)
+    token = control.token
+    state = %{state | controls: controls}
+
+    state =
+      case state.jobs[token] do
+        %{pending: pending} -> put_in(state.jobs[token].pending, List.delete(pending, request))
+        _missing -> state
+      end
+
+    token
+    |> settle_kind(control.kind, reply, state)
+    |> then(&run_deferred(token, &1))
+  end
+
+  # OutputController.edge_result/4 without blocking: register, then prepare
+  # here (a session event's producer has to be this gateway), then publish.
+  defp edge_result(token, output, value, next, state) do
+    request = OutputController.register_request(state.table, token, output)
+    await_control(token, {:edge_register, value, next}, request, state)
+  end
+
+  defp gated(token, action, state, run) do
+    case state.jobs[token] do
+      %{pending: [_ | _], deferred: deferred} ->
+        put_in(state.jobs[token].deferred, deferred ++ [action])
+
+      _ready ->
+        run.(token, state)
+    end
+  end
+
+  # Replays the steps that waited, in order, once nothing is outstanding.
+  defp run_deferred(token, state) do
+    case state.jobs[token] do
+      %{pending: [], deferred: [_ | _] = deferred} ->
+        state = put_in(state.jobs[token].deferred, [])
+        Enum.reduce(deferred, state, &run_step(token, &1, &2))
+
+      _waiting_or_gone ->
+        state
+    end
+  end
+
+  defp run_step(token, :advance, state), do: advance(token, state)
+  defp run_step(token, :finish, state), do: finish(token, state)
+  defp run_step(token, {:fail, reason}, state), do: fail(token, reason, state)
+
+  defp settle_kind(token, kind, reply, state) do
+    case state.jobs[token] do
+      nil -> state
+      job -> settle_job(kind, reply, token, job, state)
+    end
+  end
+
+  defp settle_job(:failure, :ok, token, _job, state), do: capture_observation(token, state)
+
+  defp settle_job(:failure, _unavailable, token, job, state) do
+    # The failure deadline has passed or the Controller cannot prepare the
+    # frame: nothing can be delivered on this binding any more.
+    OutputController.retire_async(state.table, token, :http_invocation_failed)
+    HTTPWriterRegistry.retire(job.binding, :http_invocation_failed)
+    finish(token, state)
+  end
+
+  defp settle_job(:observation, {:ok, observation}, token, _job, state),
+    do: put_in(state.jobs[token].observation, observation)
+
+  defp settle_job(:observation, _settled, token, _job, state), do: finish(token, state)
+
+  defp settle_job({:response, ticket}, :ok, token, _job, state) do
+    observation = HTTPWriteTicket.observation(OutputTicket.http(ticket))
+    put_in(state.jobs[token].observation, observation)
+  end
+
+  defp settle_job({:member, error?}, :ok, token, job, state) do
+    state = put_in(state.jobs[token].output?, true)
+
+    if job.initializing? and error?,
+      do: put_in(state.jobs[token].remaining, []),
+      else: state
+  end
+
+  defp settle_job(:finish, :ok, token, _job, state), do: capture_observation(token, state)
+
+  defp settle_job({:invalid_member, batch?}, :ok, token, _job, state) do
+    state = put_in(state.jobs[token].bound?, true)
+    state = put_in(state.jobs[token].output?, true)
+    if batch?, do: advance(token, state), else: state
+  end
+
+  defp settle_job(:subscription_error, :ok, token, _job, state),
+    do: put_in(state.jobs[token].output?, true)
+
+  defp settle_job({:edge_register, value, next}, {:ok, context}, token, _job, state) do
+    case OutputController.prepare(context, value) do
+      {:ok, ticket} ->
+        request = OutputController.edge_prepared_request(state.table, token, ticket)
+        await_control(token, next, request, state)
+
+      error ->
+        settle_kind(token, next, error, state)
+    end
+  end
+
+  defp settle_job({:edge_register, _value, next}, error, token, _job, state),
+    do: settle_kind(token, next, error, state)
+
+  defp settle_job(_delivery, {:error, reason}, token, _job, state),
+    do: fail(token, reason, state)
+
+  defp settle_job(_delivery, _unexpected, token, _job, state),
+    do: fail(token, :output_unavailable, state)
+
+  defp now, do: System.monotonic_time(:millisecond)
 end
