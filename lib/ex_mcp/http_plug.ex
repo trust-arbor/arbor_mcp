@@ -791,7 +791,18 @@ defmodule ExMCP.HttpPlug do
         |> send_resp(400, Jason.encode!(error_response))
 
       {:error, {:unsupported_protocol_version, request_id, version}} ->
-        supported = VersionRegistry.known_versions()
+        # Only the revisions this mount accepts, in its preference order:
+        # a client treats the list as what the server speaks and retries a
+        # version from it, which a mount of the other era would reject. A
+        # mount without a mode accepts both eras.
+        supported =
+          case Map.get(opts, :protocol_mode) do
+            mode when mode in [:legacy_only, :modern_only, :prefer_legacy, :prefer_modern] ->
+              VersionRegistry.supported_versions(mode)
+
+            _mount_without_a_mode ->
+              VersionRegistry.supported_versions(VersionRegistry.protocol_mode())
+          end
 
         error_response =
           JSONRPC.error(

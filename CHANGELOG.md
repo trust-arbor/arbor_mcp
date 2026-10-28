@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An unsupported-version error (`-32022`) from `ExMCP.HttpPlug` listed every
+  revision the library knows, so a `:legacy_only` mount advertised
+  `2026-07-28` and a `:modern_only` mount the legacy dates; a client treats
+  that list as what the server speaks and retries a version the mount
+  rejects. The list now follows the mount's protocol mode, in its preference
+  order; a mount without a mode accepts both eras and lists both (2.x
+  e5b9470, PR #159). The server-side list (`ExMCP.Server.RequestContext`)
+  was already mode-aware.
+
 - The `server/discover` probe took the first message it read for its
   answer, so a server that sent a notification first — a log message, a
   list change — made the probe fail. Notifications are not the answer and
