@@ -15,6 +15,7 @@ defmodule Arbor.MCP.Server.HTTP.Config do
     :allowed_hosts,
     :allowed_origins,
     :principal_id,
+    :client_principals,
     :tenant_id,
     :authorize_subscription_filter,
     :authorize_subscription_publication,

@@ -1208,7 +1208,11 @@ replay cache, verified retry context explicitly reports
 HTTP deployments may provide `:principal_id` and `:tenant_id` as strings or
 resolver functions. OAuth token `sub` and `tenant_id` claims are used by
 default when available; these identities are authenticated into the sealed
-state without embedding bearer tokens.
+state without embedding bearer tokens. A token without `sub` is refused unless
+the host resolves `:principal_id` itself, or sets `client_principals: true`
+because its authorization server leaves `sub` out only of client-credentials
+tokens; those then run as `client:<client_id>`. See "Principals" in
+`Arbor.MCP.HttpPlug`.
 
 ## Modern subscriptions (MCP 2026-07-28)
 

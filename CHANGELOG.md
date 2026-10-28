@@ -38,6 +38,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING:** an OAuth `Arbor.MCP.HttpPlug` mount no longer uses a token's
+  `client_id` as the principal when the token has no `sub`. A token
+  introspection response (RFC 7662) may leave `sub` out, so every user of one
+  OAuth client shared a principal, and with it MRTR `requestState` binding,
+  separate modern cancellations (whose request ids are small client-chosen
+  integers), legacy session ownership, stored tasks and subscription
+  authorization and limits. A validated token without `sub`, or with an empty
+  one, is now refused with `401 invalid_token`, and the refusal is logged
+  without token data. The new `client_principals: true` option is for an
+  authorization server that leaves `sub` out only of client-credentials
+  tokens: such a token then runs as `client:<client_id>`, which can't equal a
+  user's `sub`, and a token with a `username` but no `sub` is still refused.
+  Tokens with `sub` keep `sub` as their principal, unchanged, and a mount that
+  sets `:principal_id` itself is not affected. A principal that was a bare
+  `client_id` becomes `client:<client_id>` with the option, so MRTR
+  `requestState` issued before the upgrade no longer resumes (the client
+  starts the request again), its legacy sessions answer `404` (the client
+  initializes again), and tasks stored under it are no longer found.
 - `jose` `>= 1.11.13` is required and locked. 1.11.13 fixes five advisories:
   EEF-CVE-2026-65625 (attacker-chosen AES-GCM tag length), EEF-CVE-2026-65626
   (RSAES-PKCS1-v1_5 padding oracle), EEF-CVE-2026-65627 (unbounded JWE zip

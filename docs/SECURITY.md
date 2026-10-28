@@ -253,6 +253,15 @@ issuer/audience, expired `exp`, or future `nbf`, even when the endpoint reports
 `active: true`. `legacy_unbound_tokens: true` is a migration-only escape hatch
 that deliberately disables these bindings.
 
+Unless the host resolves `:principal_id` itself, the token's `sub` claim is
+the principal that MRTR state, separate modern cancellations, legacy sessions,
+stored tasks and subscriptions are bound to. An introspection response may
+omit `sub`, and then one user's token can't be told from another user's of the
+same client, so a token without `sub` is refused rather than bound to its
+client. Set `client_principals: true` only when the authorization server
+leaves `sub` out of client-credentials tokens alone; those tokens then run as
+`client:<client_id>`, apart from every user's `sub`.
+
 ### MRTR request state
 
 Modern multi-round requests use an ArborMCP-owned, versioned AES-256-GCM envelope.
