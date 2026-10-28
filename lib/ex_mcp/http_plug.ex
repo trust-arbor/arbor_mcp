@@ -2046,12 +2046,17 @@ defmodule ExMCP.HttpPlug do
   end
 
   # The weight is the `q` parameter, whose value is a bare qvalue (RFC 9110
-  # section 12.4.2). A range without one has quality 1.
+  # section 12.4.2). A range without one has quality 1; a `q` without a
+  # value, bare or empty, is a malformed weight and makes the range unusable,
+  # so it doesn't opt in to an event stream.
   defp quality(params) do
     Enum.find_value(params, "1", fn param ->
       case String.split(param, "=", parts: 2) do
-        [name, value] -> if String.downcase(String.trim(name)) == "q", do: String.trim(value)
-        _other -> nil
+        [name, value] ->
+          if String.downcase(String.trim(name)) == "q", do: String.trim(value)
+
+        [name] ->
+          if String.downcase(String.trim(name)) == "q", do: ""
       end
     end)
   end

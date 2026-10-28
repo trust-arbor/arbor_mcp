@@ -18,8 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `text/event-stream` named with a quality above zero, in any case. A comma
   or semicolon inside a quoted parameter value, escaped quotes included,
   separates nothing, so a range keeps its own `q`; a quoted or malformed
-  `q`, or an unterminated quoted string, doesn't opt in, and JSON is always a
-  valid answer. A wildcard such as `*/*` still gets JSON, since the MCP spec
+  `q` — bare or empty included — or an unterminated quoted string doesn't opt
+  in, and JSON is always a valid answer. A wildcard such as `*/*` still gets JSON, since the MCP spec
   asks clients to list `text/event-stream` (backport of 2.x PR #144 commits
   `4462ba3` and `a887ff2`).
 
