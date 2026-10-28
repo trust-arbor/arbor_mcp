@@ -36,6 +36,12 @@ defmodule ExMCP.Transport.Stdio.Reaper do
   # only on close/1, before the reaper closes the port. When the port has
   # already closed because its owner died, the server is left running, with
   # a warning: its pid may already name another process tree.
+  #
+  # Once it has acted, the reaper records its outcome (see new_outcome/0):
+  # confirmed only when the server, and with :process_group its group, was
+  # seen gone (it exited, or its pid no longer names it). Anything else,
+  # including a process still visible after SIGKILL, is unconfirmed, and a
+  # caller must not start another server beside one that may still run.
 
   require Logger
 
@@ -70,6 +76,21 @@ defmodule ExMCP.Transport.Stdio.Reaper do
   done
   """
 
+  # Why a shutdown couldn't be confirmed, by its code in an outcome: 0 is
+  # pending, 1 confirmed and each reason its index here plus 2.
+  @unconfirmed_reasons [
+    :no_helper,
+    :identity_unknown,
+    :identity_timeout,
+    :identity_unreadable,
+    :helper_timeout,
+    :signal_timeout,
+    :kill_unconfirmed,
+    :taskkill_failed,
+    :left_running,
+    :other
+  ]
+
   @type event :: :close | :server_exited | {:port_down, term()}
   @type step :: :close_port | :shutdown | :stop_group | :taskkill | :warn_left_running
   @type result :: :exited | :stopped | :killed | :not_ours | {:unconfirmed, term()}
@@ -77,7 +98,8 @@ defmodule ExMCP.Transport.Stdio.Reaper do
   @doc """
   Starts the reaper of the server `os_pid` behind `port`. Options:
   `:process_group`, `:eof_grace`, `:term_grace` (already fitted to the
-  budget) and `:budget` (the shutdown's bound). For tests, `:identity`
+  budget), `:budget` (the shutdown's bound) and `:outcome`, where the
+  reaper records how its shutdown ended (see `new_outcome/0`). For tests, `:identity`
   stands in for the start time read at start, `:start_time` (a one-arity
   function of the pid) for the lookups before each signal, `:start_source`
   (`:ps`) makes them use the helper's `ps` on Linux too, `:helper_env`
@@ -126,6 +148,43 @@ defmodule ExMCP.Transport.Stdio.Reaper do
     :ok
   end
 
+  @doc """
+  A place for a reaper to record its outcome, passed to `start/3` as
+  `:outcome` and read with `outcome/1`. It outlives the reaper, so whoever
+  closes the connection can read it however long ago the reaper acted.
+  """
+  @spec new_outcome() :: :atomics.atomics_ref()
+  def new_outcome, do: :atomics.new(1, signed: false)
+
+  @doc """
+  The outcome a reaper recorded: `:pending` until it has acted, then
+  `:confirmed` once the server (and with `:process_group` its group) was
+  seen gone, or `{:unconfirmed, reason}`.
+  """
+  @spec outcome(:atomics.atomics_ref()) :: :pending | :confirmed | {:unconfirmed, atom()}
+  def outcome(ref) do
+    case :atomics.get(ref, 1) do
+      0 -> :pending
+      1 -> :confirmed
+      code -> {:unconfirmed, Enum.at(@unconfirmed_reasons, code - 2, :other)}
+    end
+  end
+
+  defp record(nil, _outcome), do: :ok
+  defp record(ref, :confirmed), do: :atomics.put(ref, 1, 1)
+
+  defp record(ref, {:unconfirmed, reason}) do
+    index =
+      Enum.find_index(@unconfirmed_reasons, &(&1 == reason)) ||
+        length(@unconfirmed_reasons) - 1
+
+    :atomics.put(ref, 1, index + 2)
+  end
+
+  # Confirmed when no step left anything unconfirmed.
+  defp combined(results),
+    do: Enum.find(results, :confirmed, &match?({:unconfirmed, _reason}, &1))
+
   @doc "Tells the reaper the server exited on its own."
   @spec server_exited(pid() | nil) :: :ok
   def server_exited(reaper) when is_pid(reaper) do
@@ -168,9 +227,13 @@ defmodule ExMCP.Transport.Stdio.Reaper do
     opts = Keyword.put(opts, :ended_at, ended_at)
 
     try do
-      os_family()
-      |> steps(event)
-      |> Enum.each(&step(&1, port, os_pid, identity, opts, deadline))
+      results =
+        os_family()
+        |> steps(event)
+        |> Enum.map(&step(&1, port, os_pid, identity, opts, deadline))
+
+      # A step that raised records nothing, which reads as unconfirmed.
+      record(Keyword.get(opts, :outcome), combined(results))
     after
       # An idle helper exits on EOF once its port closes, with the reaper;
       # one that stopped answering was killed when it did.
@@ -207,13 +270,24 @@ defmodule ExMCP.Transport.Stdio.Reaper do
   defp step(:shutdown, _port, os_pid, identity, opts, deadline),
     do: report(os_pid, shutdown(os_pid, identity, opts, deadline))
 
+  # Without a group, the port's exit status already says the server is gone.
   defp step(:stop_group, _port, os_pid, identity, opts, deadline) do
     if Keyword.get(opts, :process_group, false),
-      do: report(os_pid, shutdown(os_pid, identity, opts, deadline))
+      do: report(os_pid, shutdown(os_pid, identity, opts, deadline)),
+      else: :exited
   end
 
   defp step(:taskkill, _port, os_pid, _identity, _opts, deadline) do
-    run_bounded("taskkill", ["/PID", Integer.to_string(os_pid), "/T", "/F"], time_left(deadline))
+    case run_bounded(
+           "taskkill",
+           ["/PID", Integer.to_string(os_pid), "/T", "/F"],
+           time_left(deadline)
+         ) do
+      {_output, 0} -> :killed
+      # No such process: it had exited.
+      {_output, 128} -> :exited
+      _failed -> {:unconfirmed, :taskkill_failed}
+    end
   end
 
   defp step(:warn_left_running, _port, os_pid, _identity, _opts, _deadline) do
@@ -221,16 +295,29 @@ defmodule ExMCP.Transport.Stdio.Reaper do
       "stdio server #{os_pid} may be left running: its connection's owner died before " <>
         "closing it, and on Windows its pid can no longer be confirmed"
     )
+
+    {:unconfirmed, :left_running}
   end
 
-  defp report(os_pid, {:unconfirmed, reason}) do
+  defp report(os_pid, {:unconfirmed, :kill_unconfirmed} = result) do
+    Logger.warning(
+      "stdio server #{os_pid} was sent SIGKILL and was still running when its " <>
+        "shutdown budget ran out"
+    )
+
+    result
+  end
+
+  defp report(os_pid, {:unconfirmed, reason} = result) do
     Logger.warning(
       "stdio server #{os_pid} was not signalled: it could not be confirmed as the " <>
         "connection's process in time (#{inspect(reason)})"
     )
+
+    result
   end
 
-  defp report(_os_pid, _result), do: :ok
+  defp report(_os_pid, result), do: result
 
   @doc false
   # Runs the shutdown order on the server `os_pid` (or its group) by
@@ -306,9 +393,13 @@ defmodule ExMCP.Transport.Stdio.Reaper do
     with :running <- exited_by(target, kill_at),
          :sent <- signal_if_ours(target, "KILL", deadline) do
       # A killed process stays visible (a zombie) until its parent reaps
-      # it, which a busy VM can delay: close/1 returns once it is gone.
-      exited_by(target, deadline)
-      :killed
+      # it, which a busy VM can delay: close/1 returns once it is gone, and
+      # only a process seen gone counts as stopped.
+      case exited_by(target, deadline) do
+        :exited -> :killed
+        :running -> {:unconfirmed, :kill_unconfirmed}
+        unconfirmed -> unconfirmed
+      end
     else
       gone when gone in [:exited, :not_ours] -> :stopped
       unconfirmed -> unconfirmed

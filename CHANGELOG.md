@@ -22,13 +22,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   then fails on `initialize` with the versions it supports, reported as
   `{:era_probe_and_initialize_failed, %{..., respawned: true}}`; the
   `[:ex_mcp, :client, :era, :fallback]` event carries `respawned: true`.
-  `:modern_only` never respawns. A server process that cannot be confirmed
-  stopped is never replaced, by a retry or a reconnect either:
-  `start_link/1` returns
+  `:modern_only` never respawns. The fresh process starts only once the
+  stdio shutdown has seen the old one gone (with `process_group: true`,
+  everything left in its group too). A server process that cannot be
+  confirmed stopped (its pid could not be checked before a signal, it was
+  still running after SIGKILL, or the shutdown did not finish within
+  `:cleanup_timeout` plus 500 ms) is never replaced, by a retry or a
+  reconnect either: `start_link/1` returns
   `{:error, {:transport_connect_failed, {:probed_server_stop_unconfirmed, ...}}}`
-  or `{:error, {:transport_connect_failed, {:cleanup_failed, ...}}}`, and a
+  or `{:error, {:transport_connect_failed, {:cleanup_failed, ...}}}`, the
+  cleanup given as `{:error, {:server_stop_unconfirmed, reason}}`, and a
   reconnecting client stops, settles in `:disconnected` and emits the new
-  `[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]` event. A stdio
+  `[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]` event.
+  `ExMCP.Transport.Stdio.close/1` still returns `:ok` either way. A stdio
   server that wrote part of a frame and exited is now reported as
   `{:connection_error, {:unfinished_frame, {:process_exited, status}}}`.
   **Behavior change:** such servers, which failed to connect before, now
@@ -55,8 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A health check that gave up on a hung server dropped the connection
   without closing it, so a stdio server kept running and a reconnect started
   a second one beside it. The transport is now closed first, as the other
-  teardown paths already did. Backport of the health-check part of ArborMCP
-  `9bdc531`.
+  teardown paths already did, and when that server cannot be confirmed
+  stopped the client does not reconnect: it settles in `:disconnected` and
+  emits `[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]` with the
+  reason `{:server_stop_unconfirmed, reason}`. Backport of the health-check
+  part of ArborMCP `9bdc531`.
 - The configuration, transport and troubleshooting guides said a probe
   timeout never leads to `initialize`. Over HTTP, under the preference
   modes, it is legacy evidence, as MCP 2026-07-28 says, and has been since

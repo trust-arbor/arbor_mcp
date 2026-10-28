@@ -3,7 +3,10 @@ defmodule ExMCP.Test.ScriptedStdioServer do
   # A stdio MCP server scripted in `sh`, so a test controls how long it takes
   # to start and how it answers, and can read back what it was sent. Every
   # copy started from the same log appends to it: a `start` line when the
-  # process starts, then the method of each message it reads.
+  # process starts, then the method of each message it reads. Each copy also
+  # records its pid, and the pid of anything it leaves behind, in
+  # `LOG.pids`, and when it starts, every one of those still running in
+  # `LOG.overlaps` (see `pids/1` and `overlaps/1`).
   #
   # Eras:
   #
@@ -28,9 +31,19 @@ defmodule ExMCP.Test.ScriptedStdioServer do
   #   malformed answers server/discover with a line that is not JSON
   #   partial writes part of an answer to server/discover, then exits
   #   oversized_exit writes 10 kB with no newline, then exits
+  #   orphans like exits, but first leaves a process in its group that
+  #           ignores EOF and SIGTERM (only SIGKILL stops it)
+  #   deaf    like silent, but ignores EOF and SIGTERM
 
   @script ~S"""
   printf 'start\n' >> "$3"
+  if [ -s "$3.pids" ]; then
+    for pid in $(cat "$3.pids"); do
+      if kill -0 "$pid" 2>/dev/null; then printf '%s\n' "$pid" >> "$3.overlaps"; fi
+    done
+  fi
+  printf '%s\n' "$$" >> "$3.pids"
+  if [ "$2" = deaf ]; then trap '' TERM; fi
   if [ -n "$4" ] && [ ! -e "$4" ]; then : > "$4"; first=1; else sleep "$1"; first=0; fi
   era=$2
   log=$3
@@ -60,10 +73,14 @@ defmodule ExMCP.Test.ScriptedStdioServer do
         printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32022,"message":"Unsupported protocol version","data":{"supported":["2026-07-28"],"requested":"2025-11-25"}}}\n' "$id" ;;
       legacy:server/discover)
         printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"Method not found"}}\n' "$id" ;;
-      legacy:initialize|exits:initialize|banner:initialize|notifies:initialize|silent:initialize)
+      legacy:initialize|exits:initialize|banner:initialize|notifies:initialize|silent:initialize|orphans:initialize|deaf:initialize)
         sleep "$5"
         printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-11-25","capabilities":{},"serverInfo":{"name":"scripted-legacy","version":"1"}}}\n' "$id" ;;
       exits:server/discover)
+        exit 3 ;;
+      orphans:server/discover)
+        (trap '' TERM; exec sleep 60) </dev/null >/dev/null 2>&1 &
+        printf '%s\n' "$!" >> "$log.pids"
         exit 3 ;;
       banner:server/discover)
         printf 'legacy server: unknown request, exiting\n'
@@ -86,11 +103,13 @@ defmodule ExMCP.Test.ScriptedStdioServer do
       partial:server/discover)
         printf '{"jsonrpc":"2.0","id":%s,"res' "$id"
         exit 5 ;;
-      mute:*|once:*|garbage:*|oversized:*|oversized_exit:*|malformed:*|partial:*|silent:server/discover) ;;
+      mute:*|once:*|garbage:*|oversized:*|oversized_exit:*|malformed:*|partial:*|silent:server/discover|deaf:server/discover) ;;
       *)
         printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id" ;;
     esac
   done
+  # stdin is closed; a deaf server carries on regardless.
+  if [ "$era" = deaf ]; then exec sleep 60; fi
   """
 
   @doc """
@@ -174,6 +193,7 @@ defmodule ExMCP.Test.ScriptedStdioServer do
   @doc "Starts a client in `mode` against a server of `era` logging to `log`."
   def start_client(era, mode, log, opts) do
     File.write!(log, "")
+    for suffix <- [".pids", ".overlaps"], do: File.rm(log <> suffix)
 
     {server_opts, client_opts} =
       Keyword.split(opts, [:start_delay_s, :initialize_delay_s, :first_start])
@@ -206,6 +226,61 @@ defmodule ExMCP.Test.ScriptedStdioServer do
 
   @doc "The methods the servers logging to `log` read, in order."
   def methods(log), do: log |> lines() |> Enum.reject(&(&1 == "start"))
+
+  @doc """
+  The pids of the servers logging to `log`, in the order they started, and
+  of anything they left behind (an `orphans` server's child, after it).
+  """
+  def pids(log) do
+    case File.read(log <> ".pids") do
+      {:ok, contents} ->
+        contents |> String.split("\n", trim: true) |> Enum.map(&String.to_integer/1)
+
+      {:error, :enoent} ->
+        []
+    end
+  end
+
+  @doc """
+  The pids, among `pids/1`, that were still running when a later server
+  logging to `log` started.
+  """
+  def overlaps(log) do
+    case File.read(log <> ".overlaps") do
+      {:ok, contents} ->
+        contents |> String.split("\n", trim: true) |> Enum.map(&String.to_integer/1)
+
+      {:error, :enoent} ->
+        []
+    end
+  end
+
+  @doc "Kills every process `pids/1` lists for `log` that is still running."
+  def kill_all(log) do
+    for pid <- pids(log),
+        do: System.cmd("kill", ["-KILL", "#{pid}"], stderr_to_stdout: true)
+
+    :ok
+  end
+
+  @doc """
+  The reaper (`ExMCP.Transport.Stdio.Reaper`) watching the server `os_pid`,
+  while it waits for its connection to end; nil when there is none.
+  """
+  def reaper_of(os_pid) do
+    Enum.find(Process.list(), fn pid ->
+      with {:current_function, {ExMCP.Transport.Stdio.Reaper, :run, 4}} <-
+             Process.info(pid, :current_function),
+           {:monitors, monitors} <- Process.info(pid, :monitors) do
+        Enum.any?(monitors, fn
+          {:port, port} -> Port.info(port, :os_pid) == {:os_pid, os_pid}
+          _other -> false
+        end)
+      else
+        _other -> false
+      end
+    end)
+  end
 
   @doc "How many servers logging to `log` were started."
   def starts(log), do: log |> lines() |> Enum.count(&(&1 == "start"))

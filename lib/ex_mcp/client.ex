@@ -102,6 +102,9 @@ defmodule ExMCP.Client do
     # dropped, and that were still alive when it did. Their exit signals are
     # expected and are ignored rather than read as a foreign link's exit.
     retired_links: MapSet.new(),
+    # How closing a dropped transport's stdio server ended: :ok, or the
+    # {:error, _} that keeps the client from starting another beside it.
+    server_stop: :ok,
     # Memoized client handler: nil (not yet initialized), :none (no handler
     # configured) or {module, handler_state}. Initialized once; callback
     # returns update handler_state, so stateful client handlers work.
@@ -210,9 +213,11 @@ defmodule ExMCP.Client do
   `{:error, :not_connected}`.
 
   Over stdio each connection runs its own server process, and none is
-  started while an earlier one may still be running. When a reconnect
-  attempt's stdio server cannot be confirmed stopped, the client stops
-  reconnecting, settles in `:disconnected` and emits
+  started while an earlier one may still be running. A server counts as
+  stopped only once the transport saw it gone (see `ExMCP.Transport.Stdio`).
+  When the old server's stop (after a health check gave up on it, say) or
+  a reconnect attempt's cannot be confirmed, the client stops reconnecting,
+  settles in `:disconnected` and emits
   `[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]`.
 
   Explicit `disconnect/1` or `stop/2` calls never trigger reconnection.
@@ -234,8 +239,8 @@ defmodule ExMCP.Client do
   - `[:ex_mcp, :client, :reconnect, :error]` - a single attempt failed
   - `[:ex_mcp, :client, :reconnect, :timeout]` - gave up after the final attempt
   - `[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]` - stopped
-    reconnecting because a stdio server from an earlier attempt could not be
-    confirmed stopped; metadata `reason`
+    reconnecting because a stdio server from the dropped connection or an
+    earlier attempt could not be confirmed stopped; metadata `reason`
 
   ## Reliability Options
 
@@ -2136,10 +2141,21 @@ defmodule ExMCP.Client do
     {:noreply, handle_transport_down({:transport_forwarder_died, reason}, state)}
   end
 
+  # The transport may still be open (a stdio server that only hung), so it
+  # is closed here, and a server that cannot be confirmed stopped keeps
+  # handle_transport_down/2 from reconnecting beside it.
   defp abandon_transport(state) do
     state = retire_links(state)
-    close_transport(state)
-    state
+
+    case close_transport(state) do
+      {:error, _reason} = unconfirmed ->
+        if ConnectionManager.spawned_server?(state.transport_mod, state.transport_state),
+          do: %{state | server_stop: unconfirmed},
+          else: state
+
+      _closed ->
+        state
+    end
   end
 
   # Remembers the links of the transport and receiver this client is about
@@ -2182,14 +2198,14 @@ defmodule ExMCP.Client do
   # Closing is bounded (see Deadline.cleanup_timeout/0): a best-effort
   # session DELETE to a peer that stopped answering must not hold stop/2,
   # disconnect/1 or the client loop for the transport's request timeout.
+  # It says whether a stdio server was confirmed stopped.
   defp close_transport(%{transport_mod: mod, transport_state: transport_state})
        when not is_nil(mod) and not is_nil(transport_state) do
-    mod.close(Deadline.for_cleanup(mod, transport_state))
-    :ok
+    ExMCP.Transport.close_confirmed(mod, Deadline.for_cleanup(mod, transport_state))
   rescue
-    _error -> :ok
+    exception -> {:error, {:cleanup_exception, exception.__struct__}}
   catch
-    :exit, _reason -> :ok
+    :exit, reason -> {:error, {:cleanup_exit, reason}}
   end
 
   defp close_transport(_state), do: :ok
@@ -2247,10 +2263,16 @@ defmodule ExMCP.Client do
         subscriptions: %{}
     }
 
-    if reconnect_allowed?(cleared_state, previous_status) do
-      schedule_reconnect(cleared_state)
-    else
-      close_notification_listeners(cleared_state, {:transport_closed, reason})
+    cond do
+      not reconnect_allowed?(cleared_state, previous_status) ->
+        close_notification_listeners(cleared_state, {:transport_closed, reason})
+
+      match?({:error, _reason}, cleared_state.server_stop) ->
+        {:error, unconfirmed} = cleared_state.server_stop
+        stop_reconnecting(cleared_state, unconfirmed)
+
+      true ->
+        schedule_reconnect(cleared_state)
     end
   end
 

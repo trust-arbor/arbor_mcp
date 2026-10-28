@@ -130,8 +130,17 @@ supports. Those are the only two triggers: malformed output (a JSON-looking
 line that is not a valid answer, or a frame cut off or over
 `:max_frame_bytes`) fails the connection, while non-JSON lines such as
 banners and logs are ignored and are no answer. `:modern_only` never
-respawns, and a retry or reconnect never starts a server while one an
-earlier attempt opened is not confirmed stopped.
+respawns.
+
+The fresh process starts only once the old one is confirmed stopped: the
+transport's shutdown saw it gone, and with `process_group: true` everything
+left in its group too, within `:cleanup_timeout`. A server that cannot be
+confirmed stopped (its pid could not be checked before a signal, it was
+still running after SIGKILL, or the shutdown did not finish in time) is
+never replaced, by the respawn, a retry or a reconnect, nor after a health
+check gives up on it: the connection fails, or the client stops
+reconnecting, and `[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]` is
+emitted.
 
 `protocol_version` is a legacy revision preference, not an era switch or a
 statement of the latest upstream MCP revision. The

@@ -205,8 +205,10 @@ defmodule ExMCP.Client.ConnectionManager do
 
   defp abandon_legacy_attempt(_transport_mod, _snapshot, _attempt), do: :ok
 
+  # A stdio server counts as stopped only once its reaper saw it gone:
+  # {:error, {:server_stop_unconfirmed, reason}} otherwise.
   defp close_quietly(transport_mod, transport_state) do
-    transport_mod.close(transport_state)
+    ExMCP.Transport.close_confirmed(transport_mod, transport_state)
   rescue
     exception -> {:error, {:cleanup_exception, exception.__struct__}}
   catch
