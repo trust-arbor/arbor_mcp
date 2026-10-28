@@ -147,6 +147,11 @@ defmodule ExMCP.HttpPlug do
 
   @session_id_max_bytes 128
 
+  # RFC 9110 section 12.4.2: `weight = OWS ";" OWS "q=" qvalue`, with
+  # `qvalue = ( "0" [ "." 0*3DIGIT ] ) / ( "1" [ "." 0*3("0") ] )`. ABNF
+  # literals are case-insensitive, so `q` and `Q` name the weight.
+  @weight ~r/\A[qQ]=(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)\z/
+
   @deprecated "The session table is owned by ExMCP.HttpPlug.SessionRegistry, started with the :ex_mcp application"
   def start_link(opts \\ []) do
     case SessionRegistry.start_link(opts) do
@@ -2045,20 +2050,39 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
-  # The weight is the `q` parameter, whose value is a bare qvalue (RFC 9110
-  # section 12.4.2). A range without one has quality 1; a `q` without a
-  # value, bare or empty, is a malformed weight and makes the range unusable,
-  # so it doesn't opt in to an event stream.
+  # The weight is the `q` parameter, and its grammar is exact (RFC 9110
+  # section 12.4.2): `weight = OWS ";" OWS "q=" qvalue`, so optional
+  # whitespace surrounds the whole parameter, never the name, the equals
+  # sign or the value. A parameter named `q` — either case; ABNF literals
+  # are case-insensitive — is the weight only when it matches that grammar
+  # exactly. Any other spelling of one, a bare or empty `q`, whitespace
+  # around the equals sign, a malformed or quoted qvalue, is a malformed
+  # weight and makes the range unusable, so it doesn't opt in to an event
+  # stream. A range without a `q` parameter has quality 1.
   defp quality(params) do
     Enum.find_value(params, "1", fn param ->
-      case String.split(param, "=", parts: 2) do
-        [name, value] ->
-          if String.downcase(String.trim(name)) == "q", do: String.trim(value)
+      trimmed = String.trim(param)
 
+      case String.split(trimmed, "=", parts: 2) do
         [name] ->
-          if String.downcase(String.trim(name)) == "q", do: ""
+          if weight_name?(name), do: ""
+
+        [name, _value] ->
+          if weight_name?(name), do: weight_value(trimmed)
       end
     end)
+  end
+
+  defp weight_name?(name), do: String.downcase(String.trim(name)) == "q"
+
+  # The whole parameter must match the weight grammar; the qvalue it carries
+  # is everything after the equals sign. A `q` parameter that doesn't match
+  # is malformed, so the empty qvalue makes its range unusable.
+  defp weight_value(trimmed) do
+    case Regex.run(@weight, trimmed) do
+      [match] -> binary_part(match, 2, byte_size(match) - 2)
+      nil -> ""
+    end
   end
 
   # A malformed qvalue, a quoted one included, makes its range unusable, so it
