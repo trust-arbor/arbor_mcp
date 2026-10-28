@@ -20,8 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separates nothing, so a range keeps its own `q`; a `q` parameter that
   doesn't spell the weight grammar exactly — bare, empty, whitespace around
   the equals sign, malformed or quoted qvalue (`Q`, either case, names it) —
-  or an unterminated quoted string doesn't opt in, and JSON is always a valid
-  answer. A wildcard such as `*/*` still gets JSON, since the MCP spec
+  a second `q` parameter, whatever either value says, or an unterminated
+  quoted string doesn't opt in, and JSON is always a valid answer. Optional
+  whitespace is only SP and HTAB, as RFC 9110 defines it: any other
+  whitespace-like character, a no-break space for instance, is part of the
+  value it sits in and fails the grammar. A wildcard such as `*/*` still gets JSON, since the MCP spec
   asks clients to list `text/event-stream` (backport of 2.x PR #144 commits
   `4462ba3` and `a887ff2`).
 

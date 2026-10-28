@@ -39,7 +39,8 @@ defmodule ExMCP.HttpPlugEventStreamAcceptTest do
     "text/event-stream;charset=utf-8;q=1, application/json",
     ~S(text/event-stream;foo="x;y,z";q=0.5, application/json),
     ~S(text/event-stream;foo="a\"b";q=1, application/json),
-    "application/json, text/event-stream;Q=0.5"
+    "application/json, text/event-stream;Q=0.5",
+    "application/json, text/event-stream;q=1\t"
   ]
 
   @json [
@@ -55,6 +56,9 @@ defmodule ExMCP.HttpPlugEventStreamAcceptTest do
     "application/json, text/event-stream;q=1.5",
     "application/json, text/event-stream;q=1.0000",
     "application/json, text/event-stream;q=.5",
+    "application/json, text/event-stream;q=1;q=abc",
+    "application/json, text/event-stream;q=1;q",
+    "application/json, text/event-stream;q=1\u00A0",
     "application/json",
     "*/*",
     "application/json, text/*",

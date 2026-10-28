@@ -2043,7 +2043,7 @@ defmodule ExMCP.HttpPlug do
 
   defp event_stream_range?(range) do
     with {:ok, [media | params]} <- split_unquoted(range, ?;),
-         "text/event-stream" <- media |> String.trim() |> String.downcase() do
+         "text/event-stream" <- media |> trim_ows() |> String.downcase() do
       positive_quality?(quality(params))
     else
       _other -> false
@@ -2058,32 +2058,46 @@ defmodule ExMCP.HttpPlug do
   # exactly. Any other spelling of one, a bare or empty `q`, whitespace
   # around the equals sign, a malformed or quoted qvalue, is a malformed
   # weight and makes the range unusable, so it doesn't opt in to an event
-  # stream. A range without a `q` parameter has quality 1.
+  # stream. So does a second `q` parameter, whatever either value says.
+  # A range without a `q` parameter has quality 1.
   defp quality(params) do
-    Enum.find_value(params, "1", fn param ->
-      trimmed = String.trim(param)
-
-      case String.split(trimmed, "=", parts: 2) do
-        [name] ->
-          if weight_name?(name), do: ""
-
-        [name, _value] ->
-          if weight_name?(name), do: weight_value(trimmed)
-      end
-    end)
+    params
+    |> Enum.map(&trim_ows/1)
+    |> Enum.split_with(&q_parameter?/1)
+    |> case do
+      {[], _others} -> "1"
+      {[param], _others} -> weight_value(param)
+      {_several, _others} -> ""
+    end
   end
 
-  defp weight_name?(name), do: String.downcase(String.trim(name)) == "q"
+  # A parameter's name, with optional whitespace around it removed, names the
+  # weight when it is `q` in either case. A name so wrapped still fails the
+  # grammar below, which allows no whitespace inside the parameter.
+  defp q_parameter?(param) do
+    param
+    |> String.split("=", parts: 2)
+    |> hd()
+    |> trim_ows()
+    |> String.downcase()
+    |> Kernel.==("q")
+  end
 
   # The whole parameter must match the weight grammar; the qvalue it carries
   # is everything after the equals sign. A `q` parameter that doesn't match
   # is malformed, so the empty qvalue makes its range unusable.
-  defp weight_value(trimmed) do
-    case Regex.run(@weight, trimmed) do
+  defp weight_value(param) do
+    case Regex.run(@weight, param) do
       [match] -> binary_part(match, 2, byte_size(match) - 2)
       nil -> ""
     end
   end
+
+  # OWS, optional whitespace, is only SP or HTAB (RFC 9110 section 5.6.3).
+  # Any other whitespace-like character, a no-break space for instance, is
+  # part of what it sits in, so trimming it away here would change a value
+  # the grammar below must judge.
+  defp trim_ows(value), do: String.replace(value, ~r/\A[ \t]+|[ \t]+\z/, "")
 
   # A malformed qvalue, a quoted one included, makes its range unusable, so it
   # doesn't opt in to an event stream. JSON is always a valid answer.
