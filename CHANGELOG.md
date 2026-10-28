@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Upgraded the development-only Credo dependency to 1.7.19 so linting works
+  on Elixir 1.20; retained the maintenance line's existing style rules.
+
+### Fixed
+
+- Authorization code flow now returns `{:error, :invalid_scopes}` when
+  `:scopes` is not a proper list of strings, including lists with an invalid
+  tail, instead of raising for invalid values. `nil` still omits the `scope`
+  parameter, so the authorization server applies its default scopes.
 - `jose` `>= 1.11.13` is required and locked. 1.11.13 fixes five advisories:
   EEF-CVE-2026-65625 (attacker-chosen AES-GCM tag length), EEF-CVE-2026-65626
   (RSAES-PKCS1-v1_5 padding oracle), EEF-CVE-2026-65627 (unbounded JWE zip
