@@ -109,6 +109,9 @@ defmodule ExMCP.Client.RequestHandler do
             {:ok, updated_state, _response_data} ->
               {:reply, {:error, :subscription_requires_streaming_transport}, updated_state}
 
+            {:error, reason, failed_state} ->
+              {:reply, {:error, reason}, failed_state}
+
             {:error, reason} ->
               {:reply, {:error, reason}, state}
           end
@@ -202,14 +205,14 @@ defmodule ExMCP.Client.RequestHandler do
            transport_state: %HTTP{protocol_era: :modern} = transport_state
          } = state
        ) do
-    with {:ok, encoded} <- encode_for_transport(HTTP, request),
-         {:ok, transport_state} <-
-           HTTP.open_stream(encoded, transport_state, self(), stream_kind: :subscription) do
-      {:ok, %{state | transport_state: transport_state}}
+    with {:ok, encoded} <- encode_for_transport(HTTP, request) do
+      encoded
+      |> HTTP.open_stream(transport_state, self(), stream_kind: :subscription)
+      |> with_transport_state(state)
     end
   end
 
-  defp send_subscription_request(request, state), do: send_message(request, state)
+  defp send_subscription_request(request, state), do: transmit(request, state)
 
   defp close_subscription_transport(
          request_id,
@@ -265,20 +268,29 @@ defmodule ExMCP.Client.RequestHandler do
         new_state = %{updated_state | pending_requests: pending_requests}
         {:noreply, new_state}
 
-      {:error, :not_connected} ->
-        {:reply, {:error, :not_connected}, state}
-
-      {:error, :deadline_expired} ->
-        # Refused before anything was sent (see BoundedClient).
-        {:reply, {:error, not_sent_error(:deadline_expired, state)}, state}
+      # The transport changed its state before failing (an auth provider
+      # refreshed its token, say): keep it.
+      {:error, reason, failed_state} ->
+        reply_send_error(reason, deadline, failed_state)
 
       {:error, reason} ->
-        if Deadline.expired?(deadline) do
-          # The caller's own timeout: it may already have reported one.
-          {:reply, {:error, :timeout}, state}
-        else
-          {:reply, {:error, send_failure(reason, state)}, state}
-        end
+        reply_send_error(reason, deadline, state)
+    end
+  end
+
+  defp reply_send_error(:not_connected, _deadline, state),
+    do: {:reply, {:error, :not_connected}, state}
+
+  # Refused before anything was sent (see BoundedClient).
+  defp reply_send_error(:deadline_expired, _deadline, state),
+    do: {:reply, {:error, not_sent_error(:deadline_expired, state)}, state}
+
+  defp reply_send_error(reason, deadline, state) do
+    if Deadline.expired?(deadline) do
+      # The caller's own timeout: it may already have reported one.
+      {:reply, {:error, :timeout}, state}
+    else
+      {:reply, {:error, send_failure(reason, state)}, state}
     end
   end
 
@@ -311,6 +323,9 @@ defmodule ExMCP.Client.RequestHandler do
       {:ok, updated_state} ->
         {:ok, put_transport_deadline(updated_state, previous)}
 
+      {:error, reason, failed_state} ->
+        {:error, reason, put_transport_deadline(failed_state, previous)}
+
       error ->
         error
     end
@@ -339,19 +354,33 @@ defmodule ExMCP.Client.RequestHandler do
     if stream_requested? do
       open_request_stream(request, state, transport_state)
     else
-      send_message(request, state)
+      transmit(request, state)
     end
   end
 
-  defp send_request_message(request, state), do: send_message(request, state)
+  defp send_request_message(request, state), do: transmit(request, state)
 
   defp open_request_stream(request, state, transport_state) do
-    with {:ok, encoded} <- encode_for_transport(HTTP, request),
-         {:ok, transport_state} <-
-           HTTP.open_stream(encoded, transport_state, self(), stream_kind: :request) do
-      {:ok, %{state | transport_state: transport_state}}
+    # The caller's deadline, or the client's default timeout for the request,
+    # bounds how long the stream waits for an auth challenge's answer.
+    deadline =
+      Deadline.on_transport(HTTP, transport_state) ||
+        System.monotonic_time(:millisecond) + (state.default_timeout || 5_000)
+
+    with {:ok, encoded} <- encode_for_transport(HTTP, request) do
+      encoded
+      |> HTTP.open_stream(transport_state, self(), stream_kind: :request, deadline: deadline)
+      |> with_transport_state(state)
     end
   end
+
+  defp with_transport_state({:ok, transport_state}, state),
+    do: {:ok, %{state | transport_state: transport_state}}
+
+  defp with_transport_state({:error, reason, transport_state}, state),
+    do: {:error, reason, %{state | transport_state: transport_state}}
+
+  defp with_transport_state({:error, reason}, _state), do: {:error, reason}
 
   # When the caller did not provide an explicit timeout, the client process
   # enforces its configured default (resolved from its own state — no extra
@@ -425,7 +454,7 @@ defmodule ExMCP.Client.RequestHandler do
     ordered_ids = Enum.map(requests_with_ids, &elem(&1, 0))
     protocol_requests = Enum.map(requests_with_ids, &elem(&1, 1))
 
-    case send_message(protocol_requests, state) do
+    case transmit(protocol_requests, state) do
       {:ok, updated_state} ->
         batch_id = Protocol.generate_id()
         batch_info = {from, :batch, ordered_ids, %{}}
@@ -439,16 +468,20 @@ defmodule ExMCP.Client.RequestHandler do
         new_state = %{updated_state | pending_requests: new_pending_requests}
         {:noreply, new_state}
 
-      {:error, reason} ->
-        response =
-          {:error,
-           %{
-             type: :transport_error,
-             message: "Failed to send batch request: #{inspect(reason)}"
-           }}
+      {:error, reason, failed_state} ->
+        {:reply, batch_send_error(reason), failed_state}
 
-        {:reply, response, state}
+      {:error, reason} ->
+        {:reply, batch_send_error(reason), state}
     end
+  end
+
+  defp batch_send_error(reason) do
+    {:error,
+     %{
+       type: :transport_error,
+       message: "Failed to send batch request: #{inspect(reason)}"
+     }}
   end
 
   @doc """
@@ -464,8 +497,10 @@ defmodule ExMCP.Client.RequestHandler do
   - `{:ok, nil, state}` - a synchronous transport answered inline, so the
     connection is already proven alive
   - `{:error, reason}` - the ping could not be sent
+  - `{:error, reason, state}` - the ping could not be sent, and the transport
+    changed its state first (an auth provider refreshed its token)
   """
-  @spec send_ping(map()) :: {:ok, term() | nil, map()} | {:error, any()}
+  @spec send_ping(map()) :: {:ok, term() | nil, map()} | {:error, any()} | {:error, any(), map()}
   def send_ping(state) do
     id = Protocol.generate_id()
 
@@ -473,9 +508,10 @@ defmodule ExMCP.Client.RequestHandler do
       if VersionRegistry.modern?(state.protocol_version), do: "server/discover", else: "ping"
 
     with {:ok, request} <- build_request(method, %{}, id, state) do
-      case send_message(request, state) do
+      case transmit(request, state) do
         {:ok, updated_state, _response_data} -> {:ok, nil, updated_state}
         {:ok, updated_state} -> {:ok, id, updated_state}
+        {:error, reason, failed_state} -> {:error, reason, failed_state}
         {:error, reason} -> {:error, reason}
       end
     end
@@ -843,7 +879,7 @@ defmodule ExMCP.Client.RequestHandler do
     # We assume build_request handles a nil id by omitting it.
     notification = build_request(method, params, nil)
 
-    case send_message(notification, state) do
+    case transmit(notification, state) do
       {:ok, updated_state, _response_data} ->
         # Non-SSE HTTP returns response but we ignore it for notifications
         {:noreply, updated_state}
@@ -856,19 +892,37 @@ defmodule ExMCP.Client.RequestHandler do
         Logger.debug("Cannot send notification: client not connected")
         {:noreply, state}
 
-      {:error, reason} ->
-        Logger.error("Failed to send notification",
-          reason_shape: LogSummary.describe(reason)
-        )
+      {:error, reason, failed_state} ->
+        log_notification_failure(reason)
+        {:noreply, failed_state}
 
+      {:error, reason} ->
+        log_notification_failure(reason)
         {:noreply, state}
     end
+  end
+
+  defp log_notification_failure(reason) do
+    Logger.error("Failed to send notification",
+      reason_shape: LogSummary.describe(reason)
+    )
   end
 
   @doc """
   Encodes and sends a message via the transport.
   """
   def send_message(message, state) do
+    case transmit(message, state) do
+      {:error, reason, _state} -> {:error, reason}
+      result -> result
+    end
+  end
+
+  # send_message/2 that also keeps a transport state changed before a failed
+  # send: an auth provider may have refreshed its token (spending a rotating
+  # refresh token) or recorded a failed flow's loop guards. Then the result
+  # is {:error, reason, state}, and callers carry on with that state.
+  defp transmit(message, state) do
     %{transport_mod: transport_mod, transport_state: transport_state} = state
 
     # Check if transport is available
@@ -876,7 +930,7 @@ defmodule ExMCP.Client.RequestHandler do
       {:error, :not_connected}
     else
       with {:ok, outbound_message} <- encode_for_transport(transport_mod, message) do
-        case transport_mod.send_message(outbound_message, transport_state) do
+        case transport_send(transport_mod, outbound_message, transport_state) do
           {:ok, new_transport_state, response_data} ->
             # Non-SSE HTTP returns response immediately
             {:ok, %{state | transport_state: new_transport_state}, response_data}
@@ -885,12 +939,21 @@ defmodule ExMCP.Client.RequestHandler do
             # SSE and other streaming transports return 2-tuple
             {:ok, %{state | transport_state: new_transport_state}}
 
+          {:error, reason, new_transport_state} ->
+            {:error, reason, %{state | transport_state: new_transport_state}}
+
           {:error, reason} ->
             {:error, reason}
         end
       end
     end
   end
+
+  defp transport_send(HTTP, message, %HTTP{} = transport_state),
+    do: HTTP.send_keeping_state(message, transport_state)
+
+  defp transport_send(transport_mod, message, transport_state),
+    do: transport_mod.send_message(message, transport_state)
 
   defp encode_for_transport(ExMCP.Transport.Local, message), do: {:ok, message}
   defp encode_for_transport(_transport_mod, message), do: Protocol.encode_to_string(message)
@@ -1743,7 +1806,7 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   defp send_response(response, state) do
-    case send_message(response, state) do
+    case transmit(response, state) do
       {:ok, updated_state} ->
         {:noreply, updated_state}
 
@@ -1759,12 +1822,19 @@ defmodule ExMCP.Client.RequestHandler do
             parse_transport_message(data, updated_state)
         end
 
-      {:error, reason} ->
-        Logger.error("Failed to send response to server",
-          reason_shape: LogSummary.describe(reason)
-        )
+      {:error, reason, failed_state} ->
+        log_response_failure(reason)
+        {:noreply, failed_state}
 
+      {:error, reason} ->
+        log_response_failure(reason)
         {:noreply, state}
     end
+  end
+
+  defp log_response_failure(reason) do
+    Logger.error("Failed to send response to server",
+      reason_shape: LogSummary.describe(reason)
+    )
   end
 end

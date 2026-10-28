@@ -6,8 +6,11 @@ defmodule ExMCP.Authorization.Provider.OAuth do
   It handles the complete lifecycle:
 
   1. On 401 — discovers PRM and AS metadata, selects configured client registration, runs PKCE
-  2. On 403 with insufficient_scope — re-authorizes with broader scopes
-  3. Prevents auth loops via `auth_completed` flag
+  2. Before the access token expires, and on a 401 once it has one — renews it
+     with the refresh token, without the browser, and runs the full flow only
+     if that fails
+  3. On 403 with insufficient_scope — re-authorizes with broader scopes
+  4. Prevents auth loops via `auth_completed` flag
 
   ## Configuration
 
@@ -37,8 +40,13 @@ defmodule ExMCP.Authorization.Provider.OAuth do
 
   require Logger
 
-  alias ExMCP.Authorization.{FullOAuthFlow, LogSanitizer}
+  alias ExMCP.Authorization.{FullOAuthFlow, Issuer, LogSanitizer}
 
+  # Renew this many seconds before the access token's expiry.
+  @refresh_skew 30
+
+  # auth_config can hold a client secret or an identity assertion.
+  @derive {Inspect, except: [:access_token, :refresh, :auth_config, :rejection_refreshed]}
   defstruct [
     :access_token,
     :resource_url,
@@ -46,6 +54,16 @@ defmodule ExMCP.Authorization.Provider.OAuth do
     :auth_config,
     :authorization_server_issuer,
     :last_rejected_issuer,
+    # When the access token expires (system seconds), if the server said.
+    :expires_at,
+    # FullOAuthFlow's refresh context, or nil without a refresh token.
+    :refresh,
+    # A fingerprint of the access token a refresh after a 401 returned. Its
+    # own rejection means refreshing didn't help.
+    :rejection_refreshed,
+    # Authorization servers the resource was found to have moved to. Each
+    # one's flow runs once, so failed ones don't start again with every 401.
+    migration_issuers: [],
     granted_scopes: [],
     auth_completed: false
   ]
@@ -65,15 +83,127 @@ defmodule ExMCP.Authorization.Provider.OAuth do
 
   @impl true
   def get_token(%__MODULE__{access_token: token} = state) do
-    {:ok, token, state}
+    if expiring?(state) do
+      case refresh(state) do
+        {:ok, token, state} -> {:ok, token, state}
+        # Send the old token; a 401 then decides whether to authenticate again.
+        {:error, _reason} -> {:ok, token, state}
+      end
+    else
+      {:ok, token, state}
+    end
   end
 
   @impl true
+  # A token refreshed after a 401 and rejected in turn may mean the resource
+  # moved to another authorization server. Discovery, which asks nothing of
+  # the user, decides: the full flow, which may open a browser, runs only for
+  # a different issuer. Otherwise the provider refreshes again.
   def handle_unauthorized(www_authenticate, scopes, %__MODULE__{} = state) do
-    if state.auth_completed && state.access_token do
-      reauthenticate_after_rejection(www_authenticate, scopes, state)
+    with true <- refreshed_token_rejected?(state),
+         {:ok, issuer} <- moved_to(www_authenticate, state) do
+      tried = [issuer | state.migration_issuers]
+      state = %{state | rejection_refreshed: nil, migration_issuers: tried}
+      migrate(www_authenticate, scopes, state)
     else
-      do_authenticate(www_authenticate, scopes, state)
+      _not_moved ->
+        case refresh(state) do
+          {:ok, token, state} -> {:ok, token, %{state | rejection_refreshed: fingerprint(token)}}
+          {:error, _reason} -> authenticate_again(www_authenticate, scopes, state)
+        end
+    end
+  end
+
+  defp refreshed_token_rejected?(%{access_token: token, rejection_refreshed: print})
+       when is_binary(token) and is_binary(print),
+       do: fingerprint(token) == print
+
+  defp refreshed_token_rejected?(_state), do: false
+
+  defp fingerprint(token), do: :crypto.hash(:sha256, token)
+
+  # The issuer the resource's metadata now names, if it is neither the current
+  # one nor one already tried.
+  defp moved_to(www_authenticate, %{authorization_server_issuer: current} = state) do
+    with {:ok, issuer} <- FullOAuthFlow.discover_issuer(flow_config(www_authenticate, [], state)),
+         true <- is_binary(current) and Issuer.compare(issuer, current) != :ok,
+         false <- Enum.any?(state.migration_issuers, &(Issuer.compare(issuer, &1) == :ok)) do
+      {:ok, issuer}
+    end
+  end
+
+  defp migrate(www_authenticate, scopes, state) do
+    if state.auth_completed && state.access_token,
+      do: reauthenticate_after_rejection(www_authenticate, scopes, state),
+      else: do_authenticate(www_authenticate, scopes, state)
+  end
+
+  # A flow after a rejection that already failed (last_rejected_issuer) isn't
+  # started again on the next 401: that could open a browser every request.
+  # A first sign-in, or a migration to a newly found server, still runs.
+  defp authenticate_again(www_authenticate, scopes, state) do
+    cond do
+      state.auth_completed && state.access_token ->
+        reauthenticate_after_rejection(www_authenticate, scopes, state)
+
+      # Unless the resource's published metadata now names a server not
+      # tried yet: then a migration may still run.
+      is_binary(state.last_rejected_issuer) ->
+        case moved_to(www_authenticate, state) do
+          {:ok, issuer} ->
+            state = %{state | migration_issuers: [issuer | state.migration_issuers]}
+            do_authenticate(www_authenticate, scopes, state)
+
+          _not_moved ->
+            Logger.warning("Auth failed after a rejection; not retrying the flow")
+            {:error, :auth_loop_detected, state}
+        end
+
+      true ->
+        do_authenticate(www_authenticate, scopes, state)
+    end
+  end
+
+  defp expiring?(%{expires_at: expires_at, refresh: refresh}),
+    do:
+      is_integer(expires_at) and not is_nil(refresh) and
+        System.system_time(:second) >= expires_at - @refresh_skew
+
+  defp refresh(%{refresh: nil}), do: {:error, :no_refresh_token}
+
+  defp refresh(state) do
+    case FullOAuthFlow.refresh(state.refresh, state.auth_config || %{}) do
+      {:ok, token_data, next} ->
+        Logger.info("OAuth token refreshed")
+
+        :telemetry.execute(
+          [:ex_mcp, :auth, :provider, :token_refreshed],
+          %{system_time: System.system_time()},
+          %{}
+        )
+
+        token = token_data[:access_token]
+
+        {:ok, token,
+         %{
+           state
+           | access_token: token,
+             refresh: next,
+             expires_at: expires_at(token_data),
+             granted_scopes: token_scopes(token_data, state.granted_scopes),
+             last_rejected_issuer: nil
+         }}
+
+      {:error, reason} ->
+        Logger.info("OAuth token refresh failed: #{LogSanitizer.format(reason)}")
+        {:error, reason}
+    end
+  end
+
+  defp expires_at(token_data) do
+    case token_data[:expires_in] || token_data["expires_in"] do
+      seconds when is_integer(seconds) and seconds >= 0 -> System.system_time(:second) + seconds
+      _unknown -> nil
     end
   end
 
@@ -86,21 +216,18 @@ defmodule ExMCP.Authorization.Provider.OAuth do
     end
   end
 
-  defp do_authenticate(www_authenticate, scopes, state) do
+  defp flow_config(www_authenticate, scopes, state) do
     config =
       (state.auth_config || %{})
       |> Map.put(:resource_url, state.resource_url)
       |> Map.put(:www_authenticate, www_authenticate)
       |> Map.put(:protocol_version, state.protocol_version)
 
-    config =
-      if scopes != [] do
-        Map.put(config, :scopes, scopes)
-      else
-        config
-      end
+    if scopes != [], do: Map.put(config, :scopes, scopes), else: config
+  end
 
-    case FullOAuthFlow.execute(config) do
+  defp do_authenticate(www_authenticate, scopes, state) do
+    case FullOAuthFlow.execute(flow_config(www_authenticate, scopes, state)) do
       {:ok, token_result} ->
         access_token = token_result[:access_token] || token_result["access_token"]
         Logger.info("OAuth token obtained")
@@ -122,7 +249,9 @@ defmodule ExMCP.Authorization.Provider.OAuth do
           | access_token: access_token,
             auth_completed: true,
             authorization_server_issuer: issuer,
-            granted_scopes: granted_scopes
+            granted_scopes: granted_scopes,
+            expires_at: expires_at(token_result),
+            refresh: token_result[:refresh_context]
         }
 
         {:ok, access_token, new_state}

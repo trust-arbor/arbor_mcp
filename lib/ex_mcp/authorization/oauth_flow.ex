@@ -108,7 +108,8 @@ defmodule ExMCP.Authorization.OAuthFlow do
       %{client_id: params.client_id}
     )
 
-    with :ok <- reject_custom_state(params),
+    with :ok <- validate_scope_list(params.scopes),
+         :ok <- reject_custom_state(params),
          :ok <- validate_additional_params(params),
          :ok <- Validator.validate_redirect_uri(redirect_uri),
          :ok <- Validator.validate_https_endpoint(auth_endpoint),
@@ -366,6 +367,18 @@ defmodule ExMCP.Authorization.OAuthFlow do
   end
 
   # Private helpers
+
+  # nil means no scope parameter, so the authorization server applies its
+  # default scopes, as before the list-shape check was added.
+  defp validate_scope_list(nil), do: :ok
+
+  defp validate_scope_list(scopes) do
+    if proper_scope_list?(scopes), do: :ok, else: {:error, :invalid_scopes}
+  end
+
+  defp proper_scope_list?([]), do: true
+  defp proper_scope_list?([scope | rest]) when is_binary(scope), do: proper_scope_list?(rest)
+  defp proper_scope_list?(_), do: false
 
   defp build_auth_query_params(params, code_challenge, state) do
     base_params = [

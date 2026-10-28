@@ -47,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JWE, derives shared secrets or exports password-encrypted keys, and MRTR
   request state is sealed with `:crypto` directly and checks the tag length.
   The floor keeps applications' dependency graphs off the affected releases.
+- Upgraded the development-only Credo dependency to 1.7.19 so linting works
+  on Elixir 1.20; retained the maintenance line's existing style rules.
 
 ### Fixed
 
@@ -55,7 +57,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a second one beside it. The transport is now closed first, as the other
   teardown paths already did. Backport of the health-check part of ArborMCP
   `9bdc531`.
-
 - The configuration, transport and troubleshooting guides said a probe
   timeout never leads to `initialize`. Over HTTP, under the preference
   modes, it is legacy evidence, as MCP 2026-07-28 says, and has been since
@@ -63,7 +64,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reach the `initialize` that follows. The guides now say so and that a
   stdio probe timeout is not evidence; behavior is unchanged. Backport of
   the HTTP part of ArborMCP `fd72323`.
-
 - A client in the default `:prefer_modern` mode could not connect to an
   ExMCP server running `protocol_mode: :legacy_only`, the documented
   rollback, over any transport. The server answers the `server/discover`
@@ -94,7 +94,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{:initialize_error, error}`** as it does on the other transports, instead
   of `{:transport_connect_failed, "{:http_error, 400, ...}"}`. Backport of
   ArborMCP `fba618d` and `5388272`.
-
 - Over stdio, the modern `server/discover` probe gave a newly spawned server
   only `:era_probe_timeout` (2 s by default) to start and answer. Under the
   default `:prefer_modern`, and under `:modern_only`, a server that took
@@ -105,17 +104,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   falls back on, came too late as well. Over stdio the probe now waits as
   long as a legacy `initialize` does, `:handshake_timeout` (10 s by
   default), unless `:era_probe_timeout` is given. HTTP keeps the 2 s probe.
-  **Default change, to accept deliberately:** for a stdio client that opens
-  with the probe (`:prefer_modern` or `:modern_only`) and sets no
+  **Default change (accepted for 1.x):** for a stdio client that opens with
+  the probe (`:prefer_modern` or `:modern_only`) and sets no
   `:establish_timeout`, the default establishment bound is now
   `:handshake_timeout` plus the probe's bound, 20 s, instead of 12 s: a 10 s
   probe needs room for the legacy fallback that may follow it. Every other
   client, `:legacy_only` and `:prefer_legacy` over stdio included, keeps
   12 s, and an explicit `:establish_timeout` always wins. **Behavior
   change:** under `:modern_only` a stdio server that never answers now fails
-  after `:handshake_timeout` rather than 2 s, with the same error. Backport of ArborMCP `87b4353` and `8d1f0b6` (its
-  establishment default).
-
+  after `:handshake_timeout` rather than 2 s, with the same error. Backport
+  of ArborMCP `87b4353` and `8d1f0b6` (its establishment default).
+- Authorization code flow now returns `{:error, :invalid_scopes}` when
+  `:scopes` is not a proper list of strings, including lists with an invalid
+  tail, instead of raising for invalid values. `nil` still omits the `scope`
+  parameter, so the authorization server applies its default scopes.
 - Nested atom keys in a client's declared capabilities are now normalized
   for the Local transport too, matching the HTTP wire shape. This closes a
   Local-transport gap in the 1.x backport of 2.x PR #116.
@@ -155,6 +157,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `notifications/*/list_changed`; the TypeScript SDK's servers send both that
   way. Such a message now parses with empty params, and a response that also
   names a method stays a response (backport of 2.x PR #122).
+- The stdio transport follows the MCP shutdown order: `close/1` closes the
+  server's stdin, waits up to `:eof_grace` (default 2_000 ms, as in the MCP
+  reference SDKs) for it to exit, then sends SIGTERM and, after `:term_grace`,
+  SIGKILL. A server that exits on EOF is no longer signalled. The subprocess
+  `:cleanup_timeout` defaults to `eof_grace + term_grace + 400` (2_500 ms);
+  when only `:cleanup_timeout` is set, the EOF grace shrinks to fit it.
+  SIGKILL goes out within `:cleanup_timeout`, and `close/1` returns within
+  it plus 500 ms. The shutdown is run by a process started with the
+  connection, which acts when the port closes, so a server that ignores EOF
+  is still stopped when the process owning the connection (a client its
+  supervisor kills, say) dies first, before or during `close/1`. A signal
+  goes only to the process the connection started, checked by its start
+  time just before every signal, so a server that exited on its own, whose
+  pid may since name another process, is left alone; a process group is
+  still stopped when its leader has exited and left children in it. The
+  checks are cheap and end at the shutdown's deadline: a helper shell started
+  with the connection answers them without starting a process per check
+  (`connect/1` waits, a bounded time, for it and for the server's start
+  time), the schedule keeps 100 ms of the budget for the check before each
+  signal, and a server that can't be confirmed in time is left unsignalled,
+  with a warning, rather than signalled late. A helper that stops answering
+  is killed, with any `ps` it waits on, so no signal it was handed can run
+  after the reaper has decided, and no helper outlives its reaper. It is
+  killed through `/bin/sh` (or `/bin/kill`), not whatever `PATH` holds, and
+  a helper whose exit can't be confirmed is logged as an error. Killing a
+  helper must happen even once the budget is spent, so a stalled helper can
+  push `close/1` up to 300 ms past `:cleanup_timeout` (100 ms each for the
+  kill, its fallback and the wait for its exit). The TERM grace runs from
+  when SIGTERM actually goes out, however long its check took, as far as the
+  budget allows. On Windows, `taskkill` runs only from `close/1`, bounded by
+  the budget, while the open port still holds the server's process handle. A server whose connection owner dies
+  before closing it may be left running on Windows, with a warning logged.
+  Negative graces, a non-positive budget and an explicit `nil` are rejected
+  before the server starts. Backport of 2.x #109.
+- A client's default close limit (`Deadline.cleanup_timeout/1`) covers a stdio
+  server's shutdown budget plus 500 ms: 3_000 ms with the stdio defaults. Other
+  transports keep 1_000 ms.
+- A modern `tools/call` checked its `Mcp-Param-*` headers against the first
+  `tools/list` page only, so a tool on a later page of a paginated list
+  skipped the check. The server now follows the cursors until it finds the
+  tool, for up to 100 pages and one `handler_call_timeout` in all, and fails
+  the request closed past either bound, when a page is ready only after the
+  deadline, and when the timeout isn't one `GenServer.call/3` takes.
+  Backport of 2.x #114.
+- The default OAuth provider renews an access token with its refresh
+  token, before the token expires and when the server rejects it, instead
+  of running the browser flow again (which also found the same
+  authorization server and stopped with `:auth_loop_detected`). Backport of
+  2.x #112 and #115.
+- The HTTP transport keeps an auth provider's new state on every path: a
+  refreshed token (a rotating refresh token is spent once) after a request
+  that succeeds or fails, and a failed flow's loop guards, including for
+  modern request streams. `send_message/2` and the client still return the
+  error shapes they did. Concurrent modern request streams rejected together
+  run one refresh or flow: the client answers their auth challenges one at a
+  time, and reuses a token another stream already got. A stream waits for
+  that answer no longer than its request's deadline, and the client runs no
+  provider for a request whose deadline has passed.
+- Auth provider callbacks run inside the `ExMCP.Client` process: for
+  synchronous HTTP, as before, and now also when the client answers a
+  modern request stream's 401 or 403. While one runs, the client handles
+  nothing else. A callback must not call the client it authenticates,
+  directly or indirectly (from a `Task` it awaits, say): that deadlocks
+  until a timeout. As a best effort, the client refuses a direct call from a
+  stream's challenge callback with `{:error, :auth_provider_called_client}`;
+  elsewhere a direct call exits with `:calling_self`, and an indirect call
+  is not detected. See "Where callbacks run" in
+  `ExMCP.Authorization.Provider`.
 
 ## [1.7.3] - 2026-10-26
 
