@@ -98,7 +98,7 @@ defmodule ExMCP.Client.ModernHTTPStreamAuthTest do
     def get_token(state), do: {:ok, nil, state}
 
     @impl true
-    def handle_unauthorized(_www_auth, _scopes, state),
+    def handle_unauthorized(_www_auth, _scopes, _state),
       do: GenServer.call(self(), :list_tools)
 
     @impl true
