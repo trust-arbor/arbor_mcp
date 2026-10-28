@@ -176,10 +176,17 @@ defmodule ExMCP.Transport.ReliabilityWrapper do
     end
   end
 
+  # A receive must run in the transport's owning process: `Stdio.receive_message/2`
+  # connects the port to the process that reads it, so a receive run in the
+  # breaker's throwaway process would hand the port to that process and close
+  # it when the process exited — the first request failed whatever its
+  # timeout. The breaker still admits the receive and records its outcome;
+  # the receive's own timeout bounds it, not the breaker's per-call
+  # `:timeout`.
   @impl true
   def receive_message(%__MODULE__{} = state) do
     if state.config.circuit_breaker_enabled do
-      CircuitBreaker.call(state.circuit_breaker_pid, fn ->
+      CircuitBreaker.call_in_caller(state.circuit_breaker_pid, fn ->
         execute_wrapped_operation(:receive_message, [state.wrapped_state], state)
       end)
     else
@@ -189,7 +196,7 @@ defmodule ExMCP.Transport.ReliabilityWrapper do
 
   def receive_message(%__MODULE__{} = state, timeout) do
     if state.config.circuit_breaker_enabled do
-      CircuitBreaker.call(state.circuit_breaker_pid, fn ->
+      CircuitBreaker.call_in_caller(state.circuit_breaker_pid, fn ->
         execute_wrapped_operation(:receive_message, [state.wrapped_state, timeout], state)
       end)
     else

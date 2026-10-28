@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A stdio client whose transport was wrapped with a circuit breaker failed
+  its first request with `{:transport_error, {:send_failed, :badarg}}`:
+  the breaker ran each receive in a process of its own, and a stdio receive
+  connects the port to the process reading it, so that throwaway process
+  took over the port and closed it when it exited. The receive now runs in
+  the transport's owning process — the breaker still admits it and records
+  its outcome, and still trips on real failures — bounded by the receive's
+  own timeout rather than the breaker's per-call one.
+
 - An unsupported-version error (`-32022`) from `ExMCP.HttpPlug` listed every
   revision the library knows, so a `:legacy_only` mount advertised
   `2026-07-28` and a `:modern_only` mount the legacy dates; a client treats

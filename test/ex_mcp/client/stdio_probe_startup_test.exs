@@ -34,15 +34,21 @@ defmodule ExMCP.Client.StdioProbeStartupTest do
 
   describe "a modern server that is slow to start" do
     test "connects in every mode that enables the modern era", %{tmp_dir: tmp_dir} do
-      # Inside the reliability wrapper too. (Not with its circuit breaker:
-      # that runs each receive in a process of its own, which takes over the
-      # stdio port and closes it when it exits.)
+      # Inside the reliability wrapper too, with and without its circuit
+      # breaker (a breaker-enabled receive runs in the owning process, so
+      # the stdio port stays with it; see StdioReliabilityBreakerTest).
       wrapped = {:wrapped_modern_only, :modern_only, reliability: [circuit_breaker: false]}
 
-      results =
-        connect_concurrently(tmp_dir, :modern, [wrapped | @modes], start_delay_s: @start_delay_s)
+      breaker =
+        {:breaker_modern_only, :modern_only,
+         reliability: [circuit_breaker: [failure_threshold: 5]]}
 
-      for mode <- [:modern_only, :prefer_modern, :wrapped_modern_only] do
+      results =
+        connect_concurrently(tmp_dir, :modern, [wrapped, breaker | @modes],
+          start_delay_s: @start_delay_s
+        )
+
+      for mode <- [:modern_only, :prefer_modern, :wrapped_modern_only, :breaker_modern_only] do
         %{result: result, methods: methods} = results[mode]
         assert {:ok, client} = result, "#{mode}: #{inspect(result)}"
         assert {:ok, "2026-07-28"} = Client.negotiated_version(client)

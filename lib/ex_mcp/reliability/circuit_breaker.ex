@@ -64,6 +64,38 @@ defmodule ExMCP.Reliability.CircuitBreaker do
     end
   end
 
+  @doc """
+  Executes a function through the circuit breaker, in the calling process.
+
+  Like `call/3` the breaker admits the call and records its outcome, but the
+  function runs in the caller, not in a process of its own. An operation
+  that owns a resource while it runs — a stdio receive connects the port to
+  the process reading it — cannot run in a throwaway process, which would
+  take the resource with it when it exits. The function's own timeout must
+  bound it: the breaker cannot stop it.
+  """
+  @spec call_in_caller(GenServer.server(), (-> any())) :: any()
+  def call_in_caller(server, fun) do
+    case GenServer.call(server, :acquire, 5000) do
+      {:error, :circuit_open} = error ->
+        error
+
+      {:ok, _config_timeout} ->
+        outcome =
+          try do
+            {:ok, fun.()}
+          rescue
+            error -> {:raised, error}
+          catch
+            :throw, value -> {:threw, value}
+            :exit, reason -> {:exited, reason}
+          end
+
+        GenServer.cast(server, {:report, outcome})
+        outcome_to_result(outcome)
+    end
+  end
+
   defp effective_timeout(:infinity, timeout), do: timeout
   defp effective_timeout(config_timeout, :infinity), do: config_timeout
   defp effective_timeout(config_timeout, timeout), do: min(config_timeout, timeout)

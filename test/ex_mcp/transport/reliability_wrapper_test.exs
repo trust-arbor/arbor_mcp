@@ -154,6 +154,69 @@ defmodule ExMCP.Transport.ReliabilityWrapperTest do
     end
   end
 
+  describe "receive_message/2 with a circuit breaker" do
+    # A receive runs in the calling process (see the wrapper), so a stdio
+    # port stays with its owner; the breaker still records its outcome.
+    test "trips on real receive failures" do
+      defmodule FailingReceiveTransport do
+        @behaviour ExMCP.Transport
+
+        def connect(_opts), do: {:ok, %{}}
+
+        def send_message(_message, state), do: {:ok, state}
+
+        def receive_message(state, _timeout),
+          do: {:error, {:connection_error, :simulated_receive_failure}}
+
+        def receive_message(state), do: receive_message(state, :infinity)
+        def close(_state), do: :ok
+        def connected?(_state), do: true
+      end
+
+      {:ok, transport_state} = FailingReceiveTransport.connect([])
+
+      {:ok, wrapped_state} =
+        ReliabilityWrapper.wrap(FailingReceiveTransport, transport_state,
+          circuit_breaker: [failure_threshold: 2, reset_timeout: 100]
+        )
+
+      assert {:error, {:connection_error, :simulated_receive_failure}} =
+               ReliabilityWrapper.receive_message(wrapped_state, 1_000)
+
+      assert {:error, {:connection_error, :simulated_receive_failure}} =
+               ReliabilityWrapper.receive_message(wrapped_state, 1_000)
+
+      assert {:error, :circuit_open} = ReliabilityWrapper.receive_message(wrapped_state, 1_000)
+    end
+
+    test "records a raise in the receive as a failure, contained" do
+      defmodule RaisingReceiveTransport do
+        @behaviour ExMCP.Transport
+
+        def connect(_opts), do: {:ok, %{}}
+        def send_message(_message, state), do: {:ok, state}
+
+        def receive_message(_state, _timeout), do: raise("receive exploded")
+
+        def receive_message(state), do: receive_message(state, :infinity)
+        def close(_state), do: :ok
+        def connected?(_state), do: true
+      end
+
+      {:ok, transport_state} = RaisingReceiveTransport.connect([])
+
+      {:ok, wrapped_state} =
+        ReliabilityWrapper.wrap(RaisingReceiveTransport, transport_state,
+          circuit_breaker: [failure_threshold: 1, reset_timeout: 100]
+        )
+
+      assert {:error, %RuntimeError{message: "receive exploded"}} =
+               ReliabilityWrapper.receive_message(wrapped_state, 1_000)
+
+      assert {:error, :circuit_open} = ReliabilityWrapper.receive_message(wrapped_state, 1_000)
+    end
+  end
+
   describe "connected?/1" do
     test "returns health check status when enabled" do
       {:ok, transport_state} = Test.connect([])
