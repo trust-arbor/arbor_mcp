@@ -71,10 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preserving the live event-stream consumer and preventing synchronous client
   GenServer deadlocks on retried SSE streams that contain server requests or
   progress notifications.
-- Async POST retry results version transport credentials (`auth_version`) and
-  compare them before merging into the client process's transport state,
-  preventing delayed older retry results from overwriting newer credentials and
-  exhausting retry allowances on subsequent requests.
+- Async POST retry results version transport credentials (`auth_version`)
+  monotonically allocated by the client process (`auth_version_allocator`)
+  rather than task-local snapshots, ensuring concurrent inline OAuth discovery
+  and scope step-up flows are strictly ordered and preventing delayed older
+  results from overwriting newer credentials or discarding updated tokens.
 - Nested atom keys in a client's declared capabilities are now normalized
   for the Local transport too, matching the HTTP wire shape. This closes a
   Local-transport gap in the 1.x backport of 2.x PR #116.

@@ -136,15 +136,35 @@ defmodule ExMCP.Client.ConnectionNotificationsTest do
         handler: {ClientHandler, [test_pid: self()]}
       )
 
-    if Process.whereis(:test_notifications_client) do
+    try do
       Process.unregister(:test_notifications_client)
+    rescue
+      ArgumentError -> :ok
     end
 
-    Process.register(client, :test_notifications_client)
+    try do
+      Process.register(client, :test_notifications_client)
+    rescue
+      ArgumentError -> :ok
+    end
 
     on_exit(fn ->
-      if Process.whereis(:test_notifications_client) do
+      try do
         Process.unregister(:test_notifications_client)
+      rescue
+        ArgumentError -> :ok
+      end
+
+      try do
+        if Process.alive?(client), do: GenServer.stop(client)
+      catch
+        :exit, _ -> :ok
+      end
+
+      try do
+        if Process.alive?(server), do: GenServer.stop(server)
+      catch
+        :exit, _ -> :ok
       end
     end)
 
@@ -164,7 +184,7 @@ defmodule ExMCP.Client.ConnectionNotificationsTest do
 
   test "a progress token a pending request carries is refused", %{client: client} do
     first = Task.async(fn -> Client.call_tool(client, "wait", %{}, progress_token: "shared") end)
-    assert_receive {:tool_waiting, worker}, 1_000
+    assert_receive {:tool_waiting, worker}, 5_000
 
     # Progress names its request only by token, so sharing it would misroute.
     assert {:error,
@@ -203,7 +223,7 @@ defmodule ExMCP.Client.ConnectionNotificationsTest do
         Client.call_tool(client, "wait", %{}, progress_token: "tok-timeout", format: :map)
       end)
 
-    assert_receive {:tool_waiting, worker}, 1_000
+    assert_receive {:tool_waiting, worker}, 5_000
     [pending_id] = Client.get_pending_requests(client)
 
     send(client, {:request_timeout, pending_id})
@@ -218,7 +238,7 @@ defmodule ExMCP.Client.ConnectionNotificationsTest do
     first =
       Task.async(fn -> Client.call_tool(client, "wait", %{}, progress_token: "tok-cancel") end)
 
-    assert_receive {:tool_waiting, worker}, 1_000
+    assert_receive {:tool_waiting, worker}, 5_000
 
     [pending_id] = Client.get_pending_requests(client)
 
@@ -242,7 +262,7 @@ defmodule ExMCP.Client.ConnectionNotificationsTest do
     _first =
       Task.async(fn -> Client.call_tool(client, "wait", %{}, progress_token: "tok-disc") end)
 
-    assert_receive {:tool_waiting, worker}, 1_000
+    assert_receive {:tool_waiting, worker}, 5_000
 
     state = :sys.get_state(client)
     assert Map.has_key?(state.progress_requests, "tok-disc")

@@ -165,6 +165,213 @@ defmodule ExMCP.Client.AsyncPostResultTest do
       assert new_state.transport_state.auth_version == 2
     end
 
+    test "client process allocates monotonically increasing auth versions" do
+      task_ref1 = make_ref()
+      task_ref2 = make_ref()
+      task_pid = self()
+
+      ts = %HTTP{auth_version: 0, auth_version_allocator: 0}
+
+      state =
+        client_state(
+          connection_status: :connected,
+          transport_mod: HTTP,
+          transport_state: ts,
+          async_post_tasks: %{task_ref1 => {task_pid, 1}, task_ref2 => {task_pid, 2}}
+        )
+
+      req_ref1 = make_ref()
+
+      assert {:noreply, state1} =
+               Client.handle_info({:http_post_allocate_auth_version, task_pid, req_ref1}, state)
+
+      assert_receive {:http_post_auth_version, ^req_ref1, 1}
+      assert state1.transport_state.auth_version_allocator == 1
+
+      req_ref2 = make_ref()
+
+      assert {:noreply, state2} =
+               Client.handle_info({:http_post_allocate_auth_version, task_pid, req_ref2}, state1)
+
+      assert_receive {:http_post_auth_version, ^req_ref2, 2}
+      assert state2.transport_state.auth_version_allocator == 2
+    end
+
+    test "A commits v2 then B commits newer client-allocated v3 without discarding T3" do
+      task_ref_a = make_ref()
+      task_ref_b = make_ref()
+      task_pid_a = self()
+      task_pid_b = self()
+
+      ts = %HTTP{
+        session_id: "s1",
+        access_token: nil,
+        headers: [],
+        auth_version: 0,
+        auth_version_allocator: 0
+      }
+
+      state =
+        client_state(
+          connection_status: :connected,
+          transport_mod: HTTP,
+          transport_state: ts,
+          async_post_tasks: %{
+            task_ref_a => {task_pid_a, 101},
+            task_ref_b => {task_pid_b, 102}
+          }
+        )
+
+      # Task A hits 401, allocates v1
+      ref_a1 = make_ref()
+
+      assert {:noreply, state} =
+               Client.handle_info({:http_post_allocate_auth_version, task_pid_a, ref_a1}, state)
+
+      assert_receive {:http_post_auth_version, ^ref_a1, 1}
+
+      # Task A hits 403, allocates v2
+      ref_a2 = make_ref()
+
+      assert {:noreply, state} =
+               Client.handle_info({:http_post_allocate_auth_version, task_pid_a, ref_a2}, state)
+
+      assert_receive {:http_post_auth_version, ^ref_a2, 2}
+
+      # Task A completes and commits T2 with version 2
+      meta_a = %{
+        request_id: 101,
+        state_changes: %{
+          access_token: "T2",
+          headers: [{"Authorization", "Bearer T2"}],
+          auth_version: 2
+        }
+      }
+
+      assert {:noreply, state} =
+               Client.handle_info(
+                 {:async_post_result, {:ok, state.transport_state}, meta_a},
+                 state
+               )
+
+      assert state.transport_state.access_token == "T2"
+      assert state.transport_state.auth_version == 2
+
+      # Task B (started at v0 snapshot) hits 401, allocates version from client
+      ref_b = make_ref()
+
+      assert {:noreply, state} =
+               Client.handle_info({:http_post_allocate_auth_version, task_pid_b, ref_b}, state)
+
+      assert_receive {:http_post_auth_version, ^ref_b, 3}
+
+      # Task B obtains newer token T3 with version 3
+      meta_b = %{
+        request_id: 102,
+        state_changes: %{
+          access_token: "T3",
+          headers: [{"Authorization", "Bearer T3"}],
+          auth_version: 3
+        }
+      }
+
+      assert {:noreply, state} =
+               Client.handle_info(
+                 {:async_post_result, {:ok, state.transport_state}, meta_b},
+                 state
+               )
+
+      # T3 is accepted and becomes active!
+      assert state.transport_state.access_token == "T3"
+      assert state.transport_state.auth_version == 3
+      assert state.transport_state.headers == [{"Authorization", "Bearer T3"}]
+    end
+
+    test "two single-step flows: delayed older v1 result cannot overwrite newer v2 credentials" do
+      task_ref_a = make_ref()
+      task_ref_b = make_ref()
+      task_pid_a = self()
+      task_pid_b = self()
+
+      ts = %HTTP{
+        session_id: "s1",
+        access_token: nil,
+        headers: [],
+        auth_version: 0,
+        auth_version_allocator: 0
+      }
+
+      state =
+        client_state(
+          connection_status: :connected,
+          transport_mod: HTTP,
+          transport_state: ts,
+          async_post_tasks: %{
+            task_ref_a => {task_pid_a, 101},
+            task_ref_b => {task_pid_b, 102}
+          }
+        )
+
+      # Task A hits 401, allocates v1 from client
+      ref_a = make_ref()
+
+      assert {:noreply, state} =
+               Client.handle_info({:http_post_allocate_auth_version, task_pid_a, ref_a}, state)
+
+      assert_receive {:http_post_auth_version, ^ref_a, 1}
+
+      # Task B hits 401, allocates v2 from client
+      ref_b = make_ref()
+
+      assert {:noreply, state} =
+               Client.handle_info({:http_post_allocate_auth_version, task_pid_b, ref_b}, state)
+
+      assert_receive {:http_post_auth_version, ^ref_b, 2}
+
+      # Task B completes first with T2 at version 2
+      meta_b = %{
+        request_id: 102,
+        state_changes: %{
+          access_token: "T2",
+          headers: [{"Authorization", "Bearer T2"}],
+          auth_version: 2
+        }
+      }
+
+      assert {:noreply, state} =
+               Client.handle_info(
+                 {:async_post_result, {:ok, state.transport_state}, meta_b},
+                 state
+               )
+
+      assert state.transport_state.access_token == "T2"
+      assert state.transport_state.auth_version == 2
+
+      # Delayed Task A arrives later with older token T1 at version 1
+      meta_a = %{
+        request_id: 101,
+        state_changes: %{
+          session_id: "session_by_a",
+          access_token: "T1",
+          headers: [{"Authorization", "Bearer T1"}],
+          auth_version: 1
+        }
+      }
+
+      assert {:noreply, state} =
+               Client.handle_info(
+                 {:async_post_result, {:ok, state.transport_state}, meta_a},
+                 state
+               )
+
+      # T1 does NOT overwrite T2; T2 and version 2 remain active
+      assert state.transport_state.access_token == "T2"
+      assert state.transport_state.auth_version == 2
+      assert state.transport_state.headers == [{"Authorization", "Bearer T2"}]
+      # Non-credential changes are merged
+      assert state.transport_state.session_id == "session_by_a"
+    end
+
     test "stale results from untracked tasks do not touch the transport state" do
       ts = %HTTP{session_id: "fresh", headers: []}
 

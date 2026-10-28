@@ -1795,6 +1795,39 @@ defmodule ExMCP.Client do
     {:noreply, state}
   end
 
+  # An async POST task is starting an authentication flow (e.g. inline OAuth
+  # discovery or provider auth). Hand out a monotonically increasing version
+  # allocated in the client process, so concurrent tasks never compare against
+  # their own snapshots.
+  def handle_info(
+        {:http_post_allocate_auth_version, task, ref},
+        %{transport_mod: HTTP, transport_state: %HTTP{} = transport_state} = state
+      )
+      when is_pid(task) and is_reference(ref) do
+    if own_post_task?(state, task) and state.connection_status != :disconnected do
+      current_alloc =
+        max(transport_state.auth_version_allocator || 0, transport_state.auth_version || 0)
+
+      next_version = current_alloc + 1
+      send(task, {:http_post_auth_version, ref, next_version})
+
+      transport_state = %{transport_state | auth_version_allocator: next_version}
+      {:noreply, %{state | transport_state: transport_state}}
+    else
+      send(task, {:http_post_auth_version, ref, {:error, :stream_retired}})
+      {:noreply, state}
+    end
+  end
+
+  def handle_info(
+        {:http_post_allocate_auth_version, task, ref},
+        state
+      )
+      when is_pid(task) and is_reference(ref) do
+    send(task, {:http_post_auth_version, ref, {:error, :stream_retired}})
+    {:noreply, state}
+  end
+
   def handle_info(
         {:DOWN, ref, :process, _subscriber, _reason},
         %{notification_listener_monitors: monitors} = state
@@ -2100,18 +2133,26 @@ defmodule ExMCP.Client do
     if map_size(changes) > 0 and is_map(state.transport_state) and
          known_async_post_request?(state, meta) do
       current_version = state.transport_state.auth_version || 0
-      task_version = Map.get(changes, :auth_version, 0)
-
-      applicable_changes =
-        if task_version < current_version do
-          Map.drop(changes, @credential_fields)
-        else
-          changes
-        end
+      task_version = Map.get(changes, :auth_version)
+      applicable_changes = filter_stale_credentials(changes, current_version, task_version)
 
       %{state | transport_state: Map.merge(state.transport_state, applicable_changes)}
     else
       state
+    end
+  end
+
+  defp filter_stale_credentials(changes, current_version, task_version) do
+    cond do
+      is_integer(task_version) and task_version < current_version ->
+        Map.drop(changes, @credential_fields)
+
+      is_nil(task_version) and current_version > 0 and
+          Enum.any?(@credential_fields, &Map.has_key?(changes, &1)) ->
+        Map.drop(changes, @credential_fields)
+
+      true ->
+        changes
     end
   end
 
@@ -2174,7 +2215,8 @@ defmodule ExMCP.Client do
 
     case apply(provider, callback, args) do
       {:ok, token, provider_state} when is_binary(token) ->
-        version = (transport_state.auth_version || 0) + 1
+        version =
+          max(transport_state.auth_version_allocator || 0, transport_state.auth_version || 0) + 1
 
         changes = %{
           access_token: token,
@@ -2182,6 +2224,7 @@ defmodule ExMCP.Client do
           auth_version: version
         }
 
+        transport_state = %{transport_state | auth_version_allocator: version}
         {{:ok, token, version}, merge_modern_stream_auth_state(transport_state, changes)}
 
       {:error, reason, provider_state} ->

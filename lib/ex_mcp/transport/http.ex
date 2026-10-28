@@ -149,7 +149,8 @@ defmodule ExMCP.Transport.HTTP do
     modern_streams: %{},
     sse_deferred_attempted: false,
     auth_completed: false,
-    auth_version: 0
+    auth_version: 0,
+    auth_version_allocator: 0
   ]
 
   @type t :: %__MODULE__{
@@ -181,7 +182,8 @@ defmodule ExMCP.Transport.HTTP do
           dns_resolver: module() | function(),
           allowed_private_hosts: [String.t()],
           deadline: integer() | nil,
-          auth_version: non_neg_integer()
+          auth_version: non_neg_integer(),
+          auth_version_allocator: non_neg_integer()
         }
 
   @default_endpoint "/mcp/v1"
@@ -454,7 +456,7 @@ defmodule ExMCP.Transport.HTTP do
         max_kept_bytes: state.max_response_bytes
       )
 
-    request_opts = [event_stream: stream] ++ opts
+    request_opts = [event_stream: stream, auth_parent: parent] ++ opts
 
     case perform_http_request(message, state, request_opts) do
       {:ok, response} ->
@@ -506,7 +508,7 @@ defmodule ExMCP.Transport.HTTP do
         max_kept_bytes: state.max_response_bytes
       )
 
-    request_opts = [event_stream: stream] ++ opts
+    request_opts = [event_stream: stream, auth_parent: parent] ++ opts
 
     case perform_and_maybe_auth(message, state, request_opts) do
       {:ok, response} ->
@@ -555,6 +557,44 @@ defmodule ExMCP.Transport.HTTP do
       wait ->
         Process.demonitor(monitor, [:flush])
         {:error, :timeout}
+    end
+  end
+
+  defp allocate_auth_version(opts, state) do
+    case Keyword.get(opts, :auth_parent) do
+      parent when is_pid(parent) ->
+        ref = make_ref()
+        monitor = Process.monitor(parent)
+        send(parent, {:http_post_allocate_auth_version, self(), ref})
+
+        wait =
+          case state.deadline do
+            deadline when is_integer(deadline) ->
+              min(max(deadline - System.monotonic_time(:millisecond), 0), 5_000)
+
+            nil ->
+              5_000
+          end
+
+        receive do
+          {:http_post_auth_version, ^ref, version} when is_integer(version) ->
+            Process.demonitor(monitor, [:flush])
+            version
+
+          {:http_post_auth_version, ^ref, _error} ->
+            Process.demonitor(monitor, [:flush])
+            state.auth_version + 1
+
+          {:DOWN, ^monitor, :process, _pid, _reason} ->
+            state.auth_version + 1
+        after
+          wait ->
+            Process.demonitor(monitor, [:flush])
+            state.auth_version + 1
+        end
+
+      _other ->
+        state.auth_version + 1
     end
   end
 
@@ -625,7 +665,13 @@ defmodule ExMCP.Transport.HTTP do
 
     case apply(provider, callback, [www_auth, scopes, state.auth_provider_state]) do
       {:ok, token, new_ps} ->
-        new_state = state |> Map.put(:auth_provider_state, new_ps) |> apply_token_to_state(token)
+        auth_version = allocate_auth_version(opts, state)
+
+        new_state =
+          state
+          |> Map.put(:auth_provider_state, new_ps)
+          |> apply_token_to_state(token, auth_version)
+
         provider_retry_request(body, new_state, opts)
 
       {:error, reason, _ps} ->
@@ -684,6 +730,8 @@ defmodule ExMCP.Transport.HTTP do
         auth_version: auth_version
     }
   end
+
+  defp init_auth_provider(:none, _auth_config, _base_url, _endpoint, _version), do: {nil, nil}
 
   defp init_auth_provider({mod, provider_config}, _auth_config, _base_url, _endpoint, _version) do
     case mod.init(provider_config) do
@@ -762,6 +810,8 @@ defmodule ExMCP.Transport.HTTP do
 
     Logger.info("Received 401, attempting OAuth flow with credentials")
 
+    auth_version = allocate_auth_version(opts, state)
+
     case FullOAuthFlow.execute(config) do
       {:ok, token_result} ->
         access_token = token_result[:access_token] || token_result["access_token"]
@@ -773,7 +823,7 @@ defmodule ExMCP.Transport.HTTP do
           | access_token: access_token,
             auth_completed: true,
             headers: put_bearer_header(state.headers, access_token),
-            auth_version: state.auth_version + 1
+            auth_version: auth_version
         }
 
         # Retry the original request with auth headers
@@ -802,6 +852,8 @@ defmodule ExMCP.Transport.HTTP do
       protocol_version: state.protocol_version
     }
 
+    auth_version = allocate_auth_version(opts, state)
+
     case FullOAuthFlow.execute(config) do
       {:ok, token_result} ->
         access_token = token_result[:access_token] || token_result["access_token"]
@@ -812,7 +864,7 @@ defmodule ExMCP.Transport.HTTP do
           | access_token: access_token,
             auth_completed: true,
             headers: put_bearer_header(state.headers, access_token),
-            auth_version: state.auth_version + 1
+            auth_version: auth_version
         }
 
         case perform_http_request(original_body, new_state, opts) do
