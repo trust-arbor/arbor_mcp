@@ -52,6 +52,25 @@ defmodule Arbor.MCP.HttpPlugPrincipalTest do
     end
   end
 
+  defmodule Verifier do
+    @moduledoc false
+    # A host token verifier may name the principal in a `principal_id` claim.
+    @behaviour Arbor.MCP.Authorization.TokenVerifier
+
+    @impl true
+    def verify_access_token(token, _opts) do
+      {:ok,
+       %{
+         "principal_id" => token,
+         "client_id" => "app-client",
+         "iss" => "https://issuer.example",
+         "aud" => "https://mcp.example",
+         "exp" => System.system_time(:second) + 60,
+         "scope" => "mcp"
+       }}
+    end
+  end
+
   setup do
     previous = Application.fetch_env(:arbor_mcp, :oauth2_enabled)
     Application.put_env(:arbor_mcp, :oauth2_enabled, true)
@@ -171,7 +190,63 @@ defmodule Arbor.MCP.HttpPlugPrincipalTest do
     end
   end
 
+  describe "with client_principals: true the client: prefix" do
+    test "is refused in a user's sub, so no user shares a machine's principal",
+         %{runtime: runtime} do
+      opts = mount(runtime, client_principals: true)
+
+      assert %{status: 200} = conn = post(opts, collect(1), "machine")
+      assert_receive {:collect, "client:app-client", nil}, 2_000
+      state = Jason.decode!(conn.resp_body)["result"]["requestState"]
+
+      log =
+        capture_log(fn ->
+          for request <- [collect(2), hold(7), resume(state, 3), cancellation(7)] do
+            assert %{status: 401} = conn = post(opts, request, "sub-in-client-namespace")
+            assert_invalid_token(conn)
+          end
+        end)
+
+      assert log =~ "reserved"
+      refute log =~ "app-client"
+      refute_received {:collect, _principal, _responses}
+      refute_received {:hold, _principal, _worker}
+    end
+
+    test "is refused in a principal_id claim", %{runtime: runtime} do
+      opts = mount(runtime, client_principals: true, verifier: true)
+
+      capture_log(fn ->
+        assert %{status: 401} = conn = post(opts, collect(1), "client:app-client")
+        assert_invalid_token(conn)
+      end)
+
+      refute_received {:collect, _principal, _responses}
+
+      assert %{status: 200} = post(opts, collect(2), "user-7")
+      assert_receive {:collect, "user-7", nil}, 2_000
+    end
+
+    test "is not reserved without the option", %{runtime: runtime} do
+      assert %{status: 200} = post(mount(runtime), collect(1), "sub-in-client-namespace")
+      assert_receive {:collect, "client:app-client", nil}, 2_000
+
+      assert %{status: 200} =
+               post(mount(runtime, verifier: true), collect(2), "client:app-client")
+
+      assert_receive {:collect, "client:app-client", nil}, 2_000
+    end
+  end
+
   describe "the host's :principal_id" do
+    test "wins when it is a literal nil", %{runtime: runtime} do
+      for client_principals <- [false, true], token <- ["machine", "with-sub", "ada"] do
+        opts = mount(runtime, principal_id: nil, client_principals: client_principals)
+        assert %{status: 200} = post(opts, collect(1), token)
+        assert_receive {:collect, nil, nil}, 2_000
+      end
+    end
+
     test "wins over the token, whatever it resolves", %{runtime: runtime} do
       for {principal_id, expected} <- [
             {"tenant-wide", "tenant-wide"},
@@ -240,8 +315,9 @@ defmodule Arbor.MCP.HttpPlugPrincipalTest do
 
   defp mount(runtime, extra \\ []) do
     observer = self()
+    {verifier?, extra} = Keyword.pop(extra, :verifier, false)
 
-    auth_config = %{
+    introspection = %{
       realm: "principal-test",
       introspection_endpoint: "https://issuer.example/introspect",
       client_id: "resource-server",
@@ -257,6 +333,16 @@ defmodule Arbor.MCP.HttpPlugPrincipalTest do
         end
       ]
     }
+
+    auth_config =
+      if verifier?,
+        do: %{
+          realm: "principal-test",
+          token_verifier: {Verifier, []},
+          expected_issuer: "https://issuer.example",
+          expected_audience: "https://mcp.example"
+        },
+        else: introspection
 
     HttpPlug.init(
       [
@@ -299,6 +385,7 @@ defmodule Arbor.MCP.HttpPlugPrincipalTest do
       "user-named-app-client" -> Map.put(base, "sub", "app-client")
       "with-sub" -> Map.merge(base, %{"sub" => "ada-subject", "username" => "ada"})
       "empty-sub" -> Map.put(base, "sub", "")
+      "sub-in-client-namespace" -> Map.put(base, "sub", "client:app-client")
     end
   end
 

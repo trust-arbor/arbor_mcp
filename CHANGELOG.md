@@ -48,14 +48,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one, is now refused with `401 invalid_token`, and the refusal is logged
   without token data. The new `client_principals: true` option is for an
   authorization server that leaves `sub` out only of client-credentials
-  tokens: such a token then runs as `client:<client_id>`, which can't equal a
-  user's `sub`, and a token with a `username` but no `sub` is still refused.
+  tokens: such a token then runs as `client:<client_id>`, a token with a
+  `username` but no `sub` is still refused, and the option reserves the
+  `client:` prefix, so a token whose `sub` (or verifier `principal_id` claim)
+  starts with `client:` is refused rather than sharing a client's principal.
   Tokens with `sub` keep `sub` as their principal, unchanged, and a mount that
-  sets `:principal_id` itself is not affected. A principal that was a bare
-  `client_id` becomes `client:<client_id>` with the option, so MRTR
-  `requestState` issued before the upgrade no longer resumes (the client
-  starts the request again), its legacy sessions answer `404` (the client
-  initializes again), and tasks stored under it are no longer found.
+  sets `:principal_id` to a value or resolver is not affected. A mount
+  configured with a literal `principal_id: nil` now runs without a principal,
+  as a resolver returning `nil` already did; it used to fall back to the
+  token's claims. A principal that was a bare `client_id` becomes
+  `client:<client_id>` with the option, so MRTR `requestState` issued before
+  the upgrade no longer resumes (the client starts the request again), its
+  legacy sessions answer `404` (the client initializes again), and tasks
+  stored under it are no longer found.
 - `jose` `>= 1.11.13` is required and locked. 1.11.13 fixes five advisories:
   EEF-CVE-2026-65625 (attacker-chosen AES-GCM tag length), EEF-CVE-2026-65626
   (RSAES-PKCS1-v1_5 padding oracle), EEF-CVE-2026-65627 (unbounded JWE zip
