@@ -248,12 +248,28 @@ defmodule ExMCP.Client.EraProbe do
         {:ok, response, updated_state}
 
       {:ok, updated_state} ->
-        receive_response(transport_mod, updated_state, Deadline.remaining(deadline))
+        await_response(transport_mod, updated_state, deadline)
 
       {:error, reason} ->
         if Deadline.expired?(deadline),
           do: {:error, {:probe_timeout, reason}},
           else: {:error, reason}
+    end
+  end
+
+  # A server may send notifications, such as a log message or a list
+  # change, before it answers. They aren't the answer and say nothing about
+  # the protocol era, so keep waiting for one until the deadline (2.x
+  # c05d715, skipping without a bound since 476b414).
+  defp await_response(transport_mod, transport_state, deadline) do
+    case receive_response(transport_mod, transport_state, Deadline.remaining(deadline)) do
+      {:ok, message, new_state} ->
+        if match?({:notification, _method, _params}, Protocol.parse_message(message)),
+          do: await_response(transport_mod, new_state, deadline),
+          else: {:ok, message, new_state}
+
+      error ->
+        error
     end
   end
 

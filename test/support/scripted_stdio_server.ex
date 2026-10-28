@@ -12,6 +12,8 @@ defmodule ExMCP.Test.ScriptedStdioServer do
   #
   #   modern  a 2026-07-28-only server: answers server/discover, rejects
   #           initialize with UnsupportedProtocolVersionError
+  #   chatty  like modern, but sends a valid notification before its
+  #           server/discover answer, which the probe skips while it waits
   #   legacy  a 2025-11-25 server: rejects the unknown server/discover with
   #           -32601, answers initialize
   #   exits   a legacy server that exits on server/discover, as Python's
@@ -71,7 +73,10 @@ defmodule ExMCP.Test.ScriptedStdioServer do
         printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{},"ttlMs":0,"cacheScope":"private"}}\n' "$id" ;;
       modern:server/discover)
         printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{},"ttlMs":0,"cacheScope":"private","_meta":{"io.modelcontextprotocol/serverInfo":{"name":"scripted-modern","version":"1"}}}}\n' "$id" ;;
-      modern:initialize)
+      chatty:server/discover)
+        printf '{"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info","data":"starting up"}}\n'
+        printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{},"ttlMs":0,"cacheScope":"private","_meta":{"io.modelcontextprotocol/serverInfo":{"name":"scripted-chatty","version":"1"}}}}\n' "$id" ;;
+      modern:initialize|chatty:initialize)
         printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32022,"message":"Unsupported protocol version","data":{"supported":["2026-07-28"],"requested":"2025-11-25"}}}\n' "$id" ;;
       legacy:server/discover)
         printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"Method not found"}}\n' "$id" ;;

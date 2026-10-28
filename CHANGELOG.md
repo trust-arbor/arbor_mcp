@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The `server/discover` probe took the first message it read for its
+  answer, so a server that sent a notification first — a log message, a
+  list change — made the probe fail. Notifications are not the answer and
+  say nothing about the protocol era; the probe now skips them and keeps
+  waiting for an answer until its deadline, in every protocol mode. A
+  scripted stdio server that notifies and then exits is replaced like one
+  that exits outright, its notification neither an answer nor a respawn
+  signal (2.x c05d715, skipping without a bound since 476b414).
+
 ### Added
 
 - Under `:prefer_modern`, a stdio server that exits without answering the

@@ -65,6 +65,33 @@ defmodule ExMCP.Client.StdioProbeStartupTest do
     end
   end
 
+  describe "a modern server that notifies before answering" do
+    # A notification, such as a log message, is not the probe's answer; the
+    # probe skips it and waits for one, whatever the mode.
+    test "connects in every mode that enables the modern era", %{tmp_dir: tmp_dir} do
+      results = connect_concurrently(tmp_dir, :chatty, @modes, start_delay_s: @start_delay_s)
+
+      for mode <- [:modern_only, :prefer_modern] do
+        %{result: result, methods: methods} = results[mode]
+        assert {:ok, client} = result, "#{mode}: #{inspect(result)}"
+        assert {:ok, "2026-07-28"} = Client.negotiated_version(client)
+        assert {:ok, %{"name" => "scripted-chatty"}} = Client.server_info(client)
+        assert methods == ["server/discover"], "#{mode}: #{inspect(methods)}"
+      end
+
+      # prefer_legacy opens with initialize, moves forward on the server's
+      # rejection, and its probe skips the notification the same way.
+      %{result: result, methods: methods} = results[:prefer_legacy]
+      assert {:ok, client} = result, "prefer_legacy: #{inspect(result)}"
+      assert {:ok, "2026-07-28"} = Client.negotiated_version(client)
+      assert methods == ["initialize", "server/discover"]
+
+      %{result: result, methods: methods} = results[:legacy_only]
+      assert {:error, {:initialize_error, %{"code" => -32022}}} = result
+      assert methods == ["initialize"]
+    end
+  end
+
   describe "a legacy server that is slow to start" do
     test "connects in every mode that enables the legacy era", %{tmp_dir: tmp_dir} do
       results = connect_concurrently(tmp_dir, :legacy, @modes, start_delay_s: @start_delay_s)
