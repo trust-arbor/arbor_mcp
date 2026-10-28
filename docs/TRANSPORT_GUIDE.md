@@ -238,15 +238,51 @@ wire shape.
 
 With `:prefer_modern`, ExMCP sends a bounded `server/discover` probe first. It
 falls back to `initialize` only when the response is recognized as evidence of
-a legacy peer and the transport is still usable. A recognized modern error,
-unsupported modern revision, timeout, authentication failure, or broken
-transport is surfaced instead of being silently downgraded. `:modern_only`
-never falls back.
+a legacy peer and the transport is still usable. Over HTTP, a probe that gets
+no answer within `:era_probe_timeout` is such evidence too, as MCP 2026-07-28
+says: each POST stands alone, so a late answer to the probe cannot reach the
+`initialize` that follows. A recognized modern error, unsupported modern
+revision, stdio probe timeout, authentication failure, or broken transport is
+surfaced instead of being silently downgraded. `:modern_only` never falls
+back.
+
+Over stdio a server that exits without answering the probe at all, as
+Python `mcp` 1.8 and earlier do, or that does not answer it within its bound
+is no evidence on that pipe, which a late answer could still reach. Under
+`:prefer_modern` the client closes that process (EOF, then TERM and KILL),
+starts a fresh one from the same options and initializes it, once per
+connection attempt, reconnects included, within `:establish_timeout`. A
+modern-only server then fails on `initialize` with the versions it
+supports. Those are the only two triggers: malformed output (a JSON-looking
+line that is not a valid answer, or a frame cut off or over
+`:max_frame_bytes`) fails the connection, while non-JSON lines such as
+banners and logs are ignored and are no answer. `:modern_only` never
+respawns.
+
+The fresh process starts only once the old one is confirmed stopped: the
+transport's shutdown saw it gone, and with `process_group: true` everything
+left in its group too, within `:cleanup_timeout`. A server that cannot be
+confirmed stopped (its pid could not be checked before a signal, it was
+still running after SIGKILL, or the shutdown did not finish in time) is
+never replaced, by the respawn, a retry or a reconnect: the connection
+fails, or the client stops reconnecting, and
+`[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]` is emitted. A
+reconnect waits for the old server's stop however the old connection
+ended: the server exited (it may have left its group running), the
+transport broke, or a health check gave up on it.
 
 Successful modern observations are pinned by endpoint and relevant transport
 configuration. Legacy observations expire (five minutes by default) so an
 upgraded endpoint is eventually probed again. Pass `reset_era_cache: true` for
 an intentional re-probe after an operator-controlled deployment change.
+
+An UnsupportedProtocolVersionError (`-32022`) answer to the probe whose
+`supported` list names only legacy revisions is evidence of a legacy peer:
+MCP says to continue with a listed version, and for a legacy one that means
+`initialize`, offering the client's preferred listed revision. A server
+rolled back to `protocol_mode: :legacy_only` answers the probe that way on
+every transport. A list that also names a modern or unknown revision is not
+such evidence.
 
 ### Phoenix/Plug Server
 

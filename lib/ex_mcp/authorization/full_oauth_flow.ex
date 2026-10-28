@@ -80,6 +80,40 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   @typep redirect_visited :: %{optional(String.t()) => true}
   @typep redirect_context :: {redirect_visited(), String.t()}
 
+  @doc false
+  # The issuer of the authorization server protecting the resource, from its
+  # published metadata, without registering or authorizing anything. Unlike
+  # execute/1 it doesn't fall back to an issuer guessed from the challenge or
+  # the resource's origin: a guess isn't evidence that the resource moved.
+  @spec discover_issuer(config()) :: {:ok, String.t()} | {:error, term()}
+  def discover_issuer(config) do
+    fetch_opts = metadata_fetch_options(config)
+
+    # A stale resource_metadata URL in the challenge falls back to the
+    # resource's well-known metadata, as execute/1 does; never to a guess.
+    prm =
+      case extract_resource_metadata_url(config[:www_authenticate]) do
+        nil ->
+          discover_prm_with_fallback(config.resource_url, fetch_opts)
+
+        url ->
+          case fetch_prm_directly(url, fetch_opts) do
+            {:ok, _prm} = ok -> ok
+            {:error, {:metadata_fetch_error, _reason}} = error -> error
+            {:error, _reason} -> discover_prm_with_fallback(config.resource_url, fetch_opts)
+          end
+      end
+
+    with {:ok, prm} <- prm,
+         :ok <- validate_prm_resource(prm, config),
+         {:ok, as_metadata} <- discover_as_metadata(prm, config) do
+      case as_metadata["issuer"] do
+        issuer when is_binary(issuer) -> {:ok, issuer}
+        _missing -> {:error, :missing_authorization_server_issuer}
+      end
+    end
+  end
+
   @doc """
   Execute the full OAuth flow.
 
@@ -136,7 +170,10 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   defp run_and_persist_token(as_metadata, client_info, config) do
     with {:ok, token_data} <- select_and_run_grant_flow(as_metadata, client_info, config),
          :ok <- persist_token(token_data, as_metadata, client_info, config) do
-      {:ok, Map.put(token_data, :authorization_server_issuer, as_metadata["issuer"])}
+      {:ok,
+       token_data
+       |> Map.put(:authorization_server_issuer, as_metadata["issuer"])
+       |> Map.put(:refresh_context, refresh_context(token_data, as_metadata, client_info, config))}
     else
       {:error, _reason} = error -> error
     end
@@ -594,13 +631,14 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
        do: :ok
 
   defp persist_token(token_data, as_metadata, client_info, config) do
-    expires_at =
-      case token_field(token_data, :expires_in) do
-        seconds when is_integer(seconds) and seconds >= 0 -> System.system_time(:second) + seconds
-        _other -> nil
-      end
+    binding = token_binding(token_data, as_metadata, client_info, config)
+    put_token(binding, token_data, token_field(token_data, :refresh_token), config)
+  end
 
-    token = %{
+  # What a stored token is filed under. A refresh reuses the binding of the
+  # flow that issued the first token, so it replaces that record.
+  defp token_binding(token_data, as_metadata, client_info, config) do
+    %{
       issuer: as_metadata["issuer"],
       client_id: client_info.client_id,
       resource: config[:resource] || config[:resource_url],
@@ -608,15 +646,105 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
       subject: config[:subject],
       client_identity: config[:client_identity] || client_info.client_id,
       granted_scopes:
-        token_field(token_data, :scope) || config[:scopes] || config[:prm_scopes] || [],
-      access_token: token_field(token_data, :access_token),
-      refresh_token: token_field(token_data, :refresh_token),
-      token_type: token_field(token_data, :token_type) || "Bearer",
-      expires_at: expires_at
+        token_field(token_data, :scope) || config[:scopes] || config[:prm_scopes] || []
     }
+  end
+
+  defp put_token(binding, token_data, refresh_token, config) do
+    expires_at =
+      case token_field(token_data, :expires_in) do
+        seconds when is_integer(seconds) and seconds >= 0 -> System.system_time(:second) + seconds
+        _other -> nil
+      end
+
+    token =
+      Map.merge(binding, %{
+        access_token: token_field(token_data, :access_token),
+        refresh_token: refresh_token,
+        token_type: token_field(token_data, :token_type) || "Bearer",
+        expires_at: expires_at
+      })
 
     CredentialStore.put_token(config.credential_store, token)
   end
+
+  # What refresh/2 needs to renew this token without the browser: nil when the
+  # authorization server issued no refresh token.
+  defp refresh_context(token_data, as_metadata, client_info, config) do
+    with refresh_token when is_binary(refresh_token) <- token_field(token_data, :refresh_token),
+         token_endpoint when is_binary(token_endpoint) <- as_metadata["token_endpoint"] do
+      %{
+        refresh_token: refresh_token,
+        token_endpoint: token_endpoint,
+        issuer: as_metadata["issuer"],
+        auth_methods:
+          as_metadata["token_endpoint_auth_methods_supported"] || ["client_secret_post"],
+        client_info: client_info,
+        resource: config[:resource] || config[:resource_url],
+        binding: token_binding(token_data, as_metadata, client_info, config)
+      }
+    else
+      _none -> nil
+    end
+  end
+
+  @doc false
+  # Renews an access token with the refresh token from an earlier flow
+  # (RFC 6749 section 6), authenticating the client as the original token
+  # request did. Returns the new token data and the context for the next
+  # refresh; a server that doesn't rotate refresh tokens keeps the old one.
+  @spec refresh(map(), map()) :: {:ok, map(), map()} | {:error, term()}
+  def refresh(%{refresh_token: refresh_token, client_info: client_info} = context, config) do
+    config = Map.merge(config, %{token_endpoint: context.token_endpoint})
+
+    base =
+      [
+        grant_type: "refresh_token",
+        refresh_token: refresh_token,
+        client_id: client_info.client_id,
+        client_secret: client_info[:client_secret],
+        resource: context.resource
+      ]
+      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+
+    with {:ok, method} <- select_token_auth_method(context.auth_methods, client_info, config),
+         {:ok, body} <-
+           maybe_add_client_assertion(base, client_info, context.token_endpoint, config, method),
+         {:ok, token_data} <-
+           HTTPClient.make_token_request(context.token_endpoint, body, auth_method: method),
+         # A server that doesn't rotate refresh tokens, or omits the granted
+         # scope, leaves the earlier ones in force.
+         refresh_token = token_field(token_data, :refresh_token) || refresh_token,
+         binding = refreshed_binding(token_data, context, config),
+         :ok <- persist_refreshed(token_data, refresh_token, binding, config) do
+      next =
+        context
+        |> Map.put(:refresh_token, refresh_token)
+        |> Map.put(:binding, binding)
+
+      {:ok, token_data, next}
+    end
+  end
+
+  # A refresh that changes the granted scope files the token, and the ones
+  # after it, under the new scope.
+  defp refreshed_binding(token_data, context, config) do
+    binding =
+      Map.get(context, :binding) ||
+        token_binding(token_data, %{"issuer" => context.issuer}, context.client_info, config)
+
+    case token_field(token_data, :scope) do
+      nil -> binding
+      scope -> %{binding | granted_scopes: scope}
+    end
+  end
+
+  defp persist_refreshed(_token_data, _refresh_token, _binding, config)
+       when not is_map_key(config, :credential_store),
+       do: :ok
+
+  defp persist_refreshed(token_data, refresh_token, binding, config),
+    do: put_token(binding, token_data, refresh_token, config)
 
   defp credential_context(config),
     do: config[:credential_context] || config[:resource_url]
@@ -737,6 +865,34 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
 
   defp build_client_credentials_body(client_info, config, :private_key_jwt) do
     # JWT-based client authentication for client_credentials grant
+    with {:ok, assertion_params} <- build_assertion_params_for_jwt(client_info, config) do
+      resource = config[:resource] || config[:resource_url] || ""
+      scope = join_scopes(config)
+
+      body =
+        [{"grant_type", "client_credentials"}, {"resource", resource}, {"scope", scope}]
+        |> Enum.concat(assertion_params)
+        |> Enum.reject(fn {_, v} -> is_nil(v) or v == "" end)
+
+      {:ok, body}
+    end
+  end
+
+  defp build_client_credentials_body(client_info, config, _auth_method) do
+    body =
+      [
+        grant_type: "client_credentials",
+        client_id: client_info.client_id,
+        client_secret: Map.get(client_info, :client_secret),
+        resource: config[:resource] || config[:resource_url],
+        scope: join_scopes(config)
+      ]
+      |> Enum.reject(fn {_, v} -> is_nil(v) end)
+
+    {:ok, body}
+  end
+
+  defp build_assertion_params_for_jwt(client_info, config) do
     token_endpoint = config[:token_endpoint] || ""
     private_key = config[:private_key] || client_info[:private_key]
     alg = config[:signing_algorithm] || "ES256"
@@ -747,33 +903,13 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
            private_key: private_key,
            alg: alg
          ) do
-      {:ok, assertion_params} ->
-        resource = config[:resource] || config[:resource_url] || ""
-
-        body =
-          [{"grant_type", "client_credentials"}, {"resource", resource}]
-          |> Enum.concat(assertion_params)
-          |> Enum.reject(fn {_, v} -> is_nil(v) or v == "" end)
-
-        {:ok, body}
-
-      {:error, reason} ->
-        {:error, {:client_assertion_failed, reason}}
+      {:ok, assertion_params} -> {:ok, assertion_params}
+      {:error, reason} -> {:error, {:client_assertion_failed, reason}}
     end
   end
 
-  defp build_client_credentials_body(client_info, config, _auth_method) do
-    body =
-      [
-        grant_type: "client_credentials",
-        client_id: client_info.client_id,
-        client_secret: Map.get(client_info, :client_secret),
-        resource: config[:resource] || config[:resource_url]
-      ]
-      |> Enum.reject(fn {_, v} -> is_nil(v) end)
-
-    {:ok, body}
-  end
+  defp join_scopes(%{scopes: [_ | _] = scopes}), do: Enum.join(scopes, " ")
+  defp join_scopes(_config), do: nil
 
   # Step 4b: Run authorization code flow with PKCE
   defp run_auth_code_flow(as_metadata, client_info, config) do

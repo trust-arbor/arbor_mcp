@@ -115,6 +115,9 @@ defmodule ExMCP.Client do
     # dropped, and that were still alive when it did. Their exit signals are
     # expected and are ignored rather than read as a foreign link's exit.
     retired_links: MapSet.new(),
+    # How closing a dropped transport's stdio server ended: :ok, or the
+    # {:error, _} that keeps the client from starting another beside it.
+    server_stop: :ok,
     # Memoized client handler: nil (not yet initialized), :none (no handler
     # configured) or {module, handler_state}. Initialized once; callback
     # returns update handler_state, so stateful client handlers work.
@@ -169,14 +172,22 @@ defmodule ExMCP.Client do
     included) and waiting for the server's response (default: 10_000).
     On expiry `start_link/1` fails with `{:error, :handshake_timeout}`.
   - `:protocol_mode` - Era policy: `:modern_only`, `:legacy_only`,
-    `:prefer_modern`, or `:prefer_legacy`.
+    `:prefer_modern`, or `:prefer_legacy`. Under `:prefer_modern`, a stdio
+    server that exits without answering the `server/discover` probe, or never
+    answers it, is closed and started again for a legacy `initialize`, once.
   - `:era_probe_timeout` - Dedicated timeout for the side-effect-free modern
     discovery probe exchange, send included (default: 2_000 milliseconds).
+    Over stdio the probe is the first message a newly started server reads,
+    so the wait for its answer also covers the server starting up; there the
+    default is `:handshake_timeout`, the time `initialize` gets for the same
+    first answer.
   - `:establish_timeout` - Upper bound in milliseconds (or `:infinity`) on
     establishing the connection as a whole: opening the transport, the probe,
     any legacy fallback, `initialize` and `notifications/initialized`, and
     connection retries under `:retry_policy`. Defaults to
-    `:handshake_timeout` plus `:era_probe_timeout`. On expiry `start_link/1`
+    `:handshake_timeout` plus the probe's bound, `:era_probe_timeout` or its
+    default: 12 s, or 20 s for a stdio client that opens with the probe
+    (`:prefer_modern` or `:modern_only`). On expiry `start_link/1`
     fails with `{:error, :establish_timeout}`, and each reconnection attempt is
     bounded the same way. A failed attempt closes the transport it opened, so
     a spawned stdio server does not outlive it; ending an HTTP session it
@@ -214,6 +225,16 @@ defmodule ExMCP.Client do
   settles in `:disconnected`. Requests made while reconnecting return
   `{:error, :not_connected}`.
 
+  Over stdio each connection runs its own server process, and none is
+  started while an earlier one may still be running. A server counts as
+  stopped only once the transport saw it gone (see `ExMCP.Transport.Stdio`),
+  and with `process_group: true` whatever it left in its group too. However
+  the old connection ended (the server exited, the transport broke, or a
+  health check gave up on it), the reconnect waits for that. When the old
+  server's stop or a reconnect attempt's cannot be confirmed, the client
+  stops reconnecting, settles in `:disconnected` and emits
+  `[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]`.
+
   Explicit `disconnect/1` or `stop/2` calls never trigger reconnection.
   Passing `reconnect: false` disables the behavior entirely.
 
@@ -232,6 +253,9 @@ defmodule ExMCP.Client do
   - `[:ex_mcp, :client, :reconnect, :success]` - reconnected and re-initialized
   - `[:ex_mcp, :client, :reconnect, :error]` - a single attempt failed
   - `[:ex_mcp, :client, :reconnect, :timeout]` - gave up after the final attempt
+  - `[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]` - stopped
+    reconnecting because a stdio server from the dropped connection or an
+    earlier attempt could not be confirmed stopped; metadata `reason`
 
   ## Reliability Options
 
@@ -1192,6 +1216,12 @@ defmodule ExMCP.Client do
 
   defp normalize_connection_error({:invalid_establish_timeout, _value} = reason), do: reason
 
+  defp normalize_connection_error({:probed_server_stop_unconfirmed, _details} = reason),
+    do: {:transport_connect_failed, reason}
+
+  defp normalize_connection_error({:cleanup_failed, _reason, {:error, _}} = reason),
+    do: {:transport_connect_failed, reason}
+
   defp normalize_connection_error(:invalid_request) do
     {:initialize_error, %{"code" => ErrorCodes.invalid_request()}}
   end
@@ -1624,20 +1654,44 @@ defmodule ExMCP.Client do
     result
   end
 
+  # A modern request stream got a 401 or 403. Answering here, one challenge at
+  # a time, means concurrent streams run one refresh or OAuth flow between
+  # them (a rotating refresh token is spent once), and a stream whose token
+  # another one already replaced just retries with the new token. The
+  # provider's state is kept whatever the outcome, with its loop guards.
   def handle_info(
-        {:modern_http_stream_auth_updated, stream_pid, request_id, changes},
+        {:modern_http_stream_auth_challenge, stream_pid, request_id, ref, challenge},
         %{
           transport_mod: HTTP,
           transport_state: %HTTP{} = transport_state
         } = state
       )
-      when is_map(changes) do
-    if HTTP.stream_owner?(transport_state, request_id, stream_pid) do
-      transport_state = merge_modern_stream_auth_state(transport_state, changes)
-      {:noreply, %{state | transport_state: transport_state}}
-    else
-      {:noreply, state}
+      when is_map(challenge) do
+    cond do
+      not HTTP.stream_owner?(transport_state, request_id, stream_pid) ->
+        send(stream_pid, {:modern_http_stream_auth_result, ref, {:error, :stream_retired}})
+        {:noreply, state}
+
+      # The request's caller has given up: don't refresh or sign in for it.
+      Deadline.expired?(Map.get(challenge, :deadline)) ->
+        send(stream_pid, {:modern_http_stream_auth_result, ref, {:error, :timeout}})
+        {:noreply, state}
+
+      true ->
+        {result, transport_state} = answer_stream_challenge(transport_state, challenge)
+        send(stream_pid, {:modern_http_stream_auth_result, ref, result})
+        {:noreply, %{state | transport_state: transport_state}}
     end
+  end
+
+  # From a stream of a connection this client no longer has.
+  def handle_info(
+        {:modern_http_stream_auth_challenge, stream_pid, _request_id, ref, _challenge},
+        state
+      )
+      when is_pid(stream_pid) do
+    send(stream_pid, {:modern_http_stream_auth_result, ref, {:error, :stream_retired}})
+    {:noreply, state}
   end
 
   def handle_info(
@@ -1776,13 +1830,19 @@ defmodule ExMCP.Client do
         %{transport_mod: HTTP, transport_state: %HTTP{} = transport_state} = state
       )
       when is_pid(task) and is_map(challenge) do
-    if own_post_task?(state, task) and state.connection_status != :disconnected do
-      {result, transport_state} = answer_stream_challenge(transport_state, challenge)
-      send(task, {:http_post_auth_result, ref, result})
-      {:noreply, %{state | transport_state: transport_state}}
-    else
-      send(task, {:http_post_auth_result, ref, {:error, :stream_retired}})
-      {:noreply, state}
+    cond do
+      not own_post_task?(state, task) or state.connection_status == :disconnected ->
+        send(task, {:http_post_auth_result, ref, {:error, :stream_retired}})
+        {:noreply, state}
+
+      Deadline.expired?(Map.get(challenge, :deadline)) ->
+        send(task, {:http_post_auth_result, ref, {:error, :timeout}})
+        {:noreply, state}
+
+      true ->
+        {result, transport_state} = answer_stream_challenge(transport_state, challenge)
+        send(task, {:http_post_auth_result, ref, result})
+        {:noreply, %{state | transport_state: transport_state}}
     end
   end
 
@@ -1792,39 +1852,6 @@ defmodule ExMCP.Client do
       )
       when is_pid(task) and is_reference(ref) do
     send(task, {:http_post_auth_result, ref, {:error, :stream_retired}})
-    {:noreply, state}
-  end
-
-  # An async POST task is starting an authentication flow (e.g. inline OAuth
-  # discovery or provider auth). Hand out a monotonically increasing version
-  # allocated in the client process, so concurrent tasks never compare against
-  # their own snapshots.
-  def handle_info(
-        {:http_post_allocate_auth_version, task, ref},
-        %{transport_mod: HTTP, transport_state: %HTTP{} = transport_state} = state
-      )
-      when is_pid(task) and is_reference(ref) do
-    if own_post_task?(state, task) and state.connection_status != :disconnected do
-      current_alloc =
-        max(transport_state.auth_version_allocator || 0, transport_state.auth_version || 0)
-
-      next_version = current_alloc + 1
-      send(task, {:http_post_auth_version, ref, next_version})
-
-      transport_state = %{transport_state | auth_version_allocator: next_version}
-      {:noreply, %{state | transport_state: transport_state}}
-    else
-      send(task, {:http_post_auth_version, ref, {:error, :stream_retired}})
-      {:noreply, state}
-    end
-  end
-
-  def handle_info(
-        {:http_post_allocate_auth_version, task, ref},
-        state
-      )
-      when is_pid(task) and is_reference(ref) do
-    send(task, {:http_post_auth_version, ref, {:error, :stream_retired}})
     {:noreply, state}
   end
 
@@ -2119,64 +2146,115 @@ defmodule ExMCP.Client do
   # reconnected after the task started), which keeps stale results from an old
   # connection out of the new connection's state. Older retry results never
   # overwrite newer credentials.
-  @credential_fields [
-    :access_token,
-    :headers,
-    :auth_provider_state,
-    :auth_completed,
-    :auth_version
-  ]
-
   defp merge_async_transport_state(state, meta) do
     changes = Map.get(meta, :state_changes) || %{}
 
     if map_size(changes) > 0 and is_map(state.transport_state) and
          known_async_post_request?(state, meta) do
-      current_version = state.transport_state.auth_version || 0
-      task_version = Map.get(changes, :auth_version)
-      applicable_changes = filter_stale_credentials(changes, current_version, task_version)
-
-      %{state | transport_state: Map.merge(state.transport_state, applicable_changes)}
+      %{state | transport_state: Map.merge(state.transport_state, changes)}
     else
       state
     end
   end
 
-  defp filter_stale_credentials(changes, current_version, task_version) do
-    cond do
-      is_integer(task_version) and task_version < current_version ->
-        Map.drop(changes, @credential_fields)
+  defp answer_stream_challenge(%HTTP{access_token: current} = transport_state, challenge)
+       when is_binary(current) and current != :erlang.map_get(:token, challenge) do
+    # Another stream replaced the rejected token. That answers a 401; a 403
+    # needs the challenged scopes, which a refresh alone doesn't add.
+    if challenge.status == 401 or
+         scopes_granted?(transport_state, challenge.scopes),
+       do: {{:ok, current}, transport_state},
+       else: run_challenge(transport_state, challenge)
+  end
 
-      is_nil(task_version) and current_version > 0 and
-          Enum.any?(@credential_fields, &Map.has_key?(changes, &1)) ->
-        Map.drop(changes, @credential_fields)
+  defp answer_stream_challenge(transport_state, challenge),
+    do: run_challenge(transport_state, challenge)
 
-      true ->
-        changes
+  defp scopes_granted?(%HTTP{auth_provider: provider, auth_provider_state: ps}, scopes)
+       when not is_nil(provider) do
+    case ps do
+      %{granted_scopes: granted} when is_list(granted) and is_list(scopes) and scopes != [] ->
+        Enum.all?(scopes, &(&1 in granted))
+
+      _ ->
+        false
     end
+  end
+
+  defp scopes_granted?(%HTTP{granted_scopes: granted}, [_ | _] = scopes) when is_list(granted) do
+    Enum.all?(scopes, &(&1 in granted))
+  end
+
+  defp scopes_granted?(_transport_state, _scopes), do: false
+
+  defp run_challenge(%HTTP{auth_provider: provider} = transport_state, challenge)
+       when not is_nil(provider) do
+    run_stream_challenge(transport_state, challenge)
+  end
+
+  defp run_challenge(%HTTP{auth_provider: nil} = transport_state, challenge) do
+    HTTP.run_inline_oauth_challenge(transport_state, challenge)
+  end
+
+  defp run_stream_challenge(%HTTP{auth_provider: provider} = transport_state, challenge) do
+    callback = if challenge.status == 401, do: :handle_unauthorized, else: :handle_forbidden
+    args = [challenge.www_authenticate, challenge.scopes, transport_state.auth_provider_state]
+
+    case call_provider(provider, callback, args) do
+      {:ok, token, provider_state} when is_binary(token) ->
+        changes = %{access_token: token, auth_provider_state: provider_state}
+        {{:ok, token}, merge_modern_stream_auth_state(transport_state, changes)}
+
+      # The provider's state records what it tried (the OAuth provider's loop
+      # guards), so it survives the failure.
+      {:error, reason, provider_state} ->
+        {{:error, reason}, %{transport_state | auth_provider_state: provider_state}}
+
+      other ->
+        {{:error, {:invalid_provider_response, other}}, transport_state}
+    end
+  end
+
+  # The provider runs in this process, so a call it makes to this client is
+  # a call to itself (see ExMCP.Authorization.Provider): it would exit and
+  # take the client down. It is refused instead.
+  defp call_provider(provider, callback, args) do
+    apply(provider, callback, args)
+  catch
+    :exit, {:calling_self, _call} ->
+      Logger.error(
+        "Auth provider #{inspect(provider)} called the client it authenticates from #{callback}/3"
+      )
+
+      {:error, :auth_provider_called_client, List.last(args)}
   end
 
   defp merge_modern_stream_auth_state(transport_state, changes) do
     provider_state = Map.get(changes, :auth_provider_state, transport_state.auth_provider_state)
-    auth_version = Map.get(changes, :auth_version, (transport_state.auth_version || 0) + 1)
+    granted_scopes = Map.get(changes, :granted_scopes, transport_state.granted_scopes)
 
     case Map.fetch(changes, :access_token) do
       {:ok, token} when is_binary(token) ->
         headers =
-          transport_state.headers
+          (transport_state.headers || [])
           |> Headers.delete("authorization")
           |> List.insert_at(0, {"Authorization", "Bearer #{token}"})
 
         %{
           transport_state
           | access_token: token,
+            auth_completed: true,
             auth_provider_state: provider_state,
-            headers: headers,
-            auth_version: auth_version
+            granted_scopes: granted_scopes,
+            headers: headers
         }
 
       _other ->
-        %{transport_state | auth_provider_state: provider_state, auth_version: auth_version}
+        %{
+          transport_state
+          | auth_provider_state: provider_state,
+            granted_scopes: granted_scopes
+        }
     end
   end
 
@@ -2186,56 +2264,6 @@ defmodule ExMCP.Client do
       {_ref, pid} when is_pid(pid) -> pid == task
       _other -> false
     end)
-  end
-
-  defp answer_stream_challenge(%HTTP{access_token: current} = transport_state, challenge)
-       when is_binary(current) and current != :erlang.map_get(:token, challenge) do
-    # Another stream replaced the rejected token. That answers a 401; a 403
-    # needs the challenged scopes, which a refresh alone doesn't add.
-    if challenge.status == 401 or
-         scopes_granted?(transport_state.auth_provider_state, challenge.scopes),
-       do: {{:ok, current, transport_state.auth_version || 0}, transport_state},
-       else: run_stream_challenge(transport_state, challenge)
-  end
-
-  defp answer_stream_challenge(%HTTP{auth_provider: nil} = transport_state, _challenge),
-    do: {{:error, :no_auth_provider}, transport_state}
-
-  defp answer_stream_challenge(transport_state, challenge),
-    do: run_stream_challenge(transport_state, challenge)
-
-  defp scopes_granted?(%{granted_scopes: granted}, [_ | _] = scopes) when is_list(granted),
-    do: Enum.all?(scopes, &(&1 in granted))
-
-  defp scopes_granted?(_provider_state, _scopes), do: false
-
-  defp run_stream_challenge(%HTTP{auth_provider: provider} = transport_state, challenge) do
-    callback = if challenge.status == 401, do: :handle_unauthorized, else: :handle_forbidden
-    args = [challenge.www_authenticate, challenge.scopes, transport_state.auth_provider_state]
-
-    case apply(provider, callback, args) do
-      {:ok, token, provider_state} when is_binary(token) ->
-        version =
-          max(transport_state.auth_version_allocator || 0, transport_state.auth_version || 0) + 1
-
-        changes = %{
-          access_token: token,
-          auth_provider_state: provider_state,
-          auth_version: version
-        }
-
-        transport_state = %{transport_state | auth_version_allocator: version}
-        {{:ok, token, version}, merge_modern_stream_auth_state(transport_state, changes)}
-
-      {:error, reason, provider_state} ->
-        {{:error, reason}, %{transport_state | auth_provider_state: provider_state}}
-
-      {:error, reason} ->
-        {{:error, reason}, transport_state}
-
-      other ->
-        {{:error, {:invalid_provider_response, other}}, transport_state}
-    end
   end
 
   defp async_task_request_id({_pid, request_id}), do: request_id
@@ -2349,10 +2377,35 @@ defmodule ExMCP.Client do
     {:noreply, handle_transport_down({:transport_forwarder_died, reason}, state)}
   end
 
+  # The transport may still be open (a stdio server that only hung), so it
+  # is closed here, and a server that cannot be confirmed stopped keeps
+  # handle_transport_down/2 from reconnecting beside it. The closed
+  # transport is dropped, so it is not closed again.
   defp abandon_transport(state) do
     state = retire_links(state)
-    close_transport(state)
-    state
+
+    spawned_server? =
+      ConnectionManager.spawned_server?(state.transport_mod, state.transport_state)
+
+    case close_transport(state) do
+      {:error, _reason} = unconfirmed when spawned_server? ->
+        %{state | server_stop: unconfirmed, transport_state: nil}
+
+      _closed ->
+        %{state | transport_state: nil}
+    end
+  end
+
+  # A stdio server must be confirmed stopped before anything reconnects,
+  # however its connection ended: one that exited on its own may have left
+  # its group running (process_group: true) through the shutdown's grace,
+  # and one still running may hold what its replacement needs.
+  defp stop_spawned_server(%{transport_state: nil} = state), do: state
+
+  defp stop_spawned_server(state) do
+    if ConnectionManager.spawned_server?(state.transport_mod, state.transport_state),
+      do: abandon_transport(state),
+      else: state
   end
 
   # Remembers the links of the transport and receiver this client is about
@@ -2395,14 +2448,14 @@ defmodule ExMCP.Client do
   # Closing is bounded (see Deadline.cleanup_timeout/0): a best-effort
   # session DELETE to a peer that stopped answering must not hold stop/2,
   # disconnect/1 or the client loop for the transport's request timeout.
+  # It says whether a stdio server was confirmed stopped.
   defp close_transport(%{transport_mod: mod, transport_state: transport_state})
        when not is_nil(mod) and not is_nil(transport_state) do
-    mod.close(Deadline.for_cleanup(mod, transport_state))
-    :ok
+    ExMCP.Transport.close_confirmed(mod, Deadline.for_cleanup(mod, transport_state))
   rescue
-    _error -> :ok
+    exception -> {:error, {:cleanup_exception, exception.__struct__}}
   catch
-    :exit, _reason -> :ok
+    :exit, reason -> {:error, {:cleanup_exit, reason}}
   end
 
   defp close_transport(_state), do: :ok
@@ -2443,6 +2496,11 @@ defmodule ExMCP.Client do
 
     previous_status = state.connection_status
 
+    # Pending callers have their answer; a reconnect waits for the old
+    # server's stop (already done when the transport was abandoned).
+    state =
+      if reconnect_allowed?(state, previous_status), do: stop_spawned_server(state), else: state
+
     # The health check is re-armed by the reconnect success path; leaving the
     # old timer running would double up once the client is ready again.
     cancel_health_check_timer(state)
@@ -2463,10 +2521,16 @@ defmodule ExMCP.Client do
         subscriptions: %{}
     }
 
-    if reconnect_allowed?(cleared_state, previous_status) do
-      schedule_reconnect(cleared_state)
-    else
-      close_notification_listeners(cleared_state, {:transport_closed, reason})
+    cond do
+      not reconnect_allowed?(cleared_state, previous_status) ->
+        close_notification_listeners(cleared_state, {:transport_closed, reason})
+
+      match?({:error, _reason}, cleared_state.server_stop) ->
+        {:error, unconfirmed} = cleared_state.server_stop
+        stop_reconnecting(cleared_state, unconfirmed)
+
+      true ->
+        schedule_reconnect(cleared_state)
     end
   end
 
@@ -2846,8 +2910,30 @@ defmodule ExMCP.Client do
           %{reason: reason, transport: configured_transport(state), pid: self()}
         )
 
-        handle_reconnect_failure(state, reason)
+        if ConnectionManager.cleanup_unconfirmed?(reason) and
+             ConnectionManager.spawns_server?(state.transport_opts),
+           do: stop_reconnecting(state, reason),
+           else: handle_reconnect_failure(state, reason)
     end
+  end
+
+  # A new connection to a stdio server starts a new server process, so none
+  # is started while one an earlier attempt opened may still be running: it
+  # could hold the port or lock the new one needs. The client stops
+  # reconnecting, settles in :disconnected and reports why.
+  defp stop_reconnecting(state, reason) do
+    :telemetry.execute(
+      [:ex_mcp, :client, :reconnect, :cleanup_unconfirmed],
+      %{attempt: state.reconnect_attempts},
+      %{reason: reason, transport: configured_transport(state), pid: self()}
+    )
+
+    Logger.error("Not reconnecting: an earlier server may still be running: #{inspect(reason)}")
+
+    close_notification_listeners(
+      %{state | connection_status: :disconnected},
+      {:reconnect_stopped, reason}
+    )
   end
 
   defp handle_reconnect_failure(state, reason) do
@@ -2923,6 +3009,10 @@ defmodule ExMCP.Client do
       state.health_check_id != nil ->
         Logger.warning("MCP health check ping unanswered; treating transport as closed")
         state = %{state | health_check_id: nil, health_check_ref: nil}
+        # The transport is still open (a stdio server may only have hung):
+        # close it before moving on, so a reconnect cannot run a second
+        # server beside it.
+        state = abandon_transport(state)
         handle_transport_down(:health_check_timeout, state)
 
       true ->
@@ -2942,6 +3032,10 @@ defmodule ExMCP.Client do
     case RequestHandler.send_ping(state) do
       {:ok, request_id, new_state} ->
         %{new_state | health_check_id: request_id}
+
+      {:error, reason, failed_state} ->
+        Logger.debug("MCP health check ping could not be sent: #{inspect(reason)}")
+        %{failed_state | health_check_id: nil}
 
       {:error, reason} ->
         Logger.debug("MCP health check ping could not be sent: #{inspect(reason)}")
