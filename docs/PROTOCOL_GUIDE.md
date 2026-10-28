@@ -241,7 +241,7 @@ protocol revisions. New code should call the LLM provider directly.
     "maxTokens" => 256
   })
 
-# Client — human approval is required
+# Client — example implementation of recommended human approval
 @impl true
 def handle_create_message(params, state) do
   case get_user_approval(params) do
@@ -277,6 +277,8 @@ server request:
    }
  }, state}
 ```
+
+This example deliberately requests human approval. For legacy MCP Sampling, the specification recommends human review but does not require a specific approval UI or mandate this callback-level check as a wire-protocol rule. Client applications may choose their own review workflow.
 
 The client must declare `%{"sampling" => %{}}`. The same
 `handle_create_message/2` callback satisfies the MRTR input.
