@@ -671,7 +671,7 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
     end)
 
     started = Deadline.now()
-    assert {:ok, _control, cutoff} = ShutdownControl.prepare(table, :normal, started)
+    assert {:ok, control, cutoff} = ShutdownControl.prepare(table, :normal, started)
     assert {:ok, :normal, ^cutoff, force_at} = ShutdownControl.command(table)
     assert force_at == cutoff - margin
     assert force_at - started >= budget - div(budget, 4)
@@ -681,18 +681,14 @@ defmodule Arbor.MCP.Server.Runtime.ShutdownControlTest do
     :sys.resume(guard)
     :sys.resume(observer)
 
-    case Runtime.stop(root) do
-      {:error, :runtime_unavailable} ->
-        # prepare/3 already started shutdown. A 1 ms root may have exited
-        # before this second stop call, which is successful cleanup.
-        refute Process.alive?(root)
-        assert_receive {:DOWN, ^root_monitor, :process, ^root, _reason}, 2_000
+    # Await the shutdown started by prepare/3 through its captured control.
+    # A second Runtime.stop/1 can race the root's exit and miss this control.
+    assert ShutdownControl.await(control, cutoff, false) in [
+             :ok,
+             {:error, :shutdown_cleanup_unconfirmed}
+           ]
 
-      result ->
-        assert result in [:ok, {:error, :shutdown_cleanup_unconfirmed}]
-    end
-
-    Process.demonitor(root_monitor, [:flush])
+    assert_receive {:DOWN, ^root_monitor, :process, ^root, _reason}, 2_000
     assert_receive {:DOWN, ^observer_monitor, :process, ^observer, :normal}, 2_000
   end
 
