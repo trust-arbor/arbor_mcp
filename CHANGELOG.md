@@ -22,6 +22,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An HTTP `:auth_provider` whose `init/1` fails now fails the connection
+  instead of being dropped. The transport used to go on without it, so every
+  request went out without the credentials the application configured.
+  `ExMCP.Transport.HTTP.connect/1` returns
+  `{:error, {:auth_provider_init_failed, provider, reason}}`, and
+  `ExMCP.Client.start_link/1` returns it as
+  `{:error, {:transport_connect_failed, {:auth_provider_init_failed, provider, reason}}}`
+  before sending any request; a reconnect attempt fails the same way.
+  `reason` is the provider's own when it is an atom; any other error is
+  reported as `:redacted`, an exception as `{:raised, exception_module}`, a
+  throw or exit as `:throw` or `:exit`, and an unexpected return as
+  `:invalid_init_result`, so neither the result nor the logs carry the
+  provider's config. A connection without a provider is unchanged. This is
+  the 1.x backport of 2.x PR #161.
 - Nested atom keys in a client's declared capabilities are now normalized
   for the Local transport too, matching the HTTP wire shape. This closes a
   Local-transport gap in the 1.x backport of 2.x PR #116.
