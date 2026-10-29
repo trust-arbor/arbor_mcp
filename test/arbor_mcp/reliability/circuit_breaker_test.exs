@@ -175,4 +175,84 @@ defmodule Arbor.MCP.Reliability.CircuitBreakerTest do
       assert result == {:error, :timeout}
     end
   end
+
+  describe "held admissions" do
+    setup do
+      {:ok, breaker} = CircuitBreaker.start_link(failure_threshold: 1, reset_timeout: 60_000)
+      {:ok, breaker: breaker}
+    end
+
+    test "a settled admission is counted once, whatever follows", %{breaker: breaker} do
+      {pid, ref} = holder(breaker)
+      send(pid, {:settle, {:result, {:error, :boom}}})
+      assert_receive {:settled, ^pid}
+
+      # A second settle and the holder's crash are both ignored.
+      :ok = CircuitBreaker.settle(breaker, pid, :failure)
+      send(pid, :exit_abnormally)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :boom}
+      _ = :sys.get_state(breaker)
+
+      assert failures(breaker) == 1
+    end
+
+    test "an unsettled holder that crashes counts as a failure", %{breaker: breaker} do
+      {pid, ref} = holder(breaker)
+      send(pid, :exit_abnormally)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :boom}
+
+      wait_for_failures(breaker, 1)
+      assert {:error, :circuit_open} = CircuitBreaker.hold(breaker)
+    end
+
+    test "an unsettled holder that exits normally, or a release, counts nothing",
+         %{breaker: breaker} do
+      {pid, ref} = holder(breaker)
+      send(pid, :exit_normally)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+
+      {released, _ref} = holder(breaker)
+      send(released, {:settle, :release})
+      assert_receive {:settled, ^released}
+
+      _ = :sys.get_state(breaker)
+      assert failures(breaker) == 0
+      assert :ok = CircuitBreaker.hold(breaker)
+    end
+  end
+
+  # A process that holds an admission and then does what it is told.
+  defp holder(breaker) do
+    test_pid = self()
+
+    pid =
+      spawn(fn ->
+        send(test_pid, {:held, self(), CircuitBreaker.hold(breaker)})
+
+        receive do
+          {:settle, outcome} ->
+            CircuitBreaker.settle(breaker, self(), outcome)
+            send(test_pid, {:settled, self()})
+
+            receive do
+              :exit_abnormally -> exit(:boom)
+            end
+
+          :exit_abnormally ->
+            exit(:boom)
+
+          :exit_normally ->
+            :ok
+        end
+      end)
+
+    assert_receive {:held, ^pid, :ok}
+    {pid, Process.monitor(pid)}
+  end
+
+  defp failures(breaker), do: CircuitBreaker.get_stats(breaker).total_failures
+
+  defp wait_for_failures(breaker, count) do
+    Arbor.MCP.TestHelpers.wait_until(fn -> failures(breaker) == count end, timeout: 1_000)
+  end
 end

@@ -3,7 +3,11 @@ defmodule Arbor.MCP.Integration.PythonLegacyStdioInteropTest do
   Python `mcp` 1.6 and 1.8 stdio servers exit when the `server/discover` probe
   arrives before `initialize` (1.10 and later answer -32602). A
   `:prefer_modern` client must still reach one, by initializing a fresh
-  process. Needs `uv`; run with `mix test --include interop`.
+  process. Needs `uv`; run with `mix test --include interop`. The server runs
+  on Python 3.12, which `uv` fetches if need be: `pydantic<2.11` has no
+  wheels for 3.14 and later, and building it needs a Rust toolchain. The pin
+  is in the command: the stdio transport's default `:isolated` environment
+  policy doesn't pass `UV_PYTHON` to the server.
   """
 
   use ExUnit.Case, async: true
@@ -30,6 +34,8 @@ defmodule Arbor.MCP.Integration.PythonLegacyStdioInteropTest do
             uv,
             "run",
             "--no-project",
+            "--python",
+            "3.12",
             "--with",
             "mcp==1.8.1",
             "--with",

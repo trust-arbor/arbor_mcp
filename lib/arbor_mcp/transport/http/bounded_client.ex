@@ -134,7 +134,8 @@ defmodule Arbor.MCP.Transport.HTTP.BoundedClient do
           limits = [
             max_bytes: max_bytes,
             max_bytes_for: body_limit(max_bytes, stream),
-            validate_headers: header_policy(max_bytes, stream)
+            validate_headers:
+              header_policy(max_bytes, stream, Keyword.get(opts, :auth_headers_only, false))
           ]
 
           receive_response(
@@ -259,7 +260,7 @@ defmodule Arbor.MCP.Transport.HTTP.BoundedClient do
   # Applied to the accumulated header list, trailers included: compression
   # and conflicting framing are refused, and the strict single-value
   # content-length rule decides the size limit.
-  defp header_policy(max_bytes, stream) do
+  defp header_policy(max_bytes, stream, auth_headers_only?) do
     fn _batch, accumulated, status ->
       length_limit =
         if is_nil(stream) or not event_stream?(%{status: status, headers: accumulated}),
@@ -267,6 +268,9 @@ defmodule Arbor.MCP.Transport.HTTP.BoundedClient do
           else: @max_declared_length
 
       cond do
+        auth_headers_only? and status in [401, 403] ->
+          :complete
+
         Reducer.compressed?(accumulated) ->
           {:error, :compressed_response}
 

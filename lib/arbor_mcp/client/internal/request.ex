@@ -1,10 +1,12 @@
 defmodule Arbor.MCP.Client.Internal.Request do
   @moduledoc false
-  alias Arbor.MCP.Client.MRTR
+  alias Arbor.MCP.Client.{HTTPAuth, MRTR, RequestHandler}
+  alias Arbor.MCP.Client.Internal.ManualMRTR
   alias Arbor.MCP.Error
   alias Arbor.MCP.Protocol.ErrorCodes
   alias Arbor.MCP.Reliability.Retry
   alias Arbor.MCP.Response
+  alias Arbor.MCP.Transport.HTTP
   @default_max_mrtr_rounds 8
   # The longest finite timeout Erlang accepts: no limit, in practice.
   @max_timeout 4_294_967_295
@@ -33,8 +35,12 @@ defmodule Arbor.MCP.Client.Internal.Request do
   #   still detects a dead client).
   # - The default retry policy is only fetched (one extra call) after a
   #   failed first attempt, so successful requests never pay for it.
+  #
+  # With `mrtr: :manual` an input_required round comes back as
+  # `{:input_required, %{input_requests: ..., request_state: ...}}` (see
+  # ManualMRTR).
   @spec make_request(Arbor.MCP.Client.t(), String.t(), map(), keyword(), pos_integer()) ::
-          {:ok, any()} | {:error, any()}
+          {:ok, any()} | {:error, any()} | {:input_required, ManualMRTR.input_required()}
   @spec make_request(
           Arbor.MCP.Client.t(),
           String.t(),
@@ -43,32 +49,62 @@ defmodule Arbor.MCP.Client.Internal.Request do
           pos_integer(),
           integer() | nil
         ) ::
-          {:ok, any()} | {:error, any()}
+          {:ok, any()} | {:error, any()} | {:input_required, ManualMRTR.input_required()}
   def make_request(client, method, params, opts, default_timeout, deadline_cap \\ nil) do
     validate_options!(opts)
     stream_retry_mode = Keyword.get(opts, :http_stream_retry, :at_least_once)
 
-    case validate_http_stream_retry_mode(client, stream_retry_mode) do
-      :ok ->
-        do_make_request(
-          client,
-          method,
-          params,
-          opts,
-          default_timeout,
-          stream_retry_mode,
-          deadline_cap
+    with :ok <- validate_http_stream_retry_mode(client, stream_retry_mode),
+         {:ok, params, request_meta} <- ManualMRTR.prepare(method, params, opts) do
+      {params, request_meta} = with_progress_to(params, request_meta, opts)
+      # The client process bounds the MRTR bookkeeping it keeps for progress
+      # by the request's own limits (see RequestHandler).
+      request_meta =
+        Map.merge(
+          request_meta,
+          Map.new(Keyword.take(opts, [:max_mrtr_bytes, :max_input_requests]))
         )
 
-      {:error, _reason} = error ->
-        handle_request_result(error, opts)
+      do_make_request(
+        client,
+        method,
+        params,
+        opts,
+        default_timeout,
+        stream_retry_mode,
+        deadline_cap,
+        request_meta
+      )
+    else
+      {:error, _reason} = error -> handle_request_result(error, opts)
+    end
+  end
+
+  # `progress_to: pid` also sends the request's progress to `pid` (see
+  # RequestHandler.deliver_progress/3). Progress names its request only by
+  # token, so such a request carries one; under automatic MRTR every round
+  # repeats it, and manual MRTR requires the caller's own (see ManualMRTR).
+  defp with_progress_to(params, request_meta, opts) do
+    case Keyword.get(opts, :progress_to) do
+      nil -> {params, request_meta}
+      pid -> {ensure_progress_token(params), Map.put(request_meta, :progress_to, pid)}
     end
   end
 
   defp validate_options!(opts) do
+    # Absent or `nil` is the era's default (on for modern requests, off for
+    # legacy ones), as `nil` leaves the other forwarding options unset, so a
+    # gateway can pass options through unfiltered; `true` and `false` force
+    # it, and anything else raises.
+    validate_option!(opts, :cancel_on_caller_exit, [nil, true, false], "a boolean")
     validate_option!(opts, :format, [:map, :struct], ":map or :struct")
     validate_option!(opts, :cache_mode, [:use, :refresh, :bypass], ":use, :refresh or :bypass")
     validate_option!(opts, :reset_timeout_on_progress, [true, false], "a boolean")
+    # `nil` leaves it unset, as for the forwarding options (see ManualMRTR).
+    validate_option!(opts, :mrtr, [nil, :auto, :manual], ":auto or :manual")
+
+    unless is_nil(opts[:progress_to]) or is_pid(opts[:progress_to]),
+      do: raise(ArgumentError, "progress_to must be a pid")
 
     for key <- [:timeout, :max_total_timeout], Keyword.has_key?(opts, key) do
       case Keyword.fetch!(opts, key) do
@@ -97,15 +133,22 @@ defmodule Arbor.MCP.Client.Internal.Request do
          opts,
          default_timeout,
          stream_retry_mode,
-         deadline_cap
+         deadline_cap,
+         request_meta
        ) do
     started_at = System.monotonic_time(:millisecond)
     explicit_timeout = Keyword.get(opts, :timeout)
     retry_policy = Keyword.get(opts, :retry_policy, :use_default)
     scope_ref = make_ref()
+    # What the client process reads from each round's request besides its
+    # timeout (see RequestHandler.handle_request/5).
+    # A forwarding request bypasses the cache whatever :cache_mode says.
+    request_meta = Map.put_new(request_meta, :cache_mode, Keyword.get(opts, :cache_mode, :use))
 
     progress_timeout = progress_timeout(client, opts, default_timeout)
     params = if progress_timeout, do: ensure_progress_token(params), else: params
+    cancel_on_caller_exit = Keyword.get(opts, :cancel_on_caller_exit)
+    request_meta = Map.put(request_meta, :cancel_on_caller_exit, cancel_on_caller_exit)
 
     result =
       if explicit_timeout || progress_timeout do
@@ -117,7 +160,7 @@ defmodule Arbor.MCP.Client.Internal.Request do
           scope_ref: scope_ref,
           stream_retry_mode: stream_retry_mode,
           progress_timeout: progress_timeout,
-          cache_mode: Keyword.get(opts, :cache_mode, :use)
+          request_meta: request_meta
         }
 
         do_mrtr_request(
@@ -131,14 +174,13 @@ defmodule Arbor.MCP.Client.Internal.Request do
           control
         )
       else
-        cache_mode = Keyword.get(opts, :cache_mode, :use)
-        first_operation = fn -> request_once(client, method, params, nil, cache_mode) end
+        first_operation = fn -> request_once(client, method, params, nil, request_meta) end
 
         retry_operation = fn ->
           deadline = started_at + fetch_default_timeout(client, default_timeout)
 
           with {:ok, remaining} <- remaining_timeout(deadline) do
-            request_once(client, method, params, remaining, cache_mode)
+            request_once(client, method, params, remaining, request_meta)
           end
         end
 
@@ -160,10 +202,10 @@ defmodule Arbor.MCP.Client.Internal.Request do
                 deadline: deadline,
                 scope_ref: scope_ref,
                 stream_retry_mode: stream_retry_mode,
-                cache_mode: cache_mode
+                request_meta: request_meta
               }
 
-              continue_mrtr(
+              handle_input_required(
                 client,
                 method,
                 params,
@@ -216,7 +258,7 @@ defmodule Arbor.MCP.Client.Internal.Request do
          ) do
       {:ok, result} = complete_or_extension ->
         if MRTR.input_required?(result) do
-          continue_mrtr(
+          handle_input_required(
             client,
             method,
             original_params,
@@ -232,6 +274,59 @@ defmodule Arbor.MCP.Client.Internal.Request do
 
       other ->
         other
+    end
+  end
+
+  # With `mrtr: :manual` the caller answers the round itself; otherwise the
+  # client handler does.
+  defp handle_input_required(
+         client,
+         method,
+         original_params,
+         result,
+         opts,
+         retry_policy,
+         round,
+         control
+       ) do
+    if ManualMRTR.manual?(opts) do
+      manual_round(client, method, result, opts, control)
+    else
+      continue_mrtr(
+        client,
+        method,
+        original_params,
+        result,
+        opts,
+        retry_policy,
+        round,
+        control
+      )
+    end
+  end
+
+  # A manual round reports the same events as an automatic one. Each call
+  # hands over at most one round, so a handed-over round is round 1 of the
+  # call, and a round that fails its checks fails at round 0.
+  defp manual_round(client, method, result, opts, control) do
+    case ManualMRTR.input_required(client, method, result, opts, control.deadline) do
+      {:input_required, %{input_requests: input_requests}} = handover ->
+        :telemetry.execute(
+          [:arbor_mcp, :client, :mrtr, :round],
+          %{round: 1, input_requests: map_size(input_requests)},
+          %{method: mrtr_method_class(method), mode: :manual}
+        )
+
+        handover
+
+      {:error, reason} = error ->
+        :telemetry.execute(
+          [:arbor_mcp, :client, :mrtr, :failure],
+          %{round: 0},
+          %{method: mrtr_method_class(method), reason: mrtr_failure_class(reason), mode: :manual}
+        )
+
+        error
     end
   end
 
@@ -265,7 +360,7 @@ defmodule Arbor.MCP.Client.Internal.Request do
           :telemetry.execute(
             [:arbor_mcp, :client, :mrtr, :round],
             %{round: next_round, input_requests: map_size(input_requests)},
-            %{method: mrtr_method_class(method)}
+            %{method: mrtr_method_class(method), mode: :auto}
           )
 
           retry_params = MRTR.retry_params(original_params, input_responses, request_state)
@@ -290,7 +385,8 @@ defmodule Arbor.MCP.Client.Internal.Request do
           %{round: round},
           %{
             method: mrtr_method_class(method),
-            reason: client_mrtr_failure_class(reason, round, maximum)
+            reason: client_mrtr_failure_class(reason, round, maximum),
+            mode: :auto
           }
         )
 
@@ -309,34 +405,32 @@ defmodule Arbor.MCP.Client.Internal.Request do
   defp client_mrtr_failure_class(_reason, round, maximum) when round >= maximum,
     do: :round_limit
 
-  defp client_mrtr_failure_class(:timeout, _round, _maximum), do: :timeout
+  defp client_mrtr_failure_class(reason, _round, _maximum), do: mrtr_failure_class(reason)
 
-  defp client_mrtr_failure_class(%Error.ProtocolError{code: -32_021}, _round, _maximum),
-    do: :missing_capability
-
-  defp client_mrtr_failure_class(%Error.ProtocolError{}, _round, _maximum),
-    do: :protocol_error
-
-  defp client_mrtr_failure_class(_reason, _round, _maximum), do: :input_fulfillment_failed
+  defp mrtr_failure_class(:timeout), do: :timeout
+  defp mrtr_failure_class(%Error.ProtocolError{code: -32_021}), do: :missing_capability
+  defp mrtr_failure_class(%Error.ProtocolError{}), do: :protocol_error
+  defp mrtr_failure_class(_reason), do: :input_fulfillment_failed
 
   # The absolute deadline travels with the request so the client does not
   # send it after the caller has given up (see RequestHandler.handle_request/5).
-  defp request_once(client, method, params, timeout, cache_mode) when is_integer(timeout) do
+  defp request_once(client, method, params, timeout, request_meta) when is_integer(timeout) do
     deadline = System.monotonic_time(:millisecond) + timeout
-    meta = %{timeout: timeout, deadline: deadline, cache_mode: cache_mode}
+    meta = Map.merge(request_meta, %{timeout: timeout, deadline: deadline})
     GenServer.call(client, {:request, method, params, meta}, timeout)
   catch
     :exit, {:timeout, _} -> {:error, :timeout}
   end
 
-  defp request_once(client, method, params, nil, cache_mode) do
-    meta = %{timeout: nil, cache_mode: cache_mode}
+  defp request_once(client, method, params, nil, request_meta) do
+    meta = Map.put(request_meta, :timeout, nil)
     GenServer.call(client, {:request, method, params, meta}, :infinity)
   end
 
   defp request_before(client, method, params, timeout, control) do
     meta =
-      %{timeout: timeout, deadline: control.deadline, cache_mode: control.cache_mode}
+      control.request_meta
+      |> Map.merge(%{timeout: timeout, deadline: control.deadline})
       |> then(fn meta ->
         if control[:progress_timeout],
           do: Map.put(meta, :progress_timeout, control.progress_timeout),
@@ -407,7 +501,7 @@ defmodule Arbor.MCP.Client.Internal.Request do
         operation.()
 
       policy when is_list(policy) ->
-        Retry.with_retry(operation, Retry.mcp_defaults(policy))
+        Retry.with_retry(operation, auth_bounded_retry_options(policy))
     end
   end
 
@@ -440,31 +534,36 @@ defmodule Arbor.MCP.Client.Internal.Request do
          stream_retry_mode,
          deadline_fun
        ) do
-    if stream_retry_allowed?(stream_retry_mode, method, opts) do
-      delay = http_stream_retry_delay(opts)
-      deadline = deadline_fun.()
+    cond do
+      HTTPAuth.refused?(error) ->
+        {:error, error}
 
-      case wait_for_stream_retry(delay, deadline) do
-        :ok ->
-          :telemetry.execute(
-            [:arbor_mcp, :client, :http, :request, :retry],
-            %{attempt: 2},
-            %{method: method, mode: stream_retry_mode, delivery: :at_least_once}
-          )
+      stream_retry_allowed?(stream_retry_mode, method, opts) ->
+        delay = http_stream_retry_delay(opts)
+        deadline = deadline_fun.()
 
-          case retry_operation.() do
-            {:error, %Error.TransportError{reason: :response_stream_broken} = second_error} ->
-              outcome_unknown(method, stream_retry_mode, 2, second_error)
+        case wait_for_stream_retry(delay, deadline) do
+          :ok ->
+            :telemetry.execute(
+              [:arbor_mcp, :client, :http, :request, :retry],
+              %{attempt: 2},
+              %{method: method, mode: stream_retry_mode, delivery: :at_least_once}
+            )
 
-            result ->
-              result
-          end
+            case retry_operation.() do
+              {:error, %Error.TransportError{reason: :response_stream_broken} = second_error} ->
+                outcome_unknown(method, stream_retry_mode, 2, second_error)
 
-        {:error, :timeout} ->
-          {:error, :timeout}
-      end
-    else
-      outcome_unknown(method, stream_retry_mode, 1, error)
+              result ->
+                result
+            end
+
+          {:error, :timeout} ->
+            {:error, :timeout}
+        end
+
+      true ->
+        outcome_unknown(method, stream_retry_mode, 1, error)
     end
   end
 
@@ -568,7 +667,7 @@ defmodule Arbor.MCP.Client.Internal.Request do
         original_error
 
       policy ->
-        retry_opts = Retry.mcp_defaults(policy)
+        retry_opts = auth_bounded_retry_options(policy)
         should_retry? = Keyword.fetch!(retry_opts, :should_retry?)
         max_attempts = Keyword.get(retry_opts, :max_attempts, 0)
 
@@ -592,6 +691,12 @@ defmodule Arbor.MCP.Client.Internal.Request do
     :exit, _ -> []
   end
 
+  defp auth_bounded_retry_options(policy) do
+    options = Retry.mcp_defaults(policy)
+    should_retry? = Keyword.fetch!(options, :should_retry?)
+    Keyword.put(options, :should_retry?, &(not HTTPAuth.refused?(&1) and should_retry?.(&1)))
+  end
+
   defp fetch_default_timeout(client, fallback \\ 5_000) do
     case GenServer.call(client, :get_default_timeout, 5_000) do
       {:ok, timeout} when is_integer(timeout) and timeout > 0 -> timeout
@@ -606,6 +711,24 @@ defmodule Arbor.MCP.Client.Internal.Request do
       :map -> {:ok, response}
       format -> format_response(response, format, opts)
     end
+  end
+
+  # Keep the refusal marker until all retry decisions have completed. Only
+  # the public result drops it, preserving the ordinary HTTP error shape.
+  defp handle_request_result(
+         {:error, %{type: :transport_error, reason: {:auth_refused, :timeout}}},
+         _opts
+       ),
+       do: {:error, :timeout}
+
+  defp handle_request_result(
+         {:error, %{type: :transport_error, reason: {:auth_refused, reason}}},
+         opts
+       ) do
+    handle_request_result(
+      {:error, RequestHandler.send_error(reason, %{transport_mod: HTTP})},
+      opts
+    )
   end
 
   defp handle_request_result({:error, %{__struct__: mod}} = error, _opts)

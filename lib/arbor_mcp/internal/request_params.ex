@@ -83,14 +83,23 @@ defmodule Arbor.MCP.Internal.RequestParams do
     with_non_empty_meta(params, meta)
   end
 
+  # Options for one request (see Arbor.MCP.Client.Internal.ManualMRTR):
+  #
+  # - `:client_capabilities` replaces the connection's capabilities in this
+  #   modern request's `_meta`.
+  # - `:modern_options` names the request options that only a 2026-07-28
+  #   request can carry. On a legacy connection, where the capabilities were
+  #   fixed at `initialize` and there is no MRTR, the request is refused with
+  #   `{:modern_only_option, option}` for the first of them.
   @doc false
-  @spec for_request(map(), map()) :: {:ok, map()} | {:error, Meta.validation_error()}
-  def for_request(params, context) when is_map(params) and is_map(context) do
+  @spec for_request(map(), map(), keyword()) ::
+          {:ok, map()} | {:error, Meta.validation_error() | {:modern_only_option, atom()}}
+  def for_request(params, context, opts \\ []) when is_map(params) and is_map(context) do
     protocol_version = context_value(context, :protocol_version)
 
     if VersionRegistry.modern?(protocol_version) do
       meta = Map.get(params, "_meta", %{})
-      capabilities = client_capabilities(context)
+      capabilities = Keyword.get(opts, :client_capabilities) || client_capabilities(context)
 
       case Meta.build_request_meta(meta, protocol_version, capabilities,
              client_info: context_value(context, :client_info),
@@ -101,7 +110,10 @@ defmodule Arbor.MCP.Internal.RequestParams do
         {:error, _reason} = error -> error
       end
     else
-      {:ok, params}
+      case Keyword.get(opts, :modern_options, []) do
+        [] -> {:ok, params}
+        [option | _rest] -> {:error, {:modern_only_option, option}}
+      end
     end
   end
 

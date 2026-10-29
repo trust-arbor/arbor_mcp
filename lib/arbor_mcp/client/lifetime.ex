@@ -416,7 +416,14 @@ defmodule Arbor.MCP.Client.Lifetime do
 
     if allowed and count < state.limit + if(cleanup?, do: 1, else: 0) do
       nonce = make_ref()
-      entry = %{creator: caller, module: module, deadline: Deadline.after_ms(@registration_ms)}
+
+      entry = %{
+        creator: caller,
+        module: module,
+        cleanup?: cleanup?,
+        deadline: Deadline.after_ms(@registration_ms)
+      }
+
       {:reply, {:ok, nonce}, %{state | reservations: Map.put(state.reservations, nonce, entry)}}
     else
       reason = if allowed, do: :client_worker_limit, else: :client_generation_retired
@@ -463,6 +470,7 @@ defmodule Arbor.MCP.Client.Lifetime do
             monitor: monitor,
             watchdog: watchdog,
             guard_monitor: guard_monitor,
+            cleanup?: entry.cleanup?,
             persistent?: false,
             lifetime: lifetime,
             caller_monitor: nil,
@@ -545,12 +553,14 @@ defmodule Arbor.MCP.Client.Lifetime do
     if state.cleanup_timer, do: Process.cancel_timer(state.cleanup_timer)
     timer = Process.send_after(self(), {:cleanup_cutoff, state.epoch}, Deadline.remaining(cutoff))
 
+    # The owner's own cleanup reservation survives: its shutdown closes the
+    # transport from that worker, which may still be registering.
     {:reply, :ok,
      %{
        state
        | phase: :closing,
          cutoff: cutoff,
-         reservations: %{},
+         reservations: Map.filter(state.reservations, fn {_nonce, entry} -> entry.cleanup? end),
          cleanup_timer: timer,
          retire_mode: mode
      }}
@@ -679,7 +689,7 @@ defmodule Arbor.MCP.Client.Lifetime do
       when monitor == state.parent_monitor do
     deadline = Deadline.earliest(state.cutoff, Deadline.after_ms(state.cleanup_ms))
     {:reply, :ok, state} = quiesce_state(deadline, :all, state)
-    Enum.each(retired_workers(state), &Process.exit(&1, :kill))
+    Enum.each(interruptible_workers(state), &Process.exit(&1, :kill))
     Process.send_after(self(), {:owner_cutoff, state.epoch}, Deadline.remaining(deadline))
     # Native GenServer retains its own parent's EXIT and termination reason.
     # Keep the observer responsive to its final cleanup-worker registration.
@@ -724,7 +734,7 @@ defmodule Arbor.MCP.Client.Lifetime do
 
   def handle_info({:cleanup_cutoff, epoch}, state)
       when epoch == state.epoch and state.phase == :closing do
-    Enum.each(retired_workers(state), &Process.exit(&1, :kill))
+    Enum.each(interruptible_workers(state), &Process.exit(&1, :kill))
     {:noreply, state}
   end
 
@@ -744,6 +754,12 @@ defmodule Arbor.MCP.Client.Lifetime do
 
   defp retired_workers(%{retire_mode: :transport} = state), do: connection_workers(state)
   defp retired_workers(state), do: Map.keys(state.workers)
+
+  # What a parent's exit or a cleanup cutoff stops at once: everything but the
+  # owner's own cleanup worker. The owner bounds that one by its cleanup
+  # deadline, and stops it with the rest in cleanup/2 or when it goes down.
+  defp interruptible_workers(state),
+    do: Enum.reject(retired_workers(state), &Map.fetch!(state.workers, &1).cleanup?)
 
   defp stop_all(state, deadline) do
     Enum.each(retired_workers(state), &Process.exit(&1, :kill))

@@ -189,6 +189,67 @@ defmodule Arbor.MCP.Client.StdioReconnectCleanupTest do
     end
   end
 
+  describe "a stuck reliability component" do
+    # The wrapper closes the server first and then waits up to 500 ms for
+    # each component, longer than the client's cleanup budget here, so the
+    # client cuts that close off. The client then stops its own components
+    # itself, and the stuck one is killed: it used to outlive the client.
+    test "doesn't keep the server from being stopped", %{tmp_dir: tmp_dir} do
+      log = Path.join(tmp_dir, "stuck-component.log")
+
+      {:ok, client} =
+        start_client(:modern, :modern_only, log,
+          reliability: [circuit_breaker: [failure_threshold: 5]],
+          client_cleanup_timeout: 300
+        )
+
+      on_exit(fn -> stop(client) end)
+
+      %{transport_state: %{circuit_breaker_pid: breaker, wrapped_state: %{os_pid: os_pid}}} =
+        :sys.get_state(client)
+
+      stick(breaker)
+      breaker_ref = Process.monitor(breaker)
+
+      # The wrapper's own wait for the breaker outlasts the budget, so the
+      # client gives up on the close; the server's stop came first.
+      assert Client.disconnect(client) in [:ok, {:error, :client_cleanup_timeout}]
+
+      assert_receive {:DOWN, ^breaker_ref, :process, ^breaker, :killed}
+      TestHelpers.wait_until(fn -> not os_process_alive?(os_pid) end, timeout: 2_000)
+    end
+
+    # With 20 ms there is no time for a graceful stop at all. (Whether the
+    # server's own stop is reached within 20 ms is up to the scheduler.)
+    test "is killed at once when too little of the budget is left to wait",
+         %{tmp_dir: tmp_dir} do
+      log = Path.join(tmp_dir, "stuck-component-short.log")
+
+      {:ok, client} =
+        start_client(:modern, :modern_only, log,
+          reliability: [circuit_breaker: [failure_threshold: 5]],
+          client_cleanup_timeout: 20
+        )
+
+      on_exit(fn -> stop(client) end)
+
+      %{transport_state: %{circuit_breaker_pid: breaker, wrapped_state: %{os_pid: os_pid}}} =
+        :sys.get_state(client)
+
+      stick(breaker)
+      breaker_ref = Process.monitor(breaker)
+
+      _result = Client.disconnect(client)
+      assert_receive {:DOWN, ^breaker_ref, :process, ^breaker, :killed}
+
+      client_ref = Process.monitor(client)
+      Client.stop(client)
+      assert_receive {:DOWN, ^client_ref, :process, ^client, _reason}
+      TestHelpers.wait_until(fn -> not os_process_alive?(os_pid) end, timeout: 5_000)
+      assert stdio_actors(client) == []
+    end
+  end
+
   describe "a reconnect attempt" do
     test "whose probed server cannot be confirmed stopped is the last", %{tmp_dir: tmp_dir} do
       log = Path.join(tmp_dir, "reconnect-unconfirmed.log")
@@ -224,6 +285,20 @@ defmodule Arbor.MCP.Client.StdioReconnectCleanupTest do
       assert starts(log) == 2
       assert {:error, _cleanup} = Client.stop(client)
     end
+  end
+
+  # Holds `component` inside a call of its own, so it can't answer a stop.
+  defp stick(component) do
+    test_pid = self()
+
+    spawn(fn ->
+      :sys.replace_state(component, fn state ->
+        send(test_pid, :stuck)
+        receive do: (:never -> state)
+      end)
+    end)
+
+    assert_receive :stuck
   end
 
   # The live stdio actors `client` owns.

@@ -18,6 +18,32 @@ defmodule Arbor.MCP.Internal.HTTPResponseReducerTest do
       %{ref: make_ref(), other: make_ref()}
     end
 
+    @tag :reauth_round8
+    test "a header policy can complete before data limits and later events", %{
+      ref: ref,
+      other: other
+    } do
+      events = [
+        {:status, other, 500},
+        {:headers, other, []},
+        {:status, ref, 401},
+        {:headers, ref, [{"WWW-Authenticate", "Basic"}]},
+        {:data, ref, String.duplicate("x", 100)},
+        {:done, ref}
+      ]
+
+      assert {:done, response} =
+               Reducer.reduce(events, ref, Reducer.empty_response(),
+                 max_bytes: 1,
+                 validate_headers: fn _, _, 401 -> :complete end
+               )
+
+      assert response.status == 401
+      assert response.headers == [{"www-authenticate", "Basic"}]
+      assert response.size == 0
+      assert Reducer.body(response) == ""
+    end
+
     test "accumulates status, reason, headers, and chunks in order and completes on done", %{
       ref: ref
     } do

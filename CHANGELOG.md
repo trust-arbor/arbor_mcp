@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `cancel_on_caller_exit:` on every request function (`call_tool/4`,
+  `read_resource/3`, `get_prompt/4`, the list functions and the rest).
+  `true` cancels a request upstream when the process that made it exits
+  while it is in flight, as the client does when a request times out: over
+  modern (2026-07-28) Streamable HTTP it closes the request's POST or request
+  stream, and elsewhere (stdio, BEAM, legacy HTTP) it sends
+  `notifications/cancelled`. During an MRTR round, it also stops the client
+  handler that is answering the round's input requests. `false` turns it
+  off. Absent or `nil`, it is on for modern requests and off for legacy ones
+  (see Changed); any other value raises `ArgumentError`. The `all_*` list
+  helpers pass it to each page request, and a `tools/call` to the
+  `tools/list` refresh it makes after a header mismatch. The legacy batches
+  (`batch_request/3`, `send_batch/3`) don't take it. Each cancellation emits
+  `[:arbor_mcp, :client, :request, :caller_exited]`.
 - Under `:prefer_modern`, a stdio server that exits without answering the
   `server/discover` probe, as Python `mcp` 1.6 and 1.8 stdio servers do, or
   that does not answer it within its bound is now reached with a legacy
@@ -35,6 +49,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Arbor.MCP.Reliability.CircuitBreaker.call_with_deadline/3` runs an
   operation that has its own deadline through a breaker without the
   breaker's per-call `:timeout` cutting it short.
+- Request options for a client that forwards requests for another client,
+  such as a gateway (MCP 2026-07-28, #92). `nil` leaves each one unset.
+  - `mrtr: :manual` on `Arbor.MCP.Client.call_tool/4`, `read_resource/3`
+    and `get_prompt/4` returns an `input_required` round as
+    `{:input_required, %{input_requests: ..., request_state: ..., meta: ...}}`
+    instead of answering it with the client handler. The round passes the
+    checks automatic MRTR makes, `:max_input_requests`, `:max_mrtr_bytes`
+    and the declared capabilities included; `:max_mrtr_rounds` doesn't
+    apply. It reports the `[:arbor_mcp, :client, :mrtr, :round | :failure]`
+    events with `mode: :manual`; automatic rounds now carry `mode: :auto`.
+  - `input_responses:` and `request_state:` continue the call on its next
+    round.
+  - `client_capabilities:` replaces the start capabilities in one request's
+    `_meta`, so the server chooses its input requests from the downstream
+    client's capabilities.
+
+  The continuation needs `mrtr: :manual`, and so does `client_capabilities:`
+  on a request that can return `input_required`; list requests and
+  `complete/4` take it on its own. All three need a 2026-07-28 connection.
+  Otherwise they return `{:error, %Arbor.MCP.Error.ValidationError{}}`
+  before anything is sent. Every round of one call repeats its arguments,
+  capabilities and progress token, because an arbor_mcp server binds
+  `requestState` to them, so `mrtr: :manual` with
+  `reset_timeout_on_progress: true` needs an explicit `:progress_token`.
+  Each input response is validated against the 2026-07-28 schema's
+  `ElicitResult`, `CreateMessageResult` and `ListRootsResult` and must match
+  one of them. A request with any of these options
+  neither reads nor fills the response cache, so a downstream client's
+  answers never reach the client's own callers. See "Forwarding clients" in
+  `docs/CONFIGURATION.md`. Thanks to Wagner for the design and the first
+  implementation.
+- `progress_to: pid` on any `Arbor.MCP.Client` request also sends the
+  request's progress to `pid` as
+  `{:arbor_mcp_progress, client, progress_token, params}`, alongside the
+  client handler's `handle_progress/3`, so a process that forwards the
+  request for another client can relay it (#92). `client` is the client
+  process.
+  - It works on every transport that carries progress: modern and legacy
+    Streamable HTTP, stdio, BEAM and the test transport.
+  - A request without a progress token gets one. Under automatic MRTR, all
+    rounds share it. With `mrtr: :manual`, the caller must pass
+    `:progress_token` and repeat it on every round, or the call returns a
+    `ValidationError`.
+  - Delivery stops once the call returns, with a result, an error, a timeout
+    or a cancellation. A request's target gets only that request's progress.
+    The token of a request that settled less than a second ago reaches no
+    target, so a late notification can't reach a newer request that reuses
+    it. Use connection-unique tokens. An `input_required` round's token and
+    target stay reserved until the round's deadline for its own
+    continuation, the request that presents the round's `request_state`.
+    The continuation gets the target back even if it doesn't repeat
+    `progress_to:`.
+  - Delivery stops when the caller goes down, local or remote, whether or
+    not the request is cancelled: the client monitors the caller of every
+    request with a target, and a lost node connection stops delivery too.
+  - A dead target misses the updates without failing the request.
+
+  See "Progress to another process" in `docs/PROTOCOL_GUIDE.md`.
 
 ### Changed
 
@@ -61,6 +133,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resumes (the client starts the request again), its legacy sessions answer
   `404` (the client initializes again), and tasks stored under it are no
   longer found.
+- A modern (2026-07-28) request whose caller exits while it is in flight is
+  now cancelled upstream by default: a `Task` running a call that is killed,
+  or a process that crashes mid-call, no longer leaves the server working on
+  a result nobody will read. Pass `cancel_on_caller_exit: false` to let such
+  a request run to completion. Legacy-era requests keep running unless the
+  call passes `cancel_on_caller_exit: true`: there the cancellation is a
+  `notifications/cancelled` that legacy peers did not get before, so it
+  stays opt-in.
 - `jose` `>= 1.11.13` is required and locked. 1.11.13 fixes five advisories:
   EEF-CVE-2026-65625 (attacker-chosen AES-GCM tag length), EEF-CVE-2026-65626
   (RSAES-PKCS1-v1_5 padding oracle), EEF-CVE-2026-65627 (unbounded JWE zip
@@ -74,6 +154,159 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A request or disconnect from a caller on another node used that node's
+  monotonic deadline as if it were the client's own. Two nodes' monotonic
+  clocks are unrelated, so a caller whose clock trailed by a minute got an
+  immediate timeout, refusal or cleanup timeout on a fresh call, and one
+  whose clock led got no limit. Outside legacy HTTP+SSE, which already
+  converted it, the client used the deadline to cap the transport send,
+  classify a failed send, and bound a disconnect or stop. It now counts a
+  remote caller's relative timeout, or its own cleanup budget, from its own
+  clock.
+- A Streamable HTTP client started with `reliability:` could not connect,
+  in any `protocol_mode`: the modern probe failed with
+  `{:era_probe_failed, {:unexpected_response, ...}}` and a legacy
+  `initialize` with `Failed to parse handshake response`.
+  `Arbor.MCP.Transport.ReliabilityWrapper` swapped the transport state and
+  the response of every synchronous send, which is fixed for anyone using
+  it directly. A client no longer wraps its HTTP transport: the transport
+  keeps the circuit breaker and health check itself, so each request after
+  establishment POSTs from its own task as without `reliability:`, with the
+  same cancellation and authentication. The breaker admits every POST and
+  settles each admission once, with the POST's result unless the client
+  decides first: as a failure when the task crashes or the client's timeout
+  abandons the POST, in either era, so a late response doesn't count, and
+  released, not counted, when the caller cancels or exits, even while the
+  POST waits on authentication or before its task has started. A request
+  re-sent after authenticating settles with the re-send's result, and a
+  definitive refusal counts as a failure, so repeated failed authentication
+  opens the circuit. A request stream is admitted but its outcome isn't
+  recorded. Its `:timeout` doesn't apply over HTTP, where each exchange keeps
+  its own deadline. A client's circuit breaker and health check no longer
+  outlive it: whenever the client closes or loses its transport, it stops
+  them itself, within what is left of its cleanup budget, after the
+  transport's close, so a close it cuts off (a stalled session DELETE, a
+  stuck stdio server, a busy health check) no longer leaves them running.
+- An elicitation whose validation ran out of time was reported as invalid
+  params. On a busy server, a handler that returned a valid elicitation in an
+  `input_required` result could make the client get `-32602 "Invalid MRTR
+  input request"`, with nothing to say it was a timeout. That validation now
+  gets at most 1 s and never more than the request itself has left, rather
+  than a fresh second. Running out of time is now an internal error
+  (`-32603 "MRTR input request validation timed out"`, data `type`
+  `"elicitation_validation_timeout"` with the `inputRequestId` and `method`).
+  The same applies on the legacy bridge. `Arbor.MCP.Server.elicit/3`, over
+  HTTP and over the handler server, now returns `{:error, :timeout}` for it,
+  as it does when the client is too slow. Params that break the
+  ElicitRequest schema are still `-32602` and
+  `{:error, :invalid_elicitation_params}`. Reported by
+  arnavsharma2077-a11y.
+- A client that stopped because the process that started it exited could
+  skip closing its transport, log a Task crash
+  (`** (stop) :client_generation_retired`) and report
+  `{:error, :client_cleanup_timeout}` as its cleanup result. Its lifetime
+  observer sees the parent's exit too and retires the client's work, and it
+  also cleared the reservation of the worker the client closes its
+  transport from, or killed that worker while it ran. The client's own
+  cleanup worker now survives that, and the client still bounds it by its
+  cleanup deadline, so the transport closes (a stdio server is stopped, an
+  HTTP stream ended) before the client goes, in the same order as before.
+- A `:cache_hints` entry for `server/discover` had no effect: discovery
+  filled in its own `ttlMs` of one hour and `cacheScope` `"public"`, and a
+  result's own fields win over a hint, so a server could not keep a discovery
+  result that differs by caller, its instructions for example, out of shared
+  caches. The hint now sets both; without one, discovery keeps its defaults.
+- `Accept: application/json, text/event-stream;q` — a `q` parameter with no
+  value — and `q =1` / `q= 1`, whose whitespace around the equals sign
+  violates the weight grammar (RFC 9110 section 12.4.2: optional whitespace
+  surrounds the whole parameter, never the name, the equals sign or the
+  value), treated the range as quality 1, so a request that asked for
+  progress was answered with an event stream, and a legacy session GET opened
+  one, although the client named a weight it never spelled. A `q` parameter
+  — `Q`, either case, names it too — is now the weight only when it matches
+  that grammar exactly; any other spelling, bare, empty, misspaced, malformed
+  or quoted, makes its range unusable, so those requests get JSON and the GET
+  its existing refusal. A second `q` parameter makes the range unusable
+  whatever either value says, and optional whitespace is only SP and HTAB,
+  as RFC 9110 defines it: any other whitespace-like character, a no-break
+  space for instance, is part of the value it sits in and fails the grammar
+  (found and fixed on the 1.x line first, `ex_mcp` a2d8ccc, efa779e and
+  cc2a61c).
+- Probe and handshake receive failures retain refreshed authentication state
+  during fallback and cleanup. Synchronous HTTP state-bearing failures stay
+  internal; public transport `send_message/2` errors remain `{:error, reason}`.
+- Synchronous client HTTP failures retain updated credentials and rejection state
+  through notifications, server-request replies, batches, and establishment.
+  Cached provider tokens cannot gain a fresh generation without acquisition
+  evidence or be reused after rejection. HTTP 401/403 responses are handled
+  from their headers even when their bodies exceed response limits; non-auth
+  responses retain their existing byte limits.
+- HTTP authentication retires rejected credential generations on every 401,
+  including the response that exhausts POST or stream retries and synchronous
+  authenticated sends. Provider refreshes receive a new generation even when
+  bearer bytes repeat, so delayed pre-refresh challenges reuse the refreshed
+  credential instead of starting authentication again.
+- HTTP credentials and their requests now carry monotonic generations, with
+  a fixed-size rejection high-water mark to prevent stale auth results from
+  restoring retired credentials. Auth refusals retain their retry marker until
+  public error formatting, including with explicit retry predicates. A refused
+  subscription reopen emits its documented closed event and cancels reconnect
+  timers after the subscription has previously acknowledged.
+- A 401 joining an inline OAuth step-up immediately retires the rejected shared
+  token. A narrower replacement grant updates its token and scopes, while a
+  delayed 401 cannot invalidate newer credentials. Definitive HTTP auth and
+  OAuth refusals now terminate subscriptions and request retries without
+  reopening streams or starting further auth flows.
+- A partial inline OAuth step-up grant no longer replaces shared credentials
+  with fewer scopes. Only compatible waiters receive that grant; a waiter
+  whose own flow omits required scopes fails definitively with
+  `{:oauth_failed, :insufficient_scope}` without another flow or POST retry.
+  Full superset grants and authentication after a 401 still update credentials.
+- Concurrent inline OAuth scope step-ups now wait for tokens covering their own
+  scopes, with separate serialized flows when needed. Challenged scopes are
+  passed to the inline flow with credentials. Retained HTTP health pings can
+  authenticate within their health-check interval and settle their responses
+  without triggering an unnecessary reconnect.
+- Inline HTTP OAuth now runs in one monitored worker per client, so stalled
+  discovery or authorization leaves the client responsive. Concurrent
+  challenges share the flow with independent request deadlines; cancellation
+  and reconnect retire the worker and its waiters. Legacy authenticated
+  retries use the current session id and connection headers. A request stream
+  definitively refused by HTTP auth or a failed OAuth flow reports the same
+  error as an ordinary POST without replaying the operation.
+- Provider-less legacy Streamable HTTP POSTs now authenticate through the
+  client and retry from their own task with the stream consumer intact. Server
+  requests (such as `ping`), progress and log notifications on the retried SSE
+  response are handled while it remains open. Concurrent challenges share
+  the resulting token, authentication waits respect the request deadline,
+  and cancelled requests are not re-sent.
+  Modern request streams opened for progress or logging also use inline OAuth
+  when no auth provider is configured.
+- Over modern (2026-07-28) Streamable HTTP, a client without an
+  `:auth_provider` that got a 401 or 403 sent the request again from the
+  client process. That POST held the client until the server answered it:
+  every other request through the client, `get_status/1` included, waited
+  behind it, and the request could not be cancelled meanwhile. Now the
+  client process runs only the OAuth flow, still one challenge at a time
+  across requests, and the request's own task sends it again with the new
+  token, as with an auth provider. The client records the scopes that
+  flow's token was granted, so a concurrent 403 step-up it already covered
+  reuses the token rather than running another flow. A challenge OAuth
+  can't answer, such as `Basic`, fails the request at once with the server's
+  401 instead of after a second, unauthenticated POST; the error is the same.
+  Legacy-era connections are unchanged.
+- An HTTP `:auth_provider` whose `init/1` fails now fails the connection
+  instead of being dropped. The transport used to go on without it, so every
+  request went out without the credentials the application configured.
+  `Arbor.MCP.Transport.HTTP.connect/1` returns
+  `{:error, {:auth_provider_init_failed, provider, reason}}`, and
+  `Arbor.MCP.Client.start_link/1` returns it as
+  `{:error, {:transport_connect_failed, {:auth_provider_init_failed, provider, reason}}}`
+  before sending any request. `reason` is the provider's own when it is an
+  atom; any other error is reported as `:redacted`, an exception as
+  `{:raised, exception_module}` and an unexpected return as
+  `:invalid_init_result`, so neither the result nor the error log carries the
+  provider's config. A connection without a provider is unchanged.
 - An unsupported-version error (`-32022`) lists `supported` as exactly the
   revisions the mount or server accepts, from the same source its request
   validation uses (`Arbor.MCP.Server.RequestContext.accepted_versions/1`), in

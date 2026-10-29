@@ -168,6 +168,14 @@ defmodule Arbor.MCP.Transport.ReliabilityWrapper do
 
   @impl true
   def send_message(message, %__MODULE__{} = state) do
+    case send_message_with_state(message, state) do
+      {:error, reason, _latest_state} -> {:error, reason}
+      result -> result
+    end
+  end
+
+  @doc false
+  def send_message_with_state(message, %__MODULE__{} = state) do
     if state.config.circuit_breaker_enabled do
       CircuitBreaker.call(state.circuit_breaker_pid, fn ->
         execute_wrapped_operation(:send_message, [message, state.wrapped_state], state)
@@ -316,6 +324,54 @@ defmodule Arbor.MCP.Transport.ReliabilityWrapper do
     end
   end
 
+  @doc false
+  # For a send that its transport makes itself, outside send_message/2 (an
+  # HTTP POST from its own task, see Arbor.MCP.Transport.HTTP): the breaker
+  # admits it here, and report/2 records its outcome. The breaker's per-call
+  # :timeout doesn't apply; the send has its own deadline.
+  @spec admit(t()) :: :ok | {:error, :circuit_open | :circuit_breaker_unavailable}
+  def admit(%__MODULE__{config: %{circuit_breaker_enabled: true}, circuit_breaker_pid: pid}),
+    do: CircuitBreaker.acquire(pid)
+
+  def admit(%__MODULE__{}), do: :ok
+
+  @doc false
+  # For a send its transport makes from a process of its own, `holder`,
+  # which may be killed before it ends (see CircuitBreaker.hold/2): settle/3
+  # then settles the admission exactly once, and the breaker settles one its
+  # holder never did when that process goes down.
+  @spec hold(t(), pid()) :: :ok | {:error, :circuit_open | :circuit_breaker_unavailable}
+  def hold(wrapper, holder \\ self())
+
+  def hold(
+        %__MODULE__{config: %{circuit_breaker_enabled: true}, circuit_breaker_pid: pid},
+        holder
+      ),
+      do: CircuitBreaker.hold(pid, holder)
+
+  def hold(%__MODULE__{}, _holder), do: :ok
+
+  @doc false
+  @spec settle(t(), pid(), {:result, term()} | :failure | :release) :: :ok
+  def settle(
+        %__MODULE__{config: %{circuit_breaker_enabled: true}, circuit_breaker_pid: pid},
+        holder,
+        outcome
+      ),
+      do: CircuitBreaker.settle(pid, holder, outcome)
+
+  def settle(%__MODULE__{}, _holder, _outcome), do: :ok
+
+  @doc false
+  @spec report(t(), term()) :: :ok
+  def report(
+        %__MODULE__{config: %{circuit_breaker_enabled: true}, circuit_breaker_pid: pid},
+        result
+      ),
+      do: CircuitBreaker.report(pid, result)
+
+  def report(%__MODULE__{}, _result), do: :ok
+
   @doc """
   Gets circuit breaker statistics if enabled.
   """
@@ -368,13 +424,35 @@ defmodule Arbor.MCP.Transport.ReliabilityWrapper do
 
   # Private functions
 
+  # The two operations put the transport state in different places:
+  # send_message/2 answers {:ok, state} or {:ok, state, response}, and
+  # receive_message answers {:ok, message, state}.
   defp execute_wrapped_operation(function, args, state) do
-    case apply(state.wrapped_module, function, args) do
+    result =
+      case {function, args} do
+        {:send_message, [message, wrapped_state]} ->
+          Arbor.MCP.Transport.send_message_with_state(
+            state.wrapped_module,
+            message,
+            wrapped_state
+          )
+
+        _other ->
+          apply(state.wrapped_module, function, args)
+      end
+
+    case result do
       {:ok, new_wrapped_state} ->
         {:ok, %{state | wrapped_state: new_wrapped_state}}
 
-      {:ok, result, new_wrapped_state} ->
-        {:ok, result, %{state | wrapped_state: new_wrapped_state}}
+      {:ok, new_wrapped_state, response} when function == :send_message ->
+        {:ok, %{state | wrapped_state: new_wrapped_state}, response}
+
+      {:ok, message, new_wrapped_state} ->
+        {:ok, message, %{state | wrapped_state: new_wrapped_state}}
+
+      {:error, reason, new_wrapped_state} ->
+        {:error, reason, %{state | wrapped_state: new_wrapped_state}}
 
       {:error, reason} = error ->
         Logger.debug("Transport operation failed",

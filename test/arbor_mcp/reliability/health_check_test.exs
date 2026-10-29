@@ -341,11 +341,10 @@ defmodule Arbor.MCP.Reliability.HealthCheckTest do
   describe "status change callbacks" do
     test "calls on_status_change callback", context do
       {:ok, target} = start_toggle_target()
-      {:ok, callback_agent} = Agent.start_link(fn -> [] end)
+      test_pid = self()
 
       on_status_change = fn old_status, new_status ->
-        # Update synchronously within the callback
-        Agent.update(callback_agent, &[{old_status, new_status} | &1])
+        send(test_pid, {:status_changed, old_status, new_status})
       end
 
       # Custom check function that checks the state
@@ -372,13 +371,8 @@ defmodule Arbor.MCP.Reliability.HealthCheckTest do
       GenServer.call(target, {:update, fn _ -> :healthy end})
       HealthCheck.check_now(checker)
 
-      # Let callback execute (ensure enough time for async Task)
-      Process.sleep(500)
-
-      changes = Agent.get(callback_agent, &Enum.reverse/1)
-      assert changes != [], "No status changes were recorded"
-      # Should see transition from unknown to healthy
-      assert {:unknown, :healthy} in changes
+      # The callback runs in a task of its own.
+      assert_receive {:status_changed, :unknown, :healthy}
     end
   end
 

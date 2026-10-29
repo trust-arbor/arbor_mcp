@@ -49,7 +49,9 @@ defmodule Arbor.MCP.Client do
     Deadline,
     Diagnostics,
     EraCache,
+    HTTPAuth,
     Lifetime,
+    MRTR,
     NotificationListener,
     Pagination,
     RequestHandler,
@@ -115,9 +117,20 @@ defmodule Arbor.MCP.Client do
     # Monitor refs of in-flight async POST tasks (Streamable HTTP transport),
     # mapped to the request id each task serves.
     async_post_tasks: %{},
+    # One inline OAuth worker, with independently bounded stream/POST waiters.
+    http_auth: %HTTPAuth{},
     # Progress tokens of pending requests, mapped to their request ids, so a
     # connection-level notifications/progress reaches the request it reports on.
     progress_requests: %{},
+    # progress_to: bookkeeping (see RequestHandler): the pending requests'
+    # targets, the tokens no target may receive progress for yet, the tokens
+    # input_required rounds keep for their continuations, and the monitors
+    # on the targets' callers.
+    progress_targets: %{},
+    progress_tombstones: %{},
+    progress_reservations: %{},
+    progress_monitors: %{},
+    progress_sweep: nil,
     # Requests made with reset_timeout_on_progress, mapped to the timer that
     # runs out if they go that long without progress: {timer, tag, ms}.
     progress_timeouts: %{},
@@ -147,6 +160,11 @@ defmodule Arbor.MCP.Client do
     # In-flight MRTR input fulfillment tasks. Each task may perform several
     # input callbacks sequentially while the client loop remains responsive.
     mrtr_tasks: %{},
+    # Callers watched so their exit cancels what they wait for (see
+    # RequestHandler.cancel_on_caller_exit?/2): {:request, id} or
+    # {:mrtr, task_pid} => monitor ref, and each monitor ref back to it.
+    caller_watches: %{},
+    caller_monitors: %{},
     # Modern long-lived subscription request id => Subscription process.
     subscriptions: %{},
     # Monitor ref => Subscription process. Monitors survive reconnects while
@@ -309,11 +327,19 @@ defmodule Arbor.MCP.Client do
     - `:failure_threshold` - Number of failures before opening (default: 5)
     - `:success_threshold` - Number of successes to close half-open circuit (default: 3)
     - `:reset_timeout` - Time before transitioning from open to half-open (default: 30_000)
-    - `:timeout` - Operation timeout in milliseconds (default: 5_000)
+    - `:timeout` - Operation timeout in milliseconds (default: 5_000); not
+      applied over HTTP, where each exchange keeps its own deadline
   - `:health_check` - Health check configuration or `false` to disable
     - `:check_interval` - Interval between health checks (default: 60_000)
     - `:failure_threshold` - Health check failures before marking unhealthy (default: 3)
     - `:recovery_threshold` - Health check successes before marking healthy (default: 2)
+
+  Over Streamable HTTP the client stays an HTTP client: each request after
+  establishment still POSTs from its own task. The circuit breaker admits
+  every POST and records how it ended (a crash or a timeout is a failure, a
+  cancellation or the caller's exit isn't counted); an open circuit refuses a
+  request with a `:circuit_open` transport error before anything is sent. A
+  request stream is admitted, but its outcome isn't recorded.
 
   ## Reliability Examples
 
@@ -581,7 +607,9 @@ defmodule Arbor.MCP.Client do
   Limits must be positive finite integers. Ordinary request retries are disabled;
   the existing HTTP stream retry policy remains within the same total deadline.
   Cyclic cursors, malformed pages and exceeded limits return errors, without
-  reporting a partial list as complete. All list helpers use these same options.
+  reporting a partial list as complete. `:cancel_on_caller_exit` is passed to
+  every page request, so a caller that exits mid-walk cancels the page in
+  flight. All list helpers use these same options.
   """
   @spec all_tools(t(), keyword()) :: {:ok, [map()]} | {:error, term()}
   def all_tools(client, opts \\ []),
@@ -623,7 +651,10 @@ defmodule Arbor.MCP.Client do
   out, the client cancels it on the server, as the MCP spec asks: it sends
   `notifications/cancelled`, or over modern Streamable HTTP closes the
   request's connection. Servers no longer stop work on their own after 10 s,
-  so pass a `:timeout` that fits the tool.
+  so pass a `:timeout` that fits the tool. A modern call is also cancelled
+  when its caller exits mid-call; pass `cancel_on_caller_exit: false` to let
+  it finish, or `true` to cancel a legacy one too (see "Cancellation" in the
+  Protocol Guide).
 
   ## Options
 
@@ -635,9 +666,62 @@ defmodule Arbor.MCP.Client do
   - `:max_total_timeout` - With `:reset_timeout_on_progress`, the longest the
     call may take however much progress it makes (default: no limit)
   - `:format` - Return format (:map or :struct, default: :struct)
+  - `:mrtr` - How an MCP 2026-07-28 `input_required` round is answered:
+    `:auto` (default) answers it with the client handler and retries;
+    `:manual` returns it as `{:input_required, %{input_requests: requests,
+    request_state: state, meta: meta}}` for the caller to answer
+  - `:input_responses`, `:request_state` - With `mrtr: :manual`, continue
+    the call with the caller's answers and the round's `request_state`
+  - `:client_capabilities` - With `mrtr: :manual`, the capabilities this one
+    request declares instead of the client's start capabilities. Requests
+    that can't return `input_required`, such as `list_tools/2`, take it
+    without `mrtr: :manual`
+  - `:progress_to` - A pid that also gets this request's progress, alongside
+    the handler, as `{:arbor_mcp_progress, client, progress_token, params}`,
+    until the call returns. A progress token is added if the request has
+    none; with `mrtr: :manual`, pass `:progress_token`, unique on the
+    connection. See "Progress to another process" in the Protocol Guide.
+
+  `Arbor.MCP.Client.Operations.Tools.call_tool/4` lists the other request
+  options. `nil` leaves `:mrtr`, `:input_responses`, `:request_state`,
+  `:client_capabilities` and `:progress_to` unset.
+
+  ## Forwarding a call
+
+  A client that forwards requests for another client, such as a gateway,
+  lets that client answer each round of the call:
+
+      opts = [mrtr: :manual, client_capabilities: downstream_capabilities]
+
+      case Arbor.MCP.Client.call_tool(client, "deploy", arguments, opts) do
+        {:input_required, %{input_requests: requests, request_state: state}} ->
+          # Ask the downstream client, then continue with the same
+          # arguments and options.
+          answers = ask_downstream(requests)
+          retry = opts ++ [input_responses: answers, request_state: state]
+          Arbor.MCP.Client.call_tool(client, "deploy", arguments, retry)
+
+        other ->
+          other
+      end
+
+  Repeat the arguments, `:client_capabilities`, `:meta` and
+  `:progress_token` on every round of one call: an arbor_mcp server binds
+  `requestState` to them and refuses a round that differs. For the same
+  reason `reset_timeout_on_progress: true` with `mrtr: :manual` needs an
+  explicit `:progress_token`. A round passes the checks automatic MRTR
+  makes, apart from `:max_mrtr_rounds`; the caller runs the rounds.
+  `:input_responses`, `:request_state` and `:client_capabilities` without
+  `mrtr: :manual`, malformed, or on a connection that settled on a legacy
+  revision, return `{:error, %Arbor.MCP.Error.ValidationError{}}`. A request
+  with any of these options, or with `mrtr: :manual`, bypasses the response
+  cache. See "Forwarding clients" in the configuration guide for the full
+  contract. `read_resource/3` and `get_prompt/4` take the same options.
   """
   @spec call_tool(t(), String.t(), map(), keyword() | timeout()) ::
-          {:ok, Arbor.MCP.Response.t() | map()} | {:error, term()}
+          {:ok, Arbor.MCP.Response.t() | map()}
+          | {:error, term()}
+          | {:input_required, Arbor.MCP.Client.Types.input_required()}
   def call_tool(client, tool_name, arguments, timeout_or_opts \\ 30_000)
 
   def call_tool(client, tool_name, arguments, timeout) when is_integer(timeout) do
@@ -667,6 +751,10 @@ defmodule Arbor.MCP.Client do
     or `{:error, error}` tuples, in the same order as the original requests.
   - `{:error, reason}` - If the batch request fails (e.g., timeout).
 
+  A batch takes only a timeout: it doesn't take `cancel_on_caller_exit:` and
+  isn't cancelled when its caller exits. JSON-RPC batching is a legacy
+  feature, removed from MCP in 2025-06-18.
+
   ## Example
 
       requests = [
@@ -686,6 +774,8 @@ defmodule Arbor.MCP.Client do
   Convenience alias for batch_request/3.
 
   Sends a batch of JSON-RPC requests. Available in protocol version 2025-03-26 only.
+  Like `batch_request/3`, it takes only a timeout and isn't cancelled when its
+  caller exits.
   """
   @spec send_batch(t(), [map()], timeout()) :: {:ok, [any()]} | {:error, any()}
   def send_batch(client, requests, timeout \\ 30_000) do
@@ -698,7 +788,10 @@ defmodule Arbor.MCP.Client do
   Use `call_content/4` when content extraction and tool-error normalization
   are intended. This alias never adopts the legacy root facade's extraction.
   """
-  @spec call(t(), String.t(), map(), keyword()) :: {:ok, any()} | {:error, any()}
+  @spec call(t(), String.t(), map(), keyword()) ::
+          {:ok, any()}
+          | {:error, any()}
+          | {:input_required, Arbor.MCP.Client.Types.input_required()}
   def call(client, tool_name, args \\ %{}, opts \\ []) do
     call_tool(client, tool_name, args, opts)
   end
@@ -777,9 +870,16 @@ defmodule Arbor.MCP.Client do
 
   @doc """
   Reads a resource by URI. Takes `:cache_mode`, as `list_tools/2` does.
+
+  With `mrtr: :manual`, an MCP 2026-07-28 `input_required` round comes back
+  as `{:input_required, %{input_requests: ..., request_state: ..., meta: ...}}`, and
+  `:input_responses`, `:request_state` and `:client_capabilities` apply as
+  described in "Forwarding a call" under `call_tool/4`.
   """
   @spec read_resource(t(), String.t(), keyword() | timeout()) ::
-          {:ok, Arbor.MCP.Response.t() | map()} | {:error, term()}
+          {:ok, Arbor.MCP.Response.t() | map()}
+          | {:error, term()}
+          | {:input_required, Arbor.MCP.Client.Types.input_required()}
   def read_resource(client, uri, timeout_or_opts \\ [])
 
   def read_resource(client, uri, timeout) when is_integer(timeout) do
@@ -984,9 +1084,16 @@ defmodule Arbor.MCP.Client do
 
   @doc """
   Gets a prompt with the given arguments.
+
+  With `mrtr: :manual`, an MCP 2026-07-28 `input_required` round comes back
+  as `{:input_required, %{input_requests: ..., request_state: ..., meta: ...}}`, and
+  `:input_responses`, `:request_state` and `:client_capabilities` apply as
+  described in "Forwarding a call" under `call_tool/4`.
   """
   @spec get_prompt(t(), String.t(), map(), keyword() | timeout()) ::
-          {:ok, Arbor.MCP.Response.t() | map()} | {:error, term()}
+          {:ok, Arbor.MCP.Response.t() | map()}
+          | {:error, term()}
+          | {:input_required, Arbor.MCP.Client.Types.input_required()}
   def get_prompt(client, prompt_name, arguments \\ %{}, timeout_or_opts \\ [])
 
   def get_prompt(client, prompt_name, arguments, timeout) when is_integer(timeout) do
@@ -1499,6 +1606,10 @@ defmodule Arbor.MCP.Client do
   defp normalize_connection_error({:cleanup_failed, _reason, {:error, _}} = reason),
     do: {:transport_connect_failed, reason}
 
+  # Its reason is already free of the provider's config.
+  defp normalize_connection_error({:auth_provider_init_failed, _provider, _reason} = reason),
+    do: {:transport_connect_failed, reason}
+
   defp normalize_connection_error(:connection_refused) do
     {:transport_connect_failed, :connection_refused}
   end
@@ -1567,6 +1678,15 @@ defmodule Arbor.MCP.Client do
   def handle_call({:fulfill_mrtr, input_requests, opts, scope_ref}, from, state)
       when is_map(input_requests) and is_list(opts) do
     RequestHandler.handle_mrtr_fulfillment(input_requests, opts, scope_ref, from, state)
+  end
+
+  # A round the caller answers itself (`mrtr: :manual`) is checked against
+  # the era and the capabilities the request declared: `capabilities` from
+  # its `client_capabilities:`, or nil for the client's start capabilities.
+  def handle_call({:check_manual_mrtr, input_requests, capabilities}, _from, state)
+      when is_map(input_requests) do
+    capabilities = capabilities || Keyword.get(state.transport_opts, :capabilities, %{})
+    {:reply, MRTR.check_manual_round(input_requests, state.protocol_version, capabilities), state}
   end
 
   def handle_call({:open_subscription, subscription_pid, filter}, _from, state) do
@@ -1695,17 +1815,17 @@ defmodule Arbor.MCP.Client do
   end
 
   def handle_call({:scope_disconnect, deadline}, from, state) do
-    Process.put({ConnectionScope, :cleanup_deadline}, deadline)
+    Process.put({ConnectionScope, :cleanup_deadline}, local_cleanup_deadline(from, deadline))
     handle_call(:disconnect, from, state)
   end
 
   def handle_call({:ordinary_disconnect, deadline}, from, state) do
-    Process.put({__MODULE__, :cleanup_deadline}, deadline)
+    Process.put({__MODULE__, :cleanup_deadline}, local_cleanup_deadline(from, deadline))
     handle_call(:disconnect, from, state)
   end
 
   def handle_call({:ordinary_stop, reason, deadline}, from, state) do
-    Process.put({__MODULE__, :cleanup_deadline}, deadline)
+    Process.put({__MODULE__, :cleanup_deadline}, local_cleanup_deadline(from, deadline))
     {:reply, result, state} = handle_call(:disconnect, from, state)
     {:stop, reason, result, state}
   end
@@ -1788,6 +1908,7 @@ defmodule Arbor.MCP.Client do
 
     NotificationListener.close_all(state.notification_listeners, :disconnected)
     reset_notification_worker(state)
+    state = state |> RequestHandler.forget_callers() |> RequestHandler.reset_progress()
 
     # Update state to disconnected. The manual_disconnect flag ensures a
     # late {:transport_closed, _} message does not trigger auto-reconnection.
@@ -1883,14 +2004,12 @@ defmodule Arbor.MCP.Client do
       {from, :single, _method} ->
         # Reply with cancelled error and remove from pending
         GenServer.reply(from, {:error, :cancelled})
-        new_pending = Map.delete(state.pending_requests, request_id)
-        {:reply, :ok, prune_legacy_posts(%{updated_state | pending_requests: new_pending})}
+        {:reply, :ok, prune_legacy_posts(RequestHandler.drop_pending(updated_state, request_id))}
 
       {from, :single} ->
         # Reply with cancelled error and remove from pending
         GenServer.reply(from, {:error, :cancelled})
-        new_pending = Map.delete(state.pending_requests, request_id)
-        {:reply, :ok, prune_legacy_posts(%{updated_state | pending_requests: new_pending})}
+        {:reply, :ok, prune_legacy_posts(RequestHandler.drop_pending(updated_state, request_id))}
 
       _ ->
         # Other types of requests (batch, etc.) - just track as cancelled
@@ -1966,21 +2085,62 @@ defmodule Arbor.MCP.Client do
     result
   end
 
-  # One of this client's legacy POST tasks got a 401 or 403, as a modern
-  # request stream can: answered here, in turn with every other challenge,
-  # and the task sends its request again with the token.
+  # A rejection is reported before any auth challenge or terminal response,
+  # including when the sender has already used its last authenticated retry.
+  def handle_info(
+        {:http_credential_rejected, kind, pid, request_id, generation},
+        %{transport_mod: HTTP, transport_state: %HTTP{} = transport} = state
+      ) do
+    owned? =
+      case kind do
+        :post ->
+          Enum.any?(state.async_post_tasks, fn {_ref, entry} -> entry == {pid, request_id} end)
+
+        :stream ->
+          HTTP.stream_owner?(transport, request_id, pid)
+
+        _other ->
+          false
+      end
+
+    if owned?,
+      do:
+        {:noreply,
+         HTTPAuth.reject_token(state, %{status: 401, credential_generation: generation})},
+      else: {:noreply, state}
+  end
+
+  # One of this client's POST tasks got a 401 or 403, as a modern request
+  # stream can: answered here, in turn with every other challenge, and the
+  # task sends its request again with the token, so no request is re-sent
+  # from this process.
   def handle_info(
         {:http_post_auth_challenge, task, ref, challenge},
-        %{transport_mod: HTTP, transport_state: %HTTP{} = transport_state} = state
+        %{transport_mod: HTTP, transport_state: %HTTP{}} = state
       )
       when is_pid(task) and is_map(challenge) do
-    if own_post_task?(state, task) do
-      {result, transport_state} = answer_stream_challenge(transport_state, challenge)
-      send(task, {:http_post_auth_result, ref, result})
-      {:noreply, %{state | transport_state: transport_state}}
-    else
-      send(task, {:http_post_auth_result, ref, {:error, :stream_retired}})
-      {:noreply, state}
+    owned =
+      Enum.find_value(state.async_post_tasks, fn
+        {_monitor, {^task, id}} -> {:owned, id}
+        _other -> nil
+      end)
+
+    case owned do
+      {:owned, request_id} ->
+        # Even a cancelled POST can report that the shared token was rejected.
+        # It must not start auth, but future requests must stop using that token.
+        state = HTTPAuth.reject_token(state, challenge)
+
+        if HTTPAuth.request_alive?(state, request_id) do
+          {:noreply, handle_auth_challenge(state, :post, task, request_id, ref, challenge)}
+        else
+          send(task, {:http_post_auth_result, ref, {:error, :stream_retired}})
+          {:noreply, state}
+        end
+
+      nil ->
+        send(task, {:http_post_auth_result, ref, {:error, :stream_retired}})
+        {:noreply, state}
     end
   end
 
@@ -1997,14 +2157,35 @@ defmodule Arbor.MCP.Client do
       )
       when is_map(challenge) do
     if HTTP.stream_owner?(transport_state, request_id, stream_pid) do
-      {result, transport_state} = answer_stream_challenge(transport_state, challenge)
-      send(stream_pid, {:modern_http_stream_auth_result, ref, result})
-      {:noreply, %{state | transport_state: transport_state}}
+      state = HTTPAuth.reject_token(state, challenge)
+      {:noreply, handle_auth_challenge(state, :stream, stream_pid, request_id, ref, challenge)}
     else
       send(stream_pid, {:modern_http_stream_auth_result, ref, {:error, :stream_retired}})
       {:noreply, state}
     end
   end
+
+  def handle_info({:http_inline_auth_result, pid, id, result}, state),
+    do: {:noreply, HTTPAuth.result(state, pid, id, result)}
+
+  def handle_info({:http_auth_waiter_timeout, ref}, state),
+    do: {:noreply, HTTPAuth.waiter_timeout(state, ref)}
+
+  def handle_info({:http_auth_worker_timeout, id, deadline}, state),
+    do: {:noreply, HTTPAuth.worker_timeout(state, id, deadline)}
+
+  def handle_info(
+        {:DOWN, ref, :process, _pid, _reason},
+        %{http_auth: %{worker: %{monitor: ref}}} = state
+      ),
+      do: {:noreply, HTTPAuth.down(state, ref)}
+
+  def handle_info(
+        {:DOWN, ref, :process, _pid, _reason},
+        %{http_auth: %{monitors: monitors}} = state
+      )
+      when is_map_key(monitors, ref),
+      do: {:noreply, HTTPAuth.down(state, ref)}
 
   def handle_info(
         {:modern_http_stream_finished, stream_pid, request_id},
@@ -2169,6 +2350,24 @@ defmodule Arbor.MCP.Client do
     else
       {:noreply, state}
     end
+  end
+
+  # The caller of an in-flight request, or of an MRTR round whose input the
+  # client handler is answering, exited. Nobody will read the result.
+  def handle_info({:DOWN, ref, :process, _caller, _reason}, %{caller_monitors: monitors} = state)
+      when is_map(monitors) and is_map_key(monitors, ref) do
+    {:noreply, caller_exited(ref, state)}
+  end
+
+  # The caller of a request with a progress_to target went down, here or on
+  # another node, or its node's connection was lost: the target gets nothing
+  # more. The request settles as it would (see cancel_on_caller_exit).
+  def handle_info(
+        {:DOWN, ref, :process, _caller, _reason},
+        %{progress_monitors: monitors} = state
+      )
+      when is_map(monitors) and is_map_key(monitors, ref) do
+    {:noreply, RequestHandler.progress_caller_down(ref, state)}
   end
 
   def handle_info(
@@ -2362,6 +2561,10 @@ defmodule Arbor.MCP.Client do
   # that already completed find no pending entry and are ignored.
   # A request made with reset_timeout_on_progress went its timeout without
   # progress, and times out as it would at its deadline.
+  # Expired progress_to tombstones and reservations (see RequestHandler).
+  def handle_info({:progress_sweep, ref}, state),
+    do: {:noreply, RequestHandler.sweep_progress(state, ref)}
+
   def handle_info({:progress_timeout, request_id, tag}, state) do
     case RequestHandler.progress_timed_out(request_id, tag, state) do
       {:timed_out, state} -> handle_info({:request_timeout, request_id}, state)
@@ -2375,23 +2578,13 @@ defmodule Arbor.MCP.Client do
         GenServer.reply(from, {:error, :timeout})
 
         state = cancel_timed_out(request_id, state)
-
-        {:noreply,
-         prune_legacy_posts(%{
-           state
-           | pending_requests: Map.delete(state.pending_requests, request_id)
-         })}
+        {:noreply, prune_legacy_posts(RequestHandler.drop_pending(state, request_id))}
 
       {from, :single} ->
         GenServer.reply(from, {:error, :timeout})
 
         state = cancel_timed_out(request_id, state)
-
-        {:noreply,
-         prune_legacy_posts(%{
-           state
-           | pending_requests: Map.delete(state.pending_requests, request_id)
-         })}
+        {:noreply, prune_legacy_posts(RequestHandler.drop_pending(state, request_id))}
 
       {_from, :batch, _ids, _received} when state.transport_mod == LegacySSE ->
         state = RequestHandler.close_request_stream(request_id, state)
@@ -2558,11 +2751,11 @@ defmodule Arbor.MCP.Client do
       case Map.get(state.pending_requests, id) do
         {from, :single, _method} ->
           GenServer.reply(from, {:error, error})
-          %{state | pending_requests: Map.delete(state.pending_requests, id)}
+          RequestHandler.drop_pending(state, id)
 
         {from, :single} ->
           GenServer.reply(from, {:error, error})
-          %{state | pending_requests: Map.delete(state.pending_requests, id)}
+          RequestHandler.drop_pending(state, id)
 
         {from, :batch, ordered_ids, received} when is_map(received) ->
           # Preserve responses already delivered for this exact envelope. Its
@@ -2611,19 +2804,6 @@ defmodule Arbor.MCP.Client do
     {:noreply, state}
   end
 
-  # The server asked the task's POST to authenticate. Re-sending from this
-  # process runs at most one authentication at a time, and later challenges
-  # reuse the credentials it obtained. A POST that carried no request (a
-  # notification, a batch, a reply to a server request) is re-sent too; a
-  # request whose caller has given up is not.
-  defp handle_async_post_result({:error, {:reauthenticate, message}}, meta, state) do
-    request_id = Map.get(meta, :request_id)
-
-    if is_nil(request_id) or Map.has_key?(state.pending_requests, request_id),
-      do: resend_authenticated(message, meta, state),
-      else: {:noreply, state}
-  end
-
   # The caller receives the failure, as from a synchronous send, so it is not
   # logged as an error here.
   defp handle_async_post_result({:error, reason}, meta, state) do
@@ -2631,30 +2811,6 @@ defmodule Arbor.MCP.Client do
 
     {:noreply,
      fail_async_post_request(state, Map.get(meta, :request_id), reason, Map.get(meta, :deadline))}
-  end
-
-  defp resend_authenticated(message, meta, state) do
-    request_id = Map.get(meta, :request_id)
-    deadline = Map.get(meta, :deadline)
-    previous = Deadline.on_transport(HTTP, state.transport_state)
-    transport = Deadline.put_on_transport(HTTP, state.transport_state, deadline)
-    restore = &%{state | transport_state: Deadline.put_on_transport(HTTP, &1, previous)}
-
-    case HTTP.send_authenticated(message, transport) do
-      {:ok, transport, response_data} ->
-        RequestHandler.handle_post_response(response_data, request_id, restore.(transport))
-
-      {:ok, transport} ->
-        {:noreply, restore.(transport)}
-
-      {:error, reason, transport} ->
-        Logger.debug("Authenticated resend failed", reason: LogSummary.describe(reason))
-        {:noreply, fail_async_post_request(restore.(transport), request_id, reason, deadline)}
-
-      {:error, reason} ->
-        Logger.debug("Authenticated resend failed", reason: LogSummary.describe(reason))
-        {:noreply, fail_async_post_request(state, request_id, reason, deadline)}
-    end
   end
 
   defp cache_tool_list(
@@ -2686,41 +2842,44 @@ defmodule Arbor.MCP.Client do
     end
   end
 
-  defp own_post_task?(state, task) do
-    Enum.any?(state.async_post_tasks || %{}, fn
-      {_ref, {pid, _request_id}} -> pid == task
-      _other -> false
-    end)
+  defp handle_auth_challenge(
+         %{transport_state: %HTTP{auth_provider: nil}} = state,
+         kind,
+         pid,
+         id,
+         ref,
+         challenge
+       ) do
+    HTTPAuth.challenge(state, kind, pid, id, ref, challenge)
   end
 
-  defp answer_stream_challenge(%HTTP{access_token: current} = transport_state, challenge)
-       when is_binary(current) and current != :erlang.map_get(:token, challenge) do
-    # Another stream replaced the rejected token. That answers a 401; a 403
-    # needs the challenged scopes, which a refresh alone doesn't add.
-    if challenge.status == 401 or
-         scopes_granted?(transport_state.auth_provider_state, challenge.scopes),
-       do: {{:ok, current}, transport_state},
-       else: run_stream_challenge(transport_state, challenge)
+  defp handle_auth_challenge(state, kind, pid, id, ref, challenge) do
+    {result, transport} = answer_stream_challenge(state.transport_state, challenge)
+    HTTPAuth.reply(%{kind: kind, pid: pid, request_id: id, ref: ref}, result, transport)
+    %{state | transport_state: transport}
   end
 
-  defp answer_stream_challenge(%HTTP{auth_provider: nil} = transport_state, _challenge),
-    do: {{:error, :no_auth_provider}, transport_state}
-
-  defp answer_stream_challenge(transport_state, challenge),
-    do: run_stream_challenge(transport_state, challenge)
-
-  defp scopes_granted?(%{granted_scopes: granted}, [_ | _] = scopes) when is_list(granted),
-    do: Enum.all?(scopes, &(&1 in granted))
-
-  defp scopes_granted?(_provider_state, _scopes), do: false
+  defp answer_stream_challenge(transport, challenge) do
+    case HTTPAuth.cached_token(transport, challenge) do
+      token when is_binary(token) -> {{:ok, token}, transport}
+      nil -> run_stream_challenge(transport, challenge)
+    end
+  end
 
   defp run_stream_challenge(%HTTP{auth_provider: provider} = transport_state, challenge) do
+    # Provider callbacks remain serialized in the client. Provider-less flows
+    # use HTTPAuth's monitored worker so discovery cannot hold this loop.
     callback = if challenge.status == 401, do: :handle_unauthorized, else: :handle_forbidden
     args = [challenge.www_authenticate, challenge.scopes, transport_state.auth_provider_state]
 
     case apply(provider, callback, args) do
       {:ok, token, provider_state} when is_binary(token) ->
-        changes = %{access_token: token, auth_provider_state: provider_state}
+        changes = %{
+          access_token: token,
+          credential_generation: System.unique_integer([:positive, :monotonic]),
+          auth_provider_state: provider_state
+        }
+
         {{:ok, token}, merge_modern_stream_auth_state(transport_state, changes)}
 
       {:error, reason, provider_state} ->
@@ -2744,6 +2903,7 @@ defmodule Arbor.MCP.Client do
         %{
           transport_state
           | access_token: token,
+            credential_generation: Map.fetch!(changes, :credential_generation),
             auth_provider_state: provider_state,
             headers: headers
         }
@@ -2790,10 +2950,16 @@ defmodule Arbor.MCP.Client do
   # Modern streamable HTTP cancels an ordinary request by closing only that
   # request's connection. Other transports send the protocol cancellation
   # notification.
-  defp cancel_on_wire(request_id, method, params, state) do
+  # `outcome` settles the request's breaker admissions first, before an auth
+  # wait is woken or a POST stopped, so the client decides it once:
+  # :failure at its timeout, :release at a cancellation or a caller's exit.
+  defp cancel_on_wire(request_id, method, params, state, outcome \\ :release) do
+    state = RequestHandler.settle_posts(state, request_id, outcome)
+    state = HTTPAuth.cancel_request(state, request_id)
+
     case state do
       %{transport_mod: HTTP, transport_state: %HTTP{protocol_era: :modern}} ->
-        RequestHandler.close_request_stream(request_id, state)
+        RequestHandler.close_request_stream(request_id, state, outcome)
 
       %{transport_mod: LegacySSE} ->
         retired_state = RequestHandler.close_request_stream(request_id, state)
@@ -2812,14 +2978,50 @@ defmodule Arbor.MCP.Client do
 
   # The spec asks a sender to cancel a request it stops waiting for, so the
   # server can stop the work; servers no longer cut it off after 10 s.
-  defp cancel_timed_out(request_id, state) do
-    case Protocol.encode_cancelled(request_id, "Request timed out") do
+  defp cancel_timed_out(request_id, state),
+    do: cancel_upstream(request_id, "Request timed out", state, :failure)
+
+  # `outcome` is the breaker's (see cancel_on_wire/5): a timeout is a
+  # failure, a caller's exit a release.
+  defp cancel_upstream(request_id, reason, state, outcome) do
+    case Protocol.encode_cancelled(request_id, reason) do
       {:ok, %{"method" => method, "params" => params}} ->
-        cancel_on_wire(request_id, method, params, state)
+        cancel_on_wire(request_id, method, params, state, outcome)
 
       {:error, :cannot_cancel_initialize} ->
-        RequestHandler.close_request_stream(request_id, state)
+        state = RequestHandler.settle_posts(state, request_id, outcome)
+        RequestHandler.close_request_stream(request_id, state, outcome)
     end
+  end
+
+  defp caller_exited(monitor, state) do
+    case RequestHandler.caller_exited(monitor, state) do
+      {{:request, request_id}, state} -> cancel_for_exited_caller(request_id, state)
+      {{:mrtr, task_pid}, state} -> RequestHandler.stop_mrtr_fulfillment(task_pid, state)
+      {nil, state} -> state
+    end
+  end
+
+  # As at a timeout, but with no caller left to answer: the request is
+  # cancelled upstream (its stream or POST closed on modern HTTP,
+  # notifications/cancelled elsewhere) and dropped.
+  defp cancel_for_exited_caller(request_id, state) do
+    case Map.get(state.pending_requests, request_id) do
+      {_from, :single, method} -> drop_exited_caller_request(request_id, method, state)
+      {_from, :single} -> drop_exited_caller_request(request_id, nil, state)
+      _settled -> state
+    end
+  end
+
+  defp drop_exited_caller_request(request_id, method, state) do
+    :telemetry.execute(
+      [:arbor_mcp, :client, :request, :caller_exited],
+      %{},
+      %{method: method, request_id: request_id}
+    )
+
+    state = cancel_upstream(request_id, "Caller exited", state, :release)
+    prune_legacy_posts(RequestHandler.drop_pending(state, request_id))
   end
 
   # A POST that failed at or after its caller's deadline is the caller's
@@ -2837,7 +3039,7 @@ defmodule Arbor.MCP.Client do
       _other -> :ok
     end
 
-    %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
+    RequestHandler.drop_pending(state, request_id)
   end
 
   defp fail_async_post_request(state, request_id, reason, deadline \\ nil) do
@@ -2849,12 +3051,12 @@ defmodule Arbor.MCP.Client do
     case request_id && Map.get(state.pending_requests, request_id) do
       {from, :single, _method} ->
         GenServer.reply(from, {:error, error})
-        state = %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
+        state = RequestHandler.drop_pending(state, request_id)
         if timed_out?, do: cancel_timed_out(request_id, state), else: state
 
       {from, :single} ->
         GenServer.reply(from, {:error, error})
-        state = %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
+        state = RequestHandler.drop_pending(state, request_id)
         if timed_out?, do: cancel_timed_out(request_id, state), else: state
 
       _ ->
@@ -2950,11 +3152,65 @@ defmodule Arbor.MCP.Client do
         bounded_transport_close(mod, cleanup_state, deadline)
       end
 
+    stop_reliability_components(mod, transport_state, deadline)
     ConnectionScope.closed(mod, transport_state, result)
     result
   end
 
   defp close_transport(_state, _close_mode), do: :ok
+
+  # The circuit breaker and health checker the client started with its
+  # transport (`reliability:`) are its own linked processes, and its close
+  # paths retire their links with the transport's (retire_links/1;
+  # terminate/2 needs none, as the client handles no message after it). So
+  # they are stopped here, in the client's own process, once the transport's
+  # close has returned or been cut off at the cleanup deadline: a close cut
+  # off there (a stalled session DELETE, a stuck stdio server, a busy health
+  # check holding up the wrapper's own stop) must not leave them running.
+  # Each gets a graceful stop within what is left of the cleanup budget, and
+  # is killed once that runs out. One the close stopped already is passed.
+  defp stop_reliability_components(mod, transport_state, deadline) do
+    mod
+    |> reliability_components(transport_state)
+    |> Enum.each(&stop_reliability_component(&1, deadline))
+  end
+
+  defp reliability_components(HTTP, %HTTP{reliability: %ReliabilityWrapper{} = wrapper}),
+    do: component_pids(wrapper)
+
+  defp reliability_components(ReliabilityWrapper, %ReliabilityWrapper{} = wrapper),
+    do: component_pids(wrapper)
+
+  defp reliability_components(_mod, _transport_state), do: []
+
+  defp component_pids(wrapper),
+    do: Enum.filter([wrapper.circuit_breaker_pid, wrapper.health_check_pid], &is_pid/1)
+
+  # :sys.terminate/3 rather than GenServer.stop/3, whose wait for the exit
+  # can raise when a stop is accepted just before its timeout.
+  defp stop_reliability_component(pid, deadline) do
+    monitor = Process.monitor(pid)
+
+    case Deadline.remaining(deadline) do
+      0 ->
+        :ok
+
+      wait ->
+        try do
+          :sys.terminate(pid, :normal, wait)
+        catch
+          :exit, _reason -> :ok
+        end
+    end
+
+    receive do
+      {:DOWN, ^monitor, :process, ^pid, _reason} -> :ok
+    after
+      Deadline.remaining(deadline) ->
+        Process.demonitor(monitor, [:flush])
+        Process.exit(pid, :kill)
+    end
+  end
 
   defp perform_transport_close(mod, cleanup_state) do
     case mod.close(cleanup_state) do
@@ -2983,6 +3239,15 @@ defmodule Arbor.MCP.Client do
     end
   end
 
+  # A caller on another node sends a deadline on its own monotonic clock. The
+  # client's cleanup budget counts from now instead, as the caller computed
+  # it from the same budget.
+  defp local_cleanup_deadline({caller, _tag}, _deadline)
+       when is_pid(caller) and node(caller) != node(),
+       do: Deadline.after_ms(Lifetime.client_cleanup_ms(self()))
+
+  defp local_cleanup_deadline(_from, deadline), do: deadline
+
   defp cleanup_deadline do
     Deadline.earliest(
       Process.get({__MODULE__, :cleanup_deadline}),
@@ -3006,7 +3271,7 @@ defmodule Arbor.MCP.Client do
       GenServer.reply(from, {:error, :client_disconnected})
     end)
 
-    %{state | server_request_tasks: %{}, mrtr_tasks: %{}}
+    HTTPAuth.retire(%{state | server_request_tasks: %{}, mrtr_tasks: %{}})
   end
 
   defp terminal_cleanup({:cleanup_failed, _reason, {:error, _} = result}), do: result
@@ -3034,7 +3299,11 @@ defmodule Arbor.MCP.Client do
     state = %{state | cleanup_result: remember_cleanup(state.cleanup_result, quiesce_result)}
     state = retire_callback_work(state)
     state = retire_links(state)
+    # The transport may have closed by itself (it never went through
+    # close_transport/2), and a reconnect starts fresh components.
+    stop_reliability_components(state.transport_mod, state.transport_state, deadline)
     reply_pending_with_close_error(reason, state)
+    state = state |> RequestHandler.forget_callers() |> RequestHandler.reset_progress()
     notify_subscription_processes(state, {:client_subscription_disconnected, reason})
 
     :telemetry.execute(
@@ -3568,10 +3837,35 @@ defmodule Arbor.MCP.Client do
     %{state | health_check_id: nil, health_check_ref: nil}
   end
 
-  defp send_health_ping(state) do
+  defp send_health_ping(
+         %{
+           transport_mod: HTTP,
+           transport_state: %HTTP{} = transport,
+           health_check_interval: interval
+         } = state
+       )
+       when is_integer(interval) and interval > 0 do
+    deadline = Deadline.earliest(transport.deadline, Deadline.after_ms(interval))
+
+    state =
+      do_send_health_ping(%{state | transport_state: HTTP.put_deadline(transport, deadline)})
+
+    %{state | transport_state: HTTP.put_deadline(state.transport_state, transport.deadline)}
+  end
+
+  defp send_health_ping(state), do: do_send_health_ping(state)
+
+  defp do_send_health_ping(state) do
     case RequestHandler.send_ping(state) do
       {:ok, request_id, new_state} ->
         %{new_state | health_check_id: request_id}
+
+      {:error, reason, new_state} ->
+        Logger.debug("MCP health check ping could not be sent",
+          reason: LogSummary.describe(reason)
+        )
+
+        %{new_state | health_check_id: nil}
 
       {:error, reason} ->
         Logger.debug("MCP health check ping could not be sent",

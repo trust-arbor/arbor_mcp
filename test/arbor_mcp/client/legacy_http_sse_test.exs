@@ -4,7 +4,40 @@ defmodule Arbor.MCP.Client.LegacyHttpSseTest do
   alias Arbor.MCP.Client
   alias Arbor.MCP.Client.ConnectionManager
   alias Arbor.MCP.HttpPlug
+  alias Arbor.MCP.Internal.DNSResolver
   alias Arbor.MCP.Transport.HTTP.LegacySSE
+
+  for status <- [401, 403, 500] do
+    @tag :transport_config
+    @tag :reauth_round8
+    test "deprecated legacy POST handles status #{status} before body limits" do
+      status = unquote(status)
+      bypass = Bypass.open()
+
+      Bypass.stub(bypass, "POST", "/messages", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_header("www-authenticate", "Basic")
+        |> Plug.Conn.resp(status, String.duplicate("x", 100))
+      end)
+
+      state = %LegacySSE{
+        post_url: "http://127.0.0.1:#{bypass.port}/messages",
+        headers: [],
+        timeouts: %{connect: 1_000, request: 1_000},
+        max_response_bytes: 4,
+        max_request_bytes: 1_000,
+        dns_timeout_ms: 1_000,
+        dns_resolver: DNSResolver,
+        allowed_private_hosts: []
+      }
+
+      result = LegacySSE.send_message("{}", state)
+
+      if status in [401, 403],
+        do: assert(result == {:error, {:http_error, status, ""}}),
+        else: assert(result == {:error, :response_too_large})
+    end
+  end
 
   defmodule Handler do
     use Arbor.MCP.Server.Handler

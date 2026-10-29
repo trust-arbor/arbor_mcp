@@ -20,6 +20,7 @@ defmodule Arbor.MCP.Client.HTTPStreamRetryTest do
          responses: responses,
          calls: [],
          default_timeout: Keyword.get(opts, :default_timeout, 1_000),
+         retry_policy: Keyword.get(opts, :retry_policy, []),
          conformance_mode: Keyword.get(opts, :conformance_mode, false)
        }}
     end
@@ -32,7 +33,8 @@ defmodule Arbor.MCP.Client.HTTPStreamRetryTest do
       {:reply, response, %{state | responses: responses, calls: calls}}
     end
 
-    def handle_call(:get_default_retry_policy, _from, state), do: {:reply, {:ok, []}, state}
+    def handle_call(:get_default_retry_policy, _from, state),
+      do: {:reply, {:ok, state.retry_policy}, state}
 
     def handle_call(:get_default_timeout, _from, state),
       do: {:reply, {:ok, state.default_timeout}, state}
@@ -186,6 +188,30 @@ defmodule Arbor.MCP.Client.HTTPStreamRetryTest do
              )
 
     assert GenServer.call(client, :calls) == []
+  end
+
+  @tag :reauth_round5
+  test "definitive refusals bypass default and explicit request retry policies" do
+    policy = [max_attempts: 2, initial_delay: 0, jitter: false, should_retry?: fn _ -> true end]
+
+    for reason <- [{:auth_refused, :denied}, {:oauth_failed, :insufficient_scope}],
+        retry_policy <- [:use_default, policy] do
+      error = Error.transport_error(:http, reason)
+      {:ok, client} = FakeClient.start_link([{:error, error}, {:ok, %{}}], retry_policy: policy)
+
+      assert {:error, ^error} = request(client, "tools/call", retry_policy: retry_policy)
+      assert length(GenServer.call(client, :calls)) == 1
+    end
+  end
+
+  @tag :reauth_round5
+  test "a definitive auth cause cannot become an ambiguous stream retry" do
+    for reason <- [{:auth_refused, :denied}, {:oauth_failed, :insufficient_scope}] do
+      error = broken(reason)
+      {:ok, client} = FakeClient.start_link([error, {:ok, %{}}])
+      assert ^error = request(client, "tools/call", http_stream_retry_delay: 0)
+      assert length(GenServer.call(client, :calls)) == 1
+    end
   end
 
   defp request(client, method, opts \\ []) do

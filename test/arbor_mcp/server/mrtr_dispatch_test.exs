@@ -64,6 +64,18 @@ defmodule Arbor.MCP.Server.MRTRDispatchTest do
       end
     end
 
+    # A requested schema must be a flat object of primitive fields.
+    def handle_call_tool("invalid_collect", _arguments, state) do
+      requests = %{
+        "profile" => %{
+          "method" => "elicitation/create",
+          "params" => %{"message" => "Name?", "requestedSchema" => %{"type" => "array"}}
+        }
+      }
+
+      {:input_required, requests, nil, state}
+    end
+
     def handle_call_tool(_name, _arguments, state), do: {:error, "unknown", state}
   end
 
@@ -165,6 +177,67 @@ defmodule Arbor.MCP.Server.MRTRDispatchTest do
     assert required["resultType"] == "input_required"
     assert Map.keys(required["inputRequests"]) == ["profile"]
   end
+
+  describe "an elicitation the handler asks for after the request's deadline" do
+    # The handler answered with a valid elicitation, but the request had no
+    # time left to validate it in: the server ran out of time, the request
+    # was fine, so this is not -32602.
+    test "is a server timeout for a modern client, not invalid params" do
+      assert {:response, %{"error" => error}, _state} =
+               Dispatch.dispatch(request(1, base_params()), Handler, %{calls: 0}, spent())
+
+      assert error["code"] == -32603
+      assert error["message"] == "MRTR input request validation timed out"
+
+      assert error["data"] == %{
+               "inputRequestId" => "profile",
+               "method" => "elicitation/create",
+               "type" => "elicitation_validation_timeout"
+             }
+    end
+
+    test "is a server timeout on the legacy bridge, not invalid params" do
+      params = Map.delete(base_params(), "_meta")
+
+      assert {:response, %{"error" => error}, _state} =
+               Dispatch.dispatch(request(1, params), Handler, %{calls: 0}, spent())
+
+      assert error["code"] == -32603
+      assert error["message"] == "MRTR input request validation timed out"
+      assert error["data"]["inputRequestId"] == "profile"
+    end
+
+    test "with time left, a valid one is sent and an invalid one is invalid params" do
+      live =
+        Keyword.put(options(), :request_deadline, System.monotonic_time(:millisecond) + 60_000)
+
+      assert {:response, %{"result" => %{"resultType" => "input_required"}}, _state} =
+               Dispatch.dispatch(request(1, base_params()), Handler, %{calls: 0}, live)
+
+      invalid = Map.put(base_params(), "name", "invalid_collect")
+
+      for {params, options} <- [
+            {invalid, live},
+            {invalid, options()},
+            {Map.delete(invalid, "_meta"), live}
+          ] do
+        assert {:response, %{"error" => error}, _state} =
+                 Dispatch.dispatch(request(2, params), Handler, %{calls: 0}, options)
+
+        assert error["code"] == -32602
+        assert error["message"] == "Invalid MRTR input request"
+
+        assert error["data"] == %{
+                 "inputRequestId" => "profile",
+                 "method" => "elicitation/create"
+               }
+      end
+    end
+  end
+
+  # The request's deadline has already passed when the handler answers.
+  defp spent,
+    do: Keyword.put(options(), :request_deadline, System.monotonic_time(:millisecond) - 1)
 
   defp request(id, params) do
     %{"jsonrpc" => "2.0", "id" => id, "method" => "tools/call", "params" => params}

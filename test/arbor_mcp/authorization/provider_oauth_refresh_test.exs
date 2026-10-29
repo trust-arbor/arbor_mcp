@@ -11,6 +11,7 @@ defmodule Arbor.MCP.Authorization.ProviderOAuthRefreshTest do
   @moduletag :oauth
 
   alias Arbor.MCP.Authorization.Provider.OAuth
+  alias Arbor.MCP.Transport.HTTP
 
   defmodule RecordingStore do
     @moduledoc false
@@ -69,6 +70,71 @@ defmodule Arbor.MCP.Authorization.ProviderOAuthRefreshTest do
       |> Plug.Conn.put_resp_content_type("application/json")
       |> Plug.Conn.resp(status, Jason.encode!(body))
     end)
+  end
+
+  @tag :reauth_round7
+  test "real identical-byte refreshes advance transport generations and provider acquisitions",
+       %{bypass: bypass} = context do
+    owner = self()
+
+    Bypass.stub(bypass, "POST", "/token", fn conn ->
+      {:ok, _body, conn} = Plug.Conn.read_body(conn)
+      send(owner, :identical_refresh)
+
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.resp(200, Jason.encode!(%{"access_token" => "old-token", "expires_in" => 0}))
+    end)
+
+    Bypass.stub(bypass, "POST", "/mcp", fn conn ->
+      case Plug.Conn.get_req_header(conn, "authorization") do
+        [] ->
+          send(owner, :rejected_cache_omitted)
+
+          conn
+          |> Plug.Conn.put_resp_header("www-authenticate", "Bearer")
+          |> Plug.Conn.resp(401, "")
+
+        ["Bearer old-token"] ->
+          conn
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.resp(200, Jason.encode!(%{"jsonrpc" => "2.0", "id" => 1, "result" => %{}}))
+      end
+    end)
+
+    {:ok, transport} = HTTP.connect(url: "http://localhost:#{bypass.port}/mcp", use_sse: false)
+    transport = HTTP.put_oauth_token(transport, %{access_token: "old-token"}, [])
+    provider = state(context.token_endpoint, expires_at: 0)
+    transport = %{transport | auth_provider: OAuth, auth_provider_state: provider}
+    request = Jason.encode!(%{"jsonrpc" => "2.0", "id" => 1, "method" => "tools/list"})
+
+    assert {:ok, first, _} = HTTP.send_authenticated(request, transport)
+    assert first.credential_generation > transport.credential_generation
+    assert first.auth_provider_state.token_acquisitions == 1
+    assert {:ok, second, _} = HTTP.send_authenticated(request, first)
+    assert second.credential_generation > first.credential_generation
+    assert second.auth_provider_state.token_acquisitions == 2
+    assert first.access_token == "old-token"
+    assert second.access_token == "old-token"
+    assert_receive :identical_refresh
+    assert_receive :identical_refresh
+
+    cached = %{second.auth_provider_state | expires_at: System.system_time(:second) + 600}
+
+    retired =
+      HTTP.retire_credential(
+        %{second | auth_provider_state: cached},
+        second.credential_generation
+      )
+
+    assert {:error, {:auth_refused, {:authentication_failed, :rejected_credential}},
+            after_rejection} =
+             HTTP.send_authenticated(request, retired)
+
+    assert after_rejection.credential_generation == retired.credential_generation
+    assert after_rejection.auth_provider_state.token_acquisitions == 2
+    refute_received :rejected_cache_omitted
+    refute_received :identical_refresh
   end
 
   test "an expiring token is refreshed before a request", %{bypass: bypass} = context do

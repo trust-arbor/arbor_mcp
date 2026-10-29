@@ -28,10 +28,12 @@ defmodule Arbor.MCP.Internal.HTTPResponseReducer do
   event and the accumulated list including them, and the status too when it
   takes three arguments. Returning `{:error, reason}` halts reduction with
   that reason untouched.
+  Returning `:complete` completes the response at its headers without reading
+  a body, for callers whose status handling needs no response body.
   """
   @type header_check ::
-          (headers(), headers() -> :ok | {:error, term()})
-          | (headers(), headers(), non_neg_integer() | nil -> :ok | {:error, term()})
+          (headers(), headers() -> :ok | :complete | {:error, term()})
+          | (headers(), headers(), non_neg_integer() | nil -> :ok | :complete | {:error, term()})
 
   @typedoc """
   `:max_bytes` limits the body. `:max_bytes_for`, when given, decides that
@@ -89,6 +91,7 @@ defmodule Arbor.MCP.Internal.HTTPResponseReducer do
 
     case result do
       :ok -> {:cont, %{acc | headers: all_headers}}
+      :complete -> {:halt, {:done, %{acc | headers: all_headers, chunks: [], size: 0}}}
       {:error, reason} -> {:halt, {:error, reason}}
     end
   end

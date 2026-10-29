@@ -37,6 +37,39 @@ defmodule Arbor.MCP.Transport.HTTP.BoundedClientTest do
   alias Arbor.MCP.Test.RawHTTPServer
   alias Arbor.MCP.Transport.HTTP.BoundedClient
 
+  for status <- [401, 403] do
+    @tag :reauth_round8
+    test "auth status #{status} completes from headers before an oversized declared body" do
+      status = unquote(status)
+
+      {port, server} =
+        RawHTTPServer.start([
+          "HTTP/1.1 #{status} Refused\r\nWWW-Authenticate: Basic\r\nContent-Length: 1000000\r\n\r\n"
+        ])
+
+      assert {:ok, {{_, ^status, _}, headers, ""}} =
+               request_port(port, [], max_response_bytes: 4, auth_headers_only: true)
+
+      assert {"www-authenticate", "Basic"} in headers
+      assert :ok = RawHTTPServer.await(server)
+    end
+  end
+
+  for status <- [200, 500] do
+    @tag :reauth_round8
+    test "non-auth status #{status} retains the byte limit with auth header handling enabled" do
+      {port, server} =
+        RawHTTPServer.start([
+          "HTTP/1.1 #{unquote(status)} Result\r\nContent-Length: 5\r\n\r\n12345"
+        ])
+
+      assert {:error, :response_too_large} =
+               request_port(port, [], max_response_bytes: 4, auth_headers_only: true)
+
+      assert :ok = RawHTTPServer.await(server)
+    end
+  end
+
   describe "limits" do
     test "accepts a response exactly at the limit" do
       bypass = Bypass.open()

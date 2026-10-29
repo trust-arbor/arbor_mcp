@@ -475,6 +475,7 @@ defmodule Arbor.MCP.Transport.SSEClient do
       connect_timeout: state.connect_timeout,
       transport_opts: state.ssl_opts,
       max_response_bytes: state.max_response_bytes,
+      auth_headers_only: true,
       delivery_timeout: state.consumer_ack_timeout + 1_000,
       dns_timeout_ms: state.dns_timeout_ms,
       dns_resolver: state.dns_resolver,

@@ -50,6 +50,9 @@ defmodule Arbor.MCP.Client.Operations.Prompts do
 
   - `:timeout` - Request timeout (default: 5000)
   - `:format` - Response format (default: :struct)
+  - `:mrtr`, `:input_responses`, `:request_state`, `:client_capabilities` -
+    for a client that forwards the request for another client; see
+    "Forwarding a call" under `Arbor.MCP.Client.call_tool/4`
 
   ## Examples
 
@@ -57,7 +60,7 @@ defmodule Arbor.MCP.Client.Operations.Prompts do
       {:ok, prompt} = Arbor.MCP.Client.Operations.Prompts.get_prompt(client, "my_prompt", %{"name" => "World"})
   """
   @spec get_prompt(Types.client(), String.t(), map(), Types.request_opts()) ::
-          Types.mcp_response()
+          Types.mrtr_response()
   def get_prompt(client, prompt_name, arguments \\ %{}, opts \\ []) do
     params =
       prompt_name

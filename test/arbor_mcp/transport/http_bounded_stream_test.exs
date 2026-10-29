@@ -1,7 +1,36 @@
 defmodule Arbor.MCP.Transport.HTTP.BoundedStreamTest do
   use ExUnit.Case, async: true
 
+  alias Arbor.MCP.Test.RawHTTPServer
   alias Arbor.MCP.Transport.HTTP.BoundedStream
+
+  for status <- [401, 403, 200, 500] do
+    @tag :reauth_round8
+    test "status #{status} determines auth handling before body size" do
+      status = unquote(status)
+
+      {port, server} =
+        RawHTTPServer.start([
+          "HTTP/1.1 #{status} Response\r\nWWW-Authenticate: Basic\r\nContent-Length: 1000000\r\n\r\n"
+        ])
+
+      assert {:ok, worker} =
+               BoundedStream.start(self(), :get, "http://127.0.0.1:#{port}/mcp", [], nil,
+                 connect_timeout: 1_000,
+                 max_response_bytes: 4,
+                 auth_headers_only: true
+               )
+
+      if status in [401, 403] do
+        assert_receive {:bounded_http, ^worker, {:complete, ^status, headers, ""}}, 1_000
+        assert {"www-authenticate", "Basic"} in headers
+      else
+        assert_receive {:bounded_http, ^worker, {:error, :response_too_large}}, 1_000
+      end
+
+      assert :ok = RawHTTPServer.await(server)
+    end
+  end
 
   test "accepts a chunked non-streaming response exactly at the byte limit" do
     {port, server} = chunked_server(["4\r\n1234\r\n", "0\r\n\r\n"])

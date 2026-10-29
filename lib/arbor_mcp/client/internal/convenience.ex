@@ -174,6 +174,7 @@ defmodule Arbor.MCP.Client.Internal.Convenience do
       extra_keys ++
         [
           :timeout,
+          :cancel_on_caller_exit,
           :cache_mode,
           :reset_timeout_on_progress,
           :max_total_timeout,

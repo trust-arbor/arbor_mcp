@@ -29,7 +29,115 @@ defmodule Arbor.MCP.Client.ModernHTTPStreamAuthTest do
     end
   end
 
+  defmodule RefreshingProvider do
+    @behaviour Arbor.MCP.Authorization.Provider
+    @impl true
+    def init(opts),
+      do: {:ok, %{owner: Keyword.fetch!(opts, :owner), refresh?: false, acquisitions: 0}}
+
+    @impl true
+    def get_token(%{refresh?: true} = state),
+      do: {:ok, "identical", %{state | refresh?: false, acquisitions: state.acquisitions + 1}}
+
+    def get_token(state), do: {:ok, "identical", state}
+    @impl true
+    def handle_unauthorized(_www, _scopes, state) do
+      send(state.owner, :unexpected_provider_reauthentication)
+      {:error, :refused, state}
+    end
+
+    @impl true
+    def handle_forbidden(www, scopes, state), do: handle_unauthorized(www, scopes, state)
+  end
+
+  @tag :reauth_round7
+  test "an identical-byte provider refresh gets a new generation and satisfies a delayed 401" do
+    bypass = Bypass.open()
+    owner = self()
+    attempts = start_supervised!({Agent, fn -> %{} end})
+
+    Bypass.stub(bypass, "POST", "/mcp", fn conn ->
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      id = Jason.decode!(body)["id"]
+
+      attempt =
+        Agent.get_and_update(attempts, fn counts ->
+          counts = Map.update(counts, id, 1, &(&1 + 1))
+          {counts[id], counts}
+        end)
+
+      assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer identical"]
+
+      if id == 7 and attempt == 1 do
+        send(owner, {:old_request_held, self()})
+        receive do: (:release -> :ok)
+        conn |> Plug.Conn.put_resp_header("www-authenticate", "Bearer") |> Plug.Conn.resp(401, "")
+      else
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          Jason.encode!(%{
+            "jsonrpc" => "2.0",
+            "id" => id,
+            "result" => %{"resultType" => "complete", "content" => []}
+          })
+        )
+      end
+    end)
+
+    {:ok, transport} =
+      HTTP.connect(
+        url: "http://127.0.0.1:#{bypass.port}/mcp",
+        use_sse: false,
+        auth_provider: {RefreshingProvider, owner: owner}
+      )
+
+    transport = HTTP.settle_protocol_era(transport, :modern, "2026-07-28")
+
+    request = fn id ->
+      Jason.encode!(%{"jsonrpc" => "2.0", "id" => id, "method" => "tools/call"})
+    end
+
+    assert {:ok, old} = HTTP.open_stream(request.(7), transport, self())
+    assert_receive {:old_request_held, server}, 2_000
+    on_exit(fn -> send(server, :release) end)
+    refresh = %{old | auth_provider_state: %{old.auth_provider_state | refresh?: true}}
+    assert {:ok, refreshed} = HTTP.open_stream(request.(8), refresh, self())
+    assert refreshed.credential_generation > old.credential_generation
+    assert refreshed.auth_provider_state.acquisitions == 1
+    assert {:ok, cached} = HTTP.open_stream(request.(9), refreshed, self())
+    assert cached.credential_generation == refreshed.credential_generation
+
+    for id <- [8, 9] do
+      pid = cached.modern_streams[id]
+      assert_receive {:modern_http_stream_message, ^pid, ^id, _}, 2_000
+      send(pid, {:modern_http_stream_ack, self(), id})
+      assert_receive {:modern_http_stream_finished, ^pid, ^id}, 2_000
+    end
+
+    send(server, :release)
+    pid = cached.modern_streams[7]
+    assert_receive {:modern_http_stream_auth_challenge, ^pid, 7, _ref, challenge} = message, 2_000
+    assert challenge.credential_generation == old.credential_generation
+    assert {:noreply, state} = Client.handle_info(message, client_state(cached))
+    assert state.transport_state.credential_generation == refreshed.credential_generation
+    assert_receive {:modern_http_stream_message, ^pid, 7, _}, 2_000
+    send(pid, {:modern_http_stream_ack, self(), 7})
+    assert_receive {:modern_http_stream_finished, ^pid, 7}, 2_000
+    assert Agent.get(attempts, & &1) == %{7 => 2, 8 => 1, 9 => 1}
+    refute_received :unexpected_provider_reauthentication
+  end
+
   defp client_state(transport_state) do
+    transport_state =
+      if is_binary(transport_state.access_token) and transport_state.credential_generation == 0,
+        do: %{
+          transport_state
+          | credential_generation: System.unique_integer([:positive, :monotonic])
+        },
+        else: transport_state
+
     %Client{
       transport_mod: HTTP,
       transport_state: transport_state,
@@ -253,13 +361,13 @@ defmodule Arbor.MCP.Client.ModernHTTPStreamAuthTest do
                )
 
       if reused? do
-        assert_received {:modern_http_stream_auth_result, ^ref, {:ok, "fresh"}}
+        assert_received {:modern_http_stream_auth_result, ^ref, {:ok, "fresh", _generation}}
         refute_received {:provider_step_up, _, _}
       else
         assert_received {:provider_step_up, "Bearer", ["admin"]}
 
         assert_received {:modern_http_stream_auth_result, ^ref,
-                         {:ok, "request-stream-step-up-token"}}
+                         {:ok, "request-stream-step-up-token", _generation}}
       end
     end
   end
@@ -285,7 +393,7 @@ defmodule Arbor.MCP.Client.ModernHTTPStreamAuthTest do
                client_state(transport_state)
              )
 
-    assert_received {:modern_http_stream_auth_result, ^ref, {:ok, "fresh"}}
+    assert_received {:modern_http_stream_auth_result, ^ref, {:ok, "fresh", _generation}}
     refute_received {:provider_challenge, _, _}
     assert client_state.transport_state.auth_provider_state.generation == 1
   end

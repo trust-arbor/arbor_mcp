@@ -46,12 +46,16 @@ defmodule Arbor.MCP.Client.Operations.Resources do
 
   - `:timeout` - Request timeout (default: 10000)
   - `:format` - Response format (default: :struct)
+  - `:mrtr`, `:input_responses`, `:request_state`, `:client_capabilities` -
+    for a client that forwards the request for another client; see
+    "Forwarding a call" under `Arbor.MCP.Client.call_tool/4`
 
   ## Examples
 
       {:ok, resource_content} = Arbor.MCP.Client.Operations.Resources.read_resource(client, "mcp://example/resource")
   """
-  @spec read_resource(Types.client(), Types.uri(), Types.request_opts()) :: Types.mcp_response()
+  @spec read_resource(Types.client(), Types.uri(), Types.request_opts()) ::
+          Types.mrtr_response()
   def read_resource(client, uri, opts \\ []) do
     ClientRequest.make_request(
       client,

@@ -818,6 +818,18 @@ dual-era client: once `server/discover` succeeds, ArborMCP disables that stream,
 clears legacy session state, and uses JSON or POST-owned SSE for each modern
 request. `subscriptions/listen` opens its own POST response stream.
 
+A modern request never runs in the client process, so concurrent calls
+through one client don't wait for each other, and the client keeps answering
+other calls while one runs. An ordinary request POSTs from its own task, at
+most `:max_client_workers` (default `256`) at a time; one with a progress
+token or an `io.modelcontextprotocol/logLevel` gets its own request stream.
+The caller's timeout bounds the request either way, and a request that times
+out or is cancelled has its connection closed. A 401 or 403 is answered in
+the client process, one challenge at a time across requests, and the
+request's task or stream then sends it again with the new token. The
+`:auth_provider` answers it; without one, an ordinary request's challenge
+runs the OAuth flow there, and a request stream's fails its request.
+
 ### TLS trust store
 
 Outbound HTTPS verifies peers against the operating system's trust store
@@ -1170,7 +1182,9 @@ encodable and is size-bounded before encryption.
 Client operation options default to 8 rounds, 16 input requests per round, and
 1 MiB of serialized MRTR input/output. Override them with
 `:max_mrtr_rounds`, `:max_input_requests`, and `:max_mrtr_bytes`. One overall
-`:timeout` covers all rounds.
+`:timeout` covers all rounds. A client that forwards requests for another
+client answers the rounds itself instead; see
+[Forwarding clients](#forwarding-clients-mcp-2026-07-28).
 
 Input callbacks run sequentially in deterministic request-ID order by default.
 A stateless client handler can explicitly opt into bounded parallel dispatch by
@@ -1213,6 +1227,171 @@ the host resolves `:principal_id` itself, or sets `client_principals: true`
 because its authorization server leaves `sub` out only of client-credentials
 tokens; those then run as `client:<client_id>`, and a token whose `sub` starts
 with `client:` is refused. See "Principals" in `Arbor.MCP.HttpPlug`.
+
+## Forwarding clients (MCP 2026-07-28)
+
+A client that forwards requests for another client, such as a gateway in
+front of MCP servers, cannot answer a server's input requests with its own
+handler: the downstream client has to answer them, and the server has to
+choose them from what that client declared. These request options on
+`Arbor.MCP.Client.call_tool/4`, `read_resource/3` and `get_prompt/4` leave
+each MRTR round to the caller. A request that doesn't set them is unchanged,
+and `nil` leaves an option unset, so values received from downstream can be
+passed through without filtering them first.
+
+| Option | Effect |
+|---|---|
+| `mrtr: :manual` | Returns an `input_required` round as `{:input_required, %{input_requests: requests, request_state: state, meta: meta}}` instead of answering it with the client handler. `:auto`, the default, keeps automatic MRTR. |
+| `input_responses:`, `request_state:` | With `mrtr: :manual`, continue the call: they become the next round's `inputResponses` and `requestState`. Valid for `tools/call`, `resources/read` and `prompts/get`. |
+| `client_capabilities:` | Replaces the client's start capabilities in this request's `_meta`, so the server chooses its input requests, and anything else it bases on capabilities, from what the downstream client declared. On `tools/call`, `resources/read` and `prompts/get` it needs `mrtr: :manual`; other requests, such as `list_tools/2` or `complete/4`, take it on its own. |
+
+`{:input_required, ...}` is distinct from `{:ok, ...}` because the call isn't
+finished. `input_requests` maps each input request id to the request as the
+server sent it (`"method"` and `"params"`), and is empty when the server sent
+only a request state. `request_state` is the server's opaque string and
+`meta` the round's `_meta` object, each `nil` when the server sent none.
+Both formats return the same value.
+
+Before it returns a round, the client checks it as automatic MRTR checks one
+before calling the handler: its shape, `:max_input_requests`,
+`:max_mrtr_bytes`, and that each input request needs only capabilities the
+request declared, with `client_capabilities:` or at start. A round that
+fails returns the `{:error, %Arbor.MCP.Error.ProtocolError{}}` automatic MRTR
+would return, for example `-32021` for an undeclared capability. The byte
+limit counts the round's `_meta`, which must be an object if present.
+`:max_mrtr_rounds` doesn't apply, because the caller runs the rounds and
+should bound them itself.
+
+`input_responses:` must map input request ids to objects, and each object is
+validated, as it will go out on the wire, against the MCP 2026-07-28 schema's
+results for input requests: `ElicitResult`, `CreateMessageResult` or
+`ListRootsResult`, with everything they reference (content blocks, roots and
+so on). The client keeps nothing between rounds, so it can't tell which input
+request an id answered: a response that validates against any one of the
+three passes. A response that matches none returns a `ValidationError` naming
+its id, never its content. The responses are held to `:max_mrtr_bytes` too.
+
+A gateway built on `Arbor.MCP.Server.Handler` can hand the upstream round to
+its downstream client as its own `input_required`, keeping the upstream
+`requestState` and progress token in its own sealed request state. The
+upstream call runs in a task, with `progress_to:` set to the callback's
+process, which relays the progress, because `Arbor.MCP.Server.Context`
+belongs to that process:
+
+```elixir
+alias Arbor.MCP.Server.Context
+
+@impl true
+def handle_call_tool(name, arguments, state) do
+  sealed = Context.request_state() || %{}
+  # One upstream progress token for every round of this call.
+  token = sealed["token"] || "gateway-" <> Integer.to_string(System.unique_integer([:positive]))
+  callback = self()
+
+  opts = [
+    mrtr: :manual,
+    # What the downstream client declared for this request.
+    client_capabilities: Context.current().client_capabilities,
+    # nil on the first round; the downstream answers on its retry.
+    input_responses: Context.input_responses(),
+    request_state: sealed["upstream"],
+    progress_token: token,
+    progress_to: callback,
+    format: :map
+  ]
+
+  task = Task.async(fn -> Arbor.MCP.Client.call_tool(state.upstream, name, arguments, opts) end)
+
+  case relay_progress(task, state.upstream, token) do
+    {:input_required, %{input_requests: requests, request_state: upstream}} ->
+      {:input_required, requests, %{"upstream" => upstream, "token" => token}, state}
+
+    {:ok, result} ->
+      {:ok, result, state}
+
+    {:error, reason} ->
+      {:error, reason, state}
+  end
+end
+
+defp relay_progress(%Task{ref: ref} = task, upstream, token) do
+  receive do
+    {:arbor_mcp_progress, ^upstream, ^token, %{"progress" => progress} = params} ->
+      _ = Context.report_progress(progress, params["total"], params["message"])
+      relay_progress(task, upstream, token)
+
+    {^ref, result} ->
+      Process.demonitor(ref, [:flush])
+      result
+  end
+end
+```
+
+The downstream client retries with the same arguments and capabilities and
+answers the same input request ids, so the gateway's upstream retry repeats
+the upstream request, token included, as the next paragraph requires.
+`Context.report_progress/3` reports against the downstream request's own
+token, and does nothing when the downstream client sent none. A legacy
+downstream client works too: the gateway's server sends it the input
+requests as server-to-client requests and calls the callback again with the
+answers.
+
+Every round of one call carries the same request apart from
+`input_responses:` and `request_state:`: the same arguments,
+`client_capabilities:`, `:meta` and `:progress_token`. An arbor_mcp server
+binds its `requestState` to the request's params, `_meta` included, and to
+the capabilities the request declared, and rejects a round that differs with
+`-32602` and the reason `request_state_binding_mismatch`. A gateway that sets
+its own upstream progress token therefore keeps it for all rounds of the call.
+`mrtr: :manual` with `reset_timeout_on_progress: true` or `progress_to:`
+needs a `:progress_token` (or `"progressToken"` in `:meta`), and returns a
+`ValidationError` without one: the token the client would add differs on
+every round. `read_resource/3` takes no progress token, so a manual read
+can't combine with either.
+
+`progress_to: pid` sends the request's progress to `pid` as
+`{:arbor_mcp_progress, client, progress_token, params}`, alongside the client
+handler, until the call returns. A dead `pid` misses the updates without
+failing the request. Use connection-unique upstream tokens, as the example
+does: a token a recently settled request carried reaches no target for a
+second. See "Progress to another process" in the
+[Protocol Guide](PROTOCOL_GUIDE.md#progress-to-another-process).
+
+`input_responses:` and `request_state:` without `mrtr: :manual`,
+`client_capabilities:` without it on a request that can return
+`input_required`, and any malformed value, a struct where an object belongs
+included, return `{:error, %Arbor.MCP.Error.ValidationError{}}` before
+anything is sent.
+Automatic MRTR would answer a round chosen for capabilities the client's own
+handler may not have; a request that can't pause has no round to answer, so
+it may declare any capabilities. On a connection that settled on a legacy revision,
+where capabilities were fixed at `initialize` and there is no MRTR, these
+options return a `ValidationError` too. `mrtr: :manual` alone is accepted
+there and changes nothing: a legacy server asks for input with
+server-to-client requests such as `elicitation/create`, which the client
+handler answers. A validation error leaves out the input responses and the
+request state, which may hold a user's answers or a resumable token.
+
+`client_capabilities:` applies to the request it is passed with. The
+client's own checks follow its start capabilities: which extension result
+types it accepts, such as Tasks results, and what automatic MRTR answers.
+
+A request with `client_capabilities:`, `input_responses:`, `request_state:`
+or `mrtr: :manual` neither reads nor fills the response cache, whatever
+`:cache_mode` says. Its answer belongs to one downstream client, and the
+cache to the client's own callers: an answer chosen for the downstream
+client's capabilities must not reach them, and theirs must not answer it.
+
+A manual round reports the events automatic MRTR reports, with
+`mode: :manual` in their metadata where automatic rounds carry
+`mode: :auto`. `[:arbor_mcp, :client, :mrtr, :round]` with
+`%{round: 1, input_requests: count}` marks a round handed to the caller (each
+call hands over at most one; the caller counts the rounds of a forwarded
+call). `[:arbor_mcp, :client, :mrtr, :failure]` with `%{round: 0}` and a
+`reason` class (`:missing_capability`, `:protocol_error` or `:timeout`) marks
+a round that failed its checks. Like every MRTR event, they carry only the
+method and those classes, never input requests, responses, request state or
+`_meta`.
 
 ## Modern subscriptions (MCP 2026-07-28)
 
@@ -1585,9 +1764,12 @@ defaults when a handler omits them:
 authorization contexts. A `resources/read` handler may return the whole result
 with `ttl_ms` / `cache_scope` (or the wire keys `ttlMs` / `cacheScope`) to
 override those defaults, as in `{:ok, %{contents: contents, ttl_ms: 60_000},
-state}`. For the results the server builds itself, such as the lists, set
+state}`. `server/discover` has defaults of its own, one hour and `public`. For
+the results the server builds itself, such as the lists and discovery, set
 hints per method with the `:cache_hints` server option, as with the
-TypeScript SDK's `cacheHints`; a handler's own fields take precedence:
+TypeScript SDK's `cacheHints`; a handler's own fields take precedence. A
+server whose discovery result differs by caller, its instructions for
+example, sets `"server/discover" => [cache_scope: :private]`:
 
 ```elixir
 Arbor.MCP.Server.start_link(
@@ -1665,6 +1847,18 @@ Arbor.MCP.Client.start_link(
   ]
 )
 ```
+
+Over Streamable HTTP the client stays an HTTP client: each request after
+establishment still POSTs from its own task, so calls run at the same time.
+The circuit breaker admits every POST, from establishment on, and records how
+it ended: a POST that crashes or that the client stops at a timeout is a
+failure, and one whose caller cancels it or exits isn't counted. An open
+circuit refuses a request with
+`{:error, %Arbor.MCP.Error.TransportError{reason: :circuit_open}}` before
+anything is sent. A request stream (a request with a progress token) is
+admitted, but its outcome isn't recorded, and receives aren't counted. The
+breaker's `:timeout` doesn't apply over HTTP: each exchange keeps its own
+deadline, the caller's timeout or the transport's `:request_timeout`.
 
 ## Observability
 

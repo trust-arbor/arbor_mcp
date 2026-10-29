@@ -73,6 +73,13 @@ defmodule Arbor.MCP.Client.Operations.Tools do
     result must carry `structuredContent` that conforms to it, or the call
     returns `{:error, %Arbor.MCP.Error.ValidationError{field: :structured_content}}`.
     `isError` results aren't checked.
+  - `:mrtr`, `:input_responses`, `:request_state`, `:client_capabilities` -
+    for a client that forwards the call for another client, which answers
+    each MCP 2026-07-28 MRTR round itself; see "Forwarding a call" under
+    `Arbor.MCP.Client.call_tool/4`
+  - `:progress_to` - a pid that also gets the call's progress as
+    `{:arbor_mcp_progress, client, progress_token, params}`; see
+    `Arbor.MCP.Client.call_tool/4`
 
   ## Examples
 
@@ -93,7 +100,7 @@ defmodule Arbor.MCP.Client.Operations.Tools do
           Types.tool_name(),
           Types.tool_arguments(),
           Types.request_opts_or_timeout()
-        ) :: Types.mcp_response()
+        ) :: Types.mrtr_response()
   def call_tool(client, tool_name, arguments, timeout_or_opts \\ 30_000)
 
   def call_tool(client, tool_name, arguments, timeout) when is_integer(timeout) do
@@ -330,13 +337,7 @@ defmodule Arbor.MCP.Client.Operations.Tools do
   defp maybe_retry_header_mismatch(result, client, params, opts, deadline) do
     if header_mismatch?(result) do
       with {:ok, remaining} <- remaining_timeout(deadline),
-           {:ok, _tools} <-
-             list_tools(client,
-               timeout: remaining,
-               format: :map,
-               retry_policy: false,
-               cache_mode: :refresh
-             ),
+           {:ok, _tools} <- list_tools(client, refresh_opts(remaining, opts)),
            {:ok, remaining} <- remaining_timeout(deadline) do
         # What's left becomes the retry's limit: its total limit if
         # progress keeps it alive, else its timeout.
@@ -361,6 +362,15 @@ defmodule Arbor.MCP.Client.Operations.Tools do
     else
       result
     end
+  end
+
+  # The refresh is made on the caller's behalf, so the caller's exit cancels
+  # it as it would the call (or doesn't, as the call asked). It inherits
+  # nothing else: its timeout is what is left of the call's, and the call's
+  # meta, progress token and MRTR options belong to the call alone.
+  defp refresh_opts(remaining, opts) do
+    [timeout: remaining, format: :map, retry_policy: false, cache_mode: :refresh] ++
+      Keyword.take(opts, [:cancel_on_caller_exit])
   end
 
   defp header_mismatch?({:error, %Error.ProtocolError{code: -32_020}}), do: true

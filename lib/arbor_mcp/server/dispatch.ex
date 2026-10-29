@@ -304,6 +304,10 @@ defmodule Arbor.MCP.Server.Dispatch do
   end
 
   defp do_dispatch("server/discover", ctx, state) do
+    # Discovery fills in its own ttlMs and cacheScope, which a hint from
+    # :cache_hints could no longer replace once the result carries them.
+    hint = ctx.dispatch_opts |> Keyword.get(:cache_hints, %{}) |> Map.get("server/discover", %{})
+
     result =
       Discover.build(
         handler_server_info(ctx.module) || %{},
@@ -311,7 +315,9 @@ defmodule Arbor.MCP.Server.Dispatch do
         protocol_mode: Keyword.get(ctx.dispatch_opts, :protocol_mode) || protocol_mode(state),
         instructions:
           Keyword.get(ctx.dispatch_opts, :instructions) || state_value(state, :instructions) ||
-            handler_instructions(ctx.module)
+            handler_instructions(ctx.module),
+        ttl_ms: hint["ttlMs"],
+        cache_scope: hint["cacheScope"]
       )
 
     {:response, JSONRPC.response(ctx.id, result), state}

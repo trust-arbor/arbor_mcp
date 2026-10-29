@@ -130,26 +130,7 @@ defmodule Arbor.MCP.Transport.HTTP.BoundedStream do
         {:cont, {:more, %{acc | reason: reason}}}
 
       {:headers, ^request_ref, headers}, {:more, acc} ->
-        headers = normalize_headers(headers)
-        all_headers = acc.headers ++ headers
-        mode = acc.mode || response_mode(acc.status, all_headers)
-
-        case validate_headers(all_headers, mode, Keyword.fetch!(opts, :max_response_bytes)) do
-          :ok ->
-            updated = %{acc | headers: all_headers, mode: mode}
-
-            if mode == :stream and is_nil(acc.mode) do
-              case deliver(owner, {:stream_start, acc.status, headers}, opts) do
-                :ok -> {:cont, {:more, updated}}
-                {:error, reason} -> {:halt, {:error, reason}}
-              end
-            else
-              {:cont, {:more, updated}}
-            end
-
-          {:error, reason} ->
-            {:halt, {:error, reason}}
-        end
+        consume_headers(headers, acc, owner, opts)
 
       {:data, ^request_ref, data}, {:more, %{mode: :stream} = acc} ->
         case deliver(owner, {:stream, data}, opts) do
@@ -181,6 +162,39 @@ defmodule Arbor.MCP.Transport.HTTP.BoundedStream do
       _event, result ->
         {:cont, result}
     end)
+  end
+
+  defp consume_headers(headers, acc, owner, opts) do
+    headers = normalize_headers(headers)
+    all_headers = acc.headers ++ headers
+    mode = acc.mode || response_mode(acc.status, all_headers)
+
+    case header_action(acc.status, all_headers, mode, opts) do
+      :auth ->
+        send(owner, {:bounded_http, self(), {:complete, acc.status, all_headers, ""}})
+        {:halt, :done}
+
+      :ok ->
+        updated = %{acc | headers: all_headers, mode: mode}
+
+        if mode == :stream and is_nil(acc.mode) do
+          case deliver(owner, {:stream_start, acc.status, headers}, opts) do
+            :ok -> {:cont, {:more, updated}}
+            {:error, reason} -> {:halt, {:error, reason}}
+          end
+        else
+          {:cont, {:more, updated}}
+        end
+
+      {:error, reason} ->
+        {:halt, {:error, reason}}
+    end
+  end
+
+  defp header_action(status, headers, mode, opts) do
+    if Keyword.get(opts, :auth_headers_only, false) and status in [401, 403],
+      do: :auth,
+      else: validate_headers(headers, mode, Keyword.fetch!(opts, :max_response_bytes))
   end
 
   defp response_mode(status, headers) do

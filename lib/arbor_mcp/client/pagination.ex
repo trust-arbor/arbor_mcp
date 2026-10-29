@@ -6,12 +6,23 @@ defmodule Arbor.MCP.Client.Pagination do
   alias Arbor.MCP.Internal.RequestParams
 
   def run(client, method, field, opts) do
-    opts = Keyword.validate!(opts, [:timeout, :cursor, :max_pages, :max_items, :max_bytes])
+    opts =
+      Keyword.validate!(opts, [
+        :timeout,
+        :cursor,
+        :max_pages,
+        :max_items,
+        :max_bytes,
+        :cancel_on_caller_exit
+      ])
 
+    # The limits left, and what every page request is sent with besides its
+    # timeout. Each page request validates :cancel_on_caller_exit itself.
     limits = %{
       pages: positive!(opts, :max_pages, 64),
       items: positive!(opts, :max_items, 10_000),
-      bytes: positive!(opts, :max_bytes, 8_388_608)
+      bytes: positive!(opts, :max_bytes, 8_388_608),
+      request_opts: Keyword.take(opts, [:cancel_on_caller_exit])
     }
 
     deadline = Deadline.after_ms(positive!(opts, :timeout, 30_000))
@@ -37,7 +48,9 @@ defmodule Arbor.MCP.Client.Pagination do
   end
 
   defp fetch_page(client, method, field, cursor, deadline, limits, seen, pages) do
-    opts = [format: :map, timeout: Deadline.remaining(deadline), retry_policy: false]
+    opts =
+      [format: :map, timeout: Deadline.remaining(deadline), retry_policy: false] ++
+        limits.request_opts
 
     with {:ok, page} <-
            Request.make_request(

@@ -64,6 +64,9 @@ defmodule Arbor.MCP.Authorization.Provider.OAuth do
     # Authorization servers the resource was found to have moved to. Each
     # one's flow runs once, so failed ones don't start again with every 401.
     migration_issuers: [],
+    # Observable acquisition evidence for transports, even when a refresh
+    # repeats the bearer bytes and every other piece of token metadata.
+    token_acquisitions: 0,
     granted_scopes: [],
     auth_completed: false
   ]
@@ -188,6 +191,7 @@ defmodule Arbor.MCP.Authorization.Provider.OAuth do
          %{
            state
            | access_token: token,
+             token_acquisitions: state.token_acquisitions + 1,
              refresh: next,
              expires_at: expires_at(token_data),
              granted_scopes: token_scopes(token_data, state.granted_scopes),
@@ -247,6 +251,7 @@ defmodule Arbor.MCP.Authorization.Provider.OAuth do
         new_state = %{
           state
           | access_token: access_token,
+            token_acquisitions: state.token_acquisitions + 1,
             auth_completed: true,
             authorization_server_issuer: issuer,
             granted_scopes: granted_scopes,

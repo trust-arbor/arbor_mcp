@@ -192,6 +192,7 @@ defmodule Arbor.MCP.Transport.HTTP.LegacySSE do
     result =
       with {:ok, transport_opts} <- transport_opts(state.post_url, state.security) do
         BoundedClient.request(:post, state.post_url, headers, "application/json", body,
+          auth_headers_only: true,
           connect_timeout: state.timeouts.connect,
           request_timeout: response_timeout(state),
           max_request_bytes: state.max_request_bytes,

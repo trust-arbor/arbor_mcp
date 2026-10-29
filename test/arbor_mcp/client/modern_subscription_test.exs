@@ -2,6 +2,7 @@ defmodule Arbor.MCP.Client.ModernSubscriptionTest do
   use ExUnit.Case, async: true
 
   alias Arbor.MCP.Client
+  alias Arbor.MCP.Client.RequestHandler
   alias Arbor.MCP.Client.Subscription
   alias Arbor.MCP.Server
   alias Arbor.MCP.Server.{HandlerServer, Runtime, Subscriptions}
@@ -27,20 +28,29 @@ defmodule Arbor.MCP.Client.ModernSubscriptionTest do
     def handle_call({:open_subscription, subscription, filter}, _from, state) do
       id = state.next_id
 
-      send(
-        subscription,
-        {:client_subscription_acknowledged, id,
-         %{
-           "_meta" => %{"io.modelcontextprotocol/subscriptionId" => id},
-           "notifications" => filter
-         }}
-      )
+      case Map.get(state, :refusal) do
+        nil ->
+          send(
+            subscription,
+            {:client_subscription_acknowledged, id,
+             %{
+               "_meta" => %{"io.modelcontextprotocol/subscriptionId" => id},
+               "notifications" => filter
+             }}
+          )
+
+        error ->
+          send(subscription, {:client_subscription_error, id, error})
+      end
 
       send(state.owner, {:subscription_opened, id})
 
       {:reply, {:ok, id},
        Map.merge(state, %{next_id: id + 1, subscription: subscription, request_id: id})}
     end
+
+    def handle_call({:refuse_reopen, error}, _from, state),
+      do: {:reply, :ok, Map.put(state, :refusal, error)}
 
     def handle_call({:request, "resources/read", %{"uri" => uri}, _meta}, _from, state) do
       send(
@@ -344,6 +354,78 @@ defmodule Arbor.MCP.Client.ModernSubscriptionTest do
     assert task_event["taskId"] == "task-resync"
     assert :ok = Subscription.cancel(reconnected)
     assert_receive {:subscription_cancelled, ^second_id}
+  end
+
+  @tag :reauth_round6
+  test "a refused reopen closes an acknowledged subscription exactly once" do
+    {:ok, client} = ReconnectClient.start_link(self())
+    assert {:ok, subscription} = Subscription.open(client, %{"toolsListChanged" => true})
+    assert_receive {:subscription_opened, first_id}
+    error = {:stream_error, {:auth_refused, {:oauth_failed, :insufficient_scope}}}
+    assert :ok = GenServer.call(client, {:refuse_reopen, error})
+    monitor = Process.monitor(subscription.pid)
+    send(subscription.pid, {:client_subscription_disconnected, :closed})
+    assert_receive {:ex_mcp_subscription_resync, _, :started}
+    timer = :sys.get_state(subscription.pid).reconnect_timer
+    assert is_reference(timer)
+    send(subscription.pid, :client_subscription_reconnect)
+    assert_receive {:subscription_opened, second_id}
+    refute second_id == first_id
+
+    assert_receive {:ex_mcp_subscription_closed, closed, {:error, ^error}}
+    assert closed.pid == subscription.pid
+    assert closed.request_id == second_id
+    assert closed.acknowledged_filter == subscription.acknowledged_filter
+    assert_receive {:DOWN, ^monitor, :process, _, :normal}
+    assert Process.read_timer(timer) == false
+    refute_received {:ex_mcp_subscription_closed, _, _}
+    refute_received {:subscription_opened, _}
+  end
+
+  @tag :reauth_round5
+  test "definitive auth disconnects terminate the subscription without reopening or resync" do
+    {:ok, client} = ReconnectClient.start_link(self())
+
+    for reason <- [
+          {:auth_refused, {:unauthorized, 401, "", "Basic"}},
+          {:oauth_failed, :insufficient_scope}
+        ] do
+      assert {:ok, subscription} = Subscription.open(client, %{"toolsListChanged" => true})
+      assert_receive {:subscription_opened, _id}
+      monitor = Process.monitor(subscription.pid)
+      send(subscription.pid, {:client_subscription_disconnected, reason})
+
+      assert_receive {:ex_mcp_subscription_closed, ^subscription,
+                      {:error, {:stream_error, ^reason}}}
+
+      assert_receive {:DOWN, ^monitor, :process, _pid, :normal}
+      refute_received {:ex_mcp_subscription_resync, _, :started}
+      refute_received {:subscription_opened, _}
+    end
+  end
+
+  @tag :reauth_round5
+  test "stream close classification preserves definitive auth refusals for requests and subscriptions" do
+    for reason <- [{:auth_refused, :denied}, {:oauth_failed, :insufficient_scope}] do
+      state = %Client{subscriptions: %{1 => self()}}
+
+      assert {:noreply, %{subscriptions: subscriptions}} =
+               RequestHandler.handle_subscription_stream_closed(1, reason, state)
+
+      assert subscriptions == %{}
+      assert_receive {:client_subscription_error, 1, {:stream_error, ^reason}}
+      refute_received {:client_subscription_disconnected, _}
+
+      ref = make_ref()
+      state = %Client{pending_requests: %{1 => {{self(), ref}, :single, "tools/call"}}}
+
+      assert {:noreply, %{pending_requests: pending}} =
+               RequestHandler.handle_modern_stream_closed(1, reason, state)
+
+      assert pending == %{}
+      assert_receive {^ref, {:error, %{type: :transport_error, reason: error}}}
+      assert error == reason
+    end
   end
 
   defp start_stack do

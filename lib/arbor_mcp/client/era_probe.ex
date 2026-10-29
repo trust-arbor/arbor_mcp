@@ -12,6 +12,7 @@ defmodule Arbor.MCP.Client.EraProbe do
   alias Arbor.MCP.Internal.{Protocol, RequestParams, VersionInfo, VersionRegistry}
   alias Arbor.MCP.Protocol.ResultEnvelope
   alias Arbor.MCP.Server.Discover
+  alias Arbor.MCP.Transport
   alias Arbor.MCP.Transport.Local
   alias Arbor.RPC.JSONRPC
 
@@ -114,6 +115,15 @@ defmodule Arbor.MCP.Client.EraProbe do
            bounded_send_and_receive(transport_mod, outbound, transport_state, opts) do
       parse_response(response, request_id, mode, updated_state)
     else
+      {:error, {:http_error, status, body}, latest_state} when status in [400, 404, 405] ->
+        parse_http_probe_error(status, body, latest_state)
+
+      {:error, {:probe_timeout, reason}, latest_state} ->
+        {:error, {:probe_timeout, reason}, latest_state}
+
+      {:error, reason, latest_state} ->
+        {:error, {:transport_error, reason}, latest_state}
+
       {:error, {:probe_timeout, reason}} ->
         {:error, {:probe_timeout, reason}, transport_state}
 
@@ -242,16 +252,24 @@ defmodule Arbor.MCP.Client.EraProbe do
 
       {:error, _reason} = error ->
         error
+
+      {:error, reason, updated_state} ->
+        {:error, reason,
+         Deadline.put_on_transport(transport_mod, updated_state, establish_deadline)}
     end
   end
 
   defp send_and_receive(transport_mod, outbound, transport_state, deadline) do
-    case transport_mod.send_message(outbound, transport_state) do
+    case Transport.send_message_with_state(transport_mod, outbound, transport_state) do
       {:ok, updated_state, response} ->
         {:ok, response, updated_state}
 
       {:ok, updated_state} ->
         await_response(transport_mod, updated_state, deadline)
+
+      {:error, reason, updated_state} ->
+        error = if Deadline.expired?(deadline), do: {:probe_timeout, reason}, else: reason
+        {:error, error, updated_state}
 
       {:error, reason} ->
         if Deadline.expired?(deadline),
@@ -285,9 +303,9 @@ defmodule Arbor.MCP.Client.EraProbe do
 
     case result do
       {:ok, response, updated_state} -> {:ok, response, updated_state}
-      {:error, {:timeout_error, reason}} -> {:error, {:probe_timeout, reason}}
-      {:error, :probe_timeout} -> {:error, {:probe_timeout, :timeout}}
-      {:error, reason} -> {:error, reason}
+      {:error, {:timeout_error, reason}} -> {:error, {:probe_timeout, reason}, transport_state}
+      {:error, :probe_timeout} -> {:error, {:probe_timeout, :timeout}, transport_state}
+      {:error, reason} -> {:error, reason, transport_state}
     end
   end
 

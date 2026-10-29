@@ -59,6 +59,16 @@ defmodule Arbor.MCP.Authorization.Provider do
   Initialize the provider with configuration.
 
   Called once when the transport is created. Returns initial provider state.
+
+  An error fails the connection rather than leaving it unauthenticated: the
+  HTTP transport's `connect/1` returns
+  `{:error, {:auth_provider_init_failed, module, reason}}`, and
+  `Arbor.MCP.Client.start_link/1` returns that reason inside
+  `{:error, {:transport_connect_failed, ...}}`. `reason` is kept only when it
+  is an atom; any other error is reported as `:redacted`, an exception as
+  `{:raised, exception_module}`, a throw or exit as `:throw` or `:exit`, and
+  any other return as `:invalid_init_result`, since those may carry the
+  provider's config.
   """
   @callback init(config()) :: {:ok, state()} | {:error, term()}
 

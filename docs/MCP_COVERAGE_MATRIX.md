@@ -112,7 +112,7 @@ Test paths in this table are relative to `test/arbor_mcp/`.
 | Required per-request protocol, client capability, and client-info metadata | ✅ | `server/request_context_test.exs`, `internal/request_params_test.exs`, `protocol/meta_test.exs` |
 | Modern method availability and error codes | ✅ | `protocol/methods_test.exs`, `protocol/error_code_characterization_test.exs`, `server/dispatch_test.exs` |
 | Required `resultType` envelopes and cache hints | ✅ | `protocol/result_envelope_test.exs`, `protocol/cacheable_result_test.exs`, `client/modern_result_validation_test.exs` |
-| Multi Round-Trip Requests and sealed request state | ✅ | `client/mrtr_test.exs`, `message_processor_mrtr_test.exs`, `protocol/request_processor_mrtr_test.exs`, `server/mrtr_dispatch_test.exs`, `integration/mrtr_round_trip_test.exs` |
+| Multi Round-Trip Requests and sealed request state | ✅ | `client/mrtr_test.exs`, `client/manual_mrtr_test.exs`, `message_processor_mrtr_test.exs`, `protocol/request_processor_mrtr_test.exs`, `server/mrtr_dispatch_test.exs`, `integration/mrtr_round_trip_test.exs` |
 | Replay, expiry, ownership, and key/codec rotation | ✅ | `server/request_state_test.exs`, `server/replay_cache_test.exs` |
 | `subscriptions/listen`, filters, replacement streams, and pressure bounds | ✅ | `client/modern_subscription_test.exs`, `client/modern_http_subscription_test.exs`, `server/subscriptions_test.exs`, `subscription_registry_test.exs` |
 | Stateless Streamable HTTP routing and POST-owned SSE | ✅ | `http_plug_test.exs`, `transport/http_request_headers_test.exs`, `transport/http_modern_stream_client_test.exs`, `client/modern_http_request_stream_test.exs` |

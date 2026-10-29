@@ -3,6 +3,7 @@ defmodule Arbor.MCP.Client.MRTR do
 
   alias Arbor.MCP.Client.{InputDispatcher, Lifetime}
   alias Arbor.MCP.Error
+  alias Arbor.MCP.Internal.VersionRegistry
   alias Arbor.MCP.Protocol.ErrorCodes
 
   @supported_methods ["tools/call", "resources/read", "prompts/get"]
@@ -28,6 +29,32 @@ defmodule Arbor.MCP.Client.MRTR do
          :ok <- validate_size(result, opts),
          :ok <- validate_input_requests(input_requests) do
       {:ok, input_requests, request_state}
+    end
+  end
+
+  # Checks a validated input_required round that the caller answers itself
+  # (`mrtr: :manual`) as automatic fulfillment checks one before it calls the
+  # handler: only on a 2026-07-28 connection (see
+  # RequestHandler.handle_mrtr_fulfillment/5), and only for input the request
+  # declared a capability for. `capabilities` are the ones the request
+  # declared: its `client_capabilities:` or the client's start capabilities.
+  @spec check_manual_round(map(), String.t() | nil, map()) ::
+          :ok | {:error, Error.ProtocolError.t()}
+  def check_manual_round(input_requests, protocol_version, capabilities) do
+    if VersionRegistry.modern?(protocol_version) do
+      input_requests
+      |> Enum.sort_by(fn {id, _request} -> id end)
+      |> Enum.reduce_while(:ok, fn {_id, request}, :ok ->
+        method = value(request, "method")
+        params = value(request, "params") || %{}
+
+        case InputDispatcher.require_capability(method, params, capabilities) do
+          :ok -> {:cont, :ok}
+          {:error, _reason} = error -> {:halt, error}
+        end
+      end)
+    else
+      {:error, error("MRTR requires MCP 2026-07-28")}
     end
   end
 
@@ -203,7 +230,7 @@ defmodule Arbor.MCP.Client.MRTR do
   end
 
   defp validate_request_count(requests, opts) do
-    maximum = Keyword.get(opts, :max_input_requests, @default_max_input_requests)
+    maximum = max_input_requests(opts)
 
     if map_size(requests) <= maximum,
       do: :ok,
@@ -239,8 +266,15 @@ defmodule Arbor.MCP.Client.MRTR do
       else: {:error, error("inputResponses keys do not match inputRequests")}
   end
 
+  @spec max_bytes(keyword()) :: non_neg_integer()
+  def max_bytes(opts), do: Keyword.get(opts, :max_mrtr_bytes, @default_max_bytes)
+
+  @spec max_input_requests(keyword()) :: non_neg_integer()
+  def max_input_requests(opts),
+    do: Keyword.get(opts, :max_input_requests, @default_max_input_requests)
+
   defp validate_size(value, opts) do
-    maximum = Keyword.get(opts, :max_mrtr_bytes, @default_max_bytes)
+    maximum = max_bytes(opts)
 
     case Jason.encode(value) do
       {:ok, encoded} when byte_size(encoded) <= maximum -> :ok

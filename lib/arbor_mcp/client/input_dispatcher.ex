@@ -113,16 +113,23 @@ defmodule Arbor.MCP.Client.InputDispatcher do
     do: {:error, {:invalid_client_handler_reply, other}, state}
 
   defp maybe_require_capability(method, params, capabilities, opts) do
-    if Keyword.get(opts, :require_capability, false) do
-      required = required_capability(method, params)
+    if Keyword.get(opts, :require_capability, false),
+      do: require_capability(method, params, capabilities),
+      else: :ok
+  end
 
-      if capability_satisfied?(capabilities, required) do
-        :ok
-      else
-        {:error, Error.missing_required_client_capability(required)}
-      end
-    else
+  # The check automatic MRTR makes before it calls the handler. A manual
+  # round (see Arbor.MCP.Client.MRTR.check_manual_round/3) is held to the
+  # same rule: the server may ask only for what the request declared.
+  @doc false
+  @spec require_capability(String.t(), map(), map()) :: :ok | {:error, Error.ProtocolError.t()}
+  def require_capability(method, params, capabilities) do
+    required = required_capability(method, params)
+
+    if capability_satisfied?(capabilities, required) do
       :ok
+    else
+      {:error, Error.missing_required_client_capability(required)}
     end
   end
 

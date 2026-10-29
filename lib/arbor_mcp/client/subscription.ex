@@ -10,11 +10,15 @@ defmodule Arbor.MCP.Client.Subscription do
 
   If a transport reconnects, the process re-opens the desired filter with a
   fresh JSON-RPC request ID and emits a resynchronization notification.
+  A definitive authentication refusal is returned as
+  `{:error, {:stream_error, {:auth_refused, reason}}}` during opening, or
+  delivered in `{:ex_mcp_subscription_closed, subscription, {:error, error}}`
+  after acknowledgment. It does not reopen the subscription.
   """
 
   use GenServer
 
-  alias Arbor.MCP.Client.{ConnectionScope, Deadline, Diagnostics, Lifetime}
+  alias Arbor.MCP.Client.{ConnectionScope, Deadline, Diagnostics, HTTPAuth, Lifetime}
   alias Arbor.MCP.SubscriptionFilter
 
   @subscription_id_key "io.modelcontextprotocol/subscriptionId"
@@ -43,6 +47,8 @@ defmodule Arbor.MCP.Client.Subscription do
     :acknowledged_filter,
     :open_timeout,
     :open_error,
+    :reconnect_timer,
+    acknowledged?: false,
     reconnect_attempts: 0,
     resync?: false,
     pending_events: [],
@@ -138,7 +144,7 @@ defmodule Arbor.MCP.Client.Subscription do
 
   @impl true
   def handle_continue(:open, state) do
-    {:noreply, open_on_client(state)}
+    open_on_client(state)
   end
 
   @impl true
@@ -196,7 +202,7 @@ defmodule Arbor.MCP.Client.Subscription do
         end
       end
     else
-      _invalid -> fail_open(state, :invalid_subscription_acknowledgment)
+      _invalid -> fail_subscription(state, :invalid_subscription_acknowledgment)
     end
   end
 
@@ -229,44 +235,20 @@ defmodule Arbor.MCP.Client.Subscription do
 
   def handle_info({:client_subscription_error, request_id, error}, state)
       when request_id == state.request_id do
-    if state.status == :opening do
-      fail_open(state, error)
+    fail_subscription(state, error)
+  end
+
+  def handle_info({:client_subscription_disconnected, reason}, state) do
+    if HTTPAuth.refused?(reason) do
+      handle_info({:client_subscription_error, state.request_id, {:stream_error, reason}}, state)
     else
-      send(state.owner, {:ex_mcp_subscription_closed, reference(state), {:error, error}})
-      {:stop, :normal, %{state | status: :failed, open_error: error}}
+      reconnect(state)
     end
   end
 
-  def handle_info({:client_subscription_disconnected, _reason}, state) do
-    send(state.owner, {:ex_mcp_subscription_resync, self(), :started})
-    reconnect_attempts = state.reconnect_attempts + 1
-
-    :telemetry.execute(
-      [:arbor_mcp, :client, :subscription, :reconnect],
-      %{attempt: reconnect_attempts},
-      %{phase: :scheduled}
-    )
-
-    Process.send_after(
-      self(),
-      :client_subscription_reconnect,
-      reconnect_delay(reconnect_attempts)
-    )
-
-    {:noreply,
-     %{
-       state
-       | status: :reconnecting,
-         request_id: nil,
-         acknowledged_filter: nil,
-         reconnect_attempts: reconnect_attempts,
-         resync?: true,
-         pending_events: []
-     }}
-  end
-
   def handle_info(:client_subscription_reconnect, %{status: :reconnecting} = state) do
-    {:noreply, open_on_client(%{state | status: :opening})}
+    state = cancel_reconnect(state)
+    open_on_client(%{state | status: :opening})
   end
 
   def handle_info(:client_subscription_reconnect, state), do: {:noreply, state}
@@ -305,18 +287,55 @@ defmodule Arbor.MCP.Client.Subscription do
   end
 
   @impl true
-  def terminate(_reason, %{status: status} = state)
-      when status not in [:cancelled, :complete, :failed] do
-    close_on_client(state, "subscription process stopped")
+  def terminate(_reason, state) do
+    cancel_reconnect(state)
+
+    if state.status not in [:cancelled, :complete, :failed],
+      do: close_on_client(state, "subscription process stopped")
+
     :ok
   end
 
-  def terminate(_reason, _state), do: :ok
+  defp reconnect(state) do
+    state = cancel_reconnect(state)
+    send(state.owner, {:ex_mcp_subscription_resync, self(), :started})
+    reconnect_attempts = state.reconnect_attempts + 1
+
+    :telemetry.execute(
+      [:arbor_mcp, :client, :subscription, :reconnect],
+      %{attempt: reconnect_attempts},
+      %{phase: :scheduled}
+    )
+
+    timer =
+      Process.send_after(
+        self(),
+        :client_subscription_reconnect,
+        reconnect_delay(reconnect_attempts)
+      )
+
+    {:noreply,
+     %{
+       state
+       | status: :reconnecting,
+         request_id: nil,
+         reconnect_timer: timer,
+         reconnect_attempts: reconnect_attempts,
+         resync?: true,
+         pending_events: []
+     }}
+  end
+
+  defp cancel_reconnect(state) do
+    if state.reconnect_timer, do: Process.cancel_timer(state.reconnect_timer)
+    %{state | reconnect_timer: nil}
+  end
 
   defp activate_acknowledged(state, acknowledged) do
     state = %{
       state
       | status: :active,
+        acknowledged?: true,
         acknowledged_filter: acknowledged,
         open_error: nil,
         reconnect_attempts: 0
@@ -333,19 +352,15 @@ defmodule Arbor.MCP.Client.Subscription do
            state.open_timeout
          ) do
       {:ok, request_id} ->
-        %{state | request_id: request_id, status: :opening}
+        {:noreply, %{state | request_id: request_id, status: :opening}}
 
       {:error, reason} ->
-        reply_waiters(state.waiters, {:error, reason})
-        maybe_notify_resync_failure(state, reason)
-        %{state | status: :failed, open_error: reason, waiters: []}
+        fail_subscription(state, reason)
     end
   catch
     :exit, reason ->
       error = {:client_unavailable, reason}
-      reply_waiters(state.waiters, {:error, error})
-      maybe_notify_resync_failure(state, error)
-      %{state | status: :failed, open_error: error, waiters: []}
+      fail_subscription(state, error)
   end
 
   defp close_on_client(%{request_id: nil}, _reason), do: :ok
@@ -359,7 +374,18 @@ defmodule Arbor.MCP.Client.Subscription do
     :exit, _reason -> :ok
   end
 
+  defp fail_subscription(%{acknowledged?: true} = state, error) do
+    state = cancel_reconnect(state)
+    close_on_client(state, "subscription failed")
+    maybe_notify_resync_failure(state, error)
+    send(state.owner, {:ex_mcp_subscription_closed, reference(state), {:error, error}})
+    {:stop, :normal, %{state | status: :failed, open_error: error}}
+  end
+
+  defp fail_subscription(state, error), do: fail_open(state, error)
+
   defp fail_open(state, reason) do
+    state = cancel_reconnect(state)
     close_on_client(state, "subscription opening failed")
     reply_waiters(state.waiters, {:error, reason})
     maybe_notify_resync_failure(state, reason)

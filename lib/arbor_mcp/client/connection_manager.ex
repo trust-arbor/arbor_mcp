@@ -12,6 +12,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   alias Arbor.MCP.Internal.{Protocol, VersionInfo, VersionRegistry}
   alias Arbor.MCP.Reliability.Retry
   alias Arbor.MCP.Testing.MockTransport
+  alias Arbor.MCP.Transport
 
   alias Arbor.MCP.Transport.{HTTP, Local, ReliabilityWrapper, Stdio, Test}
   alias Arbor.MCP.Transport.HTTP.LegacySSE
@@ -217,20 +218,34 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   defp abandon_legacy_attempt(HTTP, %HTTP{} = snapshot, %HTTP{} = attempt) do
     result = HTTP.abandon_attempt(with_cleanup_deadline(HTTP, attempt), snapshot)
     ConnectionScope.closed(HTTP, attempt, result)
-    result
+
+    # Restore the connection snapshot after ending the failed session, but
+    # never roll back credentials acquired or rejected during that attempt.
+    Map.merge(
+      snapshot,
+      Map.take(attempt, [
+        :access_token,
+        :credential_generation,
+        :rejected_generation,
+        :auth_completed,
+        :auth_provider_state,
+        :granted_scopes,
+        :headers
+      ])
+    )
   end
 
   defp abandon_legacy_attempt(ReliabilityWrapper, snapshot, attempt) do
     case {ReliabilityWrapper.unwrap(snapshot), ReliabilityWrapper.unwrap(attempt)} do
       {{HTTP, http_snapshot}, {HTTP, http_attempt}} ->
-        abandon_legacy_attempt(HTTP, http_snapshot, http_attempt)
+        %{attempt | wrapped_state: abandon_legacy_attempt(HTTP, http_snapshot, http_attempt)}
 
       _other ->
-        :ok
+        attempt
     end
   end
 
-  defp abandon_legacy_attempt(_transport_mod, _snapshot, _attempt), do: :ok
+  defp abandon_legacy_attempt(_transport_mod, _snapshot, attempt), do: attempt
 
   defp close_quietly(transport_mod, transport_state) do
     result = transport_mod.close(transport_state)
@@ -290,8 +305,8 @@ defmodule Arbor.MCP.Client.ConnectionManager do
         {:error, reason} ->
           {:error, reason, settled_state}
 
-        other ->
-          {:error, other, settled_state}
+        {:error, reason, latest_state} ->
+          {:error, reason, latest_state}
       end
     end
   end
@@ -484,9 +499,9 @@ defmodule Arbor.MCP.Client.ConnectionManager do
       {:error, initialize_error, latest_state} ->
         if legacy_protocol_failure?(initialize_error) and
              transport_alive?(transport_mod, transport_state) do
-          abandon_legacy_attempt(transport_mod, transport_state, latest_state)
+          probe_state = abandon_legacy_attempt(transport_mod, transport_state, latest_state)
 
-          case probe_era(transport_mod, transport_state, opts) do
+          case probe_era(transport_mod, probe_state, opts) do
             {:ok, discovery, updated_state} ->
               emit_settled_era(:modern, discovery.protocol_version)
               observe_era(era_identity, :modern, discovery.protocol_version, opts)
@@ -808,15 +823,22 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   defp connect_with_reliability(transport_mod, transport_opts, reliability_opts) do
     case transport_mod.connect(transport_opts) do
       {:ok, transport_state} ->
-        if reliability_opts != [] do
-          # Wrap with reliability features
-          {:ok, wrapped_state} =
-            ReliabilityWrapper.wrap(transport_mod, transport_state, reliability_opts)
+        cond do
+          reliability_opts == [] ->
+            {:ok, {transport_mod, transport_state}}
 
-          {:ok, {ReliabilityWrapper, wrapped_state}}
-        else
-          # No reliability features requested
-          {:ok, {transport_mod, transport_state}}
+          # HTTP keeps the wrapper's components itself, so the client still
+          # sees an HTTP transport and sends each request from its own task
+          # (see HTTP.attach_reliability/2).
+          transport_mod == HTTP ->
+            {:ok, wrapper} = ReliabilityWrapper.wrap(HTTP, transport_state, reliability_opts)
+            {:ok, {HTTP, HTTP.attach_reliability(transport_state, wrapper)}}
+
+          true ->
+            {:ok, wrapped_state} =
+              ReliabilityWrapper.wrap(transport_mod, transport_state, reliability_opts)
+
+            {:ok, {ReliabilityWrapper, wrapped_state}}
         end
 
       error ->
@@ -1039,8 +1061,8 @@ defmodule Arbor.MCP.Client.ConnectionManager do
             |> parse_handshake_response(state_after_receive)
             |> with_state(state_after_receive)
 
-          {:error, reason} ->
-            {:error, reason, state_after_send}
+          {:error, _reason, _latest_state} = error ->
+            error
         end
 
       # An HTTP server rejects initialize with a 400 carrying the JSON-RPC
@@ -1051,23 +1073,28 @@ defmodule Arbor.MCP.Client.ConnectionManager do
       # other id is someone else's answer (a stale proxy's, say): both stay
       # the transport error they were.
       {:error, {:http_error, 400, body}} = error ->
-        initialize_id = request["id"]
+        initialize_response_error(error, body, request, transport_state, deadline)
 
-        case Protocol.parse_message(body) do
-          {:error, details, ^initialize_id} when is_map(details) ->
-            body
-            |> parse_handshake_response(transport_state)
-            |> with_state(transport_state)
+      {:error, {:http_error, 400, body} = reason, latest_state} ->
+        initialize_response_error({:error, reason}, body, request, latest_state, deadline)
 
-          _other ->
-            {:error, initialize_send_error(error, deadline), transport_state}
-        end
+      {:error, reason, latest_state} ->
+        {:error, initialize_send_error({:error, reason}, deadline), latest_state}
 
       {:error, _reason} = error ->
         {:error, initialize_send_error(error, deadline), transport_state}
+    end
+  end
 
-      other ->
-        {:error, other, transport_state}
+  defp initialize_response_error(error, body, request, transport_state, deadline) do
+    initialize_id = request["id"]
+
+    case Protocol.parse_message(body) do
+      {:error, details, ^initialize_id} when is_map(details) ->
+        body |> parse_handshake_response(transport_state) |> with_state(transport_state)
+
+      _other ->
+        {:error, initialize_send_error(error, deadline), transport_state}
     end
   end
 
@@ -1085,7 +1112,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
 
   defp send_initialize_request(transport_mod, transport_state, request) do
     with {:ok, outbound_request} <- encode_for_transport(transport_mod, request) do
-      case transport_mod.send_message(outbound_request, transport_state) do
+      case Transport.send_message_with_state(transport_mod, outbound_request, transport_state) do
         {:ok, new_state, response_data} ->
           # Non-SSE HTTP mode returns response immediately
           {:ok, new_state, response_data}
@@ -1137,13 +1164,13 @@ defmodule Arbor.MCP.Client.ConnectionManager do
         {:ok, message, new_state}
 
       {:error, :handshake_timeout} ->
-        {:error, :handshake_timeout}
+        {:error, :handshake_timeout, transport_state}
 
       {:error, {:timeout_error, _reason}} ->
-        {:error, :handshake_timeout}
+        {:error, :handshake_timeout, transport_state}
 
       {:error, reason} ->
-        {:error, "Failed to receive handshake response: #{inspect(reason)}"}
+        {:error, "Failed to receive handshake response: #{inspect(reason)}", transport_state}
     end
   end
 
@@ -1187,7 +1214,11 @@ defmodule Arbor.MCP.Client.ConnectionManager do
     notification = Protocol.encode_initialized()
 
     with {:ok, outbound_notification} <- encode_for_transport(transport_mod, notification) do
-      case transport_mod.send_message(outbound_notification, transport_state) do
+      case Transport.send_message_with_state(
+             transport_mod,
+             outbound_notification,
+             transport_state
+           ) do
         {:ok, new_state, _response_data} ->
           # Non-SSE HTTP mode may return response (ignore it for notifications)
           {:ok, new_state}
