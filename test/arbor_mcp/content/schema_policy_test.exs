@@ -104,6 +104,24 @@ defmodule Arbor.MCP.Content.SchemaPolicyTest do
         assert {:error, :network_ref_forbidden} = SchemaPolicy.preflight(schema)
       end
     end
+
+    test "walks $ref schemas under draft-7 dependencies names" do
+      for name <- ~w(id $id default enum examples const $ref properties) do
+        schema = %{
+          "type" => "object",
+          "properties" => %{
+            "default" => %{
+              "dependencies" => %{
+                name => %{"$ref" => "https://evil.example/#{name}"}
+              }
+            }
+          }
+        }
+
+        assert SchemaPolicy.preflight(schema) == {:error, :network_ref_forbidden},
+               "dependencies $ref child #{inspect(name)}"
+      end
+    end
   end
 
   describe "resource bounds" do

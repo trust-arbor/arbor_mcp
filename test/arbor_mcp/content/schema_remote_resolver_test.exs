@@ -76,6 +76,8 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolverTest do
       assert {:error, _errors} = SchemaPolicy.validate(10, resolved)
     end
 
+    @named_container_keys ~w(id $id default enum examples const $ref properties)
+
     test "does not treat a property named id as a schema identifier" do
       {opts, _agent} = resolver_options(%{})
 
@@ -96,6 +98,71 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolverTest do
 
       assert {:error, _errors} =
                SchemaPolicy.validate(%{"default" => %{"id" => 1}}, resolved)
+    end
+
+    test "does not treat dependentRequired keys as schema identifiers" do
+      {opts, _agent} = resolver_options(%{})
+
+      for name <- @named_container_keys do
+        schema = %{
+          "type" => "object",
+          "properties" => %{
+            "default" => %{
+              "dependentRequired" => %{name => ["other"]}
+            }
+          }
+        }
+
+        assert match?({:ok, _}, SchemaPolicy.compile(schema, opts)),
+               "dependentRequired child #{inspect(name)}"
+      end
+    end
+
+    test "does not treat draft-7 dependencies keys as schema identifiers" do
+      {opts, _agent} = resolver_options(%{})
+
+      for name <- @named_container_keys do
+        schema = %{
+          "$schema" => "http://json-schema.org/draft-07/schema#",
+          "type" => "object",
+          "properties" => %{
+            "default" => %{
+              "dependencies" => %{name => ["other"]}
+            }
+          }
+        }
+
+        assert match?({:ok, _}, SchemaPolicy.compile(schema, opts)),
+               "dependencies array child #{inspect(name)}"
+      end
+    end
+
+    test "fetches $ref schemas stored under dependencies names" do
+      routes = %{
+        "https://schemas.example.com/dep.json" => response(~s({"type":"string"}))
+      }
+
+      for name <- @named_container_keys do
+        {opts, agent} = resolver_options(routes)
+
+        schema = %{
+          "$schema" => "http://json-schema.org/draft-07/schema#",
+          "type" => "object",
+          "properties" => %{
+            "default" => %{
+              "dependencies" => %{
+                name => %{"$ref" => "https://schemas.example.com/dep.json"}
+              }
+            }
+          }
+        }
+
+        assert match?({:ok, _}, SchemaPolicy.compile(schema, opts)),
+               "dependencies $ref child #{inspect(name)}"
+
+        assert [{"https://schemas.example.com/dep.json", @public_ipv4}] = fetch_calls(agent),
+               "dependencies $ref child #{inspect(name)} must be fetched"
+      end
     end
 
     test "supports boolean root and remote schemas" do
