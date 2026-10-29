@@ -314,15 +314,17 @@ provider redirect.
 ### Issuer-bound credential persistence
 
 Pre-registered credentials require `credential_issuer` on every protocol
-version, including the default legacy revision (`2025-11-25`) and the
-`client_id` / `client_secret` compatibility aliases. ArborMCP compares this
-value byte-for-byte with the issuer in the discovered authorization-server
+version, including the default legacy revision (`2025-11-25`), the
+`client_id` / `client_secret` compatibility aliases, and
+`Arbor.MCP.Authorization.DiscoveryFlow`. ArborMCP compares this value
+byte-for-byte with the issuer in the discovered authorization-server
 metadata before resolving or using the secret. A trailing slash, path change,
 or any other textual difference is a mismatch; issuer identifiers are not
-URL-normalized. A missing or mismatched issuer fails closed with
-`{:pre_registered_credential_issuer_required, discovered_issuer}` or
-`{:pre_registered_credential_issuer_mismatch, details}` and the secret is
-never sent to another origin.
+URL-normalized. A missing issuer fails closed with
+`{:pre_registered_credential_issuer_required, discovered_issuer}` and a
+mismatch with `{:pre_registered_credential_issuer_mismatch, details}`. The
+secret is never sent to another origin. There is no opt-out: set
+`credential_issuer` to the exact issuer.
 
 Applications that persist DCR registrations or tokens can provide an encrypted
 store or OS-keychain adapter implementing

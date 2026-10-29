@@ -209,10 +209,11 @@ ArborMCP never invents a CIMD URL or guesses the application type. A missing
 strategy returns an actionable registration error.
 
 Pre-registered credentials must include `credential_issuer` on every protocol
-version, including the default legacy revision (`2025-11-25`) and the
-`client_id` / `client_secret` compatibility aliases. It is compared exactly
-with discovered AS metadata; a missing binding fails closed and the secret is
-never sent to another origin. To retain DCR credentials and
+version, including the default legacy revision (`2025-11-25`), the
+`client_id` / `client_secret` compatibility aliases, and
+`DiscoveryFlow.execute/1`. It is compared exactly with discovered AS
+metadata; trailing slashes are not normalized. A missing or mismatched
+binding fails closed and the secret is never sent to another origin. To retain DCR credentials and
 tokens safely across flows, configure an adapter implementing
 `Arbor.MCP.Authorization.CredentialStore`; registrations are issuer + client-ID
 bound and tokens use the complete authorization partition. See the

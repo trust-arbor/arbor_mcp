@@ -83,15 +83,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Pre-registered OAuth client secrets are issuer-bound by default.** The
-  `client_id` / `client_secret` compatibility aliases no longer send a
-  secret to whatever issuer discovered metadata names. Set
-  `credential_issuer` to the exact authorization-server issuer (the same
-  value already required for the explicit `{:pre_registered, ...}` strategy
-  and for MCP `2026-07-28`). A missing or mismatched issuer fails closed
-  with `{:pre_registered_credential_issuer_required, discovered_issuer}` or
-  `{:pre_registered_credential_issuer_mismatch, details}` before the secret
-  is resolved. See [Issuer-bound credential persistence](docs/CONFIGURATION.md#issuer-bound-credential-persistence).
+- **Pre-registered OAuth client secrets are issuer-bound by default.** There
+  is no opt-out. This breaks HTTP auth and `DiscoveryFlow.execute/1` that
+  still set only `client_id` / `client_secret` (the 1.x aliases) and omit
+  `credential_issuer`, and it also breaks a `credential_issuer` that differs
+  from the discovered issuer by a trailing slash, path, or case. The error
+  is `{:pre_registered_credential_issuer_required, discovered_issuer}` when
+  the key is missing, or
+  `{:pre_registered_credential_issuer_mismatch, [expected: ..., actual: ...]}`
+  when it does not match byte-for-byte. Trailing slashes are **not**
+  normalized. The fix is to set `credential_issuer` to the exact
+  authorization-server issuer (the same value already required for the
+  explicit `{:pre_registered, ...}` strategy and for MCP `2026-07-28`). See
+  [Issuer-bound credential persistence](docs/CONFIGURATION.md#issuer-bound-credential-persistence).
 - A modern (2026-07-28) request whose caller exits while it is in flight is
   now cancelled upstream by default: a `Task` running a call that is killed,
   or a process that crashes mid-call, no longer leaves the server working on
@@ -117,9 +121,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `client_id` / `client_secret` aliases was not bound to an issuer under the
   default legacy protocol (`2025-11-25`). Attacker-controlled authorization
   server metadata could therefore receive the secret after a transform.
-  `Arbor.MCP.Authorization.RegistrationPolicy` now requires
-  `credential_issuer` for every pre-registered secret, on every protocol
-  version, and refuses to resolve or send the secret to any other origin.
+  `Arbor.MCP.Authorization.RegistrationPolicy` and
+  `Arbor.MCP.Authorization.DiscoveryFlow` now require `credential_issuer`
+  for every pre-registered secret, on every protocol version, and refuse to
+  resolve or send the secret to any other origin. A missing key fails with
+  `{:pre_registered_credential_issuer_required, discovered_issuer}`; a
+  trailing-slash, case, or other textual difference fails with
+  `{:pre_registered_credential_issuer_mismatch, details}`. Set
+  `credential_issuer` to the exact issuer. Trailing slashes are not
+  normalized.
 - `Accept: application/json, text/event-stream;q` — a `q` parameter with no
   value — and `q =1` / `q= 1`, whose whitespace around the equals sign
   violates the weight grammar (RFC 9110 section 12.4.2: optional whitespace

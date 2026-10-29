@@ -7,7 +7,12 @@ defmodule Arbor.MCP.Authorization.DiscoveryFlow do
   and private_key_jwt authentication methods.
   """
 
-  alias Arbor.MCP.Authorization.{OAuthFlow, OIDCDiscovery, ProtectedResourceMetadata}
+  alias Arbor.MCP.Authorization.{
+    OAuthFlow,
+    OIDCDiscovery,
+    ProtectedResourceMetadata,
+    RegistrationPolicy
+  }
 
   @type auth_method :: :client_secret | :private_key_jwt
 
@@ -16,6 +21,7 @@ defmodule Arbor.MCP.Authorization.DiscoveryFlow do
           required(:client_id) => String.t(),
           required(:auth_method) => auth_method(),
           optional(:client_secret) => String.t(),
+          optional(:credential_issuer) => String.t(),
           optional(:private_key) => JOSE.JWK.t(),
           optional(:alg) => String.t(),
           optional(:kid) => String.t(),
@@ -38,6 +44,9 @@ defmodule Arbor.MCP.Authorization.DiscoveryFlow do
     - `:client_id` (required) - OAuth client identifier
     - `:auth_method` (required) - `:client_secret` or `:private_key_jwt`
     - `:client_secret` - Required when auth_method is `:client_secret`
+    - `:credential_issuer` - Exact authorization-server issuer the secret is
+      bound to. Compared byte-for-byte with the discovered issuer before the
+      secret is sent; trailing slashes and case are not normalized.
     - `:private_key` - Required when auth_method is `:private_key_jwt`
     - `:alg` - Signing algorithm for JWT auth (default: "RS256")
     - `:kid` - Key ID for JWT auth
@@ -50,9 +59,23 @@ defmodule Arbor.MCP.Authorization.DiscoveryFlow do
   def execute(config) do
     with {:ok, as_info} <- discover_authorization_server(config),
          {:ok, as_metadata} <- discover_as_metadata(as_info, config),
+         {:ok, _selection} <- bind_pre_registered_secret(as_metadata, config),
          {:ok, auth_method} <- select_auth_method(config, as_metadata),
          {:ok, token} <- obtain_token(auth_method, as_metadata, config) do
       {:ok, Map.put(token, :authorization_server, as_info)}
+    end
+  end
+
+  defp bind_pre_registered_secret(as_metadata, config) do
+    case RegistrationPolicy.select(as_metadata, config) do
+      {:ok, {:pre_registered, _selection}} = ok ->
+        ok
+
+      {:error, _reason} = error ->
+        error
+
+      {:ok, _other} ->
+        {:error, :invalid_client_registration_config}
     end
   end
 
