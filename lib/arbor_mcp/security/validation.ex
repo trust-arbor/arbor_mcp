@@ -210,24 +210,79 @@ defmodule Arbor.MCP.Security.Validation do
 
   # Host headers are `name`, `name:port`, `[ipv6]`, or `[ipv6]:port`. A full
   # URL is accepted so callers that pass a request target still compare the
-  # hostname, not a substring of the raw string.
+  # hostname, not a substring of the raw string. Trailing garbage after the
+  # port or bracketed address is rejected.
   defp parse_request_host(host) when is_binary(host) do
-    uri =
-      if String.contains?(host, "://") do
-        URI.parse(host)
-      else
-        URI.parse("//" <> host)
-      end
-
-    case uri.host do
-      hostname when is_binary(hostname) and hostname != "" -> {:ok, hostname}
-      _missing -> :error
+    if String.contains?(host, "://") do
+      parse_url_host(host)
+    else
+      parse_host_header(host)
     end
   rescue
     _exception -> :error
   end
 
   defp parse_request_host(_host), do: :error
+
+  defp parse_host_header(host) do
+    uri = URI.parse("//" <> host)
+
+    case uri.host do
+      hostname when is_binary(hostname) and hostname != "" ->
+        if host == format_authority(hostname, uri.port),
+          do: {:ok, hostname},
+          else: :error
+
+      _missing ->
+        :error
+    end
+  end
+
+  defp parse_url_host(url) do
+    uri = URI.parse(url)
+
+    case uri.host do
+      hostname when is_binary(hostname) and hostname != "" ->
+        authority = url_authority(url)
+
+        if is_binary(authority) and
+             (authority == format_authority(hostname, uri.port) or
+                authority == format_authority(hostname, nil)) do
+          {:ok, hostname}
+        else
+          :error
+        end
+
+      _missing ->
+        :error
+    end
+  end
+
+  defp url_authority(url) do
+    case String.split(url, "://", parts: 2) do
+      [_scheme, rest] ->
+        rest
+        |> String.split(["/", "?", "#"], parts: 2)
+        |> hd()
+        |> strip_userinfo()
+
+      _missing ->
+        nil
+    end
+  end
+
+  defp strip_userinfo(authority) do
+    case String.split(authority, "@") do
+      [_userinfo, hostport] -> hostport
+      [hostport] -> hostport
+    end
+  end
+
+  defp format_authority(host, port) do
+    name = if String.contains?(host, ":"), do: "[" <> host <> "]", else: host
+
+    if is_integer(port), do: name <> ":" <> Integer.to_string(port), else: name
+  end
 
   defp hostname_allowed?(hostname, allowed_hosts) do
     normalized = normalize_hostname(hostname)

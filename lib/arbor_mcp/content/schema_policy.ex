@@ -3,10 +3,11 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   Fail-closed resource policy for JSON Schema compilation and validation.
 
   Cross-document references are disabled by default before either validator
-  sees a schema. Compilation never falls back to ExJsonSchema's global
-  `:remote_schema_resolver`; a process-local fail-closed resolver is installed
-  for the compile. Local fragment references remain supported. Network
-  references can be enabled only through ArborMCP's allowlisted, IP-pinned resolver.
+  sees a schema. Allowed remotes are fetched through ArborMCP's allowlisted
+  resolver and inlined as local definitions before ExJsonSchema compiles.
+  Compilation never consults ExJsonSchema's global `:remote_schema_resolver`.
+  Local fragment references remain supported. Network references can be
+  enabled only through that allowlisted, IP-pinned fetch path.
 
   Omitted or explicit draft 2020-12 declarations use JSV. Explicit drafts 4,
   6 and 7 use ExJsonSchema. Unknown dialects reject. Modern compiled artifacts
@@ -149,15 +150,13 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
          :ok <- ensure_backend(schema) do
       run_bounded(
         fn ->
-          with_fail_closed_resolver(fn ->
-            try do
-              with :ok <- validate_schema_shape(schema), do: resolve_schema(schema, opts)
-            rescue
-              _exception -> {:error, {:invalid_schema, "schema resolution failed"}}
-            catch
-              _kind, _reason -> {:error, {:invalid_schema, "schema resolution failed"}}
-            end
-          end)
+          try do
+            with :ok <- validate_schema_shape(schema), do: resolve_schema(schema, opts)
+          rescue
+            _exception -> {:error, {:invalid_schema, "schema resolution failed"}}
+          catch
+            _kind, _reason -> {:error, {:invalid_schema, "schema resolution failed"}}
+          end
         end,
         opts[:resolve_timeout_ms],
         {:schema_resolution_timeout, opts[:resolve_timeout_ms]}
@@ -660,9 +659,7 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   end
 
   defp resolve_legacy_schema(schema, opts) do
-    if network_refs_enabled?(opts),
-      do: SchemaRemoteResolver.resolve(schema, opts, &preflight_document/2),
-      else: {:ok, ExJsonSchema.Schema.resolve(schema)}
+    SchemaRemoteResolver.resolve(schema, opts, &preflight_document/2)
   end
 
   defp preflight_document(schema, opts) do
@@ -811,104 +808,6 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
     do: "relative reference has no absolute base URI"
 
   defp network_error_message(_reason), do: "request was rejected"
-
-  @resolver_app :ex_json_schema
-  @resolver_env :remote_schema_resolver
-  @resolver_flag :arbor_mcp_schema_compile
-  @resolver_table Arbor.MCP.Content.SchemaPolicy.CompileResolver
-
-  defp with_fail_closed_resolver(fun) when is_function(fun, 0) do
-    ensure_resolver_table()
-    Process.put(@resolver_flag, true)
-    install_fail_closed_resolver()
-
-    try do
-      fun.()
-    catch
-      :throw, {@resolver_flag, _url} -> {:error, :network_ref_forbidden}
-    after
-      Process.delete(@resolver_flag)
-      uninstall_fail_closed_resolver()
-    end
-  end
-
-  defp install_fail_closed_resolver do
-    count = :ets.update_counter(@resolver_table, :count, {2, 1}, {:count, 0})
-
-    if count == 1 do
-      :ets.insert(@resolver_table, {:previous, Application.get_env(@resolver_app, @resolver_env)})
-      Application.put_env(@resolver_app, @resolver_env, &fail_closed_remote_schema/1)
-    end
-  end
-
-  defp uninstall_fail_closed_resolver do
-    if :ets.whereis(@resolver_table) == :undefined do
-      :ok
-    else
-      count = :ets.update_counter(@resolver_table, :count, {2, -1}, {:count, 0})
-
-      if count == 0 do
-        case :ets.lookup(@resolver_table, :previous) do
-          [{:previous, previous}] -> restore_remote_schema_resolver(previous)
-          _missing -> :ok
-        end
-      else
-        :ok
-      end
-    end
-  end
-
-  defp fail_closed_remote_schema(url) when is_binary(url) do
-    if Process.get(@resolver_flag) do
-      throw({@resolver_flag, url})
-    else
-      case :ets.lookup(@resolver_table, :previous) do
-        [{:previous, fun}] when is_function(fun, 1) -> fun.(url)
-        [{:previous, {mod, name}}] when is_atom(mod) and is_atom(name) -> apply(mod, name, [url])
-        _missing -> raise ExJsonSchema.Schema.UndefinedRemoteSchemaResolverError
-      end
-    end
-  end
-
-  defp restore_remote_schema_resolver(nil),
-    do: Application.delete_env(@resolver_app, @resolver_env)
-
-  defp restore_remote_schema_resolver(value),
-    do: Application.put_env(@resolver_app, @resolver_env, value)
-
-  # Named ETS tables die with their owner. Compile runs inside Task.async/1,
-  # so the table must live on a process that outlasts that task.
-  defp ensure_resolver_table do
-    if :ets.whereis(@resolver_table) == :undefined do
-      start_resolver_table_owner()
-      wait_for_resolver_table(100)
-    end
-
-    :ok
-  end
-
-  defp start_resolver_table_owner do
-    spawn(fn ->
-      try do
-        Process.register(self(), @resolver_table)
-        :ets.new(@resolver_table, [:named_table, :public, :set, read_concurrency: true])
-        Process.sleep(:infinity)
-      rescue
-        ArgumentError -> :ok
-      end
-    end)
-  end
-
-  defp wait_for_resolver_table(0), do: :ok
-
-  defp wait_for_resolver_table(attempts) do
-    if :ets.whereis(@resolver_table) == :undefined do
-      Process.sleep(1)
-      wait_for_resolver_table(attempts - 1)
-    else
-      :ok
-    end
-  end
 
   defp run_bounded(fun, timeout, timeout_error) do
     task = Task.async(fun)

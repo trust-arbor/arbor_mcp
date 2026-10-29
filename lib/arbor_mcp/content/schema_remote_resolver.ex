@@ -1,8 +1,8 @@
 defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   @moduledoc false
 
+  alias Arbor.MCP.Content.SchemaInliner
   alias Arbor.MCP.Internal.NetworkPolicy
-  alias ExJsonSchema.Schema.Root
 
   require Logger
 
@@ -21,11 +21,24 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   @type preflight :: (map() | boolean(), keyword() -> :ok | {:error, term()})
 
   @spec resolve(map() | boolean(), keyword(), preflight()) ::
-          {:ok, Root.t()} | {:error, term()}
+          {:ok, ExJsonSchema.Schema.Root.t()} | {:error, term()}
   def resolve(schema, policy_opts, preflight) when is_function(preflight, 2) do
-    with {:ok, {normalized_schema, documents}} <- fetch_documents(schema, policy_opts, preflight),
-         {:ok, resolved_documents} <- resolve_documents(documents) do
-      resolve_root(normalized_schema, resolved_documents)
+    with {:ok, sealed} <- seal(schema, policy_opts, preflight) do
+      resolve_sealed(sealed)
+    end
+  end
+
+  @doc false
+  @spec seal(map() | boolean(), keyword(), preflight()) ::
+          {:ok, map() | boolean()} | {:error, term()}
+  def seal(schema, policy_opts, preflight) when is_function(preflight, 2) do
+    if policy_opts[:network_refs][:enabled] == true do
+      with {:ok, {normalized_schema, documents}} <-
+             fetch_documents(schema, policy_opts, preflight) do
+        SchemaInliner.inline(normalized_schema, documents)
+      end
+    else
+      seal_local(schema, policy_opts, preflight)
     end
   end
 
@@ -569,34 +582,22 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
     end
   end
 
-  defp resolve_documents(documents) do
-    resolved =
-      Map.new(documents, fn {location, schema} ->
-        if is_boolean(schema) do
-          {location, schema}
-        else
-          root =
-            ExJsonSchema.Schema.resolve(%Root{
-              schema: schema,
-              refs: documents,
-              location: location
-            })
+  defp seal_local(schema, policy_opts, preflight) do
+    targets = local_pointer_targets(schema)
 
-          {location, root.schema}
-        end
-      end)
-
-    {:ok, resolved}
-  rescue
-    _exception -> network_error(:invalid_remote_schema)
+    with {:ok, normalized_schema} <- normalize_references(schema, nil, false, targets),
+         :ok <- preflight.(normalized_schema, policy_opts),
+         {:ok, remotes} <- referenced_documents(normalized_schema, nil),
+         :ok <- reject_remote_documents(remotes) do
+      SchemaInliner.inline(normalized_schema, %{})
+    end
   end
 
-  defp resolve_root(schema, _documents) when is_boolean(schema) do
+  defp reject_remote_documents([]), do: :ok
+  defp reject_remote_documents(_remotes), do: {:error, :network_ref_forbidden}
+
+  defp resolve_sealed(schema) do
     {:ok, ExJsonSchema.Schema.resolve(schema)}
-  end
-
-  defp resolve_root(schema, documents) do
-    {:ok, ExJsonSchema.Schema.resolve(%Root{schema: schema, refs: documents})}
   rescue
     exception -> {:error, {:invalid_schema, Exception.message(exception)}}
   end

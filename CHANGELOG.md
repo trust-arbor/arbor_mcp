@@ -113,16 +113,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `URI`, strips the port, compares allowed hosts exactly, and recognizes
   loopback through `:inet.parse_address/1` (including `[::1]`, a trailing
   FQDN dot on `localhost.`, and IPv4-mapped IPv6 loopback `::ffff:127.0.0.0/8`).
+  Trailing garbage after a port or bracketed address is rejected.
 - JSON Schema compilation never asks ExJsonSchema's global
-  `:remote_schema_resolver` to fetch. A process-local fail-closed resolver
-  is installed for the compile; missed remote refs become
-  `:network_ref_forbidden` instead of a network fetch. The preflight walker
-  is only a first pass: it treats `$ref` / `$dynamicRef` / `$recursiveRef`
-  strings as refs wherever they appear, walks named containers without
-  dialect spoofing from a nested `$schema`, and still skips untargeted
-  `const` / `default` / `enum` / `examples` instance data. Local JSON
-  pointers are resolved so a targeted node is walked even under those
-  keywords. Named-property maps keep the enclosing schema scope, so a
+  `:remote_schema_resolver` to fetch. Allowed remotes are fetched through
+  ArborMCP's policy and inlined as local definitions; any remaining remote
+  or absolute non-local ref is rejected before ExJsonSchema runs. The
+  preflight walker is only a first pass: it treats `$ref` / `$dynamicRef` /
+  `$recursiveRef` strings as refs wherever they appear, walks named
+  containers without dialect spoofing from a nested `$schema`, and still
+  skips untargeted `const` / `default` / `enum` / `examples` instance data.
+  Local JSON pointers are resolved so a targeted node is walked even under
+  those keywords. Named-property maps keep the enclosing schema scope, so a
   property named `id` is not treated as a schema identifier.
 
 - `Accept: application/json, text/event-stream;q` — a `q` parameter with no
