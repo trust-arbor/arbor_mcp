@@ -502,36 +502,44 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
 
   defp walk_map_children(value, depth, composition_depth, count, opts, named_keys?) do
     Enum.reduce_while(value, {:ok, count}, fn {key, child}, {:ok, current_count} ->
-      cond do
-        not named_keys? and MapSet.member?(@literal_keywords, key) ->
-          {:cont, {:ok, current_count}}
-
-        not named_keys? and MapSet.member?(@reference_keywords, key) and external_ref?(child) ->
-          if key in ["$ref", "$dynamicRef"] and network_refs_enabled?(opts),
-            do: {:cont, {:ok, current_count}},
-            else: {:halt, {:error, :network_ref_forbidden}}
-
-        true ->
-          next_composition_depth =
-            if not named_keys? and MapSet.member?(@composition_keywords, key),
-              do: composition_depth + 1,
-              else: composition_depth
-
-          next_named_keys? = not named_keys? and MapSet.member?(@named_schema_maps, key)
-
-          case walk(
-                 child,
-                 depth + 1,
-                 next_composition_depth,
-                 current_count,
-                 opts,
-                 next_named_keys?
-               ) do
-            {:ok, next_count} -> {:cont, {:ok, next_count}}
-            {:error, _reason} = error -> {:halt, error}
-          end
-      end
+      walk_map_child(key, child, depth, composition_depth, current_count, opts, named_keys?)
     end)
+  end
+
+  defp walk_map_child(key, child, depth, composition_depth, count, opts, named_keys?) do
+    cond do
+      skip_literal_keyword?(named_keys?, key) ->
+        {:cont, {:ok, count}}
+
+      not named_keys? and MapSet.member?(@reference_keywords, key) and external_ref?(child) ->
+        walk_external_ref(key, count, opts)
+
+      true ->
+        walk_nested_schema(key, child, depth, composition_depth, count, opts, named_keys?)
+    end
+  end
+
+  defp skip_literal_keyword?(named_keys?, key),
+    do: not named_keys? and MapSet.member?(@literal_keywords, key)
+
+  defp walk_external_ref(key, count, opts) do
+    if key in ["$ref", "$dynamicRef"] and network_refs_enabled?(opts),
+      do: {:cont, {:ok, count}},
+      else: {:halt, {:error, :network_ref_forbidden}}
+  end
+
+  defp walk_nested_schema(key, child, depth, composition_depth, count, opts, named_keys?) do
+    next_composition_depth =
+      if not named_keys? and MapSet.member?(@composition_keywords, key),
+        do: composition_depth + 1,
+        else: composition_depth
+
+    next_named_keys? = not named_keys? and MapSet.member?(@named_schema_maps, key)
+
+    case walk(child, depth + 1, next_composition_depth, count, opts, next_named_keys?) do
+      {:ok, next_count} -> {:cont, {:ok, next_count}}
+      {:error, _reason} = error -> {:halt, error}
+    end
   end
 
   defp external_ref?(ref) when is_binary(ref), do: ref != "" and not String.starts_with?(ref, "#")

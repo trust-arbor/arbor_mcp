@@ -101,6 +101,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JWE, derives shared secrets or exports password-encrypted keys, and MRTR
   request state is sealed with `:crypto` directly and checks the tag length.
   The floor keeps applications' dependency graphs off the affected releases.
+- `Arbor.MCP.Authorization.JWT.validate_claims/2` and `verify_and_validate/3`
+  now require an expected `:aud`. Omitting it returns
+  `{:error, :missing_expected_audience}` instead of skipping the check. See
+  `docs/SECURITY.md`.
 
 ### Fixed
 
@@ -112,10 +116,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JSON Schema `$ref` walking no longer skips a property literally named
   `default`, `enum`, or `examples`. Those keys are keywords only at the
   schema level; under `properties`, `$defs`, and the other named-schema maps
-  they are still walked and validated.
-- `Arbor.MCP.Authorization.JWT.validate_claims/2` now requires an expected
-  `:aud`. Omitting it returns `{:error, :missing_expected_audience}` instead
-  of succeeding.
+  they are still walked and validated. Named-property maps keep the enclosing
+  schema scope, so a property named `id` is not treated as a schema identifier.
 
 - `Accept: application/json, text/event-stream;q` — a `q` parameter with no
   value — and `q =1` / `q= 1`, whose whitespace around the equals sign

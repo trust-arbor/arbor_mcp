@@ -284,26 +284,9 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   defp normalize_references(map, base_uri, named_keys? \\ false)
 
   defp normalize_references(map, base_uri, named_keys?) when is_map(map) do
-    with {:ok, scope} <- schema_scope(map, base_uri) do
+    with {:ok, scope} <- map_scope(map, base_uri, named_keys?) do
       Enum.reduce_while(map, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
-        cond do
-          not named_keys? and (MapSet.member?(@literal_keywords, key) or key in ["$id", "id"]) ->
-            {:cont, {:ok, Map.put(acc, key, value)}}
-
-          not named_keys? and key in ["$ref", "$dynamicRef"] ->
-            case normalize_reference(value, scope) do
-              {:ok, normalized} -> {:cont, {:ok, Map.put(acc, key, normalized)}}
-              {:error, _reason} = error -> {:halt, error}
-            end
-
-          true ->
-            next_named_keys? = not named_keys? and MapSet.member?(@named_schema_maps, key)
-
-            case normalize_references(value, scope, next_named_keys?) do
-              {:ok, normalized} -> {:cont, {:ok, Map.put(acc, key, normalized)}}
-              {:error, _reason} = error -> {:halt, error}
-            end
-        end
+        normalize_entry(key, value, scope, acc, named_keys?)
       end)
     end
   end
@@ -339,27 +322,9 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   defp walk_references(map, base_uri, references, named_keys? \\ false)
 
   defp walk_references(map, base_uri, references, named_keys?) when is_map(map) do
-    with {:ok, scope} <- schema_scope(map, base_uri) do
+    with {:ok, scope} <- map_scope(map, base_uri, named_keys?) do
       Enum.reduce_while(map, {:ok, references}, fn {key, value}, {:ok, acc} ->
-        cond do
-          not named_keys? and (MapSet.member?(@literal_keywords, key) or key in ["$id", "id"]) ->
-            {:cont, {:ok, acc}}
-
-          not named_keys? and key in ["$ref", "$dynamicRef"] ->
-            case reference_document(value, scope) do
-              {:ok, nil} -> {:cont, {:ok, acc}}
-              {:ok, document} -> {:cont, {:ok, [document | acc]}}
-              {:error, _reason} = error -> {:halt, error}
-            end
-
-          true ->
-            next_named_keys? = not named_keys? and MapSet.member?(@named_schema_maps, key)
-
-            case walk_references(value, scope, acc, next_named_keys?) do
-              {:ok, next_acc} -> {:cont, {:ok, next_acc}}
-              {:error, _reason} = error -> {:halt, error}
-            end
-        end
+        walk_entry(key, value, scope, acc, named_keys?)
       end)
     end
   end
@@ -374,6 +339,58 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   end
 
   defp walk_references(_value, _base_uri, references, _named_keys?), do: {:ok, references}
+
+  # Named-property maps (`properties`, `$defs`, ...) are not schemas. Their
+  # keys are names, so `$id`/`id` here is a property, not a scope identifier.
+  defp map_scope(_map, base_uri, true), do: {:ok, base_uri}
+  defp map_scope(map, base_uri, false), do: schema_scope(map, base_uri)
+
+  defp skip_schema_keyword?(false, key),
+    do: MapSet.member?(@literal_keywords, key) or key in ["$id", "id"]
+
+  defp skip_schema_keyword?(true, _key), do: false
+
+  defp named_child?(false, key), do: MapSet.member?(@named_schema_maps, key)
+  defp named_child?(true, _key), do: false
+
+  defp normalize_entry(key, value, scope, acc, named_keys?) do
+    cond do
+      skip_schema_keyword?(named_keys?, key) ->
+        {:cont, {:ok, Map.put(acc, key, value)}}
+
+      not named_keys? and key in ["$ref", "$dynamicRef"] ->
+        case normalize_reference(value, scope) do
+          {:ok, normalized} -> {:cont, {:ok, Map.put(acc, key, normalized)}}
+          {:error, _reason} = error -> {:halt, error}
+        end
+
+      true ->
+        case normalize_references(value, scope, named_child?(named_keys?, key)) do
+          {:ok, normalized} -> {:cont, {:ok, Map.put(acc, key, normalized)}}
+          {:error, _reason} = error -> {:halt, error}
+        end
+    end
+  end
+
+  defp walk_entry(key, value, scope, acc, named_keys?) do
+    cond do
+      skip_schema_keyword?(named_keys?, key) ->
+        {:cont, {:ok, acc}}
+
+      not named_keys? and key in ["$ref", "$dynamicRef"] ->
+        case reference_document(value, scope) do
+          {:ok, nil} -> {:cont, {:ok, acc}}
+          {:ok, document} -> {:cont, {:ok, [document | acc]}}
+          {:error, _reason} = error -> {:halt, error}
+        end
+
+      true ->
+        case walk_references(value, scope, acc, named_child?(named_keys?, key)) do
+          {:ok, next_acc} -> {:cont, {:ok, next_acc}}
+          {:error, _reason} = error -> {:halt, error}
+        end
+    end
+  end
 
   defp schema_scope(schema, base_uri) do
     case Map.get(schema, "$id") || Map.get(schema, "id") do
