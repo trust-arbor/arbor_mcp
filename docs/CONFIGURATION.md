@@ -1227,7 +1227,11 @@ replay cache, verified retry context explicitly reports
 HTTP deployments may provide `:principal_id` and `:tenant_id` as strings or
 resolver functions. OAuth token `sub` and `tenant_id` claims are used by
 default when available; these identities are authenticated into the sealed
-state without embedding bearer tokens.
+state without embedding bearer tokens. A token without `sub` is refused unless
+the host resolves `:principal_id` itself, or sets `client_principals: true`
+because its authorization server leaves `sub` out only of client-credentials
+tokens; those then run as `client:<client_id>`, and a token whose `sub` starts
+with `client:` is refused. See "Principals" in `Arbor.MCP.HttpPlug`.
 
 ## Forwarding clients (MCP 2026-07-28)
 
@@ -1274,7 +1278,10 @@ its id, never its content. The responses are held to `:max_mrtr_bytes` too.
 
 A gateway built on `Arbor.MCP.Server.Handler` can hand the upstream round to
 its downstream client as its own `input_required`, keeping the upstream
-`requestState` in its own sealed request state:
+`requestState` and progress token in its own sealed request state. The
+upstream call runs in a task, with `progress_to:` set to the callback's
+process, which relays the progress, because `Arbor.MCP.Server.Context`
+belongs to that process:
 
 ```elixir
 alias Arbor.MCP.Server.Context
@@ -1282,6 +1289,9 @@ alias Arbor.MCP.Server.Context
 @impl true
 def handle_call_tool(name, arguments, state) do
   sealed = Context.request_state() || %{}
+  # One upstream progress token for every round of this call.
+  token = sealed["token"] || "gateway-" <> Integer.to_string(System.unique_integer([:positive]))
+  callback = self()
 
   opts = [
     mrtr: :manual,
@@ -1290,12 +1300,16 @@ def handle_call_tool(name, arguments, state) do
     # nil on the first round; the downstream answers on its retry.
     input_responses: Context.input_responses(),
     request_state: sealed["upstream"],
+    progress_token: token,
+    progress_to: callback,
     format: :map
   ]
 
-  case Arbor.MCP.Client.call_tool(state.upstream, name, arguments, opts) do
+  task = Task.async(fn -> Arbor.MCP.Client.call_tool(state.upstream, name, arguments, opts) end)
+
+  case relay_progress(task, state.upstream, token) do
     {:input_required, %{input_requests: requests, request_state: upstream}} ->
-      {:input_required, requests, %{"upstream" => upstream}, state}
+      {:input_required, requests, %{"upstream" => upstream, "token" => token}, state}
 
     {:ok, result} ->
       {:ok, result, state}
@@ -1304,13 +1318,28 @@ def handle_call_tool(name, arguments, state) do
       {:error, reason, state}
   end
 end
+
+defp relay_progress(%Task{ref: ref} = task, upstream, token) do
+  receive do
+    {:arbor_mcp_progress, ^upstream, ^token, %{"progress" => progress} = params} ->
+      _ = Context.report_progress(progress, params["total"], params["message"])
+      relay_progress(task, upstream, token)
+
+    {^ref, result} ->
+      Process.demonitor(ref, [:flush])
+      result
+  end
+end
 ```
 
 The downstream client retries with the same arguments and capabilities and
 answers the same input request ids, so the gateway's upstream retry repeats
-the upstream request, as the next paragraph requires. A legacy downstream
-client works too: the gateway's server sends it the input requests as
-server-to-client requests and calls the callback again with the answers.
+the upstream request, token included, as the next paragraph requires.
+`Context.report_progress/3` reports against the downstream request's own
+token, and does nothing when the downstream client sent none. A legacy
+downstream client works too: the gateway's server sends it the input
+requests as server-to-client requests and calls the callback again with the
+answers.
 
 Every round of one call carries the same request apart from
 `input_responses:` and `request_state:`: the same arguments,
@@ -1319,11 +1348,19 @@ binds its `requestState` to the request's params, `_meta` included, and to
 the capabilities the request declared, and rejects a round that differs with
 `-32602` and the reason `request_state_binding_mismatch`. A gateway that sets
 its own upstream progress token therefore keeps it for all rounds of the call.
-`mrtr: :manual` with `reset_timeout_on_progress: true` needs a
-`:progress_token` (or `"progressToken"` in `:meta`), and returns a
+`mrtr: :manual` with `reset_timeout_on_progress: true` or `progress_to:`
+needs a `:progress_token` (or `"progressToken"` in `:meta`), and returns a
 `ValidationError` without one: the token the client would add differs on
 every round. `read_resource/3` takes no progress token, so a manual read
-can't reset its timeout on progress.
+can't combine with either.
+
+`progress_to: pid` sends the request's progress to `pid` as
+`{:arbor_mcp_progress, client, progress_token, params}`, alongside the client
+handler, until the call returns. A dead `pid` misses the updates without
+failing the request. Use connection-unique upstream tokens, as the example
+does: a token a recently settled request carried reaches no target for a
+second. See "Progress to another process" in the
+[Protocol Guide](PROTOCOL_GUIDE.md#progress-to-another-process).
 
 `input_responses:` and `request_state:` without `mrtr: :manual`,
 `client_capabilities:` without it on a request that can return
@@ -1732,9 +1769,12 @@ defaults when a handler omits them:
 authorization contexts. A `resources/read` handler may return the whole result
 with `ttl_ms` / `cache_scope` (or the wire keys `ttlMs` / `cacheScope`) to
 override those defaults, as in `{:ok, %{contents: contents, ttl_ms: 60_000},
-state}`. For the results the server builds itself, such as the lists, set
+state}`. `server/discover` has defaults of its own, one hour and `public`. For
+the results the server builds itself, such as the lists and discovery, set
 hints per method with the `:cache_hints` server option, as with the
-TypeScript SDK's `cacheHints`; a handler's own fields take precedence:
+TypeScript SDK's `cacheHints`; a handler's own fields take precedence. A
+server whose discovery result differs by caller, its instructions for
+example, sets `"server/discover" => [cache_scope: :private]`:
 
 ```elixir
 Arbor.MCP.Server.start_link(
@@ -1812,6 +1852,18 @@ Arbor.MCP.Client.start_link(
   ]
 )
 ```
+
+Over Streamable HTTP the client stays an HTTP client: each request after
+establishment still POSTs from its own task, so calls run at the same time.
+The circuit breaker admits every POST, from establishment on, and records how
+it ended: a POST that crashes or that the client stops at a timeout is a
+failure, and one whose caller cancels it or exits isn't counted. An open
+circuit refuses a request with
+`{:error, %Arbor.MCP.Error.TransportError{reason: :circuit_open}}` before
+anything is sent. A request stream (a request with a progress token) is
+admitted, but its outcome isn't recorded, and receives aren't counted. The
+breaker's `:timeout` doesn't apply over HTTP: each exchange keeps its own
+deadline, the caller's timeout or the transport's `:request_timeout`.
 
 ## Observability
 

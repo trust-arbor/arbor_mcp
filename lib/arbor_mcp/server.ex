@@ -615,6 +615,12 @@ defmodule Arbor.MCP.Server do
   This waits under the original invocation deadline. An HTTP callback requires
   its exact live legacy session stream; modern handlers use `elicit/1` inside
   an MRTR `input_required` result. Accepted durable requests are never retried.
+
+  Returns `{:ok, result}` with the client's answer, or `{:error, reason}`.
+  `:invalid_elicitation_params` means the params break the protocol's
+  ElicitRequest schema and were never sent. `:timeout` means time ran out
+  before the client answered, including while the params were still being
+  validated, so it says nothing about the params.
   """
   @spec elicit(server(), map(), pos_integer()) :: {:ok, map()} | {:error, term()}
   def elicit(server, params, timeout \\ 5_000)

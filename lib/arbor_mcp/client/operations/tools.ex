@@ -77,6 +77,9 @@ defmodule Arbor.MCP.Client.Operations.Tools do
     for a client that forwards the call for another client, which answers
     each MCP 2026-07-28 MRTR round itself; see "Forwarding a call" under
     `Arbor.MCP.Client.call_tool/4`
+  - `:progress_to` - a pid that also gets the call's progress as
+    `{:arbor_mcp_progress, client, progress_token, params}`; see
+    `Arbor.MCP.Client.call_tool/4`
 
   ## Examples
 

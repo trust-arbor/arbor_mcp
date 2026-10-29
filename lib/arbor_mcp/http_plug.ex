@@ -75,6 +75,39 @@ defmodule Arbor.MCP.HttpPlug do
           realm: "my-mcp-server" # Optional, defaults to server_info.name
         }
 
+  ### Principals (`:principal_id`, `:tenant_id`, `:client_principals`)
+
+  Each request runs as a principal. The principal decides who may cancel a
+  modern request from a separate POST, resume its MRTR `requestState`, use a
+  legacy session or read a stored task, and how subscriptions are authorized
+  and limited. Set `:principal_id` (and `:tenant_id`) to a string, or to a
+  function or `{module, function, extra_args}` resolver called with
+  `conn, request, token_claims`. What the host sets always wins. To run
+  requests without a principal on purpose, use a resolver that returns `nil`.
+  A literal `principal_id: nil` is the same as leaving the option out, so a
+  config value that is unexpectedly `nil` can't drop the token's binding.
+  Otherwise a validated token's principal is its `sub` claim (or the
+  `principal_id` claim a token verifier returns), unchanged.
+
+  A token without `sub` is refused with `401 invalid_token`. An introspection
+  response (RFC 7662) may leave `sub` out, and then nothing tells one user's
+  token from another user's of the same OAuth client, or from a
+  client-credentials token, so the client can't stand in for a user. If your
+  authorization server leaves `sub` out only of client-credentials tokens, set
+  `client_principals: true`: such a token then runs as `"client:" <> client_id`.
+  The option reserves the `client:` prefix for these principals, so a token
+  whose `sub` (or `principal_id` claim) starts with `client:` is refused too,
+  and no user can share a client's principal. Every other subject keeps its
+  value, so turning the option on doesn't move existing users. A token with a
+  `username` but no `sub` is still refused. If your authorization server leaves
+  `sub` out of user tokens too, resolve `:principal_id` from a claim that
+  identifies the user.
+
+  A mount accepts tokens from one issuer (`:expected_issuer`), so `sub` isn't
+  prefixed with it. Mounts with different issuers that share a Runtime and an
+  endpoint path, or an MRTR key ring, should resolve distinct principals or
+  tenants.
+
   ## Security
 
   ### Origin validation (`:validate_origin`, `:allowed_origins`)
@@ -235,6 +268,7 @@ defmodule Arbor.MCP.HttpPlug do
       max_mrtr_bytes: Keyword.get(opts, :max_mrtr_bytes, 1_048_576),
       require_replay_protection: Keyword.get(opts, :require_replay_protection, false),
       principal_id: Keyword.get(opts, :principal_id),
+      client_principals: client_principals!(Keyword.get(opts, :client_principals, false)),
       tenant_id: Keyword.get(opts, :tenant_id),
       authorize_subscription_filter: Keyword.get(opts, :authorize_subscription_filter),
       authorize_subscription_publication: Keyword.get(opts, :authorize_subscription_publication),
@@ -2259,32 +2293,16 @@ defmodule Arbor.MCP.HttpPlug do
   end
 
   defp resolve_mrtr_identity(conn, request, token_info, opts) do
-    principal =
-      resolve_identity_value(
-        Map.get(opts, :principal_id),
-        conn,
-        request,
-        token_info,
-        token_claim(token_info, [
-          "sub",
-          :sub,
-          "principal_id",
-          :principal_id,
-          "client_id",
-          :client_id
-        ])
-      )
-
-    tenant =
-      resolve_identity_value(
-        Map.get(opts, :tenant_id),
-        conn,
-        request,
-        token_info,
-        token_claim(token_info, ["tenant_id", :tenant_id, "tenant", :tenant])
-      )
-
-    with true <- is_nil(principal) or is_binary(principal),
+    with {:ok, principal} <- resolve_principal(conn, request, token_info, opts),
+         tenant =
+           resolve_identity_value(
+             Map.get(opts, :tenant_id),
+             conn,
+             request,
+             token_info,
+             token_claim(token_info, ["tenant_id", :tenant_id, "tenant", :tenant])
+           ),
+         true <- is_nil(principal) or is_binary(principal),
          true <- is_nil(tenant) or is_binary(tenant) do
       {:ok,
        opts
@@ -2293,11 +2311,85 @@ defmodule Arbor.MCP.HttpPlug do
        |> Map.put(:auth_info, auth_info(conn, token_info))}
     else
       false -> {:error, :invalid_mrtr_identity}
+      {:error, {:auth_error, _response}} = refused -> refused
     end
   rescue
     _exception ->
       Logger.error("Failed to resolve MRTR identity")
       {:error, :invalid_mrtr_identity}
+  end
+
+  # A principal the host configures wins, whatever a resolver returns (nil
+  # too). A literal `principal_id: nil` is no configuration at all, so a
+  # config value that is unexpectedly nil can't drop the token's binding.
+  defp resolve_principal(conn, request, token_info, %{principal_id: principal_id})
+       when not is_nil(principal_id),
+       do: {:ok, resolve_identity_value(principal_id, conn, request, token_info, nil)}
+
+  defp resolve_principal(_conn, _request, token_info, opts) when is_map(token_info),
+    do: token_principal(token_info, opts)
+
+  defp resolve_principal(_conn, _request, _no_token, _opts), do: {:ok, nil}
+
+  # The principal of a token this plug validated is its subject. RFC 9068 JWT
+  # access tokens always carry `sub`, but an introspection response (RFC 7662)
+  # may leave it out, and then nothing standard tells one user's token from
+  # another user's of the same client, or from a client-credentials token. So
+  # the client never stands in for a user: such a token is refused, unless the
+  # host says with `client_principals: true` that its authorization server
+  # leaves `sub` out only of client-credentials tokens. Client principals then
+  # own the `client:` prefix, so a token whose subject uses it is refused, and
+  # other subjects stay unprefixed.
+  defp token_principal(token_info, opts) do
+    case token_claim(token_info, ["sub", :sub, "principal_id", :principal_id]) do
+      nil -> client_principal(token_info, opts)
+      "" -> missing_subject(opts)
+      "client:" <> _reserved when opts.client_principals == true -> reserved_subject(opts)
+      subject -> {:ok, subject}
+    end
+  end
+
+  # A token that names its resource owner (`username`) is a user's, so it
+  # never gets its client's principal.
+  defp client_principal(token_info, %{client_principals: true} = opts) do
+    with nil <- token_claim(token_info, ["username", :username]),
+         client_id when is_binary(client_id) and client_id != "" <-
+           token_claim(token_info, ["client_id", :client_id]) do
+      {:ok, "client:" <> client_id}
+    else
+      _user_or_no_client -> missing_subject(opts)
+    end
+  end
+
+  defp client_principal(_token_info, opts), do: missing_subject(opts)
+
+  defp missing_subject(opts) do
+    Logger.warning(
+      "Refused an OAuth access token without a subject (sub). Set :principal_id, or " <>
+        "client_principals: true if the authorization server leaves sub out only of " <>
+        "client-credentials tokens"
+    )
+
+    refuse_subject("The access token does not identify its subject.", opts)
+  end
+
+  defp reserved_subject(opts) do
+    Logger.warning(
+      "Refused an OAuth access token whose subject starts with client:, which " <>
+        "client_principals: true reserves for client principals"
+    )
+
+    refuse_subject("The access token's subject is reserved for client principals.", opts)
+  end
+
+  defp refuse_subject(description, opts) do
+    response =
+      ServerGuard.invalid_token_response(
+        description,
+        Map.get(opts.auth_config, :realm, opts.server_info.name)
+      )
+
+    {:error, {:auth_error, add_resource_metadata(response, opts)}}
   end
 
   # A token validated here wins over auth info a host plug attached.
@@ -3502,6 +3594,12 @@ defmodule Arbor.MCP.HttpPlug do
 
   defp subscription_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp subscription_reason(reason), do: inspect(reason)
+
+  defp client_principals!(value) when is_boolean(value), do: value
+
+  defp client_principals!(value) do
+    raise ArgumentError, ":client_principals must be a boolean, got: #{inspect(value)}"
+  end
 
   defp subscription_keepalive_interval!(:infinity), do: :infinity
 

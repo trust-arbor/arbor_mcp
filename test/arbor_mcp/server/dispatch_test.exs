@@ -235,6 +235,33 @@ defmodule Arbor.MCP.Server.DispatchTest do
       assert result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "Arbor.MCP"
     end
 
+    # The Runtime hands :cache_hints over in wire form, keyed by method.
+    test "server/discover takes its ttlMs and cacheScope from a cache hint" do
+      params = %{
+        "_meta" => %{
+          "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+          "io.modelcontextprotocol/clientCapabilities" => %{}
+        }
+      }
+
+      discover = fn opts ->
+        assert {:response, %{"result" => result}, _state} =
+                 Dispatch.dispatch(request("server/discover", params), FullHandler, %{}, opts)
+
+        {result["ttlMs"], result["cacheScope"]}
+      end
+
+      hint = %{"ttlMs" => 300_000, "cacheScope" => "private"}
+
+      assert discover.(cache_hints: %{"server/discover" => hint}) == {300_000, "private"}
+
+      assert discover.(cache_hints: %{"server/discover" => %{"ttlMs" => 0}}) ==
+               {0, "public"}
+
+      assert discover.(cache_hints: %{"tools/list" => hint}) == {3_600_000, "public"}
+      assert discover.([]) == {3_600_000, "public"}
+    end
+
     test "preserves missing client capability errors from handlers" do
       params = %{
         "name" => "needs_sampling",

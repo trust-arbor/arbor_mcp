@@ -30,6 +30,7 @@ defmodule Arbor.MCP.Client.Types do
           | {:input_responses, %{optional(String.t()) => map()} | nil}
           | {:request_state, String.t() | nil}
           | {:client_capabilities, map() | nil}
+          | {:progress_to, pid() | nil}
           | {atom(), term()}
   @type request_opts :: [request_option()]
 

@@ -216,6 +216,36 @@ defmodule Arbor.MCP.Transport.ReliabilityWrapperTest do
 
       assert ReliabilityWrapper.connected?(wrapped_state) == Test.connected?(transport_state)
     end
+
+    # A synchronous transport answers send_message/2 with {:ok, state,
+    # response} and receive_message with {:ok, message, state}; the wrapper
+    # used to read both as {:ok, result, state}, which swapped the state and
+    # the response of a send.
+    test "keeps a synchronous send's response apart from its state" do
+      defmodule SyncTransport do
+        @behaviour Arbor.MCP.Transport
+
+        def connect(_opts), do: {:ok, %{sent: 0}}
+        def send_message(_message, state), do: {:ok, %{state | sent: state.sent + 1}, "reply"}
+        def receive_message(state), do: {:ok, "message", state}
+        def close(_state), do: :ok
+        def connected?(_state), do: true
+      end
+
+      {:ok, transport_state} = SyncTransport.connect([])
+
+      for opts <- [[circuit_breaker: [failure_threshold: 3]], []] do
+        {:ok, wrapped} = ReliabilityWrapper.wrap(SyncTransport, transport_state, opts)
+
+        assert {:ok, %ReliabilityWrapper{wrapped_state: %{sent: 1}}, "reply"} =
+                 ReliabilityWrapper.send_message("request", wrapped)
+
+        assert {:ok, "message", %ReliabilityWrapper{wrapped_state: %{sent: 0}}} =
+                 ReliabilityWrapper.receive_message(wrapped)
+
+        ReliabilityWrapper.close(wrapped)
+      end
+    end
   end
 
   describe "circuit breaker management" do

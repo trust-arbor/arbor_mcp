@@ -477,6 +477,13 @@ defmodule Arbor.MCP.Authorization.ServerGuard do
     end
   end
 
+  @doc false
+  # The `401 invalid_token` answer for a token this guard accepted but its
+  # caller can't use, in the same shape as the guard's own refusals.
+  @spec invalid_token_response(String.t(), String.t() | nil) :: error_response()
+  def invalid_token_response(description, realm),
+    do: build_error_response(401, "invalid_token", description, realm, nil)
+
   defp build_error_response(status, error_code, description, realm, scope) do
     realm = escape_auth_param(realm)
     scope = escape_auth_param(scope)

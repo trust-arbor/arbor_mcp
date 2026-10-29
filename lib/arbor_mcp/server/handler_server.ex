@@ -1496,11 +1496,13 @@ defmodule Arbor.MCP.Server.HandlerServer do
       true ->
         deadline = System.monotonic_time(:millisecond) + timeout
 
-        case Arbor.MCP.Protocol.Elicitation.validate(params, deadline) do
+        # Validation that runs out of time replies the :timeout an
+        # unanswered request does.
+        case Arbor.MCP.Protocol.Elicitation.validate_reverse(params, deadline) do
           {:ok, normalized} ->
             reverse_request("elicitation/create", normalized, timeout, from, state)
 
-          error ->
+          {:error, _reason} = error ->
             {:reply, error, state}
         end
     end

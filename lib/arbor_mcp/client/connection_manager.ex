@@ -823,15 +823,22 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   defp connect_with_reliability(transport_mod, transport_opts, reliability_opts) do
     case transport_mod.connect(transport_opts) do
       {:ok, transport_state} ->
-        if reliability_opts != [] do
-          # Wrap with reliability features
-          {:ok, wrapped_state} =
-            ReliabilityWrapper.wrap(transport_mod, transport_state, reliability_opts)
+        cond do
+          reliability_opts == [] ->
+            {:ok, {transport_mod, transport_state}}
 
-          {:ok, {ReliabilityWrapper, wrapped_state}}
-        else
-          # No reliability features requested
-          {:ok, {transport_mod, transport_state}}
+          # HTTP keeps the wrapper's components itself, so the client still
+          # sees an HTTP transport and sends each request from its own task
+          # (see HTTP.attach_reliability/2).
+          transport_mod == HTTP ->
+            {:ok, wrapper} = ReliabilityWrapper.wrap(HTTP, transport_state, reliability_opts)
+            {:ok, {HTTP, HTTP.attach_reliability(transport_state, wrapper)}}
+
+          true ->
+            {:ok, wrapped_state} =
+              ReliabilityWrapper.wrap(transport_mod, transport_state, reliability_opts)
+
+            {:ok, {ReliabilityWrapper, wrapped_state}}
         end
 
       error ->

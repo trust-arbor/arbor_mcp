@@ -139,7 +139,8 @@ defmodule Arbor.MCP.Client.ManualMRTRTest do
     defp name(responses), do: get_in(responses, ["name", "content", "name"])
   end
 
-  # The gateway from "Forwarding clients" in docs/CONFIGURATION.md: an
+  # The gateway from "Forwarding clients" in docs/CONFIGURATION.md, without
+  # its progress relay (progress_to_test.exs runs the whole example): an
   # arbor_mcp server whose tools forward to an upstream server and whose
   # downstream client answers the upstream rounds.
   defmodule GatewayHandler do

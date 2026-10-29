@@ -397,6 +397,98 @@ Outside a callback, or for another request's token, publish by token:
 
 `Arbor.MCP.Client.call_tool/4` also accepts `:meta` and merges it with `:progress_token`.
 
+### Progress to another process
+
+With `progress_to: pid`, a request's progress also goes to `pid`, alongside
+the handler, as
+`{:arbor_mcp_progress, client, progress_token, params}`. `client` is the
+client process, so a process that waits on several clients can tell them
+apart, and `params` is the notification's params, as `handle_progress/3` gets
+them. A process that forwards a request for another client, such as a
+gateway, relays it from there:
+
+```elixir
+caller = self()
+
+task =
+  Task.async(fn ->
+    Arbor.MCP.Client.call_tool(client, "import", %{},
+      progress_to: caller,
+      progress_token: "job-42"
+    )
+  end)
+
+receive do
+  {:arbor_mcp_progress, ^client, "job-42", %{"progress" => progress} = params} ->
+    _ = Arbor.MCP.Server.Context.report_progress(progress, params["total"], params["message"])
+end
+```
+
+- **A token is added if the request has none,** as for
+  `reset_timeout_on_progress`, since progress names its request only by
+  token. Under automatic MRTR every round already shares the request's
+  token, so each round's progress arrives.
+- **Manual MRTR needs an explicit token.** With `mrtr: :manual` on
+  `call_tool/4` or `get_prompt/4`, pass `:progress_token` yourself and
+  repeat it on every round. Without one, the call returns a
+  `ValidationError`, because a generated token would differ between rounds.
+  `read_resource/3` takes no progress token, so a manual read can't use
+  `progress_to:` or `reset_timeout_on_progress`. It returns the same
+  `ValidationError`.
+- **Delivery stops once the call returns,** with a result, an error, a
+  timeout or a cancellation, even while the client is still cleaning up
+  after a caller's own `:timeout`. The client measures the caller's
+  deadline on its own clock, so a caller on another node gets its progress
+  whatever that node's clock says. Progress that arrives later, as late
+  notifications on stdio or legacy HTTP can, isn't sent.
+- **Delivery stops when the caller goes down,** whether or not
+  `cancel_on_caller_exit:` cancels the request: the client monitors the
+  caller of every request with a target. That works for a caller on another
+  node too. If the connection to the caller's node is lost, the monitor
+  fires with `:noconnection` and delivery stops, even though the caller may
+  still be running there. A target on another node gets its updates by plain
+  message, so updates sent while its node is unreachable are lost.
+- **A request's target gets only that request's progress.** A message on a
+  modern request stream that names another request's token is dropped. After
+  a request settles, its token is held back for a second, the client's
+  cleanup grace: progress naming it on the connection reaches no target, so
+  a late notification can't reach a newer request that reuses the token.
+  Such a newer request gets its progress at its target only once that
+  second has passed.
+- **An `input_required` round doesn't settle its call.** Its token and
+  target stay reserved until the round's deadline, or the client's default
+  timeout when the round had none, for the round's own continuation.
+  - **Who can claim it:** a request with the same method and name that
+    presents the `request_state` the round returned, or, if the server
+    returned none, answers the same input request ids. Automatic MRTR's
+    rounds do this by themselves. A manual continuation claims it with
+    `request_state:` and the same `:progress_token`.
+  - **What a claim gets:** the round's target, unless the continuation
+    names its own `progress_to:`.
+  - **Anyone else:** any other request with the token starts as usual, but
+    its target gets nothing while the reservation lasts. Neither does a
+    continuation that comes after the round's deadline.
+  - **Expiry:** once the round's deadline has passed, the token is held back
+    for a second more, as for a settled request.
+  - **Limits:** a round that can't be identified within the request's own
+    MRTR limits reserves nothing. That covers a `requestState` over
+    `:max_mrtr_bytes`, or input requests over `:max_input_requests` or of
+    the wrong shape. Its token is held back like a settled request's. A
+    continuation whose `request_state:` is over its `:max_mrtr_bytes`
+    claims nothing.
+  - **Tombstones still apply:** a claim never ends a hold left by an earlier
+    request that used the token.
+- **Use tokens that are unique on the connection.** The client's generated
+  tokens are. A gateway that forwards downstream requests shouldn't reuse
+  downstream tokens upstream, since different downstream clients may pick
+  the same ones: generate a token per downstream request and map back to the
+  downstream token when relaying.
+- **A dead target misses the updates.** The request goes on, and the handler
+  still gets them.
+- **Every transport that carries progress delivers it:** modern Streamable
+  HTTP request streams, legacy Streamable HTTP (on a POST's event stream or
+  the session's GET stream), stdio, BEAM and the test transport.
+
 ### Keeping a long request alive
 
 As with the TypeScript SDK's `resetTimeoutOnProgress`, a request made with

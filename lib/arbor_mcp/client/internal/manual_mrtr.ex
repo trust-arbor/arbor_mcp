@@ -153,21 +153,32 @@ defmodule Arbor.MCP.Client.Internal.ManualMRTR do
   defp needs_manual?(:client_capabilities, method), do: method in @mrtr_methods
   defp needs_manual?(_continuation, _method), do: true
 
-  # The token the client adds for reset_timeout_on_progress differs on every
-  # round, and a server that binds requestState to `_meta`, as arbor_mcp does,
-  # rejects the next round.
+  # The token the client adds for reset_timeout_on_progress or progress_to
+  # differs on every round, and a server that binds requestState to `_meta`,
+  # as arbor_mcp does, rejects the next round.
   defp require_progress_token(method, params, opts) do
-    if manual?(opts) and method in @mrtr_methods and
-         Keyword.get(opts, :reset_timeout_on_progress) == true and not progress_token?(params) do
-      {:error,
-       Error.validation_error(
-         :progress_token,
-         nil,
-         "manual MRTR with reset_timeout_on_progress needs an explicit :progress_token"
-       )}
-    else
-      :ok
+    cond do
+      not manual?(opts) or method not in @mrtr_methods or progress_token?(params) ->
+        :ok
+
+      Keyword.get(opts, :reset_timeout_on_progress) == true ->
+        missing_progress_token("reset_timeout_on_progress")
+
+      Keyword.get(opts, :progress_to) != nil ->
+        missing_progress_token("progress_to")
+
+      true ->
+        :ok
     end
+  end
+
+  defp missing_progress_token(option) do
+    {:error,
+     Error.validation_error(
+       :progress_token,
+       nil,
+       "manual MRTR with #{option} needs an explicit :progress_token"
+     )}
   end
 
   defp progress_token?(%{"_meta" => meta}) when is_map(meta),
