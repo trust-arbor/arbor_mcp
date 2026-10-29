@@ -68,6 +68,25 @@ defmodule ExMCP.Transport.StdioProcessGroupTest do
       assert_stopped(child, state.os_pid)
     end
 
+    test "has the children it left behind stopped when nobody reads its exit",
+         %{pid_file: pid_file} do
+      command = sh(orphaning_server(), pid_file)
+
+      {:ok, state} =
+        Stdio.connect(command: command, process_group: true, eof_grace: 100, term_grace: 100)
+
+      child = await_pid(pid_file)
+      on_exit(fn -> kill(child) end)
+      port_monitor = :erlang.monitor(:port, state.port)
+
+      tell_server_to_exit(state)
+
+      # Nobody receives the exit status, so only the reaper sees the port
+      # close; by then the leader is gone and only its child holds the group.
+      assert_receive {:DOWN, ^port_monitor, :port, _port, _reason}, 10_000
+      assert_stopped(child, state.os_pid)
+    end
+
     test "has the children it left behind stopped (pull)", %{pid_file: pid_file} do
       command = sh(orphaning_server(), pid_file)
       {:ok, state} = Stdio.connect(command: command, process_group: true)

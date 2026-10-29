@@ -67,6 +67,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `notifications/*/list_changed`; the TypeScript SDK's servers send both that
   way. Such a message now parses with empty params, and a response that also
   names a method stays a response (backport of 2.x PR #122).
+- The stdio transport follows the MCP shutdown order: `close/1` closes the
+  server's stdin, waits up to `:eof_grace` (default 2_000 ms, as in the MCP
+  reference SDKs) for it to exit, then sends SIGTERM and, after `:term_grace`,
+  SIGKILL. A server that exits on EOF is no longer signalled. The subprocess
+  `:cleanup_timeout` defaults to `eof_grace + term_grace + 400` (2_500 ms);
+  when only `:cleanup_timeout` is set, the EOF grace shrinks to fit it.
+  SIGKILL goes out within `:cleanup_timeout`, and `close/1` returns within
+  it plus 500 ms. The shutdown is run by a process started with the
+  connection, which acts when the port closes, so a server that ignores EOF
+  is still stopped when the process owning the connection (a client its
+  supervisor kills, say) dies first, before or during `close/1`. A signal
+  goes only to the process the connection started, checked by its start
+  time just before every signal, so a server that exited on its own, whose
+  pid may since name another process, is left alone; a process group is
+  still stopped when its leader has exited and left children in it. The
+  checks are cheap and end at the shutdown's deadline: a helper shell started
+  with the connection answers them without starting a process per check
+  (`connect/1` waits, a bounded time, for it and for the server's start
+  time), the schedule keeps 100 ms of the budget for the check before each
+  signal, and a server that can't be confirmed in time is left unsignalled,
+  with a warning, rather than signalled late. A helper that stops answering
+  is killed, with any `ps` it waits on, so no signal it was handed can run
+  after the reaper has decided, and no helper outlives its reaper. It is
+  killed through `/bin/sh` (or `/bin/kill`), not whatever `PATH` holds, and
+  a helper whose exit can't be confirmed is logged as an error. Killing a
+  helper must happen even once the budget is spent, so a stalled helper can
+  push `close/1` up to 300 ms past `:cleanup_timeout` (100 ms each for the
+  kill, its fallback and the wait for its exit). The TERM grace runs from
+  when SIGTERM actually goes out, however long its check took, as far as the
+  budget allows. On Windows, `taskkill` runs only from `close/1`, bounded by
+  the budget, while the open port still holds the server's process handle. A server whose connection owner dies
+  before closing it may be left running on Windows, with a warning logged.
+  Negative graces, a non-positive budget and an explicit `nil` are rejected
+  before the server starts. Backport of 2.x #109.
+- A client's default close limit (`Deadline.cleanup_timeout/1`) covers a stdio
+  server's shutdown budget plus 500 ms: 3_000 ms with the stdio defaults. Other
+  transports keep 1_000 ms.
+- A modern `tools/call` checked its `Mcp-Param-*` headers against the first
+  `tools/list` page only, so a tool on a later page of a paginated list
+  skipped the check. The server now follows the cursors until it finds the
+  tool, for up to 100 pages and one `handler_call_timeout` in all, and fails
+  the request closed past either bound, when a page is ready only after the
+  deadline, and when the timeout isn't one `GenServer.call/3` takes.
+  Backport of 2.x #114.
+- The default OAuth provider renews an access token with its refresh
+  token, before the token expires and when the server rejects it, instead
+  of running the browser flow again (which also found the same
+  authorization server and stopped with `:auth_loop_detected`). Backport of
+  2.x #112 and #115.
+- The HTTP transport keeps an auth provider's new state on every path: a
+  refreshed token (a rotating refresh token is spent once) after a request
+  that succeeds or fails, and a failed flow's loop guards, including for
+  modern request streams. `send_message/2` and the client still return the
+  error shapes they did. Concurrent modern request streams rejected together
+  run one refresh or flow: the client answers their auth challenges one at a
+  time, and reuses a token another stream already got. A stream waits for
+  that answer no longer than its request's deadline, and the client runs no
+  provider for a request whose deadline has passed.
+- Auth provider callbacks run inside the `ExMCP.Client` process: for
+  synchronous HTTP, as before, and now also when the client answers a
+  modern request stream's 401 or 403. While one runs, the client handles
+  nothing else. A callback must not call the client it authenticates,
+  directly or indirectly (from a `Task` it awaits, say): that deadlocks
+  until a timeout. As a best effort, the client refuses a direct call from a
+  stream's challenge callback with `{:error, :auth_provider_called_client}`;
+  elsewhere a direct call exits with `:calling_self`, and an indirect call
+  is not detected. See "Where callbacks run" in
+  `ExMCP.Authorization.Provider`.
 
 ## [1.7.3] - 2026-10-26
 
