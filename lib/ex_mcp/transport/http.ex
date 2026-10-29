@@ -88,6 +88,7 @@ defmodule ExMCP.Transport.HTTP do
   require Logger
 
   alias ExMCP.Authorization.{FullOAuthFlow, LogSanitizer}
+  alias ExMCP.Client.Deadline
 
   alias ExMCP.Internal.{
     CACerts,
@@ -411,7 +412,9 @@ defmodule ExMCP.Transport.HTTP do
     {:ok,
      %{
        state
-       | auth_provider_state: request_state.auth_provider_state,
+       | access_token: request_state.access_token,
+         headers: request_state.headers,
+         auth_provider_state: request_state.auth_provider_state,
          tool_listing_generation: request_state.tool_listing_generation
      }}
   end
@@ -506,13 +509,17 @@ defmodule ExMCP.Transport.HTTP do
           {kind, www_auth} when attempts < 2 ->
             case await_authentication(parent, kind, www_auth, state) do
               {:ok, token} ->
-                perform_async(
-                  message,
-                  apply_token_to_state(state, token),
-                  parent,
-                  opts,
-                  attempts + 1
-                )
+                if is_integer(state.deadline) and Deadline.expired?(state.deadline) do
+                  {:error, :timeout}
+                else
+                  perform_async(
+                    message,
+                    apply_token_to_state(state, token),
+                    parent,
+                    opts,
+                    attempts + 1
+                  )
+                end
 
               {:error, reason} ->
                 {:error, {:authentication_failed, reason}}
@@ -530,39 +537,43 @@ defmodule ExMCP.Transport.HTTP do
   @auth_wait_ms 600_000
 
   defp await_authentication(parent, kind, www_auth, state) do
-    ref = make_ref()
-    monitor = Process.monitor(parent)
+    if is_integer(state.deadline) and Deadline.expired?(state.deadline) do
+      {:error, :timeout}
+    else
+      ref = make_ref()
+      monitor = Process.monitor(parent)
 
-    challenge = %{
-      status: if(kind == :unauthorized, do: 401, else: 403),
-      www_authenticate: www_auth,
-      scopes: extract_scope_from_www_auth(www_auth),
-      token: state.access_token || bearer_token(state.headers),
-      deadline: state.deadline
-    }
+      challenge = %{
+        status: if(kind == :unauthorized, do: 401, else: 403),
+        www_authenticate: www_auth,
+        scopes: extract_scope_from_www_auth(www_auth),
+        token: state.access_token || bearer_token(state.headers),
+        deadline: state.deadline
+      }
 
-    send(parent, {:http_post_auth_challenge, self(), ref, challenge})
+      send(parent, {:http_post_auth_challenge, self(), ref, challenge})
 
-    wait =
-      case state.deadline do
-        deadline when is_integer(deadline) ->
-          min(max(deadline - System.monotonic_time(:millisecond), 0), @auth_wait_ms)
+      wait =
+        case state.deadline do
+          deadline when is_integer(deadline) ->
+            min(max(deadline - System.monotonic_time(:millisecond), 0), @auth_wait_ms)
 
-        nil ->
-          @auth_wait_ms
+          nil ->
+            @auth_wait_ms
+        end
+
+      receive do
+        {:http_post_auth_result, ^ref, result} ->
+          Process.demonitor(monitor, [:flush])
+          result
+
+        {:DOWN, ^monitor, :process, _pid, _reason} ->
+          {:error, :client_gone}
+      after
+        wait ->
+          Process.demonitor(monitor, [:flush])
+          {:error, :timeout}
       end
-
-    receive do
-      {:http_post_auth_result, ^ref, result} ->
-        Process.demonitor(monitor, [:flush])
-        result
-
-      {:DOWN, ^monitor, :process, _pid, _reason} ->
-        {:error, :client_gone}
-    after
-      wait ->
-        Process.demonitor(monitor, [:flush])
-        {:error, :timeout}
     end
   end
 

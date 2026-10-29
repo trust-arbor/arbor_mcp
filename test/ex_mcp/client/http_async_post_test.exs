@@ -55,6 +55,56 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
     end
   end
 
+  defmodule TokenRotationProvider do
+    @moduledoc false
+    @behaviour ExMCP.Authorization.Provider
+
+    @impl true
+    def init(config) do
+      {:ok,
+       %{
+         test_pid: Keyword.fetch!(config, :test_pid),
+         token_agent: Keyword.fetch!(config, :token_agent)
+       }}
+    end
+
+    @impl true
+    def get_token(state) do
+      token = Agent.get(state.token_agent, & &1)
+      {:ok, token, state}
+    end
+
+    @impl true
+    def handle_unauthorized(_www_authenticate, _scopes, state) do
+      send(state.test_pid, :unexpected_reauth)
+      {:ok, "T_unexpected", state}
+    end
+
+    @impl true
+    def handle_forbidden(www, scopes, state), do: handle_unauthorized(www, scopes, state)
+  end
+
+  defmodule SlowAuthProvider do
+    @moduledoc false
+    @behaviour ExMCP.Authorization.Provider
+
+    @impl true
+    def init(config), do: {:ok, %{test_pid: Keyword.fetch!(config, :test_pid)}}
+
+    @impl true
+    def get_token(state), do: {:ok, nil, state}
+
+    @impl true
+    def handle_unauthorized(_www_authenticate, _scopes, state) do
+      Process.sleep(200)
+      send(state.test_pid, :slow_auth_finished)
+      {:ok, "T_slow", state}
+    end
+
+    @impl true
+    def handle_forbidden(www, scopes, state), do: handle_unauthorized(www, scopes, state)
+  end
+
   test "a response with a null or different id answers the request its POST carried" do
     client = start_client()
 
@@ -233,6 +283,104 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
     assert_receive {:c_auth, ["Bearer T2"]}, 2_000
   end
 
+  test "a healthy legacy HTTP connection survives several health intervals" do
+    client = start_client(health_check_interval: 40)
+
+    # First health ping arrives and is answered
+    assert_receive {:health_ping, first_id}, 1_000
+
+    # Wait for second and third health pings across multiple intervals
+    assert_receive {:health_ping, second_id}, 1_000
+    assert second_id != first_id
+
+    assert_receive {:health_ping, third_id}, 1_000
+    assert third_id != second_id
+
+    assert {:ok, %{connection_status: :ready}} = Client.get_status(client)
+    assert Client.get_pending_requests(client) == []
+  end
+
+  test "a cancelled request does not authenticate and re-send on a delayed 401" do
+    client = start_client(auth_provider: {Provider, test_pid: self()})
+
+    task =
+      Task.async(fn ->
+        Client.call_tool(client, "cancel_then_401", %{}, timeout: 5_000)
+      end)
+
+    assert_receive {:tool_cancel_attempt, req_id, handler}, 2_000
+
+    # Cancel the request while it is held at the server
+    :ok = Client.send_cancelled(client, req_id, "user_cancelled")
+    assert {:error, :cancelled} = Task.await(task, 2_000)
+
+    # Deliver delayed 401 challenge from the held POST
+    send(handler, :send_401)
+
+    # On 9dabc8d, client authenticates and re-sends the cancelled request.
+    # With the fix, the retired task is refused and never re-sent.
+    refute_receive {:tool_cancel_attempt, ^req_id, _}, 1_000
+    refute_receive :authenticated, 1_000
+  end
+
+  test "a delayed T0 challenge after a refresh reuses T1 with no second refresh" do
+    {:ok, agent} = Agent.start_link(fn -> "T0" end)
+
+    client =
+      start_client(auth_provider: {TokenRotationProvider, test_pid: self(), token_agent: agent})
+
+    # Send Request A with initial token T0 (held on server)
+    task_a =
+      Task.async(fn ->
+        Client.call_tool(client, "t0_held", %{}, timeout: 5_000)
+      end)
+
+    assert_receive {:t0_held, _req_id_a, handler_a}, 2_000
+
+    # Rotate provider token to T1
+    Agent.update(agent, fn _ -> "T1" end)
+
+    # Send Request B which picks up T1 in apply_provider_token
+    assert {:ok, _} = Client.call_tool(client, "fast", %{}, timeout: 5_000)
+
+    # Now deliver delayed 401 challenge to Request A (which sent with T0)
+    send(handler_a, :send_401)
+
+    # On 9dabc8d, returned transport did not keep T1, so it reauthenticates (fires :unexpected_reauth).
+    # With the fix, T1 is kept in the client's transport and reused without reauth.
+    refute_receive :unexpected_reauth, 500
+    assert_receive {:t0_retry_success, _}, 2_000
+    assert {:ok, _} = Task.await(task_a, 2_000)
+  end
+
+  test "a request without explicit timeout uses default timeout to bound auth wait and never re-sends past deadline" do
+    client =
+      start_client(
+        auth_provider: {SlowAuthProvider, test_pid: self()},
+        default_timeout: 40
+      )
+
+    task =
+      Task.async(fn ->
+        # No explicit timeout option passed (timeout: nil)
+        Client.call_tool(client, "timeout_auth", %{}, timeout: nil, retry_policy: false)
+      end)
+
+    assert_receive {:timeout_auth_post, req_id, _auth}, 2_000
+
+    # The caller must time out at the 40ms default timeout
+    assert {:error, %ExMCP.Error.ProtocolError{message: "Request timeout"}} =
+             Task.await(task, 2_000)
+
+    # Auth flow takes 200ms
+    assert_receive :slow_auth_finished, 2_000
+
+    # On 9dabc8d, task waited for auth and re-sent past the 40ms default deadline.
+    # With the fix, the task never re-sends after its deadline expired.
+    refute_receive {:unexpected_resend_past_deadline, ^req_id}, 500
+    refute_receive {:timeout_auth_post, ^req_id, ["Bearer T_slow"]}, 500
+  end
+
   defp receive_list_started do
     assert_receive {:list_started, _cursor, handler}, 2_000
     handler
@@ -264,17 +412,16 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
       Plug.Conn.resp(conn, 204, "")
     end)
 
-    {:ok, client} =
-      Client.start_link(
-        [
-          transport: :http,
-          url: "http://127.0.0.1:#{bypass.port}/mcp",
-          use_sse: true,
-          protocol_mode: :legacy_only,
-          health_check_interval: nil,
-          reconnect: false
-        ] ++ opts
-      )
+    base_opts = [
+      transport: :http,
+      url: "http://127.0.0.1:#{bypass.port}/mcp",
+      use_sse: true,
+      protocol_mode: :legacy_only,
+      health_check_interval: nil,
+      reconnect: false
+    ]
+
+    {:ok, client} = Client.start_link(Keyword.merge(base_opts, opts))
 
     on_exit(fn -> if Process.alive?(client), do: Process.exit(client, :kill) end)
     client
@@ -380,44 +527,12 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
        ) do
     name = params["name"]
     send(test_pid, {:tool_call_started, name, self()})
+    respond_tool(conn, id, name, test_pid)
+  end
 
-    case name do
-      "null_id" ->
-        json(conn, %{
-          "jsonrpc" => "2.0",
-          "id" => nil,
-          "error" => %{"code" => -32600, "message" => "Invalid Request"}
-        })
-
-      "string_id" ->
-        json(conn, %{"jsonrpc" => "2.0", "id" => to_string(id), "result" => %{"content" => []}})
-
-      "hang" ->
-        # The client gives up at its deadline and closes the connection;
-        # end normally when Cowboy stops this handler for that.
-        Process.flag(:trap_exit, true)
-
-        receive do
-          :release -> :ok
-          {:EXIT, _from, _reason} -> :ok
-        after
-          2_000 -> :ok
-        end
-
-        json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"content" => []}})
-
-      "protected" ->
-        if Plug.Conn.get_req_header(conn, "authorization") == ["Bearer fresh"] do
-          json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"content" => []}})
-        else
-          conn
-          |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
-          |> Plug.Conn.resp(401, "")
-        end
-
-      name when name in ["versioned_a", "versioned_b", "versioned_c"] ->
-        respond_versioned(conn, id, name, test_pid)
-    end
+  defp respond(conn, %{"method" => "ping", "id" => id}, test_pid, _counter) do
+    send(test_pid, {:health_ping, id})
+    json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{}})
   end
 
   defp respond(
@@ -463,6 +578,110 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
   defp respond(conn, %{"method" => method} = message, test_pid, _counter) do
     send(test_pid, {:notification, method, Map.get(message, "params", %{})})
     Plug.Conn.resp(conn, 202, "")
+  end
+
+  defp respond_tool(conn, _id, "null_id", _test_pid) do
+    json(conn, %{
+      "jsonrpc" => "2.0",
+      "id" => nil,
+      "error" => %{"code" => -32600, "message" => "Invalid Request"}
+    })
+  end
+
+  defp respond_tool(conn, id, "string_id", _test_pid) do
+    json(conn, %{"jsonrpc" => "2.0", "id" => to_string(id), "result" => %{"content" => []}})
+  end
+
+  defp respond_tool(conn, id, "hang", _test_pid) do
+    # The client gives up at its deadline and closes the connection;
+    # end normally when Cowboy stops this handler for that.
+    Process.flag(:trap_exit, true)
+
+    receive do
+      :release -> :ok
+      {:EXIT, _from, _reason} -> :ok
+    after
+      2_000 -> :ok
+    end
+
+    json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"content" => []}})
+  end
+
+  defp respond_tool(conn, id, "protected", _test_pid) do
+    if Plug.Conn.get_req_header(conn, "authorization") == ["Bearer fresh"] do
+      json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"content" => []}})
+    else
+      conn
+      |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
+      |> Plug.Conn.resp(401, "")
+    end
+  end
+
+  defp respond_tool(conn, id, name, test_pid)
+       when name in ["versioned_a", "versioned_b", "versioned_c"] do
+    respond_versioned(conn, id, name, test_pid)
+  end
+
+  defp respond_tool(conn, id, "cancel_then_401", test_pid) do
+    send(test_pid, {:tool_cancel_attempt, id, self()})
+
+    receive do
+      :send_401 ->
+        conn
+        |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
+        |> Plug.Conn.resp(401, "")
+
+      :allow ->
+        json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"content" => []}})
+    after
+      2_000 ->
+        conn
+        |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
+        |> Plug.Conn.resp(401, "")
+    end
+  end
+
+  defp respond_tool(conn, id, "t0_held", test_pid) do
+    case Plug.Conn.get_req_header(conn, "authorization") do
+      ["Bearer T1"] ->
+        send(test_pid, {:t0_retry_success, id})
+        json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"content" => []}})
+
+      _other ->
+        send(test_pid, {:t0_held, id, self()})
+
+        receive do
+          :send_401 ->
+            conn
+            |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
+            |> Plug.Conn.resp(401, "")
+        after
+          2_000 ->
+            conn
+            |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
+            |> Plug.Conn.resp(401, "")
+        end
+    end
+  end
+
+  defp respond_tool(conn, id, "fast", _test_pid) do
+    json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"content" => []}})
+  end
+
+  defp respond_tool(conn, id, "timeout_auth", test_pid) do
+    auth = Plug.Conn.get_req_header(conn, "authorization")
+    send(test_pid, {:timeout_auth_post, id, auth})
+
+    case auth do
+      ["Bearer T_slow"] ->
+        send(test_pid, {:unexpected_resend_past_deadline, id})
+        json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"content" => []}})
+
+      _ ->
+        conn
+        |> Plug.Conn.put_resp_header("www-authenticate", ~s(Bearer realm="mcp"))
+        |> Plug.Conn.resp(401, "")
+    end
   end
 
   defp respond_versioned(conn, id, "versioned_a", test_pid) do

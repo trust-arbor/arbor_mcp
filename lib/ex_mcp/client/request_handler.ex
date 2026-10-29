@@ -44,6 +44,9 @@ defmodule ExMCP.Client.RequestHandler do
   send is itself capped at the deadline.
   """
   def handle_request(method, params, from, state, meta \\ %{timeout: :caller_enforced}) do
+    effective_deadline = effective_request_deadline(meta, from, state)
+    meta = Map.put(meta, :deadline, effective_deadline)
+
     case undeliverable(from, meta) do
       nil ->
         id = Protocol.generate_id()
@@ -67,6 +70,30 @@ defmodule ExMCP.Client.RequestHandler do
 
   defp request_deadline(%{deadline: deadline}) when is_integer(deadline), do: deadline
   defp request_deadline(_meta), do: nil
+
+  defp effective_request_deadline(meta, from, state) do
+    deadline =
+      if is_tuple(from) and node(elem(from, 0)) == node(),
+        do: request_deadline(meta),
+        else: remote_relative_deadline(meta)
+
+    cond do
+      is_integer(deadline) ->
+        deadline
+
+      is_integer(Map.get(meta, :timeout)) ->
+        Deadline.after_ms(Map.get(meta, :timeout))
+
+      true ->
+        default = Map.get(state, :default_timeout) || 5_000
+        Deadline.after_ms(default)
+    end
+  end
+
+  defp remote_relative_deadline(%{timeout: ms}) when is_integer(ms) and ms >= 0,
+    do: Deadline.after_ms(ms)
+
+  defp remote_relative_deadline(_meta), do: nil
 
   @doc """
   The error for a request ExMCP did not send: `cause` is `:deadline_expired`
@@ -696,9 +723,10 @@ defmodule ExMCP.Client.RequestHandler do
   def handle_post_response(response_data, request_id, state) do
     case Protocol.parse_message(response_data) do
       {kind, payload, _echoed_id} when kind in [:result, :error] ->
-        if pending_single?(state.pending_requests, request_id),
-          do: handle_single_response({kind, payload, request_id}, state),
-          else: {:noreply, state}
+        if pending_single?(state.pending_requests, request_id) or
+             Map.get(state, :health_check_id) == request_id,
+           do: handle_single_response({kind, payload, request_id}, state),
+           else: {:noreply, state}
 
       _other ->
         parse_transport_message(response_data, state)
@@ -734,7 +762,13 @@ defmodule ExMCP.Client.RequestHandler do
   # cleared. These ids are never in pending_requests.
   defp handle_response_by_id(response_id, _response_data, %{health_check_id: ping_id} = state)
        when not is_nil(ping_id) and response_id == ping_id do
-    {:noreply, %{state | health_check_id: nil, last_activity: System.system_time(:second)}}
+    new_state =
+      state
+      |> Map.put(:health_check_id, nil)
+      |> Map.put(:last_activity, System.system_time(:second))
+      |> retire_async_post_task(response_id)
+
+    {:noreply, new_state}
   end
 
   defp handle_response_by_id(response_id, response_data, state) do
@@ -807,7 +841,10 @@ defmodule ExMCP.Client.RequestHandler do
           state
       end
 
-    {:noreply, forget_request_progress_token(new_state, response_id)}
+    {:noreply,
+     new_state
+     |> forget_request_progress_token(response_id)
+     |> retire_async_post_task(response_id)}
   end
 
   defp dispatch_request_notification(callback, request_id, params, state) do
@@ -1097,6 +1134,31 @@ defmodule ExMCP.Client.RequestHandler do
           Map.reject(progress_requests, fn {_token, id} -> id == request_id end)
 
         %{state | progress_requests: filtered}
+
+      _other ->
+        state
+    end
+  end
+
+  @doc false
+  def retire_async_post_task(state, request_id) do
+    case Map.get(state, :async_post_tasks) do
+      %{} = tasks ->
+        filtered =
+          Map.reject(tasks, fn
+            {ref, {_pid, ^request_id}} ->
+              Process.demonitor(ref, [:flush])
+              true
+
+            {ref, ^request_id} ->
+              Process.demonitor(ref, [:flush])
+              true
+
+            _other ->
+              false
+          end)
+
+        %{state | async_post_tasks: filtered}
 
       _other ->
         state

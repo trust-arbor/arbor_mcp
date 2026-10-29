@@ -1146,7 +1146,7 @@ defmodule ExMCP.Client do
       server_capabilities: %{},
       initialized: false,
       default_retry_policy: Keyword.get(opts, :retry_policy, []),
-      default_timeout: Keyword.get(opts, :timeout, 5_000),
+      default_timeout: Keyword.get(opts, :default_timeout, Keyword.get(opts, :timeout, 5_000)),
       async_post_tasks: %{}
     }
   end
@@ -1580,6 +1580,7 @@ defmodule ExMCP.Client do
         GenServer.reply(from, {:error, :cancelled})
         new_pending = Map.delete(state.pending_requests, request_id)
         updated_state = RequestHandler.forget_request_progress_token(updated_state, request_id)
+        updated_state = RequestHandler.retire_async_post_task(updated_state, request_id)
         {:reply, :ok, %{updated_state | pending_requests: new_pending}}
 
       {from, :single} ->
@@ -1587,6 +1588,7 @@ defmodule ExMCP.Client do
         GenServer.reply(from, {:error, :cancelled})
         new_pending = Map.delete(state.pending_requests, request_id)
         updated_state = RequestHandler.forget_request_progress_token(updated_state, request_id)
+        updated_state = RequestHandler.retire_async_post_task(updated_state, request_id)
         {:reply, :ok, %{updated_state | pending_requests: new_pending}}
 
       _ ->
@@ -2002,7 +2004,10 @@ defmodule ExMCP.Client do
   # :timeout option (scheduled by RequestHandler). Stale timers for requests
   # that already completed find no pending entry and are ignored.
   def handle_info({:request_timeout, request_id}, state) do
-    state = RequestHandler.forget_request_progress_token(state, request_id)
+    state =
+      state
+      |> RequestHandler.forget_request_progress_token(request_id)
+      |> RequestHandler.retire_async_post_task(request_id)
 
     case Map.get(state.pending_requests, request_id) do
       {from, :single, _method} ->
@@ -2090,9 +2095,11 @@ defmodule ExMCP.Client do
   # request whose caller has given up is not.
   defp handle_async_post_result({:error, {:reauthenticate, message}}, meta, state) do
     request_id = Map.get(meta, :request_id)
+    deadline = Map.get(meta, :deadline)
 
-    if (is_nil(request_id) or Map.has_key?(state.pending_requests, request_id)) and
-         state.connection_status != :disconnected and not is_nil(state.transport_state),
+    if (is_nil(request_id) or request_alive?(state, request_id)) and
+         state.connection_status != :disconnected and not is_nil(state.transport_state) and
+         not (is_integer(deadline) and Deadline.expired?(deadline)),
        do: resend_authenticated(message, meta, state),
        else: {:noreply, state}
   end
@@ -2266,6 +2273,10 @@ defmodule ExMCP.Client do
     end)
   end
 
+  defp request_alive?(state, id) do
+    Map.has_key?(state.pending_requests, id) or Map.get(state, :health_check_id) == id
+  end
+
   defp async_task_request_id({_pid, request_id}), do: request_id
   defp async_task_request_id(request_id), do: request_id
 
@@ -2340,7 +2351,10 @@ defmodule ExMCP.Client do
   # timeout, answered as a synchronous send was, and is cancelled on the
   # server: the client's own timeout timer finds nothing left to cancel.
   defp fail_async_post_request(state, request_id, reason, deadline \\ nil) do
-    state = RequestHandler.forget_request_progress_token(state, request_id)
+    state =
+      state
+      |> RequestHandler.forget_request_progress_token(request_id)
+      |> RequestHandler.retire_async_post_task(request_id)
 
     timed_out? =
       reason != :deadline_expired and is_integer(deadline) and Deadline.expired?(deadline)
@@ -3028,7 +3042,25 @@ defmodule ExMCP.Client do
     %{state | health_check_id: nil, health_check_ref: nil}
   end
 
-  defp send_health_ping(state) do
+  defp send_health_ping(
+         %{
+           transport_mod: HTTP,
+           transport_state: %HTTP{} = transport,
+           health_check_interval: interval
+         } = state
+       )
+       when is_integer(interval) and interval > 0 do
+    deadline = Deadline.earliest(transport.deadline, Deadline.after_ms(interval))
+
+    state =
+      do_send_health_ping(%{state | transport_state: HTTP.put_deadline(transport, deadline)})
+
+    %{state | transport_state: HTTP.put_deadline(state.transport_state, transport.deadline)}
+  end
+
+  defp send_health_ping(state), do: do_send_health_ping(state)
+
+  defp do_send_health_ping(state) do
     case RequestHandler.send_ping(state) do
       {:ok, request_id, new_state} ->
         %{new_state | health_check_id: request_id}
