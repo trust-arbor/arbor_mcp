@@ -30,6 +30,9 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
 
   @composition_keywords MapSet.new(~w(allOf anyOf oneOf not if then else))
   @literal_keywords MapSet.new(~w(const default enum examples))
+  @named_schema_maps MapSet.new(
+                       ~w(properties patternProperties $defs definitions dependentSchemas)
+                     )
   @reference_keywords MapSet.new(~w($ref $recursiveRef $dynamicRef))
 
   @defaults [
@@ -462,7 +465,9 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
 
   defp invalid_json_schema, do: {:error, {:invalid_schema, "schema is not JSON-compatible"}}
 
-  defp walk(value, depth, composition_depth, count, opts) when is_map(value) do
+  defp walk(value, depth, composition_depth, count, opts, named_keys? \\ false)
+
+  defp walk(value, depth, composition_depth, count, opts, named_keys?) when is_map(value) do
     count = count + 1
 
     cond do
@@ -476,11 +481,11 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
         {:error, {:schema_limit_exceeded, :max_subschemas, count}}
 
       true ->
-        walk_map_children(value, depth, composition_depth, count, opts)
+        walk_map_children(value, depth, composition_depth, count, opts, named_keys?)
     end
   end
 
-  defp walk(values, depth, composition_depth, count, opts) when is_list(values) do
+  defp walk(values, depth, composition_depth, count, opts, _named_keys?) when is_list(values) do
     if depth > opts[:max_schema_depth] do
       {:error, {:schema_limit_exceeded, :max_schema_depth, depth}}
     else
@@ -493,26 +498,35 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
     end
   end
 
-  defp walk(_value, _depth, _composition_depth, count, _opts), do: {:ok, count}
+  defp walk(_value, _depth, _composition_depth, count, _opts, _named_keys?), do: {:ok, count}
 
-  defp walk_map_children(value, depth, composition_depth, count, opts) do
+  defp walk_map_children(value, depth, composition_depth, count, opts, named_keys?) do
     Enum.reduce_while(value, {:ok, count}, fn {key, child}, {:ok, current_count} ->
       cond do
-        MapSet.member?(@literal_keywords, key) ->
+        not named_keys? and MapSet.member?(@literal_keywords, key) ->
           {:cont, {:ok, current_count}}
 
-        MapSet.member?(@reference_keywords, key) and external_ref?(child) ->
+        not named_keys? and MapSet.member?(@reference_keywords, key) and external_ref?(child) ->
           if key in ["$ref", "$dynamicRef"] and network_refs_enabled?(opts),
             do: {:cont, {:ok, current_count}},
             else: {:halt, {:error, :network_ref_forbidden}}
 
         true ->
           next_composition_depth =
-            if MapSet.member?(@composition_keywords, key),
+            if not named_keys? and MapSet.member?(@composition_keywords, key),
               do: composition_depth + 1,
               else: composition_depth
 
-          case walk(child, depth + 1, next_composition_depth, current_count, opts) do
+          next_named_keys? = not named_keys? and MapSet.member?(@named_schema_maps, key)
+
+          case walk(
+                 child,
+                 depth + 1,
+                 next_composition_depth,
+                 current_count,
+                 opts,
+                 next_named_keys?
+               ) do
             {:ok, next_count} -> {:cont, {:ok, next_count}}
             {:error, _reason} = error -> {:halt, error}
           end

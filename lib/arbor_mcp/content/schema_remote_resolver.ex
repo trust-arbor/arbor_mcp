@@ -7,6 +7,9 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   require Logger
 
   @literal_keywords MapSet.new(~w(const default enum examples))
+  @named_schema_maps MapSet.new(
+                       ~w(properties patternProperties $defs definitions dependentSchemas)
+                     )
   @redirect_statuses [301, 302, 303, 307, 308]
 
   @type network_error :: {:network_schema_error, atom()}
@@ -278,21 +281,25 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
     end
   end
 
-  defp normalize_references(map, base_uri) when is_map(map) do
+  defp normalize_references(map, base_uri, named_keys? \\ false)
+
+  defp normalize_references(map, base_uri, named_keys?) when is_map(map) do
     with {:ok, scope} <- schema_scope(map, base_uri) do
       Enum.reduce_while(map, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
         cond do
-          MapSet.member?(@literal_keywords, key) or key in ["$id", "id"] ->
+          not named_keys? and (MapSet.member?(@literal_keywords, key) or key in ["$id", "id"]) ->
             {:cont, {:ok, Map.put(acc, key, value)}}
 
-          key in ["$ref", "$dynamicRef"] ->
+          not named_keys? and key in ["$ref", "$dynamicRef"] ->
             case normalize_reference(value, scope) do
               {:ok, normalized} -> {:cont, {:ok, Map.put(acc, key, normalized)}}
               {:error, _reason} = error -> {:halt, error}
             end
 
           true ->
-            case normalize_references(value, scope) do
+            next_named_keys? = not named_keys? and MapSet.member?(@named_schema_maps, key)
+
+            case normalize_references(value, scope, next_named_keys?) do
               {:ok, normalized} -> {:cont, {:ok, Map.put(acc, key, normalized)}}
               {:error, _reason} = error -> {:halt, error}
             end
@@ -301,7 +308,7 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
     end
   end
 
-  defp normalize_references(list, base_uri) when is_list(list) do
+  defp normalize_references(list, base_uri, _named_keys?) when is_list(list) do
     list
     |> Enum.reduce_while({:ok, []}, fn value, {:ok, acc} ->
       case normalize_references(value, base_uri) do
@@ -315,7 +322,7 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
     end
   end
 
-  defp normalize_references(value, _base_uri), do: {:ok, value}
+  defp normalize_references(value, _base_uri, _named_keys?), do: {:ok, value}
 
   defp normalize_reference(reference, _scope) when not is_binary(reference),
     do: {:ok, reference}
@@ -329,14 +336,16 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
     end
   end
 
-  defp walk_references(map, base_uri, references) when is_map(map) do
+  defp walk_references(map, base_uri, references, named_keys? \\ false)
+
+  defp walk_references(map, base_uri, references, named_keys?) when is_map(map) do
     with {:ok, scope} <- schema_scope(map, base_uri) do
       Enum.reduce_while(map, {:ok, references}, fn {key, value}, {:ok, acc} ->
         cond do
-          MapSet.member?(@literal_keywords, key) or key in ["$id", "id"] ->
+          not named_keys? and (MapSet.member?(@literal_keywords, key) or key in ["$id", "id"]) ->
             {:cont, {:ok, acc}}
 
-          key in ["$ref", "$dynamicRef"] ->
+          not named_keys? and key in ["$ref", "$dynamicRef"] ->
             case reference_document(value, scope) do
               {:ok, nil} -> {:cont, {:ok, acc}}
               {:ok, document} -> {:cont, {:ok, [document | acc]}}
@@ -344,7 +353,9 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
             end
 
           true ->
-            case walk_references(value, scope, acc) do
+            next_named_keys? = not named_keys? and MapSet.member?(@named_schema_maps, key)
+
+            case walk_references(value, scope, acc, next_named_keys?) do
               {:ok, next_acc} -> {:cont, {:ok, next_acc}}
               {:error, _reason} = error -> {:halt, error}
             end
@@ -353,7 +364,7 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
     end
   end
 
-  defp walk_references(list, base_uri, references) when is_list(list) do
+  defp walk_references(list, base_uri, references, _named_keys?) when is_list(list) do
     Enum.reduce_while(list, {:ok, references}, fn value, {:ok, acc} ->
       case walk_references(value, base_uri, acc) do
         {:ok, next_acc} -> {:cont, {:ok, next_acc}}
@@ -362,7 +373,7 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
     end)
   end
 
-  defp walk_references(_value, _base_uri, references), do: {:ok, references}
+  defp walk_references(_value, _base_uri, references, _named_keys?), do: {:ok, references}
 
   defp schema_scope(schema, base_uri) do
     case Map.get(schema, "$id") || Map.get(schema, "id") do
