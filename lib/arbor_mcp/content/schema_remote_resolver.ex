@@ -281,20 +281,22 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
     end
   end
 
-  defp normalize_references(map, base_uri, named_keys? \\ false)
+  defp normalize_references(map, base_uri, named_keys? \\ false, draft \\ nil)
 
-  defp normalize_references(map, base_uri, named_keys?) when is_map(map) do
+  defp normalize_references(map, base_uri, named_keys?, draft) when is_map(map) do
+    draft = inherit_walk_draft(map, named_keys?, draft)
+
     with {:ok, scope} <- map_scope(map, base_uri, named_keys?) do
       Enum.reduce_while(map, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
-        normalize_entry(key, value, scope, acc, named_keys?)
+        normalize_entry(key, value, scope, acc, named_keys?, draft)
       end)
     end
   end
 
-  defp normalize_references(list, base_uri, _named_keys?) when is_list(list) do
+  defp normalize_references(list, base_uri, _named_keys?, draft) when is_list(list) do
     list
     |> Enum.reduce_while({:ok, []}, fn value, {:ok, acc} ->
-      case normalize_references(value, base_uri) do
+      case normalize_references(value, base_uri, false, draft) do
         {:ok, normalized} -> {:cont, {:ok, [normalized | acc]}}
         {:error, _reason} = error -> {:halt, error}
       end
@@ -305,7 +307,7 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
     end
   end
 
-  defp normalize_references(value, _base_uri, _named_keys?), do: {:ok, value}
+  defp normalize_references(value, _base_uri, _named_keys?, _draft), do: {:ok, value}
 
   defp normalize_reference(reference, _scope) when not is_binary(reference),
     do: {:ok, reference}
@@ -319,26 +321,29 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
     end
   end
 
-  defp walk_references(map, base_uri, references, named_keys? \\ false)
+  defp walk_references(map, base_uri, references, named_keys? \\ false, draft \\ nil)
 
-  defp walk_references(map, base_uri, references, named_keys?) when is_map(map) do
+  defp walk_references(map, base_uri, references, named_keys?, draft) when is_map(map) do
+    draft = inherit_walk_draft(map, named_keys?, draft)
+
     with {:ok, scope} <- map_scope(map, base_uri, named_keys?) do
       Enum.reduce_while(map, {:ok, references}, fn {key, value}, {:ok, acc} ->
-        walk_entry(key, value, scope, acc, named_keys?)
+        walk_entry(key, value, scope, acc, named_keys?, draft)
       end)
     end
   end
 
-  defp walk_references(list, base_uri, references, _named_keys?) when is_list(list) do
+  defp walk_references(list, base_uri, references, _named_keys?, draft) when is_list(list) do
     Enum.reduce_while(list, {:ok, references}, fn value, {:ok, acc} ->
-      case walk_references(value, base_uri, acc) do
+      case walk_references(value, base_uri, acc, false, draft) do
         {:ok, next_acc} -> {:cont, {:ok, next_acc}}
         {:error, _reason} = error -> {:halt, error}
       end
     end)
   end
 
-  defp walk_references(_value, _base_uri, references, _named_keys?), do: {:ok, references}
+  defp walk_references(_value, _base_uri, references, _named_keys?, _draft),
+    do: {:ok, references}
 
   # Named-property maps (`properties`, `$defs`, ...) are not schemas. Their
   # keys are names, so `$id`/`id` here is a property, not a scope identifier.
@@ -353,18 +358,26 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   defp named_child?(false, key), do: MapSet.member?(@named_schema_maps, key)
   defp named_child?(true, _key), do: false
 
-  defp normalize_entry("dependentRequired", value, _scope, acc, false) do
-    {:cont, {:ok, Map.put(acc, "dependentRequired", value)}}
+  defp normalize_entry("dependentRequired", value, scope, acc, false, draft) do
+    if skip_dependent_required?(draft) do
+      {:cont, {:ok, Map.put(acc, "dependentRequired", value)}}
+    else
+      normalize_generic("dependentRequired", value, scope, acc, false, draft)
+    end
   end
 
-  defp normalize_entry("dependencies", value, scope, acc, false) when is_map(value) do
-    case normalize_schema_or_array_map(value, scope) do
+  defp normalize_entry("dependencies", value, scope, acc, false, draft) when is_map(value) do
+    case normalize_schema_or_array_map(value, scope, draft) do
       {:ok, normalized} -> {:cont, {:ok, Map.put(acc, "dependencies", normalized)}}
       {:error, _reason} = error -> {:halt, error}
     end
   end
 
-  defp normalize_entry(key, value, scope, acc, named_keys?) do
+  defp normalize_entry(key, value, scope, acc, named_keys?, draft) do
+    normalize_generic(key, value, scope, acc, named_keys?, draft)
+  end
+
+  defp normalize_generic(key, value, scope, acc, named_keys?, draft) do
     cond do
       skip_schema_keyword?(named_keys?, key) ->
         {:cont, {:ok, Map.put(acc, key, value)}}
@@ -376,23 +389,33 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
         end
 
       true ->
-        case normalize_references(value, scope, named_child?(named_keys?, key)) do
+        case normalize_references(value, scope, named_child?(named_keys?, key), draft) do
           {:ok, normalized} -> {:cont, {:ok, Map.put(acc, key, normalized)}}
           {:error, _reason} = error -> {:halt, error}
         end
     end
   end
 
-  defp walk_entry("dependentRequired", _value, _scope, acc, false), do: {:cont, {:ok, acc}}
+  defp walk_entry("dependentRequired", value, scope, acc, false, draft) do
+    if skip_dependent_required?(draft) do
+      {:cont, {:ok, acc}}
+    else
+      walk_generic("dependentRequired", value, scope, acc, false, draft)
+    end
+  end
 
-  defp walk_entry("dependencies", value, scope, acc, false) when is_map(value) do
-    case walk_schema_or_array_map(value, scope, acc) do
+  defp walk_entry("dependencies", value, scope, acc, false, draft) when is_map(value) do
+    case walk_schema_or_array_map(value, scope, acc, draft) do
       {:ok, next_acc} -> {:cont, {:ok, next_acc}}
       {:error, _reason} = error -> {:halt, error}
     end
   end
 
-  defp walk_entry(key, value, scope, acc, named_keys?) do
+  defp walk_entry(key, value, scope, acc, named_keys?, draft) do
+    walk_generic(key, value, scope, acc, named_keys?, draft)
+  end
+
+  defp walk_generic(key, value, scope, acc, named_keys?, draft) do
     cond do
       skip_schema_keyword?(named_keys?, key) ->
         {:cont, {:ok, acc}}
@@ -405,7 +428,7 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
         end
 
       true ->
-        case walk_references(value, scope, acc, named_child?(named_keys?, key)) do
+        case walk_references(value, scope, acc, named_child?(named_keys?, key), draft) do
           {:ok, next_acc} -> {:cont, {:ok, next_acc}}
           {:error, _reason} = error -> {:halt, error}
         end
@@ -413,40 +436,65 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   end
 
   # `dependencies` keys are names. A value is a schema or a string array.
-  defp normalize_schema_or_array_map(map, scope) do
+  defp normalize_schema_or_array_map(map, scope, draft) do
     Enum.reduce_while(map, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
-      cond do
-        is_list(value) ->
-          {:cont, {:ok, Map.put(acc, key, value)}}
-
-        is_map(value) ->
-          case normalize_references(value, scope, false) do
-            {:ok, normalized} -> {:cont, {:ok, Map.put(acc, key, normalized)}}
-            {:error, _reason} = error -> {:halt, error}
-          end
-
-        true ->
-          {:cont, {:ok, Map.put(acc, key, value)}}
+      case normalize_schema_or_array_value(value, scope, draft) do
+        {:ok, normalized} -> {:cont, {:ok, Map.put(acc, key, normalized)}}
+        {:error, _reason} = error -> {:halt, error}
       end
     end)
   end
 
-  defp walk_schema_or_array_map(map, scope, references) do
+  defp normalize_schema_or_array_value(value, scope, draft) do
+    if string_array?(value) do
+      {:ok, value}
+    else
+      normalize_references(value, scope, false, draft)
+    end
+  end
+
+  defp walk_schema_or_array_map(map, scope, references, draft) do
     Enum.reduce_while(map, {:ok, references}, fn {_key, value}, {:ok, acc} ->
-      cond do
-        is_list(value) ->
-          {:cont, {:ok, acc}}
-
-        is_map(value) ->
-          case walk_references(value, scope, acc, false) do
-            {:ok, next_acc} -> {:cont, {:ok, next_acc}}
-            {:error, _reason} = error -> {:halt, error}
-          end
-
-        true ->
-          {:cont, {:ok, acc}}
+      case walk_schema_or_array_value(value, scope, acc, draft) do
+        {:ok, next_acc} -> {:cont, {:ok, next_acc}}
+        {:error, _reason} = error -> {:halt, error}
       end
     end)
+  end
+
+  defp walk_schema_or_array_value(value, scope, references, draft) do
+    if string_array?(value) do
+      {:ok, references}
+    else
+      walk_references(value, scope, references, false, draft)
+    end
+  end
+
+  defp skip_dependent_required?(draft), do: draft in [:draft201909, :modern]
+
+  defp string_array?(value) when is_list(value), do: Enum.all?(value, &is_binary/1)
+  defp string_array?(_value), do: false
+
+  defp inherit_walk_draft(_map, true, draft), do: draft || :modern
+
+  defp inherit_walk_draft(map, false, draft) do
+    case Map.get(map, "$schema") do
+      uri when is_binary(uri) -> walk_draft(uri)
+      _missing -> draft || :modern
+    end
+  end
+
+  defp walk_draft(uri) do
+    uri = if String.ends_with?(uri, "#"), do: String.slice(uri, 0, byte_size(uri) - 1), else: uri
+
+    case String.replace_prefix(uri, "https://", "http://") do
+      "http://json-schema.org/draft-04/schema" -> :draft4
+      "http://json-schema.org/draft-06/schema" -> :draft6
+      "http://json-schema.org/draft-07/schema" -> :draft7
+      "http://json-schema.org/schema" -> :draft7
+      "http://json-schema.org/draft/2019-09/schema" -> :draft201909
+      _other -> :modern
+    end
   end
 
   defp schema_scope(schema, base_uri) do

@@ -468,6 +468,7 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   defp walk(value, depth, composition_depth, count, opts, named_keys? \\ false)
 
   defp walk(value, depth, composition_depth, count, opts, named_keys?) when is_map(value) do
+    opts = inherit_walk_draft(value, opts, named_keys?)
     count = count + 1
 
     cond do
@@ -508,14 +509,18 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
 
   defp walk_map_child(
          "dependentRequired",
-         _child,
-         _depth,
-         _composition_depth,
+         child,
+         depth,
+         composition_depth,
          count,
-         _opts,
+         opts,
          false
        ) do
-    {:cont, {:ok, count}}
+    if skip_dependent_required?(opts[:schema_draft]) do
+      {:cont, {:ok, count}}
+    else
+      walk_nested_schema("dependentRequired", child, depth, composition_depth, count, opts, false)
+    end
   end
 
   defp walk_map_child("dependencies", child, depth, composition_depth, count, opts, false)
@@ -541,24 +546,57 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
 
   defp walk_schema_or_array_map(map, depth, composition_depth, count, opts) do
     Enum.reduce_while(map, {:ok, count}, fn {_key, value}, {:ok, current_count} ->
-      cond do
-        is_list(value) ->
-          {:cont, {:ok, current_count}}
-
-        is_map(value) ->
-          case walk(value, depth + 1, composition_depth, current_count, opts, false) do
-            {:ok, next_count} -> {:cont, {:ok, next_count}}
-            {:error, _reason} = error -> {:halt, error}
-          end
-
-        true ->
-          {:cont, {:ok, current_count}}
-      end
+      walk_schema_or_array_value(value, depth, composition_depth, current_count, opts)
     end)
+  end
+
+  defp walk_schema_or_array_value(value, depth, composition_depth, count, opts) do
+    cond do
+      string_array?(value) ->
+        {:cont, {:ok, count}}
+
+      is_list(value) or is_map(value) ->
+        case walk(value, depth + 1, composition_depth, count, opts, false) do
+          {:ok, next_count} -> {:cont, {:ok, next_count}}
+          {:error, _reason} = error -> {:halt, error}
+        end
+
+      true ->
+        {:cont, {:ok, count}}
+    end
   end
 
   defp skip_literal_keyword?(named_keys?, key),
     do: not named_keys? and MapSet.member?(@literal_keywords, key)
+
+  # `dependentRequired` is a string-array map only in 2019-09 / 2020-12.
+  # Earlier drafts do not define it, so `$ref` can still point into the object.
+  defp skip_dependent_required?(draft), do: draft in [:draft201909, :modern]
+
+  defp string_array?(value) when is_list(value), do: Enum.all?(value, &is_binary/1)
+  defp string_array?(_value), do: false
+
+  defp inherit_walk_draft(_schema, opts, true), do: opts
+
+  defp inherit_walk_draft(schema, opts, false) do
+    case Map.get(schema, "$schema") do
+      uri when is_binary(uri) -> Keyword.put(opts, :schema_draft, walk_draft(uri))
+      _missing -> Keyword.put_new(opts, :schema_draft, :modern)
+    end
+  end
+
+  defp walk_draft(uri) do
+    uri = if String.ends_with?(uri, "#"), do: String.slice(uri, 0, byte_size(uri) - 1), else: uri
+
+    case String.replace_prefix(uri, "https://", "http://") do
+      "http://json-schema.org/draft-04/schema" -> :draft4
+      "http://json-schema.org/draft-06/schema" -> :draft6
+      "http://json-schema.org/draft-07/schema" -> :draft7
+      "http://json-schema.org/schema" -> :draft7
+      "http://json-schema.org/draft/2019-09/schema" -> :draft201909
+      _other -> :modern
+    end
+  end
 
   defp walk_external_ref(key, count, opts) do
     if key in ["$ref", "$dynamicRef"] and network_refs_enabled?(opts),
