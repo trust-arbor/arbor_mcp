@@ -183,20 +183,79 @@ defmodule Arbor.MCP.Security.Validation do
   end
 
   defp validate_host_against_policy(host, config) do
-    # Basic validation - could be enhanced based on security policy
-    if String.contains?(host, ["localhost", "127.0.0.1", "[::1]"]) do
-      :ok
-    else
-      # For non-localhost hosts, ensure they match expected patterns
-      allowed_hosts = Map.get(config, :allowed_hosts, [])
+    case parse_request_host(host) do
+      {:ok, hostname} ->
+        if loopback_hostname?(hostname) do
+          :ok
+        else
+          allowed_hosts = Map.get(config, :allowed_hosts, [])
 
-      if allowed_hosts == [] or host in allowed_hosts do
-        :ok
-      else
+          if allowed_hosts == [] or hostname_allowed?(hostname, allowed_hosts) do
+            :ok
+          else
+            {:error, :host_not_allowed}
+          end
+        end
+
+      :error ->
         {:error, :host_not_allowed}
-      end
     end
   end
+
+  # Host headers are `name`, `name:port`, `[ipv6]`, or `[ipv6]:port`. A full
+  # URL is accepted so callers that pass a request target still compare the
+  # hostname, not a substring of the raw string.
+  defp parse_request_host(host) when is_binary(host) do
+    uri =
+      if String.contains?(host, "://") do
+        URI.parse(host)
+      else
+        URI.parse("//" <> host)
+      end
+
+    case uri.host do
+      hostname when is_binary(hostname) and hostname != "" -> {:ok, hostname}
+      _missing -> :error
+    end
+  rescue
+    _exception -> :error
+  end
+
+  defp parse_request_host(_host), do: :error
+
+  defp hostname_allowed?(hostname, allowed_hosts) do
+    normalized = normalize_hostname(hostname)
+
+    Enum.any?(allowed_hosts, fn allowed ->
+      case parse_request_host(allowed) do
+        {:ok, allowed_hostname} -> normalize_hostname(allowed_hostname) == normalized
+        :error -> false
+      end
+    end)
+  end
+
+  defp loopback_hostname?(hostname) do
+    normalized = normalize_hostname(hostname)
+
+    normalized == "localhost" or loopback_ip?(normalized)
+  end
+
+  defp loopback_ip?(hostname) do
+    case :inet.parse_address(String.to_charlist(hostname)) do
+      {:ok, address} -> loopback_address?(address)
+      {:error, _reason} -> false
+    end
+  end
+
+  defp normalize_hostname(hostname) do
+    hostname
+    |> strip_ipv6_brackets()
+    |> String.downcase()
+    |> String.trim_trailing(".")
+  end
+
+  defp strip_ipv6_brackets("[" <> rest), do: String.trim_trailing(rest, "]")
+  defp strip_ipv6_brackets(hostname), do: hostname
 
   defp validate_https_requirement(headers, %{enforce_https: true}) do
     # Check if this is an HTTPS request
