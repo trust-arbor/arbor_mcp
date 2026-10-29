@@ -209,20 +209,24 @@ defmodule Arbor.MCP.Authorization.RegistrationPolicyTest do
   end
 
   test "legacy client keys remain compatibility aliases" do
+    metadata = Map.put(cimd_and_dcr_metadata(), "issuer", "https://auth.example")
+
     assert {:ok, {:pre_registered, selected}} =
-             RegistrationPolicy.select(cimd_and_dcr_metadata(), %{
+             RegistrationPolicy.select(metadata, %{
                client_id: "legacy-client",
-               client_secret: "legacy-secret"
+               client_secret: "legacy-secret",
+               credential_issuer: "https://auth.example"
              })
 
     assert selected.client_id == "legacy-client"
     assert selected.client_secret == "legacy-secret"
 
     assert {:ok, {:pre_registered, selected}} =
-             RegistrationPolicy.select(cimd_and_dcr_metadata(), %{
+             RegistrationPolicy.select(metadata, %{
                client_registration: :auto,
                client_id: "legacy-client",
                client_secret: "legacy-secret",
+               credential_issuer: "https://auth.example",
                client_metadata_url: @cimd_url,
                application_type: :native,
                redirect_port: 8_080

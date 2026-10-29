@@ -242,7 +242,8 @@ when the authorization server sets
 `client_id_metadata_document_supported: true`, deprecated DCR when it exposes
 `registration_endpoint`, then an actionable error. `:auto` never fabricates a
 metadata URL. Existing `client_id` / `client_secret` keys remain accepted as
-1.x compatibility aliases.
+1.x compatibility aliases and, like the explicit pre-registered strategy,
+require `credential_issuer`.
 
 A CIMD client ID must be an exact HTTPS URL with a non-root path. The JSON
 document at that URL must repeat the same `client_id` byte-for-byte and include
@@ -312,14 +313,16 @@ provider redirect.
 
 ### Issuer-bound credential persistence
 
-For MCP `2026-07-28`, pre-registered credentials require
-`credential_issuer`. ArborMCP compares this value byte-for-byte with the issuer in
-the discovered authorization-server metadata before resolving or using the
-secret. A trailing slash, path change, or any other textual difference is a
-mismatch; issuer identifiers are not URL-normalized. During 1.x, only the
-legacy `client_id` / `client_secret` aliases retain their old unbound behavior
-for legacy protocol versions; the new explicit pre-registration strategy is
-always issuer-bound.
+Pre-registered credentials require `credential_issuer` on every protocol
+version, including the default legacy revision (`2025-11-25`) and the
+`client_id` / `client_secret` compatibility aliases. ArborMCP compares this
+value byte-for-byte with the issuer in the discovered authorization-server
+metadata before resolving or using the secret. A trailing slash, path change,
+or any other textual difference is a mismatch; issuer identifiers are not
+URL-normalized. A missing or mismatched issuer fails closed with
+`{:pre_registered_credential_issuer_required, discovered_issuer}` or
+`{:pre_registered_credential_issuer_mismatch, details}` and the secret is
+never sent to another origin.
 
 Applications that persist DCR registrations or tokens can provide an encrypted
 store or OS-keychain adapter implementing

@@ -83,6 +83,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Pre-registered OAuth client secrets are issuer-bound by default.** The
+  `client_id` / `client_secret` compatibility aliases no longer send a
+  secret to whatever issuer discovered metadata names. Set
+  `credential_issuer` to the exact authorization-server issuer (the same
+  value already required for the explicit `{:pre_registered, ...}` strategy
+  and for MCP `2026-07-28`). A missing or mismatched issuer fails closed
+  with `{:pre_registered_credential_issuer_required, discovered_issuer}` or
+  `{:pre_registered_credential_issuer_mismatch, details}` before the secret
+  is resolved. See [Issuer-bound credential persistence](docs/CONFIGURATION.md#issuer-bound-credential-persistence).
 - A modern (2026-07-28) request whose caller exits while it is in flight is
   now cancelled upstream by default: a `Task` running a call that is killed,
   or a process that crashes mid-call, no longer leaves the server working on
@@ -104,6 +113,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A pre-registered client secret configured through the legacy
+  `client_id` / `client_secret` aliases was not bound to an issuer under the
+  default legacy protocol (`2025-11-25`). Attacker-controlled authorization
+  server metadata could therefore receive the secret after a transform.
+  `Arbor.MCP.Authorization.RegistrationPolicy` now requires
+  `credential_issuer` for every pre-registered secret, on every protocol
+  version, and refuses to resolve or send the secret to any other origin.
 - `Accept: application/json, text/event-stream;q` — a `q` parameter with no
   value — and `q =1` / `q= 1`, whose whitespace around the equals sign
   violates the weight grammar (RFC 9110 section 12.4.2: optional whitespace

@@ -139,12 +139,13 @@ reserved, and metadata-service addresses remain denied.
 
 ### OAuth credential isolation
 
-Modern pre-registered clients bind their credentials to an exact
-authorization-server issuer through `credential_issuer`. ArborMCP rejects
-mismatches without normalizing trailing slashes or paths, validates discovered
-AS metadata against the issuer that led to it, and never resolves the client
-secret before that check succeeds. CIMD client IDs are the deliberate portable
-exception defined by the protocol.
+Pre-registered clients bind their credentials to an exact authorization-server
+issuer through `credential_issuer`, including the default legacy revision
+(`2025-11-25`) and the `client_id` / `client_secret` compatibility aliases.
+ArborMCP rejects a missing or mismatched issuer without normalizing trailing
+slashes or paths, validates discovered AS metadata against the issuer that led
+to it, and never resolves the client secret before that check succeeds. CIMD
+client IDs are the deliberate portable exception defined by the protocol.
 
 Persistent hosts should implement `Arbor.MCP.Authorization.CredentialStore` using
 an encrypted database or platform keychain. Registrations are keyed by issuer
