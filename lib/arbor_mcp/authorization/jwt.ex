@@ -192,7 +192,8 @@ defmodule Arbor.MCP.Authorization.JWT do
     - `:leeway` - Clock skew allowance in seconds (default: `#{@default_leeway_seconds}`)
     - `:require_exp` - Require an `exp` claim (default: `true`)
     - `:iss` - Expected issuer
-    - `:aud` - Expected audience (string or list)
+    - `:aud` - Expected audience (string or list). Required; omitting it
+      returns `{:error, :missing_expected_audience}`
     - `:sub` - Expected subject
     - `:max_age` - Maximum token age in seconds
     - `:required` - List of required claim keys (as strings)
@@ -202,6 +203,7 @@ defmodule Arbor.MCP.Authorization.JWT do
     - `{:error, :missing_exp}` - no `exp` claim and `require_exp` is true
     - `{:error, {:invalid_claim_type, "exp" | "nbf" | "iat"}}` - claim present but not a number
     - `{:error, :token_expired}` / `{:error, :token_not_yet_valid}` / `{:error, :invalid_iat}`
+    - `{:error, :missing_expected_audience}` - no `:aud` option was passed
   """
   @spec validate_claims(map(), keyword()) :: {:ok, map()} | {:error, term()}
   def validate_claims(claims, expected \\ []) do
@@ -336,7 +338,7 @@ defmodule Arbor.MCP.Authorization.JWT do
 
   defp validate_iss(_, _expected), do: {:error, :missing_issuer}
 
-  defp validate_aud(_, nil), do: :ok
+  defp validate_aud(_, nil), do: {:error, :missing_expected_audience}
 
   defp validate_aud(%{"aud" => aud}, expected_aud) when is_binary(expected_aud) do
     aud_list = List.wrap(aud)
