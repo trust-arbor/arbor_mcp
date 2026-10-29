@@ -104,6 +104,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Host header policy no longer treats `localhost` or `127.0.0.1` as a
+  substring match. `validate_host_against_policy/2` parses the header or URL
+  with `URI`, strips the port, compares allowed hosts exactly, and recognizes
+  loopback through `:inet.parse_address/1` (including `[::1]` and a trailing
+  FQDN dot on `localhost.`).
+- JSON Schema `$ref` walking no longer skips a property literally named
+  `default`, `enum`, or `examples`. Those keys are keywords only at the
+  schema level; under `properties`, `$defs`, and the other named-schema maps
+  they are still walked and validated.
+- `Arbor.MCP.Authorization.JWT.validate_claims/2` now requires an expected
+  `:aud`. Omitting it returns `{:error, :missing_expected_audience}` instead
+  of succeeding.
+
 - `Accept: application/json, text/event-stream;q` — a `q` parameter with no
   value — and `q =1` / `q= 1`, whose whitespace around the equals sign
   violates the weight grammar (RFC 9110 section 12.4.2: optional whitespace
