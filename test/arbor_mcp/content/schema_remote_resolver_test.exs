@@ -76,6 +76,28 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolverTest do
       assert {:error, _errors} = SchemaPolicy.validate(10, resolved)
     end
 
+    test "does not treat a property named id as a schema identifier" do
+      {opts, _agent} = resolver_options(%{})
+
+      schema = %{
+        "type" => "object",
+        "properties" => %{
+          "default" => %{
+            "type" => "object",
+            "properties" => %{
+              "id" => %{"type" => "string"}
+            }
+          }
+        }
+      }
+
+      assert {:ok, resolved} = SchemaPolicy.compile(schema, opts)
+      assert :ok = SchemaPolicy.validate(%{"default" => %{"id" => "abc"}}, resolved)
+
+      assert {:error, _errors} =
+               SchemaPolicy.validate(%{"default" => %{"id" => 1}}, resolved)
+    end
+
     test "supports boolean root and remote schemas" do
       routes = %{
         "https://schemas.example.com/false.json" => response("false")
