@@ -176,31 +176,159 @@ defmodule Arbor.MCP.Content.SchemaPolicyTest do
     end
 
     test "compile never calls the global remote resolver for hidden or spoofed refs" do
+      with_global_resolver_spy(fn ->
+        for {label, schema} <- hidden_or_spoofed_ref_schemas() do
+          refute match?({:ok, _}, SchemaPolicy.compile(schema)),
+                 "#{label} compile with network refs off"
+
+          refute_receive {:global_resolver_called, _requested},
+                         50,
+                         "#{label} reached the global resolver with network refs off"
+
+          refute match?({:ok, _}, SchemaPolicy.compile(schema, @unrelated_allowlist)),
+                 "#{label} compile with an unrelated allowlist"
+
+          refute_receive {:global_resolver_called, _requested},
+                         50,
+                         "#{label} reached the global resolver with an unrelated allowlist"
+        end
+      end)
+    end
+
+    test "compile never calls the global resolver for $id-scoped fragment refs" do
+      with_global_resolver_spy(fn ->
+        for {label, schema} <- id_scoped_fragment_schemas() do
+          _result = SchemaPolicy.compile(schema)
+
+          refute_receive {:global_resolver_called, _requested},
+                         50,
+                         "#{label} reached the global resolver with network refs off"
+
+          _allowed = SchemaPolicy.compile(schema, @unrelated_allowlist)
+
+          refute_receive {:global_resolver_called, _requested},
+                         50,
+                         "#{label} reached the global resolver with an unrelated allowlist"
+        end
+      end)
+    end
+
+    test "overlapping compiles never call the global resolver or change app env" do
       previous = Application.get_env(:ex_json_schema, :remote_schema_resolver)
       caller = self()
 
-      Application.put_env(:ex_json_schema, :remote_schema_resolver, fn uri ->
+      spy = fn uri ->
         send(caller, {:global_resolver_called, uri})
         %{}
-      end)
+      end
 
+      Application.put_env(:ex_json_schema, :remote_schema_resolver, spy)
       on_exit(fn -> restore_env(:ex_json_schema, :remote_schema_resolver, previous) end)
 
-      for {label, schema} <- hidden_or_spoofed_ref_schemas() do
-        refute match?({:ok, _}, SchemaPolicy.compile(schema)),
-               "#{label} compile with network refs off"
+      hidden = Enum.map(hidden_or_spoofed_ref_schemas(), fn {_label, schema} -> schema end)
+      id_scoped = Enum.map(id_scoped_fragment_schemas(), fn {_label, schema} -> schema end)
+      barrier = make_ref()
 
-        refute_receive {:global_resolver_called, _requested},
-                       50,
-                       "#{label} reached the global resolver with network refs off"
+      hidden_tasks =
+        for schema <- hidden do
+          Task.async(fn ->
+            send(caller, {:ready, self()})
+            receive do: (^barrier -> :ok)
+            SchemaPolicy.compile(schema)
+          end)
+        end
 
-        refute match?({:ok, _}, SchemaPolicy.compile(schema, @unrelated_allowlist)),
-               "#{label} compile with an unrelated allowlist"
+      id_tasks =
+        for schema <- id_scoped, _n <- 1..3 do
+          Task.async(fn ->
+            send(caller, {:ready, self()})
+            receive do: (^barrier -> :ok)
+            SchemaPolicy.compile(schema)
+          end)
+        end
 
-        refute_receive {:global_resolver_called, _requested},
-                       50,
-                       "#{label} reached the global resolver with an unrelated allowlist"
+      tasks = hidden_tasks ++ id_tasks
+      for _task <- tasks, do: assert_receive({:ready, _pid}, 5_000)
+      Enum.each(tasks, fn task -> send(task.pid, barrier) end)
+
+      hidden_results = Enum.map(hidden_tasks, &Task.await(&1, 15_000))
+      _id_results = Enum.map(id_tasks, &Task.await(&1, 15_000))
+
+      Enum.each(hidden_results, fn result ->
+        refute match?({:ok, _}, result)
+      end)
+
+      refute_receive {:global_resolver_called, _requested}
+      assert Application.get_env(:ex_json_schema, :remote_schema_resolver) == spy
+    end
+
+    test "stress: many overlapping compiles leave the global resolver env untouched" do
+      previous = Application.get_env(:ex_json_schema, :remote_schema_resolver)
+      caller = self()
+
+      spy = fn uri ->
+        send(caller, {:global_resolver_called, uri})
+        %{}
       end
+
+      Application.put_env(:ex_json_schema, :remote_schema_resolver, spy)
+      on_exit(fn -> restore_env(:ex_json_schema, :remote_schema_resolver, previous) end)
+
+      schema = id_anchor_schema()
+
+      1..40
+      |> Enum.map(fn _n -> Task.async(fn -> SchemaPolicy.compile(schema) end) end)
+      |> Enum.each(&Task.await(&1, 15_000))
+
+      refute_receive {:global_resolver_called, _requested}
+      assert Application.get_env(:ex_json_schema, :remote_schema_resolver) == spy
+    end
+
+    test "a timed-out compile leaves the global resolver env unchanged" do
+      previous = Application.get_env(:ex_json_schema, :remote_schema_resolver)
+      caller = self()
+
+      spy = fn uri ->
+        send(caller, {:global_resolver_called, uri})
+        %{}
+      end
+
+      Application.put_env(:ex_json_schema, :remote_schema_resolver, spy)
+      on_exit(fn -> restore_env(:ex_json_schema, :remote_schema_resolver, previous) end)
+
+      http_client = fn _uri, _address, _opts ->
+        Process.sleep(5_000)
+        {:ok, %{status: 200, headers: [], body: ~s({"type":"string"})}}
+      end
+
+      opts = [
+        resolve_timeout_ms: 30,
+        network_refs: [
+          enabled: true,
+          allowed_hosts: ["schemas.example.com"],
+          allow_http: true,
+          dns_resolver: fn _host, _timeout -> {:ok, [{93, 184, 216, 34}]} end,
+          http_client: http_client
+        ]
+      ]
+
+      schema = %{
+        "$schema" => "http://json-schema.org/draft-07/schema#",
+        "$ref" => "https://schemas.example.com/slow.json"
+      }
+
+      assert {:error, {:schema_resolution_timeout, 30}} = SchemaPolicy.compile(schema, opts)
+      refute_receive {:global_resolver_called, _requested}
+      assert Application.get_env(:ex_json_schema, :remote_schema_resolver) == spy
+
+      assert {:error, :network_ref_forbidden} =
+               SchemaPolicy.compile(%{
+                 "$schema" => "http://json-schema.org/draft-07/schema#",
+                 "$ref" => "https://schemas.example.com/after-timeout.json"
+               })
+
+      refute_receive {:global_resolver_called, _requested}
+      assert Application.get_env(:ex_json_schema, :remote_schema_resolver) == spy
     end
 
     test "walks mixed dependencies lists that hold schemas" do
@@ -354,6 +482,42 @@ defmodule Arbor.MCP.Content.SchemaPolicyTest do
 
       assert_raise ArgumentError, ~r/cross-document/, fn -> Code.compile_string(source) end
     end
+  end
+
+  defp with_global_resolver_spy(fun) when is_function(fun, 0) do
+    previous = Application.get_env(:ex_json_schema, :remote_schema_resolver)
+    caller = self()
+
+    Application.put_env(:ex_json_schema, :remote_schema_resolver, fn uri ->
+      send(caller, {:global_resolver_called, uri})
+      %{}
+    end)
+
+    try do
+      fun.()
+    after
+      restore_env(:ex_json_schema, :remote_schema_resolver, previous)
+    end
+  end
+
+  defp id_anchor_schema do
+    %{
+      "$schema" => "http://json-schema.org/draft-07/schema#",
+      "$id" => "http://127.0.0.1:4000/private.json#anchor",
+      "properties" => %{"x" => %{"$ref" => "#"}}
+    }
+  end
+
+  defp id_scoped_fragment_schemas do
+    [
+      {"draft-7 $id-anchor $ref #", id_anchor_schema()},
+      {"draft-4 id-anchor $ref #",
+       %{
+         "$schema" => "http://json-schema.org/draft-04/schema#",
+         "id" => "http://127.0.0.1:4000/private.json#anchor",
+         "properties" => %{"x" => %{"$ref" => "#"}}
+       }}
+    ]
   end
 
   defp hidden_or_spoofed_ref_schemas do

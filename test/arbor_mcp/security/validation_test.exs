@@ -89,7 +89,15 @@ defmodule Arbor.MCP.Security.ValidationTest do
       end
     end
 
-    test "does not treat IPv4-mapped public addresses as loopback" do
+    test "rejects trailing garbage after a port or bracketed address" do
+      for host <- ["api.example.com:443.evil.com", "[::ffff:7f00:1].evil.com"] do
+        assert {:error, :host_not_allowed} =
+                 Validation.validate_request([{"host", host}], @allowed_api)
+      end
+    end
+
+    # Guard: IPv4-mapped public addresses must stay off the loopback path.
+    test "guard: IPv4-mapped public addresses are not loopback" do
       assert {:error, :host_not_allowed} =
                Validation.validate_request([{"host", "[::ffff:8.8.8.8]:8080"}], @allowed_api)
     end
