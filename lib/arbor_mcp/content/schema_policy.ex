@@ -506,6 +506,26 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
     end)
   end
 
+  defp walk_map_child(
+         "dependentRequired",
+         _child,
+         _depth,
+         _composition_depth,
+         count,
+         _opts,
+         false
+       ) do
+    {:cont, {:ok, count}}
+  end
+
+  defp walk_map_child("dependencies", child, depth, composition_depth, count, opts, false)
+       when is_map(child) do
+    case walk_schema_or_array_map(child, depth, composition_depth, count, opts) do
+      {:ok, next_count} -> {:cont, {:ok, next_count}}
+      {:error, _reason} = error -> {:halt, error}
+    end
+  end
+
   defp walk_map_child(key, child, depth, composition_depth, count, opts, named_keys?) do
     cond do
       skip_literal_keyword?(named_keys?, key) ->
@@ -517,6 +537,24 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
       true ->
         walk_nested_schema(key, child, depth, composition_depth, count, opts, named_keys?)
     end
+  end
+
+  defp walk_schema_or_array_map(map, depth, composition_depth, count, opts) do
+    Enum.reduce_while(map, {:ok, count}, fn {_key, value}, {:ok, current_count} ->
+      cond do
+        is_list(value) ->
+          {:cont, {:ok, current_count}}
+
+        is_map(value) ->
+          case walk(value, depth + 1, composition_depth, current_count, opts, false) do
+            {:ok, next_count} -> {:cont, {:ok, next_count}}
+            {:error, _reason} = error -> {:halt, error}
+          end
+
+        true ->
+          {:cont, {:ok, current_count}}
+      end
+    end)
   end
 
   defp skip_literal_keyword?(named_keys?, key),

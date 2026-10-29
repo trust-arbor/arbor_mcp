@@ -118,6 +118,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   schema level; under `properties`, `$defs`, and the other named-schema maps
   they are still walked and validated. Named-property maps keep the enclosing
   schema scope, so a property named `id` is not treated as a schema identifier.
+  `dependentRequired` values are string arrays and are not walked as schemas.
+  Draft-7 `dependencies` keys are names: a schema value is walked, a string
+  array is skipped.
 
 - `Accept: application/json, text/event-stream;q` — a `q` parameter with no
   value — and `q =1` / `q= 1`, whose whitespace around the equals sign

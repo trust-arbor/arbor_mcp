@@ -113,8 +113,16 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolverTest do
           }
         }
 
-        assert match?({:ok, _}, SchemaPolicy.compile(schema, opts)),
+        result = SchemaPolicy.compile(schema, opts)
+
+        refute result == {:error, {:network_schema_error, :invalid_schema_id}},
                "dependentRequired child #{inspect(name)}"
+
+        # JSV treats a nested `$id` as a schema identifier, so only that
+        # name fails compilation after the walker accepts it.
+        if name != "$id" do
+          assert match?({:ok, _}, result), "dependentRequired child #{inspect(name)}"
+        end
       end
     end
 

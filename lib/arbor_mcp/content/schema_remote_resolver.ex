@@ -353,6 +353,17 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   defp named_child?(false, key), do: MapSet.member?(@named_schema_maps, key)
   defp named_child?(true, _key), do: false
 
+  defp normalize_entry("dependentRequired", value, _scope, acc, false) do
+    {:cont, {:ok, Map.put(acc, "dependentRequired", value)}}
+  end
+
+  defp normalize_entry("dependencies", value, scope, acc, false) when is_map(value) do
+    case normalize_schema_or_array_map(value, scope) do
+      {:ok, normalized} -> {:cont, {:ok, Map.put(acc, "dependencies", normalized)}}
+      {:error, _reason} = error -> {:halt, error}
+    end
+  end
+
   defp normalize_entry(key, value, scope, acc, named_keys?) do
     cond do
       skip_schema_keyword?(named_keys?, key) ->
@@ -369,6 +380,15 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
           {:ok, normalized} -> {:cont, {:ok, Map.put(acc, key, normalized)}}
           {:error, _reason} = error -> {:halt, error}
         end
+    end
+  end
+
+  defp walk_entry("dependentRequired", _value, _scope, acc, false), do: {:cont, {:ok, acc}}
+
+  defp walk_entry("dependencies", value, scope, acc, false) when is_map(value) do
+    case walk_schema_or_array_map(value, scope, acc) do
+      {:ok, next_acc} -> {:cont, {:ok, next_acc}}
+      {:error, _reason} = error -> {:halt, error}
     end
   end
 
@@ -390,6 +410,43 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
           {:error, _reason} = error -> {:halt, error}
         end
     end
+  end
+
+  # `dependencies` keys are names. A value is a schema or a string array.
+  defp normalize_schema_or_array_map(map, scope) do
+    Enum.reduce_while(map, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
+      cond do
+        is_list(value) ->
+          {:cont, {:ok, Map.put(acc, key, value)}}
+
+        is_map(value) ->
+          case normalize_references(value, scope, false) do
+            {:ok, normalized} -> {:cont, {:ok, Map.put(acc, key, normalized)}}
+            {:error, _reason} = error -> {:halt, error}
+          end
+
+        true ->
+          {:cont, {:ok, Map.put(acc, key, value)}}
+      end
+    end)
+  end
+
+  defp walk_schema_or_array_map(map, scope, references) do
+    Enum.reduce_while(map, {:ok, references}, fn {_key, value}, {:ok, acc} ->
+      cond do
+        is_list(value) ->
+          {:cont, {:ok, acc}}
+
+        is_map(value) ->
+          case walk_references(value, scope, acc, false) do
+            {:ok, next_acc} -> {:cont, {:ok, next_acc}}
+            {:error, _reason} = error -> {:halt, error}
+          end
+
+        true ->
+          {:cont, {:ok, acc}}
+      end
+    end)
   end
 
   defp schema_scope(schema, base_uri) do
