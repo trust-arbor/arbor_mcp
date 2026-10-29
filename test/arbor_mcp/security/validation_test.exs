@@ -73,6 +73,34 @@ defmodule Arbor.MCP.Security.ValidationTest do
     end
   end
 
+  describe "validate_request/2 host policy" do
+    @allowed_api %{allowed_hosts: ["api.example.com"]}
+
+    test "rejects substring localhost and loopback bypasses" do
+      for host <- ["localhost.evil.com", "evil.com#127.0.0.1", "attacker-127.0.0.1.nip.io"] do
+        assert {:error, :host_not_allowed} =
+                 Validation.validate_request([{"host", host}], @allowed_api)
+      end
+    end
+
+    test "treats loopback hosts exactly after stripping a port or trailing FQDN dot" do
+      for host <- ["localhost:8080", "[::1]:80", "localhost."] do
+        assert :ok = Validation.validate_request([{"host", host}], @allowed_api)
+      end
+    end
+
+    test "matches allowed hosts exactly after stripping a port" do
+      assert :ok =
+               Validation.validate_request([{"host", "api.example.com"}], @allowed_api)
+
+      assert :ok =
+               Validation.validate_request([{"host", "api.example.com:443"}], @allowed_api)
+
+      assert {:error, :host_not_allowed} =
+               Validation.validate_request([{"host", "other.example.com"}], @allowed_api)
+    end
+  end
+
   describe "validate_config/1 allowed origins" do
     test "rejects an improper or non-string allowed origins list" do
       assert {:error, :invalid_allowed_origins} =
