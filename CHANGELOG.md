@@ -168,6 +168,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a late notification of A's still in flight then reaches B. The MCP specification requires
   tokens to be unique only among active requests, so this race is inherent to the protocol,
   and 2.x behaves the same.)
+- In legacy SSE mode, health-check ping responses are recognized and settled on response,
+  clearing `health_check_id` and updating last activity, and HTTP health POSTs are bounded
+  by the health interval. This prevents healthy connections from falsely timing out on
+  subsequent health checks (backport of 2.x PR #170: `296e037`).
+- In legacy SSE mode, cancelled and timed-out requests retire their async POST tasks. Delayed
+  authentication challenges from retired tasks are refused with `{:error, :stream_retired}`
+  and never re-sent, preventing requests from executing tool calls on the server after cancellation
+  (backport of 2.x PR #170).
+- When an auth provider refreshes a token in legacy SSE mode, the refreshed `access_token`
+  and headers are retained together with the provider state in the returned transport, so
+  delayed challenges against older tokens reuse the refreshed token without re-triggering an
+  unnecessary second refresh (backport of 2.x PR #170).
+- Requests without an explicit `:timeout` carry an effective deadline derived from the client's
+  `default_timeout`. The auth wait and re-send in the async POST task are bounded by this
+  deadline, and a request past its deadline is never re-sent (backport of 2.x PR #170).
 - Legacy SSE async POST responses are matched by the request the POST carried
   rather than solely by the `id` echoed in the response body. Responses with a
   null or different id answer the caller instead of timing out, and responses
