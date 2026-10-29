@@ -186,6 +186,13 @@ defmodule Arbor.MCP.Authorization.JWTTest do
       assert {:error, {:invalid_issuer, _}} = JWT.validate_claims(claims, iss: "wrong-issuer")
     end
 
+    test "rejects validation when no expected audience is provided", %{valid_exp: valid_exp} do
+      claims = Map.put(valid_exp, "aud", "my-audience")
+
+      assert {:error, :missing_expected_audience} = JWT.validate_claims(claims)
+      assert {:error, :missing_expected_audience} = JWT.validate_claims(claims, iss: "issuer")
+    end
+
     test "validates aud - string", %{valid_exp: valid_exp} do
       claims = Map.put(valid_exp, "aud", "my-audience")
       assert {:ok, _} = JWT.validate_claims(claims, aud: "my-audience")
