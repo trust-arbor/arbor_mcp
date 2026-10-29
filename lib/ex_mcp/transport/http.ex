@@ -395,6 +395,7 @@ defmodule ExMCP.Transport.HTTP do
 
         meta = %{
           task_ref: task_ref,
+          task_pid: self(),
           request_id: request_id,
           deadline: request_state.deadline,
           tool_list: page_info,

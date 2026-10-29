@@ -614,12 +614,10 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
     end
 
     test "duplicate progress tokens across requests", %{client: client} do
-      # Progress notifications are sent through the transport
-
-      # Same token for multiple requests (not recommended but should work)
+      # MCP requires progress tokens to be unique across active requests.
       token = "duplicate-token"
 
-      # Start two operations with same token
+      # Start first operation with the progress token
       task1 =
         Task.async(fn ->
           Client.call_tool(
@@ -633,25 +631,42 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
           )
         end)
 
-      task2 =
-        Task.async(fn ->
-          Client.call_tool(
-            client,
-            "progress_tool",
-            %{
-              "duration" => 200,
-              "steps" => 2
-            },
-            meta: %{"progressToken" => token}
-          )
-        end)
+      # Wait until task1's progress token is tracked as active
+      wait_until(
+        fn -> Map.has_key?(:sys.get_state(client).progress_requests, token) end,
+        timeout: 1_000
+      )
 
-      # Wait for both operations to complete
-      # Progress notifications would be sent but not received by test process
+      # An overlapping request with the same progress token is refused before sending
+      assert {:error,
+              %ExMCP.Error.TransportError{
+                reason: :not_sent,
+                details: %{cause: :duplicate_progress_token}
+              }} =
+               Client.call_tool(
+                 client,
+                 "progress_tool",
+                 %{
+                   "duration" => 200,
+                   "steps" => 2
+                 },
+                 meta: %{"progressToken" => token}
+               )
 
-      # Both tasks should complete
+      # First task still completes normally
       assert {:ok, _} = Task.await(task1)
-      assert {:ok, _} = Task.await(task2)
+
+      # Once the first request completes, the token can be reused sequentially
+      assert {:ok, _} =
+               Client.call_tool(
+                 client,
+                 "progress_tool",
+                 %{
+                   "duration" => 100,
+                   "steps" => 1
+                 },
+                 meta: %{"progressToken" => token}
+               )
     end
   end
 

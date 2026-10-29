@@ -172,8 +172,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clearing `health_check_id` and updating last activity, and HTTP health POSTs are bounded
   by the health interval. This prevents healthy connections from falsely timing out on
   subsequent health checks (backport of 2.x PR #170: `296e037`).
-- In legacy SSE mode, cancelled and timed-out requests retire their async POST tasks. Delayed
-  authentication challenges from retired tasks are refused with `{:error, :stream_retired}`
+- In legacy SSE mode, every path that removes a pending request (including incoming server
+  `notifications/cancelled` notifications, client `send_cancelled`, timeouts, responses,
+  errors, and stream closure) retires its async POST task (`drop_pending_request/2`), while
+  failed POST tasks carrying no request ID (notifications, batches, and server replies) only
+  untrack the failed task itself rather than retiring other in-flight `request_id: nil` POSTs.
+  Delayed authentication challenges from retired tasks are refused with `{:error, :stream_retired}`
   and never re-sent, preventing requests from executing tool calls on the server after cancellation
   (backport of 2.x PR #170).
 - When an auth provider refreshes a token in legacy SSE mode, the refreshed `access_token`
@@ -181,8 +185,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   delayed challenges against older tokens reuse the refreshed token without re-triggering an
   unnecessary second refresh (backport of 2.x PR #170).
 - Requests without an explicit `:timeout` carry an effective deadline derived from the client's
-  `default_timeout`. The auth wait and re-send in the async POST task are bounded by this
-  deadline, and a request past its deadline is never re-sent (backport of 2.x PR #170).
+  `default_timeout`. The auth wait and re-send in the async POST task, as well as `-32020`
+  HeaderMismatch recovery in `ExMCP.Client.Operations.Tools`, are bounded by a concrete
+  effective deadline, and a request past its deadline is never re-sent (backport of 2.x PR #170).
 - Legacy SSE async POST responses are matched by the request the POST carried
   rather than solely by the `id` echoed in the response body. Responses with a
   null or different id answer the caller instead of timing out, and responses

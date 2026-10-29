@@ -381,6 +381,83 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
     refute_receive {:timeout_auth_post, ^req_id, ["Bearer T_slow"]}, 500
   end
 
+  test "an incoming server cancellation notification retires the POST task so a delayed 401 does not re-send" do
+    client = start_client(auth_provider: {Provider, test_pid: self()})
+
+    task =
+      Task.async(fn ->
+        Client.call_tool(client, "cancel_then_401", %{}, timeout: 5_000)
+      end)
+
+    assert_receive {:tool_cancel_attempt, req_id, handler}, 2_000
+
+    # Server sends notifications/cancelled over the SSE stream
+    cancelled_event =
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "method" => "notifications/cancelled",
+        "params" => %{"requestId" => req_id, "reason" => "server_cancelled"}
+      })
+
+    send(client, {:transport_event, cancelled_event})
+    assert {:error, :cancelled} = Task.await(task, 2_000)
+
+    # Deliver delayed 401 challenge from the held POST
+    send(handler, :send_401)
+
+    # On 7d8eb27, handle_cancellation_notification left the POST task tracked,
+    # so it authenticated and re-sent the cancelled tool call.
+    refute_receive {:tool_cancel_attempt, ^req_id, _}, 500
+    refute_receive :authenticated, 500
+  end
+
+  test "a failed notification POST does not retire an in-flight batch POST" do
+    client = start_client()
+
+    batch_task =
+      Task.async(fn ->
+        Client.batch_request(client, [{"ping", %{}}], 1_000)
+      end)
+
+    assert_receive {:batch_held, batch_handler, batch_req_id}, 2_000
+
+    # Send a notification whose POST fails with HTTP 500 while the batch is in flight
+    :ok = Client.notify(client, "notifications/fail_500", %{})
+    assert_receive :notification_500_sent, 2_000
+
+    # Ensure client processed the notification POST failure
+    _ = :sys.get_state(client)
+
+    # Release the held batch response
+    send(batch_handler, {:release_batch, batch_req_id})
+
+    # On 7d8eb27, failing the notification with request_id: nil retired the batch's
+    # async POST task (also request_id: nil), causing its response to be dropped.
+    assert {:ok, [{:ok, %{}}]} = Task.await(batch_task, 1_000)
+  end
+
+  test "a tool call with timeout: nil recovers from -32020 HeaderMismatch without ArithmeticError" do
+    {:ok, counter} = Agent.start_link(fn -> 0 end)
+    client = start_client(cursor_counter: counter)
+
+    call_task =
+      Task.async(fn ->
+        Client.call_tool(
+          client,
+          "header_mismatch_recover",
+          %{"x" => "1"},
+          timeout: nil,
+          retry_policy: false
+        )
+      end)
+
+    assert_receive {:list_started, nil, list_handler}, 2_000
+    send(list_handler, :release)
+
+    assert {:ok, response} = Task.await(call_task, 2_000)
+    assert [%{text: "recovered"}] = response.content
+  end
+
   defp receive_list_started do
     assert_receive {:list_started, _cursor, handler}, 2_000
     handler
@@ -521,6 +598,29 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
 
   defp respond(
          conn,
+         %{
+           "method" => "tools/call",
+           "id" => id,
+           "params" => %{"name" => "header_mismatch_recover"}
+         },
+         _test_pid,
+         counter
+       ) do
+    attempt = if counter, do: Agent.get_and_update(counter, &{&1 + 1, &1 + 1}), else: 1
+
+    if attempt == 1 do
+      json(conn, %{
+        "jsonrpc" => "2.0",
+        "id" => id,
+        "error" => %{"code" => -32_020, "message" => "Header mismatch"}
+      })
+    else
+      text_result(conn, id, "recovered")
+    end
+  end
+
+  defp respond(
+         conn,
          %{"method" => "tools/call", "id" => id, "params" => params},
          test_pid,
          _counter
@@ -528,6 +628,23 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
     name = params["name"]
     send(test_pid, {:tool_call_started, name, self()})
     respond_tool(conn, id, name, test_pid)
+  end
+
+  defp respond(conn, [%{"method" => "ping", "id" => id}], test_pid, _counter) do
+    send(test_pid, {:batch_held, self(), id})
+
+    receive do
+      {:release_batch, ^id} ->
+        json(conn, [%{"jsonrpc" => "2.0", "id" => id, "result" => %{}}])
+    after
+      2_000 ->
+        json(conn, [%{"jsonrpc" => "2.0", "id" => id, "result" => %{}}])
+    end
+  end
+
+  defp respond(conn, %{"method" => "notifications/fail_500"}, test_pid, _counter) do
+    send(test_pid, :notification_500_sent)
+    Plug.Conn.resp(conn, 500, "Internal Server Error")
   end
 
   defp respond(conn, %{"method" => "ping", "id" => id}, test_pid, _counter) do

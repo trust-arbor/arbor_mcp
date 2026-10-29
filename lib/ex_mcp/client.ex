@@ -1573,27 +1573,21 @@ defmodule ExMCP.Client do
     case Map.get(state.pending_requests, request_id) do
       nil ->
         # Request already completed or doesn't exist
-        {:reply, :ok, updated_state}
+        {:reply, :ok, RequestHandler.retire_async_post_task(updated_state, request_id)}
 
       {from, :single, _method} ->
         # Reply with cancelled error and remove from pending
         GenServer.reply(from, {:error, :cancelled})
-        new_pending = Map.delete(state.pending_requests, request_id)
-        updated_state = RequestHandler.forget_request_progress_token(updated_state, request_id)
-        updated_state = RequestHandler.retire_async_post_task(updated_state, request_id)
-        {:reply, :ok, %{updated_state | pending_requests: new_pending}}
+        {:reply, :ok, RequestHandler.drop_pending_request(updated_state, request_id)}
 
       {from, :single} ->
         # Reply with cancelled error and remove from pending
         GenServer.reply(from, {:error, :cancelled})
-        new_pending = Map.delete(state.pending_requests, request_id)
-        updated_state = RequestHandler.forget_request_progress_token(updated_state, request_id)
-        updated_state = RequestHandler.retire_async_post_task(updated_state, request_id)
-        {:reply, :ok, %{updated_state | pending_requests: new_pending}}
+        {:reply, :ok, RequestHandler.drop_pending_request(updated_state, request_id)}
 
       _ ->
         # Other types of requests (batch, etc.) - just track as cancelled
-        {:reply, :ok, updated_state}
+        {:reply, :ok, RequestHandler.retire_async_post_task(updated_state, request_id)}
     end
   end
 
@@ -1786,7 +1780,7 @@ defmodule ExMCP.Client do
       state =
         state
         |> merge_async_transport_state(meta)
-        |> untrack_async_post_task(task_ref)
+        |> untrack_async_post_task(meta)
 
       handle_async_post_result(result, meta, state)
     end
@@ -2004,24 +1998,19 @@ defmodule ExMCP.Client do
   # :timeout option (scheduled by RequestHandler). Stale timers for requests
   # that already completed find no pending entry and are ignored.
   def handle_info({:request_timeout, request_id}, state) do
-    state =
-      state
-      |> RequestHandler.forget_request_progress_token(request_id)
-      |> RequestHandler.retire_async_post_task(request_id)
-
     case Map.get(state.pending_requests, request_id) do
       {from, :single, _method} ->
         GenServer.reply(from, {:error, :timeout})
-        state = %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
+        state = RequestHandler.drop_pending_request(state, request_id)
         {:noreply, cancel_timed_out(request_id, state)}
 
       {from, :single} ->
         GenServer.reply(from, {:error, :timeout})
-        state = %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
+        state = RequestHandler.drop_pending_request(state, request_id)
         {:noreply, cancel_timed_out(request_id, state)}
 
       _ ->
-        {:noreply, state}
+        {:noreply, RequestHandler.drop_pending_request(state, request_id)}
     end
   end
 
@@ -2312,12 +2301,32 @@ defmodule ExMCP.Client do
 
   defp retired_async_post_result?(_state, _meta), do: false
 
-  defp untrack_async_post_task(state, nil), do: state
-
-  defp untrack_async_post_task(state, ref) do
+  defp untrack_async_post_task(state, %{task_ref: ref}) when is_reference(ref) do
     Process.demonitor(ref, [:flush])
     %{state | async_post_tasks: Map.delete(state.async_post_tasks || %{}, ref)}
   end
+
+  defp untrack_async_post_task(state, %{task_pid: pid}) when is_pid(pid) do
+    tasks = state.async_post_tasks || %{}
+
+    filtered =
+      Map.reject(tasks, fn
+        {ref, {^pid, _request_id}} ->
+          Process.demonitor(ref, [:flush])
+          true
+
+        {ref, ^pid} ->
+          Process.demonitor(ref, [:flush])
+          true
+
+        _other ->
+          false
+      end)
+
+    %{state | async_post_tasks: filtered}
+  end
+
+  defp untrack_async_post_task(state, _other), do: state
 
   # Modern streamable HTTP cancels an ordinary request by closing only that
   # request's response stream. Other transports retain the protocol
@@ -2351,11 +2360,6 @@ defmodule ExMCP.Client do
   # timeout, answered as a synchronous send was, and is cancelled on the
   # server: the client's own timeout timer finds nothing left to cancel.
   defp fail_async_post_request(state, request_id, reason, deadline \\ nil) do
-    state =
-      state
-      |> RequestHandler.forget_request_progress_token(request_id)
-      |> RequestHandler.retire_async_post_task(request_id)
-
     timed_out? =
       reason != :deadline_expired and is_integer(deadline) and Deadline.expired?(deadline)
 
@@ -2364,16 +2368,16 @@ defmodule ExMCP.Client do
     case request_id && Map.get(state.pending_requests, request_id) do
       {from, :single, _method} ->
         GenServer.reply(from, {:error, error})
-        state = %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
+        state = RequestHandler.drop_pending_request(state, request_id)
         if timed_out?, do: cancel_timed_out(request_id, state), else: state
 
       {from, :single} ->
         GenServer.reply(from, {:error, error})
-        state = %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
+        state = RequestHandler.drop_pending_request(state, request_id)
         if timed_out?, do: cancel_timed_out(request_id, state), else: state
 
       _ ->
-        state
+        RequestHandler.drop_pending_request(state, request_id)
     end
   end
 
@@ -3434,12 +3438,14 @@ defmodule ExMCP.Client do
       {:error, :timeout}
   end
 
-  defp remaining_timeout(deadline) do
+  defp remaining_timeout(deadline) when is_integer(deadline) do
     case deadline - System.monotonic_time(:millisecond) do
       remaining when remaining > 0 -> {:ok, remaining}
       _expired -> {:error, :timeout}
     end
   end
+
+  defp remaining_timeout(_deadline), do: {:error, :timeout}
 
   defp execute_with_retry_policy(operation, client, retry_policy) do
     case retry_policy do
@@ -3638,7 +3644,8 @@ defmodule ExMCP.Client do
     :exit, _ -> []
   end
 
-  defp fetch_default_timeout(client, fallback \\ 5_000) do
+  @doc false
+  def fetch_default_timeout(client, fallback \\ 5_000) do
     case GenServer.call(client, :get_default_timeout, 5_000) do
       {:ok, timeout} when is_integer(timeout) and timeout > 0 -> timeout
       _other -> fallback

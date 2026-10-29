@@ -636,22 +636,14 @@ defmodule ExMCP.Client.RequestHandler do
 
             GenServer.reply(from, {:error, error})
 
-            {:noreply,
-             forget_request_progress_token(
-               %{state | pending_requests: Map.delete(state.pending_requests, request_id)},
-               request_id
-             )}
+            {:noreply, drop_pending_request(state, request_id)}
 
           {from, :single} ->
             error = request_stream_error(reason)
 
             GenServer.reply(from, {:error, error})
 
-            {:noreply,
-             forget_request_progress_token(
-               %{state | pending_requests: Map.delete(state.pending_requests, request_id)},
-               request_id
-             )}
+            {:noreply, drop_pending_request(state, request_id)}
 
           _not_pending ->
             {:noreply, state}
@@ -779,11 +771,7 @@ defmodule ExMCP.Client.RequestHandler do
         {batch_id, {from, :batch, ordered_ids, _received_responses}} ->
           GenServer.reply(from, response_data)
           # Clean up all individual request IDs and the batch ID
-          new_pending_requests =
-            Enum.reduce(ordered_ids, state.pending_requests, &Map.delete(&2, &1))
-            |> Map.delete(batch_id)
-
-          new_state = %{state | pending_requests: new_pending_requests}
+          new_state = drop_pending_requests(state, [batch_id | ordered_ids])
           {:noreply, new_state}
 
         nil ->
@@ -816,8 +804,7 @@ defmodule ExMCP.Client.RequestHandler do
           )
 
           GenServer.reply(from, response_data)
-          new_pending_requests = Map.delete(pending_requests, response_id)
-          %{state | pending_requests: new_pending_requests}
+          drop_pending_request(state, response_id)
 
         {:ok, {from, :single}} ->
           :telemetry.execute(
@@ -827,8 +814,7 @@ defmodule ExMCP.Client.RequestHandler do
           )
 
           GenServer.reply(from, response_data)
-          new_pending_requests = Map.delete(pending_requests, response_id)
-          %{state | pending_requests: new_pending_requests}
+          drop_pending_request(state, response_id)
 
         {:ok, {:batch, batch_id}} ->
           handle_batch_response_item(response_data, response_id, batch_id, state)
@@ -838,13 +824,10 @@ defmodule ExMCP.Client.RequestHandler do
             request_id_hash: LogSummary.fingerprint(response_id)
           )
 
-          state
+          drop_pending_request(state, response_id)
       end
 
-    {:noreply,
-     new_state
-     |> forget_request_progress_token(response_id)
-     |> retire_async_post_task(response_id)}
+    {:noreply, new_state}
   end
 
   defp dispatch_request_notification(callback, request_id, params, state) do
@@ -917,16 +900,15 @@ defmodule ExMCP.Client.RequestHandler do
           GenServer.reply(from, {:ok, final_responses})
 
           # Clean up
-          new_pending_requests =
-            Enum.reduce(ordered_ids, pending_requests, &Map.delete(&2, &1))
-            |> Map.delete(batch_id)
-
-          %{state | pending_requests: new_pending_requests}
+          drop_pending_requests(state, [batch_id | ordered_ids])
         else
           # Batch not yet complete
           new_batch_info = {from, :batch, ordered_ids, new_received}
           new_pending_requests = Map.put(pending_requests, batch_id, new_batch_info)
+
           %{state | pending_requests: new_pending_requests}
+          |> forget_request_progress_token(response_id)
+          |> retire_async_post_task(response_id)
         end
 
       _ ->
@@ -1127,6 +1109,24 @@ defmodule ExMCP.Client.RequestHandler do
     do: Map.update(state, :progress_requests, %{}, &Map.delete(&1, token))
 
   @doc false
+  def drop_pending_request(state, nil), do: state
+
+  def drop_pending_request(state, request_id) do
+    %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
+    |> forget_request_progress_token(request_id)
+    |> retire_async_post_task(request_id)
+  end
+
+  @doc false
+  def drop_pending_requests(state, request_ids) when is_list(request_ids) do
+    Enum.reduce(request_ids, state, fn request_id, acc ->
+      drop_pending_request(acc, request_id)
+    end)
+  end
+
+  @doc false
+  def forget_request_progress_token(state, nil), do: state
+
   def forget_request_progress_token(state, request_id) do
     case Map.get(state, :progress_requests) do
       %{} = progress_requests ->
@@ -1141,6 +1141,8 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   @doc false
+  def retire_async_post_task(state, nil), do: state
+
   def retire_async_post_task(state, request_id) do
     case Map.get(state, :async_post_tasks) do
       %{} = tasks ->
@@ -1609,33 +1611,21 @@ defmodule ExMCP.Client.RequestHandler do
       case Map.get(state.pending_requests, request_id) do
         nil ->
           # Request already completed or doesn't exist
-          {:noreply, updated_state}
+          {:noreply, retire_async_post_task(updated_state, request_id)}
 
         {from, :single, _method} ->
           # Reply with cancelled error and remove from pending
           GenServer.reply(from, {:error, :cancelled})
-          new_pending = Map.delete(state.pending_requests, request_id)
-
-          {:noreply,
-           forget_request_progress_token(
-             %{updated_state | pending_requests: new_pending},
-             request_id
-           )}
+          {:noreply, drop_pending_request(updated_state, request_id)}
 
         {from, :single} ->
           # Reply with cancelled error and remove from pending
           GenServer.reply(from, {:error, :cancelled})
-          new_pending = Map.delete(state.pending_requests, request_id)
-
-          {:noreply,
-           forget_request_progress_token(
-             %{updated_state | pending_requests: new_pending},
-             request_id
-           )}
+          {:noreply, drop_pending_request(updated_state, request_id)}
 
         _ ->
           # Other types of requests (batch, etc.)
-          {:noreply, updated_state}
+          {:noreply, retire_async_post_task(updated_state, request_id)}
       end
     else
       Logger.warning("Received cancellation notification without requestId")
