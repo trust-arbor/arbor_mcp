@@ -18,6 +18,7 @@ defmodule Arbor.MCP.Content.SchemaPolicyTest do
   ]
 
   @unrelated_allowlist [network_refs: [enabled: true, allowed_hosts: ["schemas.example.com"]]]
+  @private_ref "http://127.0.0.1:4000/private.json"
 
   describe "local and external references" do
     test "supports local fragment references" do
@@ -174,6 +175,34 @@ defmodule Arbor.MCP.Content.SchemaPolicyTest do
       end
     end
 
+    test "compile never calls the global remote resolver for hidden or spoofed refs" do
+      previous = Application.get_env(:ex_json_schema, :remote_schema_resolver)
+      caller = self()
+
+      Application.put_env(:ex_json_schema, :remote_schema_resolver, fn uri ->
+        send(caller, {:global_resolver_called, uri})
+        %{}
+      end)
+
+      on_exit(fn -> restore_env(:ex_json_schema, :remote_schema_resolver, previous) end)
+
+      for {label, schema} <- hidden_or_spoofed_ref_schemas() do
+        refute match?({:ok, _}, SchemaPolicy.compile(schema)),
+               "#{label} compile with network refs off"
+
+        refute_receive {:global_resolver_called, _requested},
+                       50,
+                       "#{label} reached the global resolver with network refs off"
+
+        refute match?({:ok, _}, SchemaPolicy.compile(schema, @unrelated_allowlist)),
+               "#{label} compile with an unrelated allowlist"
+
+        refute_receive {:global_resolver_called, _requested},
+                       50,
+                       "#{label} reached the global resolver with an unrelated allowlist"
+      end
+    end
+
     test "walks mixed dependencies lists that hold schemas" do
       previous = Application.get_env(:ex_json_schema, :remote_schema_resolver)
       caller = self()
@@ -325,6 +354,62 @@ defmodule Arbor.MCP.Content.SchemaPolicyTest do
 
       assert_raise ArgumentError, ~r/cross-document/, fn -> Code.compile_string(source) end
     end
+  end
+
+  defp hidden_or_spoofed_ref_schemas do
+    private = @private_ref
+    modern = "https://json-schema.org/draft/2020-12/schema"
+
+    named_containers =
+      ~w(properties patternProperties $defs definitions dependentSchemas dependencies)
+
+    for uri <- @pointer_drafts, {label, schema} <- hidden_ref_shapes(uri, private, modern) do
+      {"#{uri} #{label}", schema}
+    end ++
+      for uri <- @legacy_drafts, container <- named_containers do
+        {"#{uri} extension.#{container} $ref name",
+         %{
+           "$schema" => uri,
+           "extension" => %{container => %{"$ref" => private}},
+           "$ref" => "#/extension/#{container}"
+         }}
+      end
+  end
+
+  defp hidden_ref_shapes(uri, private, modern) do
+    [
+      {"root $defs $ref name", %{"$schema" => uri, "$defs" => %{"$ref" => private}}},
+      {"root dependentSchemas $ref name",
+       %{"$schema" => uri, "dependentSchemas" => %{"$ref" => private}}},
+      {"extension.dependencies $ref name",
+       %{"$schema" => uri, "extension" => %{"dependencies" => %{"$ref" => private}}}},
+      {"nested $schema spoof",
+       %{
+         "$schema" => uri,
+         "extension" => %{
+           "$schema" => modern,
+           "dependentRequired" => %{"p" => %{"$ref" => private}}
+         },
+         "$ref" => "#/extension/dependentRequired/p"
+       }},
+      {"object $dynamicRef", %{"$schema" => uri, "$dynamicRef" => %{"$ref" => private}}},
+      {"dependentRequired payload",
+       %{
+         "$schema" => uri,
+         "dependentRequired" => %{"payload" => %{"$ref" => private}},
+         "$ref" => "#/dependentRequired/payload"
+       }},
+      {"mixed dependencies list",
+       %{
+         "$schema" => uri,
+         "extension" => %{
+           "dependencies" => %{
+             "payload" => ["name", %{"$ref" => private}]
+           }
+         },
+         "$ref" => "#/extension/dependencies/payload/1"
+       }}
+    ]
   end
 
   defp restore_env(app, key, nil), do: Application.delete_env(app, key)

@@ -84,9 +84,14 @@ defmodule Arbor.MCP.Security.ValidationTest do
     end
 
     test "treats loopback hosts exactly after stripping a port or trailing FQDN dot" do
-      for host <- ["localhost:8080", "[::1]:80", "localhost."] do
+      for host <- ["localhost:8080", "[::1]:80", "localhost.", "[::ffff:127.0.0.1]:8080"] do
         assert :ok = Validation.validate_request([{"host", host}], @allowed_api)
       end
+    end
+
+    test "does not treat IPv4-mapped public addresses as loopback" do
+      assert {:error, :host_not_allowed} =
+               Validation.validate_request([{"host", "[::ffff:8.8.8.8]:8080"}], @allowed_api)
     end
 
     test "matches allowed hosts exactly after stripping a port" do
