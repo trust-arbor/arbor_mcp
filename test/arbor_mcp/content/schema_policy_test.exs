@@ -79,6 +79,31 @@ defmodule Arbor.MCP.Content.SchemaPolicyTest do
 
       assert :ok = SchemaPolicy.preflight(schema)
     end
+
+    test "walks a $ref under a property named default" do
+      schema = %{
+        "type" => "object",
+        "properties" => %{
+          "default" => %{"$ref" => "https://evil.example/schema"}
+        }
+      }
+
+      assert {:error, :network_ref_forbidden} = SchemaPolicy.preflight(schema)
+      assert {:error, :network_ref_forbidden} = SchemaPolicy.compile(schema)
+    end
+
+    test "walks $ref values under properties named enum and examples" do
+      for name <- ["enum", "examples"] do
+        schema = %{
+          "type" => "object",
+          "properties" => %{
+            name => %{"$ref" => "https://evil.example/#{name}"}
+          }
+        }
+
+        assert {:error, :network_ref_forbidden} = SchemaPolicy.preflight(schema)
+      end
+    end
   end
 
   describe "resource bounds" do
