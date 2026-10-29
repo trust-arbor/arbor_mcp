@@ -3,6 +3,22 @@ defmodule Arbor.MCP.Content.SchemaPolicyTest do
 
   alias Arbor.MCP.Content.{SchemaPolicy, SchemaValidator, Validation}
 
+  @legacy_drafts [
+    "http://json-schema.org/draft-04/schema#",
+    "http://json-schema.org/draft-06/schema#",
+    "http://json-schema.org/draft-07/schema#"
+  ]
+
+  @pointer_drafts [
+    "http://json-schema.org/draft-04/schema#",
+    "http://json-schema.org/draft-06/schema#",
+    "http://json-schema.org/draft-07/schema#",
+    "https://json-schema.org/draft/2019-09/schema",
+    "https://json-schema.org/draft/2020-12/schema"
+  ]
+
+  @unrelated_allowlist [network_refs: [enabled: true, allowed_hosts: ["schemas.example.com"]]]
+
   describe "local and external references" do
     test "supports local fragment references" do
       schema = %{
@@ -120,6 +136,76 @@ defmodule Arbor.MCP.Content.SchemaPolicyTest do
 
         assert SchemaPolicy.preflight(schema) == {:error, :network_ref_forbidden},
                "dependencies $ref child #{inspect(name)}"
+      end
+    end
+
+    test "walks dependentRequired on drafts that do not define it" do
+      previous = Application.get_env(:ex_json_schema, :remote_schema_resolver)
+      caller = self()
+
+      Application.put_env(:ex_json_schema, :remote_schema_resolver, fn uri ->
+        send(caller, {:global_resolver_called, uri})
+        %{}
+      end)
+
+      on_exit(fn -> restore_env(:ex_json_schema, :remote_schema_resolver, previous) end)
+
+      for uri <- @legacy_drafts do
+        schema = %{
+          "$schema" => uri,
+          "dependentRequired" => %{
+            "payload" => %{"$ref" => "http://127.0.0.1:4000/private.json"}
+          },
+          "$ref" => "#/dependentRequired/payload"
+        }
+
+        assert SchemaPolicy.preflight(schema) == {:error, :network_ref_forbidden},
+               "#{uri} preflight"
+
+        assert SchemaPolicy.compile(schema) == {:error, :network_ref_forbidden},
+               "#{uri} compile"
+
+        refute_receive {:global_resolver_called, _requested}
+
+        assert {:error, {:network_schema_error, _reason}} =
+                 SchemaPolicy.compile(schema, @unrelated_allowlist)
+
+        refute_receive {:global_resolver_called, _requested}
+      end
+    end
+
+    test "walks mixed dependencies lists that hold schemas" do
+      previous = Application.get_env(:ex_json_schema, :remote_schema_resolver)
+      caller = self()
+
+      Application.put_env(:ex_json_schema, :remote_schema_resolver, fn uri ->
+        send(caller, {:global_resolver_called, uri})
+        %{}
+      end)
+
+      on_exit(fn -> restore_env(:ex_json_schema, :remote_schema_resolver, previous) end)
+
+      for uri <- @pointer_drafts do
+        schema = %{
+          "$schema" => uri,
+          "extension" => %{
+            "dependencies" => %{
+              "payload" => ["name", %{"$ref" => "http://127.0.0.1:4000/private.json"}]
+            }
+          },
+          "$ref" => "#/extension/dependencies/payload/1"
+        }
+
+        assert SchemaPolicy.preflight(schema) == {:error, :network_ref_forbidden},
+               "#{uri} preflight"
+
+        assert SchemaPolicy.compile(schema) == {:error, :network_ref_forbidden},
+               "#{uri} compile"
+
+        refute_receive {:global_resolver_called, _requested}
+
+        assert {:error, _reason} = SchemaPolicy.compile(schema, @unrelated_allowlist)
+        refute_receive {:global_resolver_called, _requested}
       end
     end
   end
