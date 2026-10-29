@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Under `:prefer_modern`, a stdio server that exits without answering the
+  `server/discover` probe, as Python `mcp` 1.6 and 1.8 stdio servers do, or
+  that does not answer it within its bound is now reached with a legacy
+  `initialize`. The client closes that process (EOF, then TERM and KILL),
+  starts a fresh one from the same options and initializes it, once per
+  connection attempt and reconnect, within `:establish_timeout`. The probed
+  pipe carries nothing more, so a late answer to the probe cannot reach the
+  handshake. Malformed output (a JSON-looking line that is not a valid
+  answer, or a frame cut off or over `:max_frame_bytes`) never leads to a
+  respawn, and non-JSON stdout lines are no answer. A modern-only server
+  then fails on `initialize` with the versions it supports, reported as
+  `{:era_probe_and_initialize_failed, %{..., respawned: true}}`; the
+  `[:ex_mcp, :client, :era, :fallback]` event carries `respawned: true`.
+  `:modern_only` never respawns. The fresh process starts only once the
+  stdio shutdown has seen the old one gone (with `process_group: true`,
+  everything left in its group too), and so does any reconnect, however the
+  old connection ended: a server that exits can leave its group running
+  through the shutdown's grace, and the reconnect used to start beside it.
+  A server process that cannot be confirmed stopped (its pid could not be
+  checked before a signal, it was still running after SIGKILL, or the
+  shutdown did not finish within `:cleanup_timeout` plus 500 ms) is never
+  replaced, by a retry or a reconnect either: `start_link/1` returns
+  `{:error, {:transport_connect_failed, {:probed_server_stop_unconfirmed, ...}}}`
+  or `{:error, {:transport_connect_failed, {:cleanup_failed, ...}}}`, the
+  cleanup given as `{:error, {:server_stop_unconfirmed, reason}}`, and a
+  reconnecting client stops, settles in `:disconnected` and emits the new
+  `[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]` event.
+  `ExMCP.Transport.Stdio.close/1` still returns `:ok` either way. A stdio
+  server that wrote part of a frame and exited is now reported as
+  `{:connection_error, {:unfinished_frame, {:process_exited, status}}}`.
+  **Behavior change:** such servers, which failed to connect before, now
+  connect. Backport of ArborMCP `8d1f0b6`, `01c4e2c`, `beb25f2` and the
+  reconnect part of `9bdc531`.
+
 ### Changed
 
 - `jose` `>= 1.11.13` is required and locked. 1.11.13 fixes five advisories:
@@ -24,6 +60,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A health check that gave up on a hung server dropped the connection
+  without closing it, so a stdio server kept running and a reconnect started
+  a second one beside it. The transport is now closed first, as the other
+  teardown paths already did, and when that server cannot be confirmed
+  stopped the client does not reconnect: it settles in `:disconnected` and
+  emits `[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]` with the
+  reason `{:server_stop_unconfirmed, reason}`. Backport of the health-check
+  part of ArborMCP `9bdc531`.
+- The configuration, transport and troubleshooting guides said a probe
+  timeout never leads to `initialize`. Over HTTP, under the preference
+  modes, it is legacy evidence, as MCP 2026-07-28 says, and has been since
+  the modern era landed: each POST stands alone, so a late answer cannot
+  reach the `initialize` that follows. The guides now say so and that a
+  stdio probe timeout is not evidence; behavior is unchanged. Backport of
+  the HTTP part of ArborMCP `fd72323`.
+- A client in the default `:prefer_modern` mode could not connect to an
+  ExMCP server running `protocol_mode: :legacy_only`, the documented
+  rollback, over any transport. The server answers the `server/discover`
+  probe with an UnsupportedProtocolVersionError (-32022) whose `supported`
+  list names only legacy revisions, and the client failed with
+  `{:era_probe_failed, {:no_mutually_supported_modern_version, ...}}` instead
+  of using one of them. MCP says to continue with a listed version, and for
+  a legacy one that is `initialize`: `:prefer_modern` now falls back to it,
+  offering its preferred revision among those listed (its legacy
+  `:protocol_version` when listed), and records the legacy observation.
+  `:prefer_legacy`, whose `initialize` comes first, retries it once with
+  such a revision when the server rejected the one it offered and the probe
+  then names others. A list that also names a modern or an unknown revision
+  is not legacy evidence, `:modern_only` never falls back, and a cached
+  modern observation still never downgrades. A cached legacy observation
+  now also keeps the revision the server negotiated, and the next
+  connection offers that one again, so a server that accepts only an older
+  revision stays reachable until the observation expires. Backport of
+  ArborMCP `47faf39` and `fba618d`.
+- Over HTTP, an `initialize` rejected with a 400 carrying a JSON-RPC error,
+  as an ExMCP `protocol_mode: :modern_only` server sends it, was taken for a
+  transport failure. `:prefer_legacy` therefore never moved forward to the
+  modern era over HTTP, unless an earlier connection had recorded it. The
+  error is now read as the rejection it is, the way the other transports
+  deliver it, when that error carries this `initialize` request's id (any
+  other id, `null` included, stays a transport error): `:prefer_legacy`
+  probes and connects, and **`:legacy_only` now fails with
+  `{:initialize_error, error}`** as it does on the other transports, instead
+  of `{:transport_connect_failed, "{:http_error, 400, ...}"}`. Backport of
+  ArborMCP `fba618d` and `5388272`.
+- Over stdio, the modern `server/discover` probe gave a newly spawned server
+  only `:era_probe_timeout` (2 s by default) to start and answer. Under the
+  default `:prefer_modern`, and under `:modern_only`, a server that took
+  longer to start failed to connect, and so did every reconnect to it, with
+  `{:era_probe_failed, {:transport_error, :handshake_timeout}}`: a BEAM
+  started with `mix run`, `npx` or `uvx` on a cold cache, or any server on a
+  loaded host. A slow legacy server's error answer, which `:prefer_modern`
+  falls back on, came too late as well. Over stdio the probe now waits as
+  long as a legacy `initialize` does, `:handshake_timeout` (10 s by
+  default), unless `:era_probe_timeout` is given. HTTP keeps the 2 s probe.
+  **Default change (accepted for 1.x):** for a stdio client that opens with
+  the probe (`:prefer_modern` or `:modern_only`) and sets no
+  `:establish_timeout`, the default establishment bound is now
+  `:handshake_timeout` plus the probe's bound, 20 s, instead of 12 s: a 10 s
+  probe needs room for the legacy fallback that may follow it. Every other
+  client, `:legacy_only` and `:prefer_legacy` over stdio included, keeps
+  12 s, and an explicit `:establish_timeout` always wins. **Behavior
+  change:** under `:modern_only` a stdio server that never answers now fails
+  after `:handshake_timeout` rather than 2 s, with the same error. Backport
+  of ArborMCP `87b4353` and `8d1f0b6` (its establishment default).
 - Authorization code flow now returns `{:error, :invalid_scopes}` when
   `:scopes` is not a proper list of strings, including lists with an invalid
   tail, instead of raising for invalid values. `nil` still omits the `scope`

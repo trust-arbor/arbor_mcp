@@ -166,7 +166,6 @@ defmodule ExMCP.Integration.ModernInteropTest do
           protocol_mode: :modern_only,
           capabilities: %{"elicitation" => %{"form" => %{}}},
           handler: {ClientHandler, [owner: self()]},
-          era_probe_timeout: 10_000,
           health_check_interval: nil
         )
 

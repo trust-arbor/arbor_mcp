@@ -269,6 +269,97 @@ defmodule ExMCP.Transport.StdioShutdownTest do
       assert os_alive?(os_pid)
     end
 
+    test "records that its server is gone once it has seen it go" do
+      {port, os_pid} = sleeper()
+      outcome = Reaper.new_outcome()
+
+      reaper =
+        Reaper.start(port, os_pid, eof_grace: 0, term_grace: 100, budget: 1_000, outcome: outcome)
+
+      assert Reaper.outcome(outcome) == :pending
+      Reaper.close(reaper)
+      await_exit(reaper)
+
+      assert Reaper.outcome(outcome) == :confirmed
+      refute os_alive?(os_pid)
+    end
+
+    test "records that it could not confirm a server it could not identify" do
+      {port, os_pid} = sleeper()
+      outcome = Reaper.new_outcome()
+
+      # The server runs, but its start time can't be read before a signal.
+      reaper =
+        Reaper.start(port, os_pid,
+          eof_grace: 0,
+          term_grace: 0,
+          budget: 1_000,
+          outcome: outcome,
+          start_time: fn _pid -> nil end
+        )
+
+      Reaper.close(reaper)
+      await_exit(reaper)
+
+      assert Reaper.outcome(outcome) == {:unconfirmed, :identity_unreadable}
+      assert os_alive?(os_pid)
+    end
+
+    # A connection as connect/1 builds it, around a reaper with `opts`.
+    defp connection(opts) do
+      {port, os_pid} = sleeper()
+      outcome = Reaper.new_outcome()
+      opts = Keyword.merge([eof_grace: 0, term_grace: 100, budget: 1_000, outcome: outcome], opts)
+
+      %Stdio{
+        port: port,
+        os_pid: os_pid,
+        line_buffer: "",
+        cleanup_timeout: Keyword.fetch!(opts, :budget),
+        reaper: Reaper.start(port, os_pid, opts),
+        reaper_outcome: outcome
+      }
+    end
+
+    test "close_confirmed/1 says whether the server was seen gone; close/1 returns :ok" do
+      assert Stdio.close_confirmed(connection([])) == :ok
+
+      unidentified = [start_time: fn _pid -> nil end]
+
+      assert Stdio.close_confirmed(connection(unidentified)) ==
+               {:error, {:server_stop_unconfirmed, :identity_unreadable}}
+
+      state = connection(unidentified)
+      assert Stdio.close(state) == :ok
+      assert Reaper.outcome(state.reaper_outcome) == {:unconfirmed, :identity_unreadable}
+    end
+
+    test "close_confirmed/1 confirms nothing when the reaper does not finish in time" do
+      state = connection(budget: 200)
+      true = :erlang.suspend_process(state.reaper)
+      started = System.monotonic_time(:millisecond)
+
+      try do
+        assert Stdio.close_confirmed(state) ==
+                 {:error, {:server_stop_unconfirmed, :reaper_timeout}}
+
+        # The 200 ms budget plus 500 ms for the reaper to report.
+        assert System.monotonic_time(:millisecond) - started < 1_500
+      after
+        :erlang.resume_process(state.reaper)
+        Process.exit(state.reaper, :kill)
+      end
+    end
+
+    test "close_confirmed/1 confirms a server whose exit the port reported" do
+      {:ok, state} = Stdio.connect(command: ["/bin/sh", "-c", "exit 0"])
+
+      assert {:error, {:connection_error, {:process_exited, 0}}} =
+               Stdio.receive_message(state, 5_000)
+
+      assert Stdio.close_confirmed(state) == :ok
+    end
+
     # The lookup says the pid is the server's at first, then that another
     # process has it: the server exited and its pid was handed on.
     defp reused_after_first_check do
