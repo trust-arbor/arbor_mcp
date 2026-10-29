@@ -3,8 +3,9 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   Fail-closed resource policy for JSON Schema compilation and validation.
 
   Cross-document references are disabled by default before either validator
-  sees a schema, even if the host application configured ExJsonSchema's global
-  remote resolver. Local fragment references remain supported. Network
+  sees a schema. Compilation never falls back to ExJsonSchema's global
+  `:remote_schema_resolver`; a process-local fail-closed resolver is installed
+  for the compile. Local fragment references remain supported. Network
   references can be enabled only through ArborMCP's allowlisted, IP-pinned resolver.
 
   Omitted or explicit draft 2020-12 declarations use JSV. Explicit drafts 4,
@@ -31,7 +32,7 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   @composition_keywords MapSet.new(~w(allOf anyOf oneOf not if then else))
   @literal_keywords MapSet.new(~w(const default enum examples))
   @named_schema_maps MapSet.new(
-                       ~w(properties patternProperties $defs definitions dependentSchemas)
+                       ~w(properties patternProperties $defs definitions dependentSchemas dependencies dependentRequired)
                      )
   @reference_keywords MapSet.new(~w($ref $recursiveRef $dynamicRef))
 
@@ -148,13 +149,15 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
          :ok <- ensure_backend(schema) do
       run_bounded(
         fn ->
-          try do
-            with :ok <- validate_schema_shape(schema), do: resolve_schema(schema, opts)
-          rescue
-            _exception -> {:error, {:invalid_schema, "schema resolution failed"}}
-          catch
-            _kind, _reason -> {:error, {:invalid_schema, "schema resolution failed"}}
-          end
+          with_fail_closed_resolver(fn ->
+            try do
+              with :ok <- validate_schema_shape(schema), do: resolve_schema(schema, opts)
+            rescue
+              _exception -> {:error, {:invalid_schema, "schema resolution failed"}}
+            catch
+              _kind, _reason -> {:error, {:invalid_schema, "schema resolution failed"}}
+            end
+          end)
         end,
         opts[:resolve_timeout_ms],
         {:schema_resolution_timeout, opts[:resolve_timeout_ms]}
@@ -236,9 +239,11 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   end
 
   defp preflight_normalized(schema, opts) do
-    with :ok <- check_encoded_size(schema, opts),
-         {:ok, _count} <- walk(schema, 0, 0, 0, opts),
-         do: :ok
+    with :ok <- check_encoded_size(schema, opts) do
+      opts = Keyword.put(opts, :pointer_targets, local_pointer_targets(schema))
+
+      with {:ok, _count} <- walk(schema, 0, 0, 0, opts), do: :ok
+    end
   end
 
   defp normalize_schema(schema, opts)
@@ -468,7 +473,6 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   defp walk(value, depth, composition_depth, count, opts, named_keys? \\ false)
 
   defp walk(value, depth, composition_depth, count, opts, named_keys?) when is_map(value) do
-    opts = inherit_walk_draft(value, opts, named_keys?)
     count = count + 1
 
     cond do
@@ -507,99 +511,31 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
     end)
   end
 
-  defp walk_map_child(
-         "dependentRequired",
-         child,
-         depth,
-         composition_depth,
-         count,
-         opts,
-         false
-       ) do
-    if skip_dependent_required?(opts[:schema_draft]) do
-      {:cont, {:ok, count}}
-    else
-      walk_nested_schema("dependentRequired", child, depth, composition_depth, count, opts, false)
-    end
-  end
-
-  defp walk_map_child("dependencies", child, depth, composition_depth, count, opts, false)
-       when is_map(child) do
-    case walk_schema_or_array_map(child, depth, composition_depth, count, opts) do
-      {:ok, next_count} -> {:cont, {:ok, next_count}}
-      {:error, _reason} = error -> {:halt, error}
-    end
-  end
-
   defp walk_map_child(key, child, depth, composition_depth, count, opts, named_keys?) do
     cond do
-      skip_literal_keyword?(named_keys?, key) ->
+      skip_untargeted_literal?(named_keys?, key, child, opts) ->
         {:cont, {:ok, count}}
 
-      not named_keys? and MapSet.member?(@reference_keywords, key) and external_ref?(child) ->
-        walk_external_ref(key, count, opts)
+      MapSet.member?(@reference_keywords, key) and is_binary(child) and external_ref?(child) ->
+        walk_external_ref(count, opts)
 
       true ->
         walk_nested_schema(key, child, depth, composition_depth, count, opts, named_keys?)
     end
   end
 
-  defp walk_schema_or_array_map(map, depth, composition_depth, count, opts) do
-    Enum.reduce_while(map, {:ok, count}, fn {_key, value}, {:ok, current_count} ->
-      walk_schema_or_array_value(value, depth, composition_depth, current_count, opts)
-    end)
+  defp skip_untargeted_literal?(named_keys?, key, child, opts) do
+    not named_keys? and MapSet.member?(@literal_keywords, key) and
+      not pointer_target?(child, opts)
   end
 
-  defp walk_schema_or_array_value(value, depth, composition_depth, count, opts) do
-    cond do
-      string_array?(value) ->
-        {:cont, {:ok, count}}
-
-      is_list(value) or is_map(value) ->
-        case walk(value, depth + 1, composition_depth, count, opts, false) do
-          {:ok, next_count} -> {:cont, {:ok, next_count}}
-          {:error, _reason} = error -> {:halt, error}
-        end
-
-      true ->
-        {:cont, {:ok, count}}
-    end
+  defp pointer_target?(child, opts) do
+    targets = opts[:pointer_targets]
+    is_map(targets) and MapSet.member?(targets, child)
   end
 
-  defp skip_literal_keyword?(named_keys?, key),
-    do: not named_keys? and MapSet.member?(@literal_keywords, key)
-
-  # `dependentRequired` is a string-array map only in 2019-09 / 2020-12.
-  # Earlier drafts do not define it, so `$ref` can still point into the object.
-  defp skip_dependent_required?(draft), do: draft in [:draft201909, :modern]
-
-  defp string_array?(value) when is_list(value), do: Enum.all?(value, &is_binary/1)
-  defp string_array?(_value), do: false
-
-  defp inherit_walk_draft(_schema, opts, true), do: opts
-
-  defp inherit_walk_draft(schema, opts, false) do
-    case Map.get(schema, "$schema") do
-      uri when is_binary(uri) -> Keyword.put(opts, :schema_draft, walk_draft(uri))
-      _missing -> Keyword.put_new(opts, :schema_draft, :modern)
-    end
-  end
-
-  defp walk_draft(uri) do
-    uri = if String.ends_with?(uri, "#"), do: String.slice(uri, 0, byte_size(uri) - 1), else: uri
-
-    case String.replace_prefix(uri, "https://", "http://") do
-      "http://json-schema.org/draft-04/schema" -> :draft4
-      "http://json-schema.org/draft-06/schema" -> :draft6
-      "http://json-schema.org/draft-07/schema" -> :draft7
-      "http://json-schema.org/schema" -> :draft7
-      "http://json-schema.org/draft/2019-09/schema" -> :draft201909
-      _other -> :modern
-    end
-  end
-
-  defp walk_external_ref(key, count, opts) do
-    if key in ["$ref", "$dynamicRef"] and network_refs_enabled?(opts),
+  defp walk_external_ref(count, opts) do
+    if network_refs_enabled?(opts),
       do: {:cont, {:ok, count}},
       else: {:halt, {:error, :network_ref_forbidden}}
   end
@@ -619,7 +555,89 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   end
 
   defp external_ref?(ref) when is_binary(ref), do: ref != "" and not String.starts_with?(ref, "#")
-  defp external_ref?(_ref), do: true
+
+  defp local_pointer_targets(root) do
+    root
+    |> collect_ref_strings([])
+    |> Enum.reduce(MapSet.new(), fn ref, acc ->
+      case pointer_target(root, ref) do
+        {:ok, target} -> MapSet.put(acc, target)
+        :error -> acc
+      end
+    end)
+  end
+
+  defp collect_ref_strings(map, acc) when is_map(map) and not is_struct(map) do
+    acc =
+      Enum.reduce(@reference_keywords, acc, fn key, acc ->
+        case Map.get(map, key) do
+          ref when is_binary(ref) -> [ref | acc]
+          _other -> acc
+        end
+      end)
+
+    Enum.reduce(map, acc, fn {_key, value}, acc -> collect_ref_strings(value, acc) end)
+  end
+
+  defp collect_ref_strings(list, acc) when is_list(list) do
+    Enum.reduce(list, acc, fn value, acc -> collect_ref_strings(value, acc) end)
+  end
+
+  defp collect_ref_strings(_value, acc), do: acc
+
+  defp pointer_target(root, "#"), do: {:ok, root}
+
+  defp pointer_target(root, "#" <> fragment) do
+    if String.starts_with?(fragment, "/") do
+      follow_pointer(root, fragment)
+    else
+      :error
+    end
+  end
+
+  defp pointer_target(root, ref) when is_binary(ref) do
+    case URI.parse(ref) do
+      %URI{scheme: nil, host: nil, path: path, fragment: fragment}
+      when path in [nil, ""] and is_binary(fragment) ->
+        pointer_target(root, "#" <> fragment)
+
+      _other ->
+        :error
+    end
+  end
+
+  defp pointer_target(_root, _ref), do: :error
+
+  defp follow_pointer(node, pointer) do
+    pointer
+    |> String.split("/")
+    |> tl()
+    |> Enum.map(&decode_pointer_segment/1)
+    |> Enum.reduce_while({:ok, node}, fn segment, {:ok, current} ->
+      case pointer_child(current, segment) do
+        {:ok, child} -> {:cont, {:ok, child}}
+        :error -> {:halt, :error}
+      end
+    end)
+  end
+
+  defp decode_pointer_segment(segment) do
+    segment
+    |> URI.decode()
+    |> String.replace("~1", "/")
+    |> String.replace("~0", "~")
+  end
+
+  defp pointer_child(map, key) when is_map(map) and not is_struct(map), do: Map.fetch(map, key)
+
+  defp pointer_child(list, key) when is_list(list) do
+    case Integer.parse(key) do
+      {index, ""} when index >= 0 -> Enum.fetch(list, index)
+      _other -> :error
+    end
+  end
+
+  defp pointer_child(_node, _key), do: :error
 
   defp resolve_schema(schema, opts) do
     with {:ok, draft} <- schema_draft(schema) do
@@ -793,6 +811,74 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
     do: "relative reference has no absolute base URI"
 
   defp network_error_message(_reason), do: "request was rejected"
+
+  @resolver_app :ex_json_schema
+  @resolver_env :remote_schema_resolver
+  @resolver_flag :arbor_mcp_schema_compile
+  @resolver_table Arbor.MCP.Content.SchemaPolicy.CompileResolver
+
+  defp with_fail_closed_resolver(fun) when is_function(fun, 0) do
+    ensure_resolver_table()
+    Process.put(@resolver_flag, true)
+    install_fail_closed_resolver()
+
+    try do
+      fun.()
+    catch
+      :throw, {@resolver_flag, _url} -> {:error, :network_ref_forbidden}
+    after
+      Process.delete(@resolver_flag)
+      uninstall_fail_closed_resolver()
+    end
+  end
+
+  defp install_fail_closed_resolver do
+    count = :ets.update_counter(@resolver_table, :count, {2, 1}, {:count, 0})
+
+    if count == 1 do
+      :ets.insert(@resolver_table, {:previous, Application.get_env(@resolver_app, @resolver_env)})
+      Application.put_env(@resolver_app, @resolver_env, &fail_closed_remote_schema/1)
+    end
+  end
+
+  defp uninstall_fail_closed_resolver do
+    count = :ets.update_counter(@resolver_table, :count, {2, -1}, {:count, 0})
+
+    if count == 0 do
+      case :ets.lookup(@resolver_table, :previous) do
+        [{:previous, previous}] -> restore_remote_schema_resolver(previous)
+        _missing -> :ok
+      end
+    end
+  end
+
+  defp fail_closed_remote_schema(url) when is_binary(url) do
+    if Process.get(@resolver_flag) do
+      throw({@resolver_flag, url})
+    else
+      case :ets.lookup(@resolver_table, :previous) do
+        [{:previous, fun}] when is_function(fun, 1) -> fun.(url)
+        [{:previous, {mod, name}}] when is_atom(mod) and is_atom(name) -> apply(mod, name, [url])
+        _missing -> raise ExJsonSchema.Schema.UndefinedRemoteSchemaResolverError
+      end
+    end
+  end
+
+  defp restore_remote_schema_resolver(nil),
+    do: Application.delete_env(@resolver_app, @resolver_env)
+
+  defp restore_remote_schema_resolver(value),
+    do: Application.put_env(@resolver_app, @resolver_env, value)
+
+  defp ensure_resolver_table do
+    if :ets.whereis(@resolver_table) == :undefined do
+      try do
+        :ets.new(@resolver_table, [:named_table, :public, :set, read_concurrency: true])
+      rescue
+        ArgumentError -> :ok
+      end
+    end
+  end
 
   defp run_bounded(fun, timeout, timeout_error) do
     task = Task.async(fun)

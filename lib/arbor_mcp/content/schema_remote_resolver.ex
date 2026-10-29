@@ -8,8 +8,9 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
 
   @literal_keywords MapSet.new(~w(const default enum examples))
   @named_schema_maps MapSet.new(
-                       ~w(properties patternProperties $defs definitions dependentSchemas)
+                       ~w(properties patternProperties $defs definitions dependentSchemas dependencies dependentRequired)
                      )
+  @reference_keywords MapSet.new(~w($ref $dynamicRef $recursiveRef))
   @redirect_statuses [301, 302, 303, 307, 308]
 
   @type network_error :: {:network_schema_error, atom()}
@@ -35,7 +36,8 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
     network_opts = policy_opts[:network_refs]
     state = %{documents: %{}, fetched: %{}, aggregate_bytes: 0, document_count: 0}
 
-    with {:ok, normalized_schema} <- normalize_references(schema, nil),
+    with {:ok, normalized_schema} <-
+           normalize_references(schema, nil, false, local_pointer_targets(schema)),
          :ok <- preflight.(normalized_schema, policy_opts),
          {:ok, references} <- referenced_documents(normalized_schema, nil),
          {:ok, state} <- fetch_references(references, state, [], 0, policy_opts, preflight) do
@@ -117,7 +119,13 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
            add_aggregate_bytes(state.aggregate_bytes, response.bytes, network_opts),
          {:ok, decoded} <- decode_schema(response.body),
          identified_schema = ensure_retrieval_id(decoded, response.final_uri),
-         {:ok, schema} <- normalize_references(identified_schema, response.final_uri),
+         {:ok, schema} <-
+           normalize_references(
+             identified_schema,
+             response.final_uri,
+             false,
+             local_pointer_targets(identified_schema)
+           ),
          :ok <- preflight.(schema, policy_opts),
          {:ok, nested_references} <- referenced_documents(schema, response.final_uri) do
       next_state =
@@ -276,27 +284,31 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   end
 
   defp referenced_documents(schema, base_uri) do
-    with {:ok, references} <- walk_references(schema, base_uri, []) do
+    targets = local_pointer_targets(schema)
+
+    with {:ok, references} <- walk_references(schema, base_uri, [], false, targets) do
       {:ok, references |> Enum.uniq() |> Enum.sort()}
     end
   end
 
-  defp normalize_references(map, base_uri, named_keys? \\ false, draft \\ nil)
+  defp normalize_references(map, base_uri, named_keys?, targets)
 
-  defp normalize_references(map, base_uri, named_keys?, draft) when is_map(map) do
-    draft = inherit_walk_draft(map, named_keys?, draft)
+  defp normalize_references(map, base_uri, named_keys?, targets) when is_map(map) do
+    targets = targets || MapSet.new()
 
     with {:ok, scope} <- map_scope(map, base_uri, named_keys?) do
       Enum.reduce_while(map, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
-        normalize_entry(key, value, scope, acc, named_keys?, draft)
+        normalize_entry(key, value, scope, acc, named_keys?, targets)
       end)
     end
   end
 
-  defp normalize_references(list, base_uri, _named_keys?, draft) when is_list(list) do
+  defp normalize_references(list, base_uri, _named_keys?, targets) when is_list(list) do
+    targets = targets || MapSet.new()
+
     list
     |> Enum.reduce_while({:ok, []}, fn value, {:ok, acc} ->
-      case normalize_references(value, base_uri, false, draft) do
+      case normalize_references(value, base_uri, false, targets) do
         {:ok, normalized} -> {:cont, {:ok, [normalized | acc]}}
         {:error, _reason} = error -> {:halt, error}
       end
@@ -307,7 +319,7 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
     end
   end
 
-  defp normalize_references(value, _base_uri, _named_keys?, _draft), do: {:ok, value}
+  defp normalize_references(value, _base_uri, _named_keys?, _targets), do: {:ok, value}
 
   defp normalize_reference(reference, _scope) when not is_binary(reference),
     do: {:ok, reference}
@@ -321,28 +333,30 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
     end
   end
 
-  defp walk_references(map, base_uri, references, named_keys? \\ false, draft \\ nil)
+  defp walk_references(map, base_uri, references, named_keys?, targets)
 
-  defp walk_references(map, base_uri, references, named_keys?, draft) when is_map(map) do
-    draft = inherit_walk_draft(map, named_keys?, draft)
+  defp walk_references(map, base_uri, references, named_keys?, targets) when is_map(map) do
+    targets = targets || MapSet.new()
 
     with {:ok, scope} <- map_scope(map, base_uri, named_keys?) do
       Enum.reduce_while(map, {:ok, references}, fn {key, value}, {:ok, acc} ->
-        walk_entry(key, value, scope, acc, named_keys?, draft)
+        walk_entry(key, value, scope, acc, named_keys?, targets)
       end)
     end
   end
 
-  defp walk_references(list, base_uri, references, _named_keys?, draft) when is_list(list) do
+  defp walk_references(list, base_uri, references, _named_keys?, targets) when is_list(list) do
+    targets = targets || MapSet.new()
+
     Enum.reduce_while(list, {:ok, references}, fn value, {:ok, acc} ->
-      case walk_references(value, base_uri, acc, false, draft) do
+      case walk_references(value, base_uri, acc, false, targets) do
         {:ok, next_acc} -> {:cont, {:ok, next_acc}}
         {:error, _reason} = error -> {:halt, error}
       end
     end)
   end
 
-  defp walk_references(_value, _base_uri, references, _named_keys?, _draft),
+  defp walk_references(_value, _base_uri, references, _named_keys?, _targets),
     do: {:ok, references}
 
   # Named-property maps (`properties`, `$defs`, ...) are not schemas. Their
@@ -350,77 +364,44 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   defp map_scope(_map, base_uri, true), do: {:ok, base_uri}
   defp map_scope(map, base_uri, false), do: schema_scope(map, base_uri)
 
-  defp skip_schema_keyword?(false, key),
-    do: MapSet.member?(@literal_keywords, key) or key in ["$id", "id"]
+  defp skip_untargeted_keyword?(false, key, value, targets) do
+    identifier?(key, value) or
+      (MapSet.member?(@literal_keywords, key) and not MapSet.member?(targets, value))
+  end
 
-  defp skip_schema_keyword?(true, _key), do: false
+  defp skip_untargeted_keyword?(true, _key, _value, _targets), do: false
+
+  defp identifier?(key, value) when key in ["$id", "id"], do: is_binary(value)
+  defp identifier?(_key, _value), do: false
 
   defp named_child?(false, key), do: MapSet.member?(@named_schema_maps, key)
   defp named_child?(true, _key), do: false
 
-  defp normalize_entry("dependentRequired", value, scope, acc, false, draft) do
-    if skip_dependent_required?(draft) do
-      {:cont, {:ok, Map.put(acc, "dependentRequired", value)}}
-    else
-      normalize_generic("dependentRequired", value, scope, acc, false, draft)
-    end
-  end
-
-  defp normalize_entry("dependencies", value, scope, acc, false, draft) when is_map(value) do
-    case normalize_schema_or_array_map(value, scope, draft) do
-      {:ok, normalized} -> {:cont, {:ok, Map.put(acc, "dependencies", normalized)}}
-      {:error, _reason} = error -> {:halt, error}
-    end
-  end
-
-  defp normalize_entry(key, value, scope, acc, named_keys?, draft) do
-    normalize_generic(key, value, scope, acc, named_keys?, draft)
-  end
-
-  defp normalize_generic(key, value, scope, acc, named_keys?, draft) do
+  defp normalize_entry(key, value, scope, acc, named_keys?, targets) do
     cond do
-      skip_schema_keyword?(named_keys?, key) ->
+      skip_untargeted_keyword?(named_keys?, key, value, targets) ->
         {:cont, {:ok, Map.put(acc, key, value)}}
 
-      not named_keys? and key in ["$ref", "$dynamicRef"] ->
+      MapSet.member?(@reference_keywords, key) and is_binary(value) ->
         case normalize_reference(value, scope) do
           {:ok, normalized} -> {:cont, {:ok, Map.put(acc, key, normalized)}}
           {:error, _reason} = error -> {:halt, error}
         end
 
       true ->
-        case normalize_references(value, scope, named_child?(named_keys?, key), draft) do
+        case normalize_references(value, scope, named_child?(named_keys?, key), targets) do
           {:ok, normalized} -> {:cont, {:ok, Map.put(acc, key, normalized)}}
           {:error, _reason} = error -> {:halt, error}
         end
     end
   end
 
-  defp walk_entry("dependentRequired", value, scope, acc, false, draft) do
-    if skip_dependent_required?(draft) do
-      {:cont, {:ok, acc}}
-    else
-      walk_generic("dependentRequired", value, scope, acc, false, draft)
-    end
-  end
-
-  defp walk_entry("dependencies", value, scope, acc, false, draft) when is_map(value) do
-    case walk_schema_or_array_map(value, scope, acc, draft) do
-      {:ok, next_acc} -> {:cont, {:ok, next_acc}}
-      {:error, _reason} = error -> {:halt, error}
-    end
-  end
-
-  defp walk_entry(key, value, scope, acc, named_keys?, draft) do
-    walk_generic(key, value, scope, acc, named_keys?, draft)
-  end
-
-  defp walk_generic(key, value, scope, acc, named_keys?, draft) do
+  defp walk_entry(key, value, scope, acc, named_keys?, targets) do
     cond do
-      skip_schema_keyword?(named_keys?, key) ->
+      skip_untargeted_keyword?(named_keys?, key, value, targets) ->
         {:cont, {:ok, acc}}
 
-      not named_keys? and key in ["$ref", "$dynamicRef"] ->
+      MapSet.member?(@reference_keywords, key) and is_binary(value) ->
         case reference_document(value, scope) do
           {:ok, nil} -> {:cont, {:ok, acc}}
           {:ok, document} -> {:cont, {:ok, [document | acc]}}
@@ -428,74 +409,95 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
         end
 
       true ->
-        case walk_references(value, scope, acc, named_child?(named_keys?, key), draft) do
+        case walk_references(value, scope, acc, named_child?(named_keys?, key), targets) do
           {:ok, next_acc} -> {:cont, {:ok, next_acc}}
           {:error, _reason} = error -> {:halt, error}
         end
     end
   end
 
-  # `dependencies` keys are names. A value is a schema or a string array.
-  defp normalize_schema_or_array_map(map, scope, draft) do
-    Enum.reduce_while(map, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
-      case normalize_schema_or_array_value(value, scope, draft) do
-        {:ok, normalized} -> {:cont, {:ok, Map.put(acc, key, normalized)}}
-        {:error, _reason} = error -> {:halt, error}
+  defp local_pointer_targets(root) do
+    root
+    |> collect_ref_strings([])
+    |> Enum.reduce(MapSet.new(), fn ref, acc ->
+      case pointer_target(root, ref) do
+        {:ok, target} -> MapSet.put(acc, target)
+        :error -> acc
       end
     end)
   end
 
-  defp normalize_schema_or_array_value(value, scope, draft) do
-    if string_array?(value) do
-      {:ok, value}
+  defp collect_ref_strings(map, acc) when is_map(map) and not is_struct(map) do
+    acc =
+      Enum.reduce(@reference_keywords, acc, fn key, acc ->
+        case Map.get(map, key) do
+          ref when is_binary(ref) -> [ref | acc]
+          _other -> acc
+        end
+      end)
+
+    Enum.reduce(map, acc, fn {_key, value}, acc -> collect_ref_strings(value, acc) end)
+  end
+
+  defp collect_ref_strings(list, acc) when is_list(list) do
+    Enum.reduce(list, acc, fn value, acc -> collect_ref_strings(value, acc) end)
+  end
+
+  defp collect_ref_strings(_value, acc), do: acc
+
+  defp pointer_target(root, "#"), do: {:ok, root}
+
+  defp pointer_target(root, "#" <> fragment) do
+    if String.starts_with?(fragment, "/") do
+      follow_pointer(root, fragment)
     else
-      normalize_references(value, scope, false, draft)
+      :error
     end
   end
 
-  defp walk_schema_or_array_map(map, scope, references, draft) do
-    Enum.reduce_while(map, {:ok, references}, fn {_key, value}, {:ok, acc} ->
-      case walk_schema_or_array_value(value, scope, acc, draft) do
-        {:ok, next_acc} -> {:cont, {:ok, next_acc}}
-        {:error, _reason} = error -> {:halt, error}
+  defp pointer_target(root, ref) when is_binary(ref) do
+    case URI.parse(ref) do
+      %URI{scheme: nil, host: nil, path: path, fragment: fragment}
+      when path in [nil, ""] and is_binary(fragment) ->
+        pointer_target(root, "#" <> fragment)
+
+      _other ->
+        :error
+    end
+  end
+
+  defp pointer_target(_root, _ref), do: :error
+
+  defp follow_pointer(node, pointer) do
+    pointer
+    |> String.split("/")
+    |> tl()
+    |> Enum.map(&decode_pointer_segment/1)
+    |> Enum.reduce_while({:ok, node}, fn segment, {:ok, current} ->
+      case pointer_child(current, segment) do
+        {:ok, child} -> {:cont, {:ok, child}}
+        :error -> {:halt, :error}
       end
     end)
   end
 
-  defp walk_schema_or_array_value(value, scope, references, draft) do
-    if string_array?(value) do
-      {:ok, references}
-    else
-      walk_references(value, scope, references, false, draft)
+  defp decode_pointer_segment(segment) do
+    segment
+    |> URI.decode()
+    |> String.replace("~1", "/")
+    |> String.replace("~0", "~")
+  end
+
+  defp pointer_child(map, key) when is_map(map) and not is_struct(map), do: Map.fetch(map, key)
+
+  defp pointer_child(list, key) when is_list(list) do
+    case Integer.parse(key) do
+      {index, ""} when index >= 0 -> Enum.fetch(list, index)
+      _other -> :error
     end
   end
 
-  defp skip_dependent_required?(draft), do: draft in [:draft201909, :modern]
-
-  defp string_array?(value) when is_list(value), do: Enum.all?(value, &is_binary/1)
-  defp string_array?(_value), do: false
-
-  defp inherit_walk_draft(_map, true, draft), do: draft || :modern
-
-  defp inherit_walk_draft(map, false, draft) do
-    case Map.get(map, "$schema") do
-      uri when is_binary(uri) -> walk_draft(uri)
-      _missing -> draft || :modern
-    end
-  end
-
-  defp walk_draft(uri) do
-    uri = if String.ends_with?(uri, "#"), do: String.slice(uri, 0, byte_size(uri) - 1), else: uri
-
-    case String.replace_prefix(uri, "https://", "http://") do
-      "http://json-schema.org/draft-04/schema" -> :draft4
-      "http://json-schema.org/draft-06/schema" -> :draft6
-      "http://json-schema.org/draft-07/schema" -> :draft7
-      "http://json-schema.org/schema" -> :draft7
-      "http://json-schema.org/draft/2019-09/schema" -> :draft201909
-      _other -> :modern
-    end
-  end
+  defp pointer_child(_node, _key), do: :error
 
   defp schema_scope(schema, base_uri) do
     case Map.get(schema, "$id") || Map.get(schema, "id") do

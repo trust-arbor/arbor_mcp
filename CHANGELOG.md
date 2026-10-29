@@ -111,19 +111,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Host header policy no longer treats `localhost` or `127.0.0.1` as a
   substring match. `validate_host_against_policy/2` parses the header or URL
   with `URI`, strips the port, compares allowed hosts exactly, and recognizes
-  loopback through `:inet.parse_address/1` (including `[::1]` and a trailing
-  FQDN dot on `localhost.`).
-- JSON Schema `$ref` walking no longer skips a property literally named
-  `default`, `enum`, or `examples`. Those keys are keywords only at the
-  schema level; under `properties`, `$defs`, and the other named-schema maps
-  they are still walked and validated. Named-property maps keep the enclosing
-  schema scope, so a property named `id` is not treated as a schema identifier.
-  `dependentRequired` values are string arrays and are not walked as schemas,
-  and only on drafts that define that keyword (2019-09 / 2020-12). Earlier
-  drafts leave it as unknown data, so a `$ref` that points into it is still
-  walked. Draft-7 `dependencies` keys are names: a schema value is walked, a
-  list of strings is skipped, and any other list is walked so mixed schema
-  entries cannot hide a network `$ref`.
+  loopback through `:inet.parse_address/1` (including `[::1]`, a trailing
+  FQDN dot on `localhost.`, and IPv4-mapped IPv6 loopback `::ffff:127.0.0.0/8`).
+- JSON Schema compilation never asks ExJsonSchema's global
+  `:remote_schema_resolver` to fetch. A process-local fail-closed resolver
+  is installed for the compile; missed remote refs become
+  `:network_ref_forbidden` instead of a network fetch. The preflight walker
+  is only a first pass: it treats `$ref` / `$dynamicRef` / `$recursiveRef`
+  strings as refs wherever they appear, walks named containers without
+  dialect spoofing from a nested `$schema`, and still skips untargeted
+  `const` / `default` / `enum` / `examples` instance data. Local JSON
+  pointers are resolved so a targeted node is walked even under those
+  keywords. Named-property maps keep the enclosing schema scope, so a
+  property named `id` is not treated as a schema identifier.
 
 - `Accept: application/json, text/event-stream;q` — a `q` parameter with no
   value — and `q =1` / `q= 1`, whose whitespace around the equals sign

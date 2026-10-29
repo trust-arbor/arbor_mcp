@@ -106,8 +106,14 @@ defmodule Arbor.MCP.Security.Validation do
   def validate_localhost_binding(_config), do: :ok
 
   # IPv4 loopback is the whole 127.0.0.0/8 block; IPv6 loopback is ::1.
+  # IPv4-mapped IPv6 loopback is ::ffff:127.0.0.0/8.
   defp loopback_address?({127, _b, _c, _d}), do: true
   defp loopback_address?({0, 0, 0, 0, 0, 0, 0, 1}), do: true
+
+  defp loopback_address?({0, 0, 0, 0, 0, 0xFFFF, hi, _lo})
+       when hi >= 0x7F00 and hi <= 0x7FFF,
+       do: true
+
   defp loopback_address?(_other), do: false
 
   @doc """
