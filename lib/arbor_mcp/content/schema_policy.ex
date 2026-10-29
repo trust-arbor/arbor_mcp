@@ -842,12 +842,18 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   end
 
   defp uninstall_fail_closed_resolver do
-    count = :ets.update_counter(@resolver_table, :count, {2, -1}, {:count, 0})
+    if :ets.whereis(@resolver_table) == :undefined do
+      :ok
+    else
+      count = :ets.update_counter(@resolver_table, :count, {2, -1}, {:count, 0})
 
-    if count == 0 do
-      case :ets.lookup(@resolver_table, :previous) do
-        [{:previous, previous}] -> restore_remote_schema_resolver(previous)
-        _missing -> :ok
+      if count == 0 do
+        case :ets.lookup(@resolver_table, :previous) do
+          [{:previous, previous}] -> restore_remote_schema_resolver(previous)
+          _missing -> :ok
+        end
+      else
+        :ok
       end
     end
   end
@@ -870,13 +876,37 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   defp restore_remote_schema_resolver(value),
     do: Application.put_env(@resolver_app, @resolver_env, value)
 
+  # Named ETS tables die with their owner. Compile runs inside Task.async/1,
+  # so the table must live on a process that outlasts that task.
   defp ensure_resolver_table do
     if :ets.whereis(@resolver_table) == :undefined do
+      start_resolver_table_owner()
+      wait_for_resolver_table(100)
+    end
+
+    :ok
+  end
+
+  defp start_resolver_table_owner do
+    spawn(fn ->
       try do
+        Process.register(self(), @resolver_table)
         :ets.new(@resolver_table, [:named_table, :public, :set, read_concurrency: true])
+        Process.sleep(:infinity)
       rescue
         ArgumentError -> :ok
       end
+    end)
+  end
+
+  defp wait_for_resolver_table(0), do: :ok
+
+  defp wait_for_resolver_table(attempts) do
+    if :ets.whereis(@resolver_table) == :undefined do
+      Process.sleep(1)
+      wait_for_resolver_table(attempts - 1)
+    else
+      :ok
     end
   end
 
