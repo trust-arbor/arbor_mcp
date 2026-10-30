@@ -40,22 +40,6 @@ defmodule ExMCP.Client.HTTPPostStreamEventsTest do
     end
   end
 
-  defmodule DisabledAuthProvider do
-    @behaviour ExMCP.Authorization.Provider
-
-    @impl true
-    def init(_config), do: {:error, :disabled}
-
-    @impl true
-    def get_token(state), do: {:ok, nil, state}
-
-    @impl true
-    def handle_unauthorized(_challenge, _scopes, state), do: {:error, :disabled, state}
-
-    @impl true
-    def handle_forbidden(_challenge, _scopes, state), do: {:error, :disabled, state}
-  end
-
   # `answer_call` gets the tools/call request and the conn, and sends the
   # POST's response itself. A GET relay keeps the legacy standalone stream
   # open, so the call's POST runs from its own task and can hand the events
@@ -392,7 +376,7 @@ defmodule ExMCP.Client.HTTPPostStreamEventsTest do
       start(answer,
         bypass_setup: setup_bypass,
         client: [
-          auth_provider: {DisabledAuthProvider, []},
+          auth_provider: :none,
           auth: %{client_id: "auto-client", client_secret: "secret"}
         ]
       )
