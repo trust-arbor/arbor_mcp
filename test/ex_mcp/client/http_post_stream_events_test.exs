@@ -369,15 +369,16 @@ defmodule ExMCP.Client.HTTPPostStreamEventsTest do
       end)
     end
 
-    Application.put_env(:ex_mcp, :oauth_metadata_fetch, allow_insecure_loopback: true)
-    on_exit(fn -> Application.delete_env(:ex_mcp, :oauth_metadata_fetch) end)
-
     {client, stream} =
       start(answer,
         bypass_setup: setup_bypass,
         client: [
           auth_provider: :none,
-          auth: %{client_id: "auto-client", client_secret: "secret"}
+          auth: %{
+            client_id: "auto-client",
+            client_secret: "secret",
+            metadata_fetch: [allow_insecure_loopback: true]
+          }
         ]
       )
 
