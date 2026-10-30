@@ -35,7 +35,7 @@ defmodule Arbor.MCP.Authorization.CompatibilityMatrixTest do
     end
   end
 
-  test "legacy credential aliases are issuer-bound whenever the settled HTTP era is modern" do
+  test "legacy credential aliases are issuer-bound on every settled HTTP era" do
     metadata = authorization_server_metadata()
 
     for {_mode, version} <- enabled_mode_versions() do
@@ -45,20 +45,14 @@ defmodule Arbor.MCP.Authorization.CompatibilityMatrixTest do
         protocol_version: version
       }
 
-      if VersionRegistry.modern?(version) do
-        assert {:error, {:pre_registered_credential_issuer_required, @issuer}} =
-                 RegistrationPolicy.select(metadata, config)
-      else
-        assert {:ok, {:pre_registered, selection}} =
-                 RegistrationPolicy.select(metadata, config)
-
-        assert selection.client_id == "legacy-client"
-      end
+      assert {:error, {:pre_registered_credential_issuer_required, @issuer}} =
+               RegistrationPolicy.select(metadata, config)
 
       assert {:ok, {:pre_registered, bound}} =
                RegistrationPolicy.select(metadata, Map.put(config, :credential_issuer, @issuer))
 
       assert bound.issuer == @issuer
+      assert bound.client_id == "legacy-client"
     end
   end
 

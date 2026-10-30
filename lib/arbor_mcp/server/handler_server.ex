@@ -140,7 +140,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
     case validate_mrtr_configuration(opts) do
       :ok ->
         Runtime.start_link(
-          Keyword.merge(opts,
+          Keyword.merge(Keyword.take(opts, Arbor.MCP.Server.Runtime.Config.option_keys()),
             cancellation_tracker:
               Keyword.get(opts, :cancellation_tracker, CancellationTracker.Default),
             edge: {__MODULE__, Keyword.delete(opts, :name)}
@@ -1496,11 +1496,13 @@ defmodule Arbor.MCP.Server.HandlerServer do
       true ->
         deadline = System.monotonic_time(:millisecond) + timeout
 
-        case Arbor.MCP.Protocol.Elicitation.validate(params, deadline) do
+        # Validation that runs out of time replies the :timeout an
+        # unanswered request does.
+        case Arbor.MCP.Protocol.Elicitation.validate_reverse(params, deadline) do
           {:ok, normalized} ->
             reverse_request("elicitation/create", normalized, timeout, from, state)
 
-          error ->
+          {:error, _reason} = error ->
             {:reply, error, state}
         end
     end
@@ -1749,17 +1751,22 @@ defmodule Arbor.MCP.Server.HandlerServer do
   defp do_process_mcp_request(%{"method" => "tools/call"} = request, state) do
     id = Map.get(request, "id")
     params = Map.get(request, "params", %{})
+    arguments = Map.get(params, "arguments", %{})
+    meta = Map.get(params, "_meta")
 
     enhanced_arguments =
-      params
-      |> Map.get("arguments", %{})
+      arguments
       |> Map.put("_request_id", id)
-      |> put_meta(Map.get(params, "_meta"))
+      |> put_meta(meta)
 
     enhanced_params = Map.put(params, "arguments", enhanced_arguments)
     enhanced_request = Map.put(request, "params", enhanced_params)
 
-    dispatch(enhanced_request, state)
+    # The copy of _meta is not caller data, so the requestState binding leaves
+    # it out; the request's own _meta stays bound.
+    dispatch(enhanced_request, state,
+      injected_argument_meta: not is_nil(meta) and not Map.has_key?(arguments, "_meta")
+    )
   end
 
   defp do_process_mcp_request(%{"method" => "subscriptions/listen"} = request, state) do
@@ -1827,7 +1834,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
 
   # Runs the shared dispatcher against the handler module and folds the new
   # handler state back into the server state.
-  defp dispatch(request, state) do
+  defp dispatch(request, state, extra_opts \\ []) do
     state = request |> maybe_pin_connection_era(state) |> remember_client_capabilities(request)
 
     token = state.current_ingress
@@ -1849,7 +1856,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
            state.runtime,
            token,
            request,
-           dispatch_opts: dispatch_opts,
+           dispatch_opts: dispatch_opts ++ extra_opts,
            output: %{
              edge: self(),
              connection: state.connection,
@@ -1923,7 +1930,7 @@ defmodule Arbor.MCP.Server.HandlerServer do
   defp effective_protocol_mode(state), do: state.protocol_mode
 
   defp put_meta(arguments, nil), do: arguments
-  defp put_meta(arguments, meta), do: Map.put(arguments, "_meta", meta)
+  defp put_meta(arguments, meta), do: Map.put_new(arguments, "_meta", meta)
 
   defp emit_initialize_telemetry(result) do
     server_name =

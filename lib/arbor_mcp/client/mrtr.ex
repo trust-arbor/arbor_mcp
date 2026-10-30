@@ -230,7 +230,7 @@ defmodule Arbor.MCP.Client.MRTR do
   end
 
   defp validate_request_count(requests, opts) do
-    maximum = Keyword.get(opts, :max_input_requests, @default_max_input_requests)
+    maximum = max_input_requests(opts)
 
     if map_size(requests) <= maximum,
       do: :ok,
@@ -268,6 +268,10 @@ defmodule Arbor.MCP.Client.MRTR do
 
   @spec max_bytes(keyword()) :: non_neg_integer()
   def max_bytes(opts), do: Keyword.get(opts, :max_mrtr_bytes, @default_max_bytes)
+
+  @spec max_input_requests(keyword()) :: non_neg_integer()
+  def max_input_requests(opts),
+    do: Keyword.get(opts, :max_input_requests, @default_max_input_requests)
 
   defp validate_size(value, opts) do
     maximum = max_bytes(opts)

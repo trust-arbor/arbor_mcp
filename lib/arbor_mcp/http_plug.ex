@@ -75,6 +75,39 @@ defmodule Arbor.MCP.HttpPlug do
           realm: "my-mcp-server" # Optional, defaults to server_info.name
         }
 
+  ### Principals (`:principal_id`, `:tenant_id`, `:client_principals`)
+
+  Each request runs as a principal. The principal decides who may cancel a
+  modern request from a separate POST, resume its MRTR `requestState`, use a
+  legacy session or read a stored task, and how subscriptions are authorized
+  and limited. Set `:principal_id` (and `:tenant_id`) to a string, or to a
+  function or `{module, function, extra_args}` resolver called with
+  `conn, request, token_claims`. What the host sets always wins. To run
+  requests without a principal on purpose, use a resolver that returns `nil`.
+  A literal `principal_id: nil` is the same as leaving the option out, so a
+  config value that is unexpectedly `nil` can't drop the token's binding.
+  Otherwise a validated token's principal is its `sub` claim (or the
+  `principal_id` claim a token verifier returns), unchanged.
+
+  A token without `sub` is refused with `401 invalid_token`. An introspection
+  response (RFC 7662) may leave `sub` out, and then nothing tells one user's
+  token from another user's of the same OAuth client, or from a
+  client-credentials token, so the client can't stand in for a user. If your
+  authorization server leaves `sub` out only of client-credentials tokens, set
+  `client_principals: true`: such a token then runs as `"client:" <> client_id`.
+  The option reserves the `client:` prefix for these principals, so a token
+  whose `sub` (or `principal_id` claim) starts with `client:` is refused too,
+  and no user can share a client's principal. Every other subject keeps its
+  value, so turning the option on doesn't move existing users. A token with a
+  `username` but no `sub` is still refused. If your authorization server leaves
+  `sub` out of user tokens too, resolve `:principal_id` from a claim that
+  identifies the user.
+
+  A mount accepts tokens from one issuer (`:expected_issuer`), so `sub` isn't
+  prefixed with it. Mounts with different issuers that share a Runtime and an
+  endpoint path, or an MRTR key ring, should resolve distinct principals or
+  tenants.
+
   ## Security
 
   ### Origin validation (`:validate_origin`, `:allowed_origins`)
@@ -144,8 +177,11 @@ defmodule Arbor.MCP.HttpPlug do
   `notifications/message` are written only there, followed by one final
   JSON-RPC response that closes the stream. SSE comment keepalives are sent
   every `:request_keepalive_interval_ms` milliseconds (default: `15_000`;
-  set `:infinity` to disable). A failed write cancels that modern request's
-  worker without affecting other requests or subscriptions. The first write
+  set `:infinity` to disable). A failed write, of a keepalive or of a
+  notification, cancels that modern request's worker without affecting other
+  requests or subscriptions. Closing the stream is how a modern client
+  cancels, so a failed write, including one of the final response, ends the
+  response without logging an error. The first write
   after a TCP peer closes usually succeeds, so a write-detected close is
   usually noticed within two intervals; Cowboy also cancels by terminating the
   request process when it sees the connection close. JSON responses do not
@@ -217,7 +253,6 @@ defmodule Arbor.MCP.HttpPlug do
   @impl Plug
   def init(opts) do
     Configuration.validate!(opts)
-    validate_mrtr_configuration!(opts)
     protected_resource_metadata = protected_resource_metadata!(opts)
 
     legacy_http_sse = Keyword.get(opts, :legacy_http_sse, false)
@@ -235,6 +270,7 @@ defmodule Arbor.MCP.HttpPlug do
       max_mrtr_bytes: Keyword.get(opts, :max_mrtr_bytes, 1_048_576),
       require_replay_protection: Keyword.get(opts, :require_replay_protection, false),
       principal_id: Keyword.get(opts, :principal_id),
+      client_principals: client_principals!(Keyword.get(opts, :client_principals, false)),
       tenant_id: Keyword.get(opts, :tenant_id),
       authorize_subscription_filter: Keyword.get(opts, :authorize_subscription_filter),
       authorize_subscription_publication: Keyword.get(opts, :authorize_subscription_publication),
@@ -330,20 +366,6 @@ defmodule Arbor.MCP.HttpPlug do
 
     if URI.parse(value).query do
       raise ArgumentError, ":authorization_servers entries must not contain query components"
-    end
-  end
-
-  defp validate_mrtr_configuration!(opts) do
-    if Keyword.get(opts, :mrtr, false) do
-      case Arbor.MCP.Server.RequestState.validate_configuration(
-             request_state: Keyword.get(opts, :request_state)
-           ) do
-        :ok ->
-          :ok
-
-        {:error, reason} ->
-          raise ArgumentError, "invalid MRTR requestState configuration: #{reason}"
-      end
     end
   end
 
@@ -532,7 +554,6 @@ defmodule Arbor.MCP.HttpPlug do
       |> put_resp_header("content-type", "text/event-stream")
       |> put_resp_header("x-accel-buffering", "no")
       |> put_resp_header("cache-control", "no-cache")
-      |> put_resp_header("connection", "keep-alive")
       |> RuntimeSessionStream.serve(stream, {"endpoint", {:raw, endpoint}})
     else
       {:error, reason}
@@ -1869,7 +1890,12 @@ defmodule Arbor.MCP.HttpPlug do
       :subscription_max_lifetime_ms
     ]
 
-    Enum.map(keys, &{&1, Map.get(opts, &1)}) ++
+    dispatch_opts =
+      keys
+      |> Enum.map(&{&1, Map.get(opts, &1)})
+      |> Enum.reject(fn {key, value} -> key == :request_state and is_nil(value) end)
+
+    dispatch_opts ++
       [
         application_context: opts.handler_opts,
         request_headers: conn.req_headers,
@@ -1934,25 +1960,47 @@ defmodule Arbor.MCP.HttpPlug do
 
     conn = if initialization_error?, do: suppress_session_header(conn), else: conn
 
-    conn = write_runtime_response(conn, effect, wire, format)
+    written = write_runtime_response(conn, effect, wire, format)
+    if initialization_error?, do: RuntimeSession.terminate(session)
 
-    if kind == :notification do
-      case await_runtime_output(conn, format, runtime_wait(conn, request, opts)) do
-        {:ok, {:ok, effect, wire}, conn} ->
-          write_runtime_output(conn, effect, wire, format, session, request, opts)
+    case written do
+      {:closed, conn} ->
+        end_closed_request_stream(conn, kind, request)
 
-        {:stream_closed, conn} ->
-          conn
+      conn when kind == :notification ->
+        continue_runtime_output(conn, format, session, request, opts)
 
-        _closed ->
-          raise RuntimeWriter.AdmissionError
-      end
-    else
-      if initialization_error?, do: RuntimeSession.terminate(session)
-
-      conn
+      conn ->
+        conn
     end
   end
+
+  # A notification leaves the stream open for the request's next output.
+  defp continue_runtime_output(conn, format, session, request, opts) do
+    case await_runtime_output(conn, format, runtime_wait(conn, request, opts)) do
+      {:ok, {:ok, effect, wire}, conn} ->
+        write_runtime_output(conn, effect, wire, format, session, request, opts)
+
+      {:stream_closed, conn} ->
+        conn
+
+      _closed ->
+        raise RuntimeWriter.AdmissionError
+    end
+  end
+
+  # The client closed the request's SSE stream, and a frame for it found the
+  # stream gone. Closing the stream is how a modern client cancels, so the
+  # response ends quietly, as after a failed keepalive. A notification's
+  # failed frame cancels a modern request; a legacy one runs to its end, since
+  # those revisions say a disconnect SHOULD NOT be taken for a cancellation.
+  # After the final response there is nothing left to cancel.
+  defp end_closed_request_stream(conn, :notification, request) do
+    if modern_http_request?(conn, request), do: cancel_closed_request(conn)
+    conn
+  end
+
+  defp end_closed_request_stream(conn, _response, _request), do: conn
 
   # Headers already sent with a chunked response cannot be withdrawn. No
   # streamed request is an initialize: a legacy initialize is answered with
@@ -2003,7 +2051,30 @@ defmodule Arbor.MCP.HttpPlug do
     RuntimeWriter.perform(conn, effect, wire, &Plug.Conn.send_resp(&1, status, &2))
   end
 
-  defp write_runtime_response(conn, effect, wire, :sse) do
+  # A modern request with a progress token selects an event stream, but its
+  # headers go out only with its first write. When that write is the final
+  # response and the method is one the server doesn't serve, the response is
+  # still the 404 with a JSON body that the 2026-07-28 transport requires, as
+  # for a request without the token.
+  defp write_runtime_response(%{state: state} = conn, effect, "data: " <> framed = wire, :sse)
+       when state != :chunked do
+    body = String.trim_trailing(framed, "\r\n\r\n")
+
+    if HTTPWriterRegistry.kind(effect) == :response and runtime_json_status(conn, body) == 404 do
+      conn = put_resp_content_type(conn, "application/json")
+
+      RuntimeWriter.perform(conn, effect, wire, fn conn, _wire ->
+        Plug.Conn.send_resp(conn, 404, body)
+      end)
+    else
+      write_runtime_stream_frame(conn, effect, wire)
+    end
+  end
+
+  defp write_runtime_response(conn, effect, wire, :sse),
+    do: write_runtime_stream_frame(conn, effect, wire)
+
+  defp write_runtime_stream_frame(conn, effect, wire) do
     conn =
       if conn.state == :chunked do
         conn
@@ -2014,14 +2085,8 @@ defmodule Arbor.MCP.HttpPlug do
         |> put_resp_header("cache-control", "no-cache")
       end
 
-    RuntimeWriter.perform(conn, effect, wire, fn conn, wire ->
-      conn = if conn.state == :chunked, do: conn, else: Plug.Conn.send_chunked(conn, 200)
-
-      case Plug.Conn.chunk(conn, wire) do
-        {:ok, conn} -> conn
-        error -> error
-      end
-    end)
+    # A closed stream comes back as {:closed, conn}.
+    with {:ok, conn} <- RuntimeWriter.stream_frame(conn, effect, wire), do: conn
   end
 
   # An empty output has nothing to add to a stream whose headers already went
@@ -2259,32 +2324,16 @@ defmodule Arbor.MCP.HttpPlug do
   end
 
   defp resolve_mrtr_identity(conn, request, token_info, opts) do
-    principal =
-      resolve_identity_value(
-        Map.get(opts, :principal_id),
-        conn,
-        request,
-        token_info,
-        token_claim(token_info, [
-          "sub",
-          :sub,
-          "principal_id",
-          :principal_id,
-          "client_id",
-          :client_id
-        ])
-      )
-
-    tenant =
-      resolve_identity_value(
-        Map.get(opts, :tenant_id),
-        conn,
-        request,
-        token_info,
-        token_claim(token_info, ["tenant_id", :tenant_id, "tenant", :tenant])
-      )
-
-    with true <- is_nil(principal) or is_binary(principal),
+    with {:ok, principal} <- resolve_principal(conn, request, token_info, opts),
+         tenant =
+           resolve_identity_value(
+             Map.get(opts, :tenant_id),
+             conn,
+             request,
+             token_info,
+             token_claim(token_info, ["tenant_id", :tenant_id, "tenant", :tenant])
+           ),
+         true <- is_nil(principal) or is_binary(principal),
          true <- is_nil(tenant) or is_binary(tenant) do
       {:ok,
        opts
@@ -2293,11 +2342,85 @@ defmodule Arbor.MCP.HttpPlug do
        |> Map.put(:auth_info, auth_info(conn, token_info))}
     else
       false -> {:error, :invalid_mrtr_identity}
+      {:error, {:auth_error, _response}} = refused -> refused
     end
   rescue
     _exception ->
       Logger.error("Failed to resolve MRTR identity")
       {:error, :invalid_mrtr_identity}
+  end
+
+  # A principal the host configures wins, whatever a resolver returns (nil
+  # too). A literal `principal_id: nil` is no configuration at all, so a
+  # config value that is unexpectedly nil can't drop the token's binding.
+  defp resolve_principal(conn, request, token_info, %{principal_id: principal_id})
+       when not is_nil(principal_id),
+       do: {:ok, resolve_identity_value(principal_id, conn, request, token_info, nil)}
+
+  defp resolve_principal(_conn, _request, token_info, opts) when is_map(token_info),
+    do: token_principal(token_info, opts)
+
+  defp resolve_principal(_conn, _request, _no_token, _opts), do: {:ok, nil}
+
+  # The principal of a token this plug validated is its subject. RFC 9068 JWT
+  # access tokens always carry `sub`, but an introspection response (RFC 7662)
+  # may leave it out, and then nothing standard tells one user's token from
+  # another user's of the same client, or from a client-credentials token. So
+  # the client never stands in for a user: such a token is refused, unless the
+  # host says with `client_principals: true` that its authorization server
+  # leaves `sub` out only of client-credentials tokens. Client principals then
+  # own the `client:` prefix, so a token whose subject uses it is refused, and
+  # other subjects stay unprefixed.
+  defp token_principal(token_info, opts) do
+    case token_claim(token_info, ["sub", :sub, "principal_id", :principal_id]) do
+      nil -> client_principal(token_info, opts)
+      "" -> missing_subject(opts)
+      "client:" <> _reserved when opts.client_principals == true -> reserved_subject(opts)
+      subject -> {:ok, subject}
+    end
+  end
+
+  # A token that names its resource owner (`username`) is a user's, so it
+  # never gets its client's principal.
+  defp client_principal(token_info, %{client_principals: true} = opts) do
+    with nil <- token_claim(token_info, ["username", :username]),
+         client_id when is_binary(client_id) and client_id != "" <-
+           token_claim(token_info, ["client_id", :client_id]) do
+      {:ok, "client:" <> client_id}
+    else
+      _user_or_no_client -> missing_subject(opts)
+    end
+  end
+
+  defp client_principal(_token_info, opts), do: missing_subject(opts)
+
+  defp missing_subject(opts) do
+    Logger.warning(
+      "Refused an OAuth access token without a subject (sub). Set :principal_id, or " <>
+        "client_principals: true if the authorization server leaves sub out only of " <>
+        "client-credentials tokens"
+    )
+
+    refuse_subject("The access token does not identify its subject.", opts)
+  end
+
+  defp reserved_subject(opts) do
+    Logger.warning(
+      "Refused an OAuth access token whose subject starts with client:, which " <>
+        "client_principals: true reserves for client principals"
+    )
+
+    refuse_subject("The access token's subject is reserved for client principals.", opts)
+  end
+
+  defp refuse_subject(description, opts) do
+    response =
+      ServerGuard.invalid_token_response(
+        description,
+        Map.get(opts.auth_config, :realm, opts.server_info.name)
+      )
+
+    {:error, {:auth_error, add_resource_metadata(response, opts)}}
   end
 
   # A token validated here wins over auth info a host plug attached.
@@ -2737,7 +2860,6 @@ defmodule Arbor.MCP.HttpPlug do
         |> put_resp_header("content-type", "text/event-stream")
         |> put_resp_header("x-accel-buffering", "no")
         |> put_resp_header("cache-control", "no-cache")
-        |> put_resp_header("connection", "keep-alive")
         |> send_chunked(200)
 
       serve_sse(conn, session_id, session_manager, initial_sse_opts(opts, session_id))
@@ -3502,6 +3624,12 @@ defmodule Arbor.MCP.HttpPlug do
 
   defp subscription_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp subscription_reason(reason), do: inspect(reason)
+
+  defp client_principals!(value) when is_boolean(value), do: value
+
+  defp client_principals!(value) do
+    raise ArgumentError, ":client_principals must be a boolean, got: #{inspect(value)}"
+  end
 
   defp subscription_keepalive_interval!(:infinity), do: :infinity
 

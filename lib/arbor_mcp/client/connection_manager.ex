@@ -157,6 +157,7 @@ defmodule Arbor.MCP.Client.ConnectionManager do
         |> Map.put(:protocol_version, result["protocolVersion"])
         |> Map.put(:server_info, result["serverInfo"])
         |> Map.put(:server_instructions, result["instructions"])
+        |> forget_unkept_session(transport_mod, transport_state, final_transport_state)
 
       ConnectionScope.established()
       {:ok, new_state}
@@ -176,6 +177,20 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   defp check_deadline(deadline) do
     if Deadline.expired?(deadline), do: {:error, :establish_timeout}, else: :ok
   end
+
+  # A configured `:session_id` the new legacy connection didn't keep, because
+  # the server had ended it (see do_handshake/3), isn't offered again when the
+  # client reconnects.
+  defp forget_unkept_session(
+         %{transport_opts: transport_opts} = state,
+         HTTP,
+         %HTTP{session_id: configured},
+         %HTTP{protocol_era: :legacy, session_id: kept}
+       )
+       when is_binary(configured) and configured != kept and is_list(transport_opts),
+       do: %{state | transport_opts: forget_session_id(transport_opts)}
+
+  defp forget_unkept_session(state, _transport_mod, _opened, _established), do: state
 
   # A connection attempt that fails after the transport was opened must not
   # leave it behind: a spawned stdio server, or a port and reader linked to
@@ -220,9 +235,10 @@ defmodule Arbor.MCP.Client.ConnectionManager do
     ConnectionScope.closed(HTTP, attempt, result)
 
     # Restore the connection snapshot after ending the failed session, but
-    # never roll back credentials acquired or rejected during that attempt.
-    Map.merge(
-      snapshot,
+    # never roll back credentials acquired or rejected during that attempt,
+    # nor bring back a configured session the server has ended.
+    snapshot
+    |> Map.merge(
       Map.take(attempt, [
         :access_token,
         :credential_generation,
@@ -230,9 +246,11 @@ defmodule Arbor.MCP.Client.ConnectionManager do
         :auth_completed,
         :auth_provider_state,
         :granted_scopes,
-        :headers
+        :headers,
+        :configured_session_ended
       ])
     )
+    |> without_ended_session()
   end
 
   defp abandon_legacy_attempt(ReliabilityWrapper, snapshot, attempt) do
@@ -795,6 +813,12 @@ defmodule Arbor.MCP.Client.ConnectionManager do
         Process.sleep(100)
         receive_loop(parent, transport_mod, transport_state)
 
+      {:error, {:session_expired, _detail} = reason} ->
+        # The server ended the legacy HTTP session this stream belongs to.
+        # That is no transport fault: the client starts a new session.
+        Lifetime.deliver(parent, {:transport_closed, reason})
+        :ok
+
       {:error, reason} ->
         Logger.error("Transport error in receive loop", reason: LogSummary.describe(reason))
         Lifetime.deliver(parent, {:transport_closed, reason})
@@ -823,21 +847,53 @@ defmodule Arbor.MCP.Client.ConnectionManager do
   defp connect_with_reliability(transport_mod, transport_opts, reliability_opts) do
     case transport_mod.connect(transport_opts) do
       {:ok, transport_state} ->
-        if reliability_opts != [] do
-          # Wrap with reliability features
-          {:ok, wrapped_state} =
-            ReliabilityWrapper.wrap(transport_mod, transport_state, reliability_opts)
+        cond do
+          reliability_opts == [] ->
+            {:ok, {transport_mod, transport_state}}
 
-          {:ok, {ReliabilityWrapper, wrapped_state}}
-        else
-          # No reliability features requested
-          {:ok, {transport_mod, transport_state}}
+          # HTTP keeps the wrapper's components itself, so the client still
+          # sees an HTTP transport and sends each request from its own task
+          # (see HTTP.attach_reliability/2).
+          transport_mod == HTTP ->
+            {:ok, wrapper} = ReliabilityWrapper.wrap(HTTP, transport_state, reliability_opts)
+            {:ok, {HTTP, HTTP.attach_reliability(transport_state, wrapper)}}
+
+          true ->
+            {:ok, wrapped_state} =
+              ReliabilityWrapper.wrap(transport_mod, transport_state, reliability_opts)
+
+            {:ok, {ReliabilityWrapper, wrapped_state}}
         end
 
       error ->
         error
     end
   end
+
+  @doc false
+  # The client options without the `:session_id` a legacy HTTP connection
+  # resumes, wherever a transport spec carries it, for a server that has
+  # ended that session: a new connection must start a session of its own.
+  @spec forget_session_id(keyword()) :: keyword()
+  def forget_session_id(opts) when is_list(opts) do
+    opts
+    |> Keyword.delete(:session_id)
+    |> update_present(:transport, &forget_spec_session_id/1)
+    |> update_present(:transports, fn
+      specs when is_list(specs) -> Enum.map(specs, &forget_spec_session_id/1)
+      other -> other
+    end)
+  end
+
+  defp update_present(opts, key, fun) do
+    if Keyword.has_key?(opts, key), do: Keyword.update!(opts, key, fun), else: opts
+  end
+
+  defp forget_spec_session_id({transport, spec_opts}) when is_list(spec_opts),
+    do: {transport, Keyword.delete(spec_opts, :session_id)}
+
+  defp forget_spec_session_id(spec) when is_list(spec), do: Keyword.delete(spec, :session_id)
+  defp forget_spec_session_id(spec), do: spec
 
   def prepare_transport_config(opts) do
     cond do
@@ -1009,21 +1065,44 @@ defmodule Arbor.MCP.Client.ConnectionManager do
     handshake_timeout = handshake_timeout(opts)
     establish_deadline = Deadline.on_transport(transport_mod, transport_state)
 
-    exchange_deadline =
-      Deadline.earliest(
-        Deadline.after_ms(handshake_timeout),
-        Keyword.get(opts, :establish_deadline)
-      )
-
-    transport_state = Deadline.put_on_transport(transport_mod, transport_state, exchange_deadline)
-
     # The same capabilities a modern client sends with every request.
     capabilities = Keyword.get(opts, :capabilities, %{})
 
-    transport_mod
-    |> exchange_initialize(transport_state, protocol_version, capabilities, exchange_deadline)
+    exchange = fn state ->
+      exchange_deadline =
+        Deadline.earliest(
+          Deadline.after_ms(handshake_timeout),
+          Keyword.get(opts, :establish_deadline)
+        )
+
+      state = Deadline.put_on_transport(transport_mod, state, exchange_deadline)
+      exchange_initialize(transport_mod, state, protocol_version, capabilities, exchange_deadline)
+    end
+
+    transport_state
+    |> without_ended_session()
+    |> exchange.()
+    |> start_new_session(exchange)
     |> restore_deadline(transport_mod, establish_deadline)
   end
+
+  # An initialize that carried a configured `:session_id` the server has
+  # ended gets 404, and the client must then start a new session with an
+  # initialize that carries no session id (Session Management, 2025-03-26 and
+  # later). It sends that one at once, within the connection's deadline, and
+  # reports its failure as it is. The connection remembers that the session
+  # ended, so no later initialize in the same attempt (a version retry after
+  # the modern probe, say) offers it again, and this happens at most once per
+  # attempt.
+  defp start_new_session({:error, {:session_expired, _detail}, %HTTP{} = latest}, exchange),
+    do: exchange.(%{latest | session_id: nil, configured_session_ended: true})
+
+  defp start_new_session(result, _exchange), do: result
+
+  defp without_ended_session(%HTTP{configured_session_ended: true} = state),
+    do: %{state | session_id: nil}
+
+  defp without_ended_session(state), do: state
 
   defp exchange_initialize(
          transport_mod,

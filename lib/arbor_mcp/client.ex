@@ -122,6 +122,15 @@ defmodule Arbor.MCP.Client do
     # Progress tokens of pending requests, mapped to their request ids, so a
     # connection-level notifications/progress reaches the request it reports on.
     progress_requests: %{},
+    # progress_to: bookkeeping (see RequestHandler): the pending requests'
+    # targets, the tokens no target may receive progress for yet, the tokens
+    # input_required rounds keep for their continuations, and the monitors
+    # on the targets' callers.
+    progress_targets: %{},
+    progress_tombstones: %{},
+    progress_reservations: %{},
+    progress_monitors: %{},
+    progress_sweep: nil,
     # Requests made with reset_timeout_on_progress, mapped to the timer that
     # runs out if they go that long without progress: {timer, tag, ms}.
     progress_timeouts: %{},
@@ -192,6 +201,13 @@ defmodule Arbor.MCP.Client do
 
   @doc """
   Starts a client process with the given options.
+
+  Connection failures retain structured reasons inside
+  `{:error, {:transport_connect_failed, reason}}`; dedicated handshake and
+  initialization error envelopes remain unchanged. Initial failures emit
+  `[:arbor_mcp, :client, :connect, :failed]` with a redacted reason summary
+  and use debug-level diagnostics, leaving application error logging to the
+  caller. A host supervisor may still report its own child-start failure.
 
   ## Options
 
@@ -318,11 +334,19 @@ defmodule Arbor.MCP.Client do
     - `:failure_threshold` - Number of failures before opening (default: 5)
     - `:success_threshold` - Number of successes to close half-open circuit (default: 3)
     - `:reset_timeout` - Time before transitioning from open to half-open (default: 30_000)
-    - `:timeout` - Operation timeout in milliseconds (default: 5_000)
+    - `:timeout` - Operation timeout in milliseconds (default: 5_000); not
+      applied over HTTP, where each exchange keeps its own deadline
   - `:health_check` - Health check configuration or `false` to disable
     - `:check_interval` - Interval between health checks (default: 60_000)
     - `:failure_threshold` - Health check failures before marking unhealthy (default: 3)
     - `:recovery_threshold` - Health check successes before marking healthy (default: 2)
+
+  Over Streamable HTTP the client stays an HTTP client: each request after
+  establishment still POSTs from its own task. The circuit breaker admits
+  every POST and records how it ended (a crash or a timeout is a failure, a
+  cancellation or the caller's exit isn't counted); an open circuit refuses a
+  request with a `:circuit_open` transport error before anything is sent. A
+  request stream is admitted, but its outcome isn't recorded.
 
   ## Reliability Examples
 
@@ -366,6 +390,10 @@ defmodule Arbor.MCP.Client do
     request stream with a new JSON-RPC id. `:safe_only` reissues only built-in
     read operations or operations explicitly marked `retry_safe: true`, and
     otherwise returns a transport error whose reason is `:outcome_unknown`.
+    A stream whose connection never opened sent nothing, so it isn't
+    reissued: it fails at once, as not sent (see `delivery_outcome/1`). A
+    reissue that isn't sent leaves the outcome unknown, since the first
+    attempt may have been delivered.
   - `:http_stream_retry_delay` - Delay before the one reissue (default: 200ms),
     bounded by the operation's original deadline.
   - `:retry_safe` - Caller-owned safety attestation. Tool annotations such as
@@ -659,10 +687,15 @@ defmodule Arbor.MCP.Client do
     request declares instead of the client's start capabilities. Requests
     that can't return `input_required`, such as `list_tools/2`, take it
     without `mrtr: :manual`
+  - `:progress_to` - A pid that also gets this request's progress, alongside
+    the handler, as `{:arbor_mcp_progress, client, progress_token, params}`,
+    until the call returns. A progress token is added if the request has
+    none; with `mrtr: :manual`, pass `:progress_token`, unique on the
+    connection. See "Progress to another process" in the Protocol Guide.
 
   `Arbor.MCP.Client.Operations.Tools.call_tool/4` lists the other request
-  options. `nil` leaves `:mrtr`, `:input_responses`, `:request_state` and
-  `:client_capabilities` unset.
+  options. `nil` leaves `:mrtr`, `:input_responses`, `:request_state`,
+  `:client_capabilities` and `:progress_to` unset.
 
   ## Forwarding a call
 
@@ -684,10 +717,11 @@ defmodule Arbor.MCP.Client do
       end
 
   Repeat the arguments, `:client_capabilities`, `:meta` and
-  `:progress_token` on every round of one call: an arbor_mcp server binds
-  `requestState` to them and refuses a round that differs. For the same
-  reason `reset_timeout_on_progress: true` with `mrtr: :manual` needs an
-  explicit `:progress_token`. A round passes the checks automatic MRTR
+  `:progress_token` on every round of one call: a server may bind
+  `requestState` to them and refuse a round that differs. An arbor_mcp server
+  leaves the progress token out of that binding; another server may not. For
+  the same reason `reset_timeout_on_progress: true` with `mrtr: :manual`
+  needs an explicit `:progress_token`. A round passes the checks automatic MRTR
   makes, apart from `:max_mrtr_rounds`; the caller runs the rounds.
   `:input_responses`, `:request_state` and `:client_capabilities` without
   `mrtr: :manual`, malformed, or on a connection that settled on a legacy
@@ -1386,7 +1420,9 @@ defmodule Arbor.MCP.Client do
       passed or the caller exited before it went out, or the transport
       refused it before writing anything (the connection could not be opened,
       the address could not be resolved or was not permitted, the request was
-      too large, a security policy blocked it).
+      too large, a security policy blocked it, the auth provider gave no
+      token for it, or gave one the server had already rejected). This holds
+      for a request with its own response stream too.
     * `:unknown` - the request was, or may have been, delivered, and whether
       the server acted on it is not known. This covers the caller's own
       timeout, a connection that failed after sending, a broken response
@@ -1445,7 +1481,11 @@ defmodule Arbor.MCP.Client do
   defp send_outcome({:validation_error, _reason}), do: :not_sent
   defp send_outcome({:transport_error, {:send_failed, _reason}}), do: :not_sent
   defp send_outcome({:transport_error, reason}), do: send_outcome(reason)
-  defp send_outcome(_reason), do: :unknown
+
+  # The HTTP transport refused it before writing anything: its auth provider
+  # gave no token, or gave one the server had already rejected.
+  defp send_outcome(reason),
+    do: if(HTTP.presend_refusal?(reason), do: :not_sent, else: :unknown)
 
   # GenServer callbacks
 
@@ -1564,7 +1604,15 @@ defmodule Arbor.MCP.Client do
 
   # Handle connection errors with proper normalization
   defp handle_connection_error(reason) do
-    Logger.error("Failed to initialize MCP client", reason: LogSummary.describe(reason))
+    summary = LogSummary.describe(reason)
+
+    :telemetry.execute(
+      [:arbor_mcp, :client, :connect, :failed],
+      %{count: 1},
+      %{client: self(), reason: summary}
+    )
+
+    Logger.debug("MCP client connection failed", reason: summary)
     {:stop, normalize_connection_error(reason)}
   end
 
@@ -1587,6 +1635,13 @@ defmodule Arbor.MCP.Client do
   # Its reason is already free of the provider's config.
   defp normalize_connection_error({:auth_provider_init_failed, _provider, _reason} = reason),
     do: {:transport_connect_failed, reason}
+
+  # So is this one: the opening request was refused before it was sent,
+  # because the auth provider gave no token for it. However establishment
+  # reported that, it says nothing about the server or its era.
+  defp normalize_connection_error({tag, _details} = reason)
+       when tag in [:auth_refused, :era_probe_failed, :pinned_modern_era_probe_failed],
+       do: {:transport_connect_failed, token_failure(reason) || extract_inner_reason(reason)}
 
   defp normalize_connection_error(:connection_refused) do
     {:transport_connect_failed, :connection_refused}
@@ -1622,11 +1677,18 @@ defmodule Arbor.MCP.Client do
     {:transport_connect_failed, normalized}
   end
 
+  defp token_failure({:auth_refused, {:auth_provider_token_failed, _, _} = failure}), do: failure
+  defp token_failure({:era_probe_failed, {:transport_error, refusal}}), do: token_failure(refusal)
+
+  defp token_failure({:pinned_modern_era_probe_failed, %{probe: {:transport_error, refusal}}}),
+    do: token_failure(refusal)
+
+  defp token_failure(_reason), do: nil
+
   # Extract inner reason from nested structures
   defp extract_inner_reason(%{"code" => _, "message" => _} = err_map), do: err_map
   defp extract_inner_reason({:error, inner_reason}), do: inner_reason
-  defp extract_inner_reason(atom) when is_atom(atom), do: to_string(atom)
-  defp extract_inner_reason(other), do: inspect(other)
+  defp extract_inner_reason(other), do: other
 
   @impl GenServer
   def handle_call({:request, method, params}, from, state) do
@@ -1793,17 +1855,17 @@ defmodule Arbor.MCP.Client do
   end
 
   def handle_call({:scope_disconnect, deadline}, from, state) do
-    Process.put({ConnectionScope, :cleanup_deadline}, deadline)
+    Process.put({ConnectionScope, :cleanup_deadline}, local_cleanup_deadline(from, deadline))
     handle_call(:disconnect, from, state)
   end
 
   def handle_call({:ordinary_disconnect, deadline}, from, state) do
-    Process.put({__MODULE__, :cleanup_deadline}, deadline)
+    Process.put({__MODULE__, :cleanup_deadline}, local_cleanup_deadline(from, deadline))
     handle_call(:disconnect, from, state)
   end
 
   def handle_call({:ordinary_stop, reason, deadline}, from, state) do
-    Process.put({__MODULE__, :cleanup_deadline}, deadline)
+    Process.put({__MODULE__, :cleanup_deadline}, local_cleanup_deadline(from, deadline))
     {:reply, result, state} = handle_call(:disconnect, from, state)
     {:stop, reason, result, state}
   end
@@ -1886,7 +1948,7 @@ defmodule Arbor.MCP.Client do
 
     NotificationListener.close_all(state.notification_listeners, :disconnected)
     reset_notification_worker(state)
-    state = RequestHandler.forget_callers(state)
+    state = state |> RequestHandler.forget_callers() |> RequestHandler.reset_progress()
 
     # Update state to disconnected. The manual_disconnect flag ensures a
     # late {:transport_closed, _} message does not trigger auto-reconnection.
@@ -2337,6 +2399,17 @@ defmodule Arbor.MCP.Client do
     {:noreply, caller_exited(ref, state)}
   end
 
+  # The caller of a request with a progress_to target went down, here or on
+  # another node, or its node's connection was lost: the target gets nothing
+  # more. The request settles as it would (see cancel_on_caller_exit).
+  def handle_info(
+        {:DOWN, ref, :process, _caller, _reason},
+        %{progress_monitors: monitors} = state
+      )
+      when is_map(monitors) and is_map_key(monitors, ref) do
+    {:noreply, RequestHandler.progress_caller_down(ref, state)}
+  end
+
   def handle_info(
         {:DOWN, ref, :process, _subscriber, _reason},
         %{notification_listener_monitors: monitors} = state
@@ -2528,6 +2601,10 @@ defmodule Arbor.MCP.Client do
   # that already completed find no pending entry and are ignored.
   # A request made with reset_timeout_on_progress went its timeout without
   # progress, and times out as it would at its deadline.
+  # Expired progress_to tombstones and reservations (see RequestHandler).
+  def handle_info({:progress_sweep, ref}, state),
+    do: {:noreply, RequestHandler.sweep_progress(state, ref)}
+
   def handle_info({:progress_timeout, request_id, tag}, state) do
     case RequestHandler.progress_timed_out(request_id, tag, state) do
       {:timed_out, state} -> handle_info({:request_timeout, request_id}, state)
@@ -2602,6 +2679,13 @@ defmodule Arbor.MCP.Client do
     end
   end
 
+  # The receiver read a 404 for the session's GET stream.
+  def handle_info(
+        {:transport_closed, {:session_expired, _detail} = reason},
+        %{connection_status: :ready} = state
+      ),
+      do: {:noreply, expire_session(reason, state)}
+
   def handle_info({:transport_closed, reason}, state) do
     Logger.error("Transport closed", reason: LogSummary.describe(reason))
 
@@ -2623,6 +2707,11 @@ defmodule Arbor.MCP.Client do
         {:noreply, state}
     end
   end
+
+  # A synchronous send got a 404 for the session (see
+  # RequestHandler.send_message/2).
+  def handle_info({:http_session_expired, reason}, state),
+    do: {:noreply, expire_session(reason, state)}
 
   def handle_info(:attempt_reconnect, %{connection_status: :reconnecting} = state) do
     {:noreply, attempt_reconnect(%{state | reconnect_timer: nil})}
@@ -2767,6 +2856,20 @@ defmodule Arbor.MCP.Client do
     {:noreply, state}
   end
 
+  # The server has ended the session this POST carried. The request fails
+  # with that reason, and the session ends for the rest of the client too.
+  defp handle_async_post_result({:error, {:session_expired, _detail} = reason}, meta, state) do
+    state =
+      fail_async_post_request(
+        state,
+        Map.get(meta, :request_id),
+        reason,
+        Map.get(meta, :deadline)
+      )
+
+    {:noreply, expire_session(reason, state)}
+  end
+
   # The caller receives the failure, as from a synchronous send, so it is not
   # logged as an error here.
   defp handle_async_post_result({:error, reason}, meta, state) do
@@ -2778,11 +2881,11 @@ defmodule Arbor.MCP.Client do
 
   defp cache_tool_list(
          %{transport_mod: HTTP, transport_state: %HTTP{} = transport} = state,
-         kind,
+         {kind, generation} = page,
          data
        )
-       when kind in [:first, :cursor],
-       do: %{state | transport_state: HTTP.cache_tool_list(transport, kind, data)}
+       when kind in [:first, :cursor] and (is_integer(generation) or generation == :ambiguous),
+       do: %{state | transport_state: HTTP.cache_tool_list(transport, page, data)}
 
   defp cache_tool_list(state, _kind, _data), do: state
 
@@ -2913,12 +3016,21 @@ defmodule Arbor.MCP.Client do
   # Modern streamable HTTP cancels an ordinary request by closing only that
   # request's connection. Other transports send the protocol cancellation
   # notification.
-  defp cancel_on_wire(request_id, method, params, state) do
+  # `outcome` settles the request's breaker admissions first, before an auth
+  # wait is woken or a POST stopped, so the client decides it once:
+  # :failure at its timeout, :release at a cancellation or a caller's exit.
+  defp cancel_on_wire(request_id, method, params, state, outcome \\ :release) do
+    state = RequestHandler.settle_posts(state, request_id, outcome)
     state = HTTPAuth.cancel_request(state, request_id)
 
     case state do
       %{transport_mod: HTTP, transport_state: %HTTP{protocol_era: :modern}} ->
-        RequestHandler.close_request_stream(request_id, state)
+        RequestHandler.close_request_stream(request_id, state, outcome)
+
+      %{transport_mod: HTTP, transport_state: %HTTP{}} ->
+        retired_state = RequestHandler.close_request_stream(request_id, state, outcome)
+        # A cancellation the server is slow to accept must not hold the client.
+        RequestHandler.send_notification_async(method, params, retired_state)
 
       %{transport_mod: LegacySSE} ->
         retired_state = RequestHandler.close_request_stream(request_id, state)
@@ -2929,8 +3041,6 @@ defmodule Arbor.MCP.Client do
         notified_state
 
       _other ->
-        # Over legacy HTTP this POSTs from its own task, so a cancellation the
-        # server is slow to accept cannot hold the client.
         RequestHandler.send_notification_async(method, params, state)
     end
   end
@@ -2938,15 +3048,18 @@ defmodule Arbor.MCP.Client do
   # The spec asks a sender to cancel a request it stops waiting for, so the
   # server can stop the work; servers no longer cut it off after 10 s.
   defp cancel_timed_out(request_id, state),
-    do: cancel_upstream(request_id, "Request timed out", state)
+    do: cancel_upstream(request_id, "Request timed out", state, :failure)
 
-  defp cancel_upstream(request_id, reason, state) do
+  # `outcome` is the breaker's (see cancel_on_wire/5): a timeout is a
+  # failure, a caller's exit a release.
+  defp cancel_upstream(request_id, reason, state, outcome) do
     case Protocol.encode_cancelled(request_id, reason) do
       {:ok, %{"method" => method, "params" => params}} ->
-        cancel_on_wire(request_id, method, params, state)
+        cancel_on_wire(request_id, method, params, state, outcome)
 
       {:error, :cannot_cancel_initialize} ->
-        RequestHandler.close_request_stream(request_id, state)
+        state = RequestHandler.settle_posts(state, request_id, outcome)
+        RequestHandler.close_request_stream(request_id, state, outcome)
     end
   end
 
@@ -2976,7 +3089,7 @@ defmodule Arbor.MCP.Client do
       %{method: method, request_id: request_id}
     )
 
-    state = cancel_upstream(request_id, "Caller exited", state)
+    state = cancel_upstream(request_id, "Caller exited", state, :release)
     prune_legacy_posts(RequestHandler.drop_pending(state, request_id))
   end
 
@@ -3108,11 +3221,65 @@ defmodule Arbor.MCP.Client do
         bounded_transport_close(mod, cleanup_state, deadline)
       end
 
+    stop_reliability_components(mod, transport_state, deadline)
     ConnectionScope.closed(mod, transport_state, result)
     result
   end
 
   defp close_transport(_state, _close_mode), do: :ok
+
+  # The circuit breaker and health checker the client started with its
+  # transport (`reliability:`) are its own linked processes, and its close
+  # paths retire their links with the transport's (retire_links/1;
+  # terminate/2 needs none, as the client handles no message after it). So
+  # they are stopped here, in the client's own process, once the transport's
+  # close has returned or been cut off at the cleanup deadline: a close cut
+  # off there (a stalled session DELETE, a stuck stdio server, a busy health
+  # check holding up the wrapper's own stop) must not leave them running.
+  # Each gets a graceful stop within what is left of the cleanup budget, and
+  # is killed once that runs out. One the close stopped already is passed.
+  defp stop_reliability_components(mod, transport_state, deadline) do
+    mod
+    |> reliability_components(transport_state)
+    |> Enum.each(&stop_reliability_component(&1, deadline))
+  end
+
+  defp reliability_components(HTTP, %HTTP{reliability: %ReliabilityWrapper{} = wrapper}),
+    do: component_pids(wrapper)
+
+  defp reliability_components(ReliabilityWrapper, %ReliabilityWrapper{} = wrapper),
+    do: component_pids(wrapper)
+
+  defp reliability_components(_mod, _transport_state), do: []
+
+  defp component_pids(wrapper),
+    do: Enum.filter([wrapper.circuit_breaker_pid, wrapper.health_check_pid], &is_pid/1)
+
+  # :sys.terminate/3 rather than GenServer.stop/3, whose wait for the exit
+  # can raise when a stop is accepted just before its timeout.
+  defp stop_reliability_component(pid, deadline) do
+    monitor = Process.monitor(pid)
+
+    case Deadline.remaining(deadline) do
+      0 ->
+        :ok
+
+      wait ->
+        try do
+          :sys.terminate(pid, :normal, wait)
+        catch
+          :exit, _reason -> :ok
+        end
+    end
+
+    receive do
+      {:DOWN, ^monitor, :process, ^pid, _reason} -> :ok
+    after
+      Deadline.remaining(deadline) ->
+        Process.demonitor(monitor, [:flush])
+        Process.exit(pid, :kill)
+    end
+  end
 
   defp perform_transport_close(mod, cleanup_state) do
     case mod.close(cleanup_state) do
@@ -3140,6 +3307,15 @@ defmodule Arbor.MCP.Client do
         {:error, :client_cleanup_timeout}
     end
   end
+
+  # A caller on another node sends a deadline on its own monotonic clock. The
+  # client's cleanup budget counts from now instead, as the caller computed
+  # it from the same budget.
+  defp local_cleanup_deadline({caller, _tag}, _deadline)
+       when is_pid(caller) and node(caller) != node(),
+       do: Deadline.after_ms(Lifetime.client_cleanup_ms(self()))
+
+  defp local_cleanup_deadline(_from, deadline), do: deadline
 
   defp cleanup_deadline do
     Deadline.earliest(
@@ -3177,6 +3353,31 @@ defmodule Arbor.MCP.Client do
 
   # Transport teardown and reconnection
 
+  # A legacy Streamable HTTP server answers 404 to a request carrying the
+  # session's Mcp-Session-Id once it has ended the session, and the client
+  # must then start a new session with an initialize that carries no session
+  # id (Session Management, 2025-03-26 and later). The request that found the
+  # session gone has already failed with the reason. It isn't sent again,
+  # since a tool call may not be safe to repeat, and every other request still
+  # in flight on the session fails with the same reason. The client closes the
+  # transport as for a lost connection, and reconnects, which initializes a new
+  # session, or stays disconnected under `reconnect: false`. A configured
+  # `:session_id` may name the ended session, so a new connection doesn't use
+  # it. Modern (2026-07-28) connections carry no session and never get here.
+  defp expire_session(reason, %{connection_status: :ready} = state) do
+    Logger.warning("The server ended the MCP session (HTTP 404)",
+      reason: LogSummary.describe(reason)
+    )
+
+    state = %{state | transport_opts: ConnectionManager.forget_session_id(state.transport_opts)}
+    state = abandon_transport(state, :bounded)
+    handle_transport_down(reason, state)
+  end
+
+  # The session ended with an earlier report, or the client is no longer
+  # connected.
+  defp expire_session(_reason, state), do: state
+
   # Already reconnecting with an attempt scheduled — nothing left to tear down.
   defp handle_transport_down(
          _reason,
@@ -3192,8 +3393,11 @@ defmodule Arbor.MCP.Client do
     state = %{state | cleanup_result: remember_cleanup(state.cleanup_result, quiesce_result)}
     state = retire_callback_work(state)
     state = retire_links(state)
+    # The transport may have closed by itself (it never went through
+    # close_transport/2), and a reconnect starts fresh components.
+    stop_reliability_components(state.transport_mod, state.transport_state, deadline)
     reply_pending_with_close_error(reason, state)
-    state = RequestHandler.forget_callers(state)
+    state = state |> RequestHandler.forget_callers() |> RequestHandler.reset_progress()
     notify_subscription_processes(state, {:client_subscription_disconnected, reason})
 
     :telemetry.execute(
@@ -3289,7 +3493,7 @@ defmodule Arbor.MCP.Client do
 
   # Reply to all pending requests with connection error or cancelled error
   defp reply_pending_with_close_error(reason, state) do
-    connection_error = Error.connection_error("Transport closed: #{inspect(reason)}")
+    connection_error = close_error(reason, state)
 
     Enum.each(state.pending_requests, fn
       {id, {from, :single, _method}} ->
@@ -3322,6 +3526,14 @@ defmodule Arbor.MCP.Client do
         :ok
     end)
   end
+
+  # Requests in flight on a session the server ended fail as the request that
+  # found it gone did.
+  defp close_error({:session_expired, _detail} = reason, state),
+    do: RequestHandler.send_error(reason, state)
+
+  defp close_error(reason, _state),
+    do: Error.connection_error("Transport closed: #{inspect(reason)}")
 
   defp close_error_for(id, state, connection_error) do
     if MapSet.member?(state.cancelled_requests, id) do

@@ -60,7 +60,9 @@ defmodule Arbor.MCP.Server.StdioServer do
     opts = Keyword.put(opts, :handler, Keyword.get(opts, :module, Keyword.get(opts, :handler)))
     opts = opts |> Keyword.put_new(:handler_args, opts) |> Keyword.put(:dispatcher, Dispatch)
 
-    with {:ok, config, deadline} <- Initialization.configure(opts),
+    runtime_opts = Keyword.take(opts, Arbor.MCP.Server.Runtime.Config.option_keys())
+
+    with {:ok, config, deadline} <- Initialization.configure(runtime_opts),
          {:ok, stdio_opts} <- stdio_options(opts, config),
          {:ok, authority} <- output_authority(opts, deadline),
          {:ok, lease} <-

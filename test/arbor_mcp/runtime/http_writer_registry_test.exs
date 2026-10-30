@@ -541,6 +541,7 @@ defmodule Arbor.MCP.Server.Runtime.HTTPWriterRegistryTest do
     :ok = HTTPWriterRegistry.publish(response)
     assert {:error, :http_write_in_flight} = HTTPWriterRegistry.checkout(binding)
     assert :ok = HTTPWriterRegistry.complete(keepalive, :ok)
+    eventually(fn -> HTTPWriterRegistry.stats(domain).in_flight == 0 end)
 
     # A pending response always wins over a later comment.
     assert {:error, :http_output_busy} = HTTPWriterRegistry.enter_request_keepalive(binding)

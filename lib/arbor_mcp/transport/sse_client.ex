@@ -363,6 +363,11 @@ defmodule Arbor.MCP.Transport.SSEClient do
     {:stop, :normal, state}
   end
 
+  # No request's delivery rides on the GET stream, so a connection that never
+  # opened is reported as any other failure is.
+  def handle_info({:bounded_http, ref, {:error, {:connect_failed, reason}}}, %{ref: ref} = state),
+    do: handle_info({:bounded_http, ref, {:error, reason}}, state)
+
   def handle_info({:bounded_http, ref, {:error, reason}}, %{ref: ref} = state) do
     state = cancel_handshake_timer(state)
 

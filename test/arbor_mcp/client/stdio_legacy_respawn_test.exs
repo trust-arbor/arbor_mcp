@@ -52,7 +52,7 @@ defmodule Arbor.MCP.Client.StdioLegacyRespawnTest do
 
       %{result: result, methods: methods, starts: starts} = results[:modern_only]
       assert {:error, {:transport_connect_failed, reason}} = result
-      assert reason =~ "{:era_probe_failed, {:transport_error, "
+      assert {:era_probe_failed, {:transport_error, _}} = reason
       assert {methods, starts} == {["server/discover"], 1}
     end
   end
@@ -93,7 +93,7 @@ defmodule Arbor.MCP.Client.StdioLegacyRespawnTest do
 
       %{result: result, methods: methods, starts: starts} = results[:modern_only]
       assert {:error, {:transport_connect_failed, reason}} = result
-      assert reason == "{:era_probe_failed, {:transport_error, :handshake_timeout}}"
+      assert reason == {:era_probe_failed, {:transport_error, :handshake_timeout}}
       assert {methods, starts} == {["server/discover"], 1}
     end
   end
@@ -104,8 +104,8 @@ defmodule Arbor.MCP.Client.StdioLegacyRespawnTest do
         connect_concurrently(tmp_dir, :broken, [:prefer_modern], [])
 
       assert {:error, {:transport_connect_failed, reason}} = result
-      assert reason =~ "{:era_probe_and_initialize_failed, "
-      assert reason =~ "respawned: true"
+      assert {:era_probe_and_initialize_failed, %{initialize: _, probe: _}} = reason
+      assert {:era_probe_and_initialize_failed, %{respawned: true}} = reason
       assert methods == ["server/discover", "initialize"]
       assert starts == 2
     end
@@ -121,9 +121,13 @@ defmodule Arbor.MCP.Client.StdioLegacyRespawnTest do
       # The respawned server rejects initialize as a modern server does, with
       # the versions it supports.
       assert {:error, {:transport_connect_failed, reason}} = result
-      assert reason =~ "{:era_probe_and_initialize_failed, "
-      assert reason =~ ~s("supported" => ["2026-07-28"])
-      assert reason =~ "respawned: true"
+      assert {:era_probe_and_initialize_failed, %{initialize: _, probe: _}} = reason
+
+      assert {:era_probe_and_initialize_failed,
+              %{initialize: {:initialize_rejected, %{"data" => %{"supported" => ["2026-07-28"]}}}}} =
+               reason
+
+      assert {:era_probe_and_initialize_failed, %{respawned: true}} = reason
       assert starts == 2
       assert List.last(methods) == "initialize"
     end
@@ -149,12 +153,14 @@ defmodule Arbor.MCP.Client.StdioLegacyRespawnTest do
     # the pipe delivers it (Linux and macOS buffer differently).
     for {era, expected} <- [
           oversized: [
-            "{:era_probe_failed, {:transport_error, {:connection_error, :frame_too_large}}}",
-            "{:era_probe_failed, {:transport_error, {:connection_error, {:unfinished_frame, :frame_too_large}}}}"
+            {:era_probe_failed, {:transport_error, {:connection_error, :frame_too_large}}},
+            {:era_probe_failed,
+             {:transport_error, {:connection_error, {:unfinished_frame, :frame_too_large}}}}
           ],
-          malformed: ["{:era_probe_failed, {:unexpected_response, "],
+          malformed: :unexpected_response,
           partial: [
-            "{:era_probe_failed, {:transport_error, {:connection_error, {:unfinished_frame, {:process_exited, 5}}}}}"
+            {:era_probe_failed,
+             {:transport_error, {:connection_error, {:unfinished_frame, {:process_exited, 5}}}}}
           ]
         ] do
       test "#{era} output is not respawned", %{tmp_dir: tmp_dir} do
@@ -162,7 +168,15 @@ defmodule Arbor.MCP.Client.StdioLegacyRespawnTest do
           connect_concurrently(tmp_dir, unquote(era), [:prefer_modern], max_frame_bytes: 4_096)
 
         assert {:error, {:transport_connect_failed, reason}} = result
-        assert Enum.any?(unquote(expected), &String.starts_with?(reason, &1)), reason
+
+        case unquote(Macro.escape(expected)) do
+          :unexpected_response ->
+            assert {:era_probe_failed, {:unexpected_response, _}} = reason
+
+          expected ->
+            assert reason in expected
+        end
+
         assert {methods, starts} == {["server/discover"], 1}
       end
     end

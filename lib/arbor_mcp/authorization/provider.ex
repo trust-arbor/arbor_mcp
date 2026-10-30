@@ -50,6 +50,11 @@ defmodule Arbor.MCP.Authorization.Provider do
         url: "https://api.example.com/mcp",
         auth_provider: {MyAuthProvider, api_key: "sk-..."}
       )
+
+  The provider owns the `Authorization` header. An `Authorization` header set
+  through the transport's `:headers` or `:security` options is dropped when the
+  transport connects, with a warning, so each request carries the token
+  `c:get_token/1` gives for it, or no `Authorization` header at all.
   """
 
   @type state :: any()
@@ -75,8 +80,37 @@ defmodule Arbor.MCP.Authorization.Provider do
   @doc """
   Get the current access token, if available.
 
-  Returns `{:ok, token, new_state}` if a valid token is available,
-  or `{:ok, nil, state}` if no token is available yet (pre-auth).
+  The HTTP transport calls it for every request it sends, and the request
+  carries what it returns:
+
+    * `{:ok, token, new_state}` sends the request with `token` as its bearer
+      token.
+    * `{:ok, nil, new_state}` means no token is available yet (pre-auth): the
+      request goes out without an `Authorization` header, and any token the
+      provider gave before is dropped, so the server's 401 can start the
+      provider's flow (`c:handle_unauthorized/3`).
+    * `{:error, reason}` refuses the request before anything is sent. It goes
+      out neither with an earlier token nor without one, and the caller gets
+      `{:auth_provider_token_failed, module, reason}`, which
+      `Arbor.MCP.Client.delivery_outcome/1` reports as `:not_sent`. When the
+      refused request is the one that opens the connection,
+      `Arbor.MCP.Client.start_link/1` returns
+      `{:error, {:transport_connect_failed, {:auth_provider_token_failed, module, reason}}}`.
+
+  `reason` is kept only when it is an atom, as for `c:init/1`: any other error
+  is reported as `:redacted`, an exception as `{:raised, exception_module}`, a
+  throw or exit as `:throw` or `:exit`, and any other return as
+  `:invalid_token_result`, since those may carry the provider's secrets.
+
+  A token is taken as newly acquired only when the provider's state changed
+  since its last token. A token the server rejected with a 401 is therefore
+  refused before it is sent if the provider returns it again with its state
+  unchanged, even after an error or `nil` in between.
+
+  A provider that would rather let the server decide returns a token instead
+  of an error. The built-in `Arbor.MCP.Authorization.Provider.OAuth` does: when
+  a refresh fails, it returns the token it has, and a 401 then decides whether
+  to authenticate again.
   """
   @callback get_token(state()) :: {:ok, String.t() | nil, state()} | {:error, term()}
 

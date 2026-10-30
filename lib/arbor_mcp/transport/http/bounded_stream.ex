@@ -48,6 +48,9 @@ defmodule Arbor.MCP.Transport.HTTP.BoundedStream do
     :ok
   end
 
+  # A connection that never opened is reported as {:connect_failed, reason},
+  # since nothing of the request was written. Any later failure may follow a
+  # request the server received.
   defp run(owner, method, uri, address, headers, body, opts) do
     result =
       with {:ok, conn} <- connect(uri, address, opts),
@@ -92,14 +95,19 @@ defmodule Arbor.MCP.Transport.HTTP.BoundedStream do
       |> Keyword.put(:timeout, Keyword.fetch!(opts, :connect_timeout))
       |> Keyword.merge(address_family_options(address))
 
-    with {:ok, transport_opts} <- CACerts.put_default(scheme, transport_opts) do
-      Mint.HTTP1.connect(scheme, pinned_address, port,
-        hostname: uri.host,
-        mode: :passive,
-        transport_opts: transport_opts,
-        max_header_list_size: Keyword.get(opts, :max_header_bytes, @default_max_header_bytes),
-        optional_responses: [:status_reason]
-      )
+    with {:ok, transport_opts} <- CACerts.put_default(scheme, transport_opts),
+         {:ok, conn} <-
+           Mint.HTTP1.connect(scheme, pinned_address, port,
+             hostname: uri.host,
+             mode: :passive,
+             transport_opts: transport_opts,
+             max_header_list_size:
+               Keyword.get(opts, :max_header_bytes, @default_max_header_bytes),
+             optional_responses: [:status_reason]
+           ) do
+      {:ok, conn}
+    else
+      {:error, reason} -> {:error, {:connect_failed, reason}}
     end
   end
 

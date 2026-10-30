@@ -5,11 +5,13 @@ defmodule Arbor.MCP.Server.MRTR do
   alias Arbor.MCP.Internal.VersionRegistry
   alias Arbor.MCP.Protocol.{Elicitation, ErrorCodes}
   alias Arbor.MCP.Server.{RequestContext, RequestState, ResultNormalizer}
+  alias Arbor.MCP.Server.Runtime.{CallbackContext, Deadline}
 
   @supported_methods ["tools/call", "resources/read", "prompts/get"]
   @input_methods ["elicitation/create", "sampling/createMessage", "roots/list"]
   @default_max_input_requests 16
   @default_max_bytes 1_048_576
+  @max_elicitation_validation_ms 1_000
 
   defmodule InputRequired do
     @moduledoc """
@@ -126,7 +128,7 @@ defmodule Arbor.MCP.Server.MRTR do
           {:ok, map()} | {:error, Error.ProtocolError.t()}
   def legacy_input_requests(%RequestContext{method: method}, input_requests, opts) do
     if method in @supported_methods do
-      with {:ok, requests} <- normalize_input_requests(input_requests),
+      with {:ok, requests} <- normalize_input_requests(input_requests, opts),
            :ok <- validate_request_count(requests, opts),
            :ok <- validate_size(requests, opts),
            do: {:ok, requests}
@@ -142,7 +144,7 @@ defmodule Arbor.MCP.Server.MRTR do
     context = hydrate_context(context, opts)
 
     with :ok <- validate_context(context),
-         {:ok, requests} <- normalize_input_requests(input_requests),
+         {:ok, requests} <- normalize_input_requests(input_requests, opts),
          :ok <- validate_request_count(requests, opts),
          :ok <- validate_size(requests, opts),
          :ok <- validate_capabilities(requests, context.client_capabilities || %{}),
@@ -180,23 +182,36 @@ defmodule Arbor.MCP.Server.MRTR do
     end
   end
 
-  defp normalize_input_requests(requests) when is_map(requests) do
+  defp normalize_input_requests(requests, opts) when is_map(requests) do
     normalized = ResultNormalizer.stringify_keys(requests)
 
     Enum.reduce_while(normalized, {:ok, %{}}, fn
       {id, request}, {:ok, acc} when is_binary(id) and byte_size(id) > 0 and is_map(request) ->
         method = Map.get(request, "method")
         params = Map.get(request, "params", %{})
+        data = %{"inputRequestId" => id, "method" => method}
 
         with true <- method in @input_methods and is_map(params),
-             {:ok, params} <- input_params(method, params) do
+             {:ok, params} <- input_params(method, params, opts) do
           clean = %{"method" => method, "params" => params}
           {:cont, {:ok, Map.put(acc, id, clean)}}
         else
-          _invalid ->
+          false ->
+            {:halt, {:error, invalid("Invalid MRTR input request", data)}}
+
+          {:error, :invalid_elicitation_params} ->
+            {:halt, {:error, invalid("Invalid MRTR input request", data)}}
+
+          # Running out of time says nothing about the request, so it is the
+          # server's internal error, typed like the runtime's own timeouts.
+          {:error, {:elicitation_validation_timeout, _budget_ms}} ->
             {:halt,
              {:error,
-              invalid("Invalid MRTR input request", %{"inputRequestId" => id, "method" => method})}}
+              Error.protocol_error(
+                ErrorCodes.internal_error(),
+                "MRTR input request validation timed out",
+                Map.put(data, "type", "elicitation_validation_timeout")
+              )}}
         end
 
       {id, _request}, _acc ->
@@ -204,15 +219,35 @@ defmodule Arbor.MCP.Server.MRTR do
     end)
   end
 
-  defp normalize_input_requests(_requests),
+  defp normalize_input_requests(_requests, _opts),
     do: {:error, invalid("inputRequests must be an object")}
 
   # An elicitation is held to the protocol's ElicitRequest schema in both
   # eras, as the legacy bridge holds the requests it sends.
-  defp input_params("elicitation/create", params),
-    do: Elicitation.validate(params, System.monotonic_time(:millisecond) + 1_000)
+  defp input_params("elicitation/create", params, opts),
+    do: Elicitation.validate(params, validation_deadline(opts))
 
-  defp input_params(_method, params), do: {:ok, params}
+  defp input_params(_method, params, _opts), do: {:ok, params}
+
+  # Each validation gets at most 1 s, and never more than the request has
+  # left: a handler that answered late gets a timeout, not a fresh second.
+  # Inside a runtime invocation the request's deadline is the invocation's;
+  # :request_deadline overrides it for a caller that knows it otherwise.
+  defp validation_deadline(opts) do
+    cap = Deadline.after_ms(@max_elicitation_validation_ms)
+
+    case Keyword.get_lazy(opts, :request_deadline, &invocation_deadline/0) do
+      deadline when is_integer(deadline) -> min(deadline, cap)
+      _unbounded -> cap
+    end
+  end
+
+  defp invocation_deadline do
+    case CallbackContext.current() do
+      %{deadline: deadline} -> deadline
+      _outside -> :infinity
+    end
+  end
 
   defp validate_request_count(requests, opts) do
     maximum = Keyword.get(opts, :max_input_requests, @default_max_input_requests)

@@ -14,6 +14,17 @@ defmodule Arbor.MCP.Server.Runtime do
   `request_timeout_ms` (default one hour) is a safety net: callers end work
   with their own timeout and `notifications/cancelled`.
 
+  Configure `mrtr: true` and optionally `request_state: [...]` on the Runtime
+  for startup validation and a per-Runtime key ring, including mounted HTTP.
+  Named HTTP mounts can compile before the Runtime starts. Unknown Runtime
+  option names are rejected rather than silently ignored.
+
+  Cancellation sends the callback `{:arbor_mcp_cancelled, token, reason}`,
+  where the invocation token is opaque and the reason is `:request_cancelled`,
+  `:owner_down`, or `:handler_timeout`. A callback has `cancel_grace_ms`
+  (default 100 ms) to finish cleanup before its task is killed. Cleanup does
+  not roll back external effects that the callback already performed.
+
   One original `init_timeout_ms` budget covers configuration validation and all
   owned startup phases through final admission readiness. A genuine service or
   execution replacement establishes one new startup budget shared by subsequent

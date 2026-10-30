@@ -129,10 +129,14 @@ defmodule Arbor.MCP.Server.DSL.ServerOptionsTest do
              complete(client, ref, "owner", "tr")
   end
 
-  test "an argument without a completer falls back to handle_complete/3" do
+  # It falls back to handle_complete/3, and the default of that, in a server
+  # that serves completions, completes to nothing, as the TypeScript SDK does.
+  test "an argument without a completer completes to nothing" do
     client = start_client(:legacy_only)
     ref = %{"type" => "ref/resource", "uri" => "repo://{owner}/{name}"}
-    assert {:error, _not_implemented} = complete(client, ref, "name", "x")
+
+    assert {:ok, %{"completion" => %{"values" => [], "hasMore" => false}}} =
+             complete(client, ref, "name", "x")
   end
 
   test "an empty value lists every candidate, and a missing one is invalid" do

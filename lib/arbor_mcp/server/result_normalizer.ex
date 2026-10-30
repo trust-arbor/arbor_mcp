@@ -372,6 +372,53 @@ defmodule Arbor.MCP.Server.ResultNormalizer do
     end
   end
 
+  @doc false
+  # The answer to a method the handler doesn't serve (it answered -32601)
+  # within a capability the server does serve, as the TypeScript SDK's
+  # McpServer answers: an empty list or completion, or not-found for a name.
+  # nil when the server doesn't serve the method's capability, so the -32601
+  # stands. `capabilities` is what the server advertises.
+  @spec served_capability_answer(String.t(), map(), map()) ::
+          {:ok, map()} | {:error, Arbor.MCP.Error.ProtocolError.t()} | nil
+  def served_capability_answer(method, params, capabilities) when is_map(capabilities) do
+    with {capability, answer} <- served_answer(method, params || %{}),
+         true <- capability_served?(capabilities, capability) do
+      answer
+    else
+      _not_served -> nil
+    end
+  end
+
+  def served_capability_answer(_method, _params, _capabilities), do: nil
+
+  defp served_answer("resources/list", _params), do: {"resources", {:ok, %{"resources" => []}}}
+
+  defp served_answer("resources/templates/list", _params),
+    do: {"resources", {:ok, %{"resourceTemplates" => []}}}
+
+  defp served_answer("prompts/list", _params), do: {"prompts", {:ok, %{"prompts" => []}}}
+
+  defp served_answer("completion/complete", _params),
+    do: {"completions", {:ok, %{"completion" => %{"values" => [], "hasMore" => false}}}}
+
+  defp served_answer("resources/read", params) do
+    message = "Resource not found: #{Map.get(params, "uri")}"
+
+    {"resources",
+     {:error, Arbor.MCP.Error.protocol_error(ErrorCodes.resource_not_found(:modern), message)}}
+  end
+
+  defp served_answer("prompts/get", params) do
+    message = "Prompt not found: #{Map.get(params, "name")}"
+    {"prompts", {:error, Arbor.MCP.Error.protocol_error(ErrorCodes.invalid_params(), message)}}
+  end
+
+  defp served_answer(_method, _params), do: nil
+
+  # Keys may be atoms or strings; a served capability is an object.
+  defp capability_served?(capabilities, key),
+    do: Enum.any?(capabilities, fn {name, value} -> to_string(name) == key and is_map(value) end)
+
   @doc """
   Returns the JSON-RPC error code a handler error reason should map to.
 

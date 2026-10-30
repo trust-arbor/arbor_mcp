@@ -135,6 +135,11 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
     {:ok, state, {:continue, :open}}
   end
 
+  # A request whose connection never opened closes with
+  # {:connect_failed, reason}, as BoundedStream reports it: its address
+  # didn't resolve or wasn't permitted (here), or the connection was refused
+  # or its trust store unavailable (later). Nothing of it was written, so the
+  # client reports it as not sent.
   @impl true
   def handle_continue(:open, state) do
     case open_request(state) do
@@ -142,7 +147,7 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
         {:noreply, state |> Map.put(:request_ref, request_ref) |> reset_handshake_timer()}
 
       {:error, reason} ->
-        {:stop, :normal, notify_closed(state, reason)}
+        {:stop, :normal, notify_closed(state, {:connect_failed, reason})}
     end
   end
 
@@ -251,7 +256,10 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
 
   def handle_info({:bounded_http, ref, {:error, reason}}, %{request_ref: ref} = state) do
     {:stop, :normal,
-     state |> cancel_handshake_timer() |> cancel_idle_timer() |> notify_closed(reason)}
+     state
+     |> cancel_handshake_timer()
+     |> cancel_idle_timer()
+     |> notify_closed(close_reason(reason, state))}
   end
 
   def handle_info(:handshake_timeout, %{request_ref: ref} = state) when not is_nil(ref) do
@@ -432,6 +440,20 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
     end
   end
 
+  # A server answers a method it doesn't implement with 404 and a JSON-RPC
+  # error for the request (2026-07-28 Streamable HTTP): that error is the
+  # request's answer, as in a 200. Any other 404 is an HTTP error.
+  defp handle_complete_response(404, body, state) do
+    with {:ok, %{"error" => %{"code" => code, "message" => message}} = response}
+         when is_integer(code) and is_binary(message) <- Jason.decode(body),
+         :ok <- validate_message(response, state.request_id, state.stream_kind) do
+      deliver_message(response, state)
+      %{state | completed?: true}
+    else
+      _not_json_rpc -> notify_closed(state, {:http_error, 404})
+    end
+  end
+
   defp handle_complete_response(status, _body, state) do
     if status in [401, 403],
       do: notify_closed(state, {:auth_refused, auth_response_error(state)}),
@@ -606,6 +628,14 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClient do
   defp cancel_request(state) do
     BoundedStream.cancel(state.request_ref)
   end
+
+  # Only the first attempt's connection failure means the request was never
+  # sent: a re-send after an auth challenge follows a request the server
+  # answered, so its failure to connect is reported as the bare reason.
+  defp close_reason({:connect_failed, reason}, %{auth_attempts: attempts}) when attempts > 0,
+    do: reason
+
+  defp close_reason(reason, _state), do: reason
 
   defp notify_closed(%{close_notified?: true} = state, _reason), do: state
 

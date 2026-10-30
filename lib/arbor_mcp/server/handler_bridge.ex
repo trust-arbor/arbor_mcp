@@ -18,6 +18,9 @@ defmodule Arbor.MCP.Server.HandlerBridge do
   makes the bridge directly testable.
   """
 
+  alias Arbor.MCP.Error
+  alias Arbor.MCP.Protocol.ErrorCodes
+
   @type state :: term()
   @type reply :: {:reply, term(), state()}
 
@@ -60,6 +63,14 @@ defmodule Arbor.MCP.Server.HandlerBridge do
       other -> normalize(other, state)
     end
   end
+
+  @doc false
+  # What a default callback of `use Arbor.MCP.Server.Handler` answers for the
+  # method it stands for. Dispatch recognises the code, not this text, so a
+  # handler's own -32601 counts as well.
+  @spec method_not_found(String.t()) :: Arbor.MCP.Error.ProtocolError.t()
+  def method_not_found(method) when is_binary(method),
+    do: Error.protocol_error(ErrorCodes.method_not_found(), "Method not found: #{method}")
 
   defp invoke(module, fun, args, state), do: apply(module, fun, args ++ [state])
 

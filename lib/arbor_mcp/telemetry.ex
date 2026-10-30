@@ -12,6 +12,10 @@ defmodule Arbor.MCP.Telemetry do
   ### Client Events
 
   #### Connection
+  * `[:arbor_mcp, :client, :connect, :failed]` - Initial connection failed
+    * Measurements: `%{count: 1}`
+    * Metadata: `%{client: pid(), reason: String.t()}`; reason is a redacted
+      summary, never the raw server body or credentials
   * `[:arbor_mcp, :client, :connected]` - Client connection established
     * Metadata: `%{transport: module()}`
   * `[:arbor_mcp, :client, :disconnected]` - Client disconnected

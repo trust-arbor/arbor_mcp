@@ -415,19 +415,64 @@ defmodule Arbor.MCP.MessageProcessor.MethodHandlers do
 
   defp validate_tool_request_headers(_conn, _server_pid, _tool_name, _params), do: :ok
 
-  # The tool may be on any page of tools/list, so follow the cursors until it
-  # turns up, stopping at the first page that has it. A list that runs past
-  # the page bound, or past one handler call timeout for the whole walk,
-  # fails closed: a slow handler can't hold a tools/call for a timeout per
-  # page.
+  # Unless the handler's handle_get_tool/2 supplies it, the tool may be on any
+  # page of tools/list, so follow the cursors until it turns up, stopping at
+  # the first page that has it. A list that runs past the page bound, or past
+  # one handler call timeout for the lookup and the whole walk, fails closed:
+  # a slow handler can't hold a tools/call for a timeout per page.
   @max_tool_pages 100
 
   defp load_tools_for_header_validation(server_pid, conn, tool_name) do
     case walk_deadline(call_timeout(conn)) do
-      {:ok, deadline} -> load_tool_pages(server_pid, tool_name, nil, @max_tool_pages, deadline)
+      {:ok, deadline} -> handler_tool(server_pid, conn, tool_name, deadline)
       # A timeout GenServer.call/3 would not take fails closed, as the call did.
       :error -> {:error, :tool_schema_unavailable}
     end
+  end
+
+  # nil means the handler doesn't know the tool: the walk still runs, on what
+  # is left of the deadline, so the check is never skipped.
+  defp handler_tool(server_pid, conn, tool_name, deadline) do
+    if get_tool_capable?(server_pid) do
+      case get_tool(server_pid, conn, tool_name, deadline) do
+        {:ok, nil} -> load_tool_pages(server_pid, tool_name, nil, @max_tool_pages, deadline)
+        result -> result
+      end
+    else
+      load_tool_pages(server_pid, tool_name, nil, @max_tool_pages, deadline)
+    end
+  end
+
+  defp get_tool(server_pid, conn, tool_name, deadline) do
+    case remaining_time(deadline) do
+      0 ->
+        {:error, :tool_schema_unavailable}
+
+      timeout ->
+        request = contextual_request(conn, server_pid, {:get_tool, tool_name})
+        reply = GenServer.call(server_pid, request, timeout)
+
+        # As with a page, a definition ready only after the deadline isn't used.
+        case {reply, remaining_time(deadline)} do
+          {_reply, 0} -> {:error, :tool_schema_unavailable}
+          {{:ok, nil}, _remaining} -> {:ok, nil}
+          {{:ok, tool}, _remaining} when is_map(tool) -> named_tool(tool, tool_name)
+          {_unavailable, _remaining} -> {:error, :tool_schema_unavailable}
+        end
+    end
+  rescue
+    _error -> {:error, :tool_schema_unavailable}
+  catch
+    :exit, _reason -> {:error, :tool_schema_unavailable}
+  end
+
+  # A definition for another tool would match no name and skip the check.
+  defp named_tool(tool, tool_name) do
+    tools = [ResultNormalizer.stringify_keys(tool)]
+
+    if find_tool(tools, tool_name),
+      do: {:ok, tools},
+      else: {:error, :tool_schema_unavailable}
   end
 
   defp walk_deadline(:infinity), do: {:ok, :infinity}
@@ -514,6 +559,20 @@ defmodule Arbor.MCP.MessageProcessor.MethodHandlers do
   end
 
   defp handler_context_capable?(_server), do: false
+
+  # Only a `use Arbor.MCP.Server.Handler` module that defines
+  # handle_get_tool/2 is sent {:get_tool, name}; any other process keeps the
+  # tools/list walk it had.
+  defp get_tool_capable?(server_pid) when is_pid(server_pid) do
+    {module, _function, _arity} = :proc_lib.translate_initial_call(server_pid)
+
+    function_exported?(module, :__task_store_options__, 0) and
+      function_exported?(module, :handle_get_tool, 2)
+  rescue
+    _error -> false
+  end
+
+  defp get_tool_capable?(_server), do: false
 
   defp put_mrtr_result(conn, params, reply, id) do
     case mrtr_reply(reply) do
@@ -638,13 +697,18 @@ defmodule Arbor.MCP.MessageProcessor.MethodHandlers do
   # Error details are logged, never embedded in the JSON-RPC response: the
   # `data.type` field carries a stable, machine-readable classification
   # instead of `inspect(reason)` output (audit M12).
-  defp put_error(conn, _message, %Error.ProtocolError{} = error, id) do
-    conn =
-      if error.code == ErrorCodes.missing_required_client_capability(),
-        do: Conn.assign(conn, :http_status, 400),
-        else: conn
+  defp put_error(conn, message, %Error.ProtocolError{} = error, id) do
+    cond do
+      error.code == ErrorCodes.missing_required_client_capability() ->
+        conn = Conn.assign(conn, :http_status, 400)
+        %{conn | response: JSONRPC.error(id, Error.to_json_rpc(error))}
 
-    %{conn | response: JSONRPC.error(id, Error.to_json_rpc(error))}
+      error.code == ErrorCodes.method_not_found() ->
+        put_unserved(conn, message, error, id)
+
+      true ->
+        %{conn | response: JSONRPC.error(id, Error.to_json_rpc(error))}
+    end
   end
 
   defp put_error(conn, message, reason, id) do
@@ -657,15 +721,39 @@ defmodule Arbor.MCP.MessageProcessor.MethodHandlers do
   end
 
   defp put_method_not_found(conn, id) do
-    conn =
-      case conn.assigns do
-        %{request_context: %{era: :modern}} ->
-          Conn.assign(conn, :http_status, 404)
-
-        _legacy_or_unscoped ->
-          conn
-      end
-
+    conn = put_method_not_found_status(conn)
     %{conn | response: JSONRPC.error(id, -32601, "Method not found")}
+  end
+
+  # A method the handler doesn't serve, such as a Handler default's answer.
+  # Within a capability the server serves it gets the empty or not-found
+  # answer Dispatch gives; otherwise it is a modern 404, like an unknown
+  # method.
+  defp put_unserved(conn, message, error, id) do
+    request = conn.request || %{}
+    capabilities = Map.get(conn.assigns, :server_capabilities, %{})
+
+    case ResultNormalizer.served_capability_answer(
+           Map.get(request, "method"),
+           Map.get(request, "params"),
+           capabilities
+         ) do
+      {:ok, answer} ->
+        put_success(conn, answer, id)
+
+      {:error, not_found} ->
+        put_error(conn, message, not_found, id)
+
+      nil ->
+        conn = put_method_not_found_status(conn)
+        %{conn | response: JSONRPC.error(id, Error.to_json_rpc(error))}
+    end
+  end
+
+  defp put_method_not_found_status(conn) do
+    case conn.assigns do
+      %{request_context: %{era: :modern}} -> Conn.assign(conn, :http_status, 404)
+      _legacy_or_unscoped -> conn
+    end
   end
 end

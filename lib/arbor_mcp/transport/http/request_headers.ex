@@ -20,14 +20,8 @@ defmodule Arbor.MCP.Transport.HTTP.RequestHeaders do
   @spec build(binary(), map()) :: [{String.t(), String.t()}]
   def build(body, state) do
     message = decode_message(body)
-    body_version = body_protocol_version(message)
-    protocol_version = body_version || state.protocol_version
-
-    modern? =
-      case body_version do
-        version when is_binary(version) -> VersionRegistry.modern?(version)
-        _missing -> false
-      end
+    protocol_version = body_protocol_version(message) || state.protocol_version
+    modern? = modern_message?(message)
 
     configured_headers =
       if modern?,
@@ -78,6 +72,19 @@ defmodule Arbor.MCP.Transport.HTTP.RequestHeaders do
 
   @spec protocol_version(map()) :: String.t() | nil
   def protocol_version(request), do: body_protocol_version(request)
+
+  @doc false
+  # Whether build/2 puts the legacy Mcp-Session-Id header on this request.
+  @spec session_request?(binary(), map()) :: boolean()
+  def session_request?(body, state),
+    do: is_binary(state.session_id) and not modern_message?(decode_message(body))
+
+  defp modern_message?(message) do
+    case body_protocol_version(message) do
+      version when is_binary(version) -> VersionRegistry.modern?(version)
+      _missing -> false
+    end
+  end
 
   defp decode_message(body) when is_binary(body) do
     case Jason.decode(body) do

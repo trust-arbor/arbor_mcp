@@ -194,11 +194,13 @@ defmodule Arbor.MCP.Client.ResponseCacheTest do
   end
 
   test "over modern HTTP too" do
+    discover_hint = [ttl_ms: 300_000, cache_scope: :private]
+
     runtime =
       Arbor.MCP.Test.RuntimeHTTPFixture.start(Handler,
         handler_args: [owner: self()],
         protocol_mode: :modern_only,
-        cache_hints: @hints
+        cache_hints: Map.put(@hints, "server/discover", discover_hint)
       )
 
     ref = {__MODULE__, make_ref()}
@@ -233,6 +235,9 @@ defmodule Arbor.MCP.Client.ResponseCacheTest do
     assert {:ok, _} = list(client)
     assert_received {:listed, nil, _}
     refute_received {:listed, _, _}
+
+    # The result the server builds for discovery takes a hint as well.
+    assert {:ok, %{"ttlMs" => 300_000, "cacheScope" => "private"}} = Client.discover(client)
   end
 
   test "invalid cache options are refused" do

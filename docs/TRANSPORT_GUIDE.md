@@ -113,6 +113,25 @@ client keeps its session and opens the stream again with `Last-Event-ID`. A
 server that answers that GET with 405 no longer offers the stream, and the
 client carries on POST-only.
 
+A legacy server answers 404 to a request that carries a session it has ended,
+after a restart for example, and the client must then start a new session
+(Session Management, 2025-03-26 and later). The request that got the 404 fails
+with `%Arbor.MCP.Error.TransportError{reason: {:session_expired, detail}}`,
+where `detail` is `{:http_error, 404, body}` for a POST and
+`{:sse_error, {:http_error, 404}}` for the reopened GET stream. The client does
+not send it again, since a tool call may not be safe to repeat, and
+`Arbor.MCP.Client.delivery_outcome/1` reports `:unknown` for it, as for any
+error the server answered. Requests still in flight on the session fail with
+the same error. The client then closes the transport as for a lost
+connection: it sends the session DELETE and stops its `reliability:`
+components. It reconnects under `:reconnect_backoff`, with an `initialize`
+that carries no session id, so the server starts a new session; a configured
+`:session_id` is not used again. Requests made before the new session is
+ready get `{:error, :not_connected}`. With `reconnect: false` the client goes
+`:disconnected` instead. A 404 for a request without a session id, and every
+modern 404, stays `{:http_error, 404, body}`, since a 2026-07-28 connection
+has no session.
+
 A list change sent outside a callback, such as
 `Arbor.MCP.Server.notify_tools_changed(runtime)` or the `add_tool/3` family,
 isn't addressed to a session. It goes to every modern `subscriptions/listen`
@@ -153,7 +172,16 @@ Supported client options include:
 - `:protocol_mode` - `:legacy_only`, `:prefer_legacy`, `:prefer_modern`, or
   `:modern_only`; see the [Configuration Guide](CONFIGURATION.md#protocol-eras-and-modes).
 - `:use_sse` - enable the legacy Streamable HTTP GET stream, defaults to `true`.
-- `:session_id` - resume an existing streamable HTTP session.
+- `:session_id` - resume an existing legacy Streamable HTTP session: the
+  client's `initialize` carries it. If the server answers that `initialize`
+  with 404 because it has ended the session, the client sends one more
+  `initialize`, without the id, and starts a new session. That `initialize`
+  gets its own `:handshake_timeout`, within what the connection's
+  `:establish_timeout` has left. If that one fails too, `start_link/1` or the
+  reconnect reports its failure. A connection attempt offers the ended
+  session once, even when it goes on to initialize again (a `:prefer_legacy`
+  retry with another revision), and once the server has ended the configured
+  session, no later reconnect offers it again.
 - `:protocol_version` - requested legacy revision, or a modern probe revision
   when the selected mode enables it.
 - `:timeout` - connect timeout.
@@ -208,8 +236,12 @@ an explicit `application_type: :native | :web` and a stable `redirect_port`;
 ArborMCP never invents a CIMD URL or guesses the application type. A missing
 strategy returns an actionable registration error.
 
-Modern pre-registered credentials must include `credential_issuer`, which is
-compared exactly with discovered AS metadata. To retain DCR credentials and
+Pre-registered credentials must include `credential_issuer` on every protocol
+version, including the default legacy revision (`2025-11-25`), the
+`client_id` / `client_secret` compatibility aliases, and
+`DiscoveryFlow.execute/1`. It is compared exactly with discovered AS
+metadata; trailing slashes are not normalized. A missing or mismatched
+binding fails closed and the secret is never sent to another origin. To retain DCR credentials and
 tokens safely across flows, configure an adapter implementing
 `Arbor.MCP.Authorization.CredentialStore`; registrations are issuer + client-ID
 bound and tokens use the complete authorization partition. See the
@@ -253,6 +285,16 @@ The server returns one of these shapes:
   response; or
 - `202 Accepted` with no body for an accepted notification POST.
 
+A method the server doesn't implement, or one behind a capability it doesn't
+advertise, is answered with `404 Not Found` and a JSON-RPC `-32601` error,
+also for a request whose progress token would have opened an event stream,
+as long as nothing has been written to that stream yet. The client returns
+that error as it would one from a `200`, and keeps its connection. A `404`
+without a JSON-RPC error for the request stays an HTTP error.
+A server that advertises a capability but leaves out part of it, such as
+resource templates beside resources, or completion for one prompt argument,
+answers that part with an empty list or completion rather than `-32601`.
+
 A modern result always has `resultType: "complete"` or
 `resultType: "input_required"`. For `input_required`, the client satisfies the
 embedded elicitation, sampling, or roots requests and sends the original
@@ -267,8 +309,11 @@ Closing a modern request/subscription response stream is the cancellation
 signal; there is no session DELETE and no resumable `Last-Event-ID` cursor.
 For a modern SSE request response other than `subscriptions/listen`, which
 has its own keepalive, the server writes comment keepalives every
-`:request_keepalive_interval_ms` (15 seconds by default). A failed write
-cancels the running handler and releases its Runtime capacity. Over TCP the
+`:request_keepalive_interval_ms` (15 seconds by default). A failed write,
+of a keepalive or of a progress or log notification, cancels the running
+handler and releases its Runtime capacity. The client has closed the stream,
+which is how it cancels, so that write, like a failed write of the final
+response, ends the response without logging an error. Over TCP the
 first write after the client closes usually succeeds and the next one fails,
 so on Bandit the close is usually noticed within two intervals. Cowboy instead
 terminates the request process when it sees the connection close, which
@@ -539,6 +584,21 @@ Arbor.MCP.Client.start_link(
   ]
 )
 ```
+
+Over Streamable HTTP the client stays an HTTP client: each request after
+establishment still POSTs from its own task, so calls run at the same time.
+The circuit breaker admits every POST, from establishment on, and records how
+it ended: a POST that crashes or that the client stops at a timeout is a
+failure, and one whose caller cancels it or exits isn't counted. An open
+circuit refuses a request with
+`{:error, %Arbor.MCP.Error.TransportError{reason: :circuit_open}}` before
+anything is sent. A request the client refuses before sending it, because
+its auth provider gave no token for it or gave one the server had already
+rejected, never reached the server, so the breaker doesn't count it. A
+request stream (a request with a progress token) is admitted, but its
+outcome isn't recorded, and receives aren't counted. The breaker's
+`:timeout` doesn't apply over HTTP: each exchange keeps its own deadline,
+the caller's timeout or the transport's `:request_timeout`.
 
 ## Telemetry
 

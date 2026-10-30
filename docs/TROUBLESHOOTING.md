@@ -111,6 +111,17 @@ Increase `stream_handshake_timeout` for slow deployments. See the
 [Streamable HTTP comparison](TRANSPORT_GUIDE.md#streamable-http) for the full
 era-specific lifecycle.
 
+### A request fails with `{:session_expired, _}`
+
+The legacy server answered 404 for the client's `Mcp-Session-Id`: it has
+ended the session, often because it restarted. The client fails that request
+and every other one still in flight on the session, then starts a new session
+through its reconnection, or goes `:disconnected` under `reconnect: false`.
+It doesn't send the request again: a tool call may not be safe to repeat,
+and a 404 that a proxy in front of the server produced looks the same to the
+client, so `Arbor.MCP.Client.delivery_outcome/1` reports `:unknown`. Send it
+again once the client is `:ready` if it is safe to repeat.
+
 ## Protocol modes and MCP 2026-07-28
 
 ### `server/discover` fails or the client does not fall back
@@ -143,7 +154,7 @@ after an operator-controlled endpoint upgrade. Strict `:modern_only` and
 `:legacy_only` modes never fall back.
 
 Over stdio, a `:modern_only` `start_link/1` that fails with
-`{:transport_connect_failed, "{:era_probe_failed, {:transport_error, :handshake_timeout}}"}`
+`{:transport_connect_failed, {:era_probe_failed, {:transport_error, :handshake_timeout}}}`
 means the spawned server did not answer the probe within its bound,
 `:handshake_timeout` (10 s) unless `:era_probe_timeout` is set. The wait
 includes the server's own start-up, so raise `:handshake_timeout` for a

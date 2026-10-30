@@ -67,6 +67,57 @@ defmodule Arbor.MCP.Reliability.CircuitBreaker do
     admit(server, fun, fn _config_timeout -> timeout end)
   end
 
+  @doc false
+  # Admission for an operation that runs elsewhere and reports its own
+  # outcome with report/2, such as an HTTP POST from a task of its own. No
+  # execution timeout applies: the operation has its own deadline.
+  @spec acquire(GenServer.server()) ::
+          :ok | {:error, :circuit_open | :circuit_breaker_unavailable}
+  def acquire(server) do
+    case GenServer.call(server, :acquire, 5000) do
+      {:ok, _config_timeout} -> :ok
+      {:error, :circuit_open} = error -> error
+    end
+  catch
+    :exit, _reason -> {:error, :circuit_breaker_unavailable}
+  end
+
+  @doc false
+  # Records the result of an operation acquire/1 admitted, as call/3 records
+  # the result of its function: `{:error, reason}` goes through the error
+  # filter, anything else is a success.
+  @spec report(GenServer.server(), term()) :: :ok
+  def report(server, result), do: GenServer.cast(server, {:report, {:ok, result}})
+
+  @doc false
+  # Admission for an operation `holder` (the calling process by default)
+  # runs and settles later with settle/3, such as an HTTP POST from its own
+  # task, which may be killed before it can report. The breaker monitors the
+  # holder, and an admission it never settles is settled when it goes down:
+  # as a failure, unless it exited normally. Taking it for another process
+  # lets the process that starts the operation admit it before anything else
+  # can settle it.
+  @spec hold(GenServer.server(), pid()) ::
+          :ok | {:error, :circuit_open | :circuit_breaker_unavailable}
+  def hold(server, holder \\ self()) when is_pid(holder) do
+    GenServer.call(server, {:hold, holder}, 5000)
+  catch
+    :exit, _reason -> {:error, :circuit_breaker_unavailable}
+  end
+
+  @doc false
+  # Settles the admission `holder` took with hold/1, exactly once:
+  # `{:result, result}` records the result as call/3 records its function's,
+  # `:failure` counts a failure, and `:release` frees it without counting.
+  # Later settles, and the holder's :DOWN, are ignored. Synchronous, so a
+  # settle made before killing the holder is never overtaken by its :DOWN.
+  @spec settle(GenServer.server(), pid(), {:result, term()} | :failure | :release) :: :ok
+  def settle(server, holder, outcome) when is_pid(holder) do
+    GenServer.call(server, {:settle, holder, outcome}, 5000)
+  catch
+    :exit, _reason -> :ok
+  end
+
   defp admit(server, fun, execution_timeout) do
     case GenServer.call(server, :acquire, 5000) do
       {:error, :circuit_open} = error ->
@@ -201,7 +252,9 @@ defmodule Arbor.MCP.Reliability.CircuitBreaker do
 
     state = %{
       circuit_breaker: circuit_breaker,
-      error_filter: error_filter
+      error_filter: error_filter,
+      # Admissions taken with hold/1 and not yet settled: holder => monitor.
+      holders: %{}
     }
 
     {:ok, state}
@@ -217,6 +270,35 @@ defmodule Arbor.MCP.Reliability.CircuitBreaker do
       {:reply, {:ok, timeout}, updated_state}
     else
       {:reply, {:error, :circuit_open}, updated_state}
+    end
+  end
+
+  def handle_call({:hold, holder}, _from, state) do
+    {allowed, updated_cb} = Core.allow_request_with_state?(state.circuit_breaker, now_ms())
+    state = %{state | circuit_breaker: updated_cb}
+
+    cond do
+      not allowed ->
+        {:reply, {:error, :circuit_open}, state}
+
+      Map.has_key?(state.holders, holder) ->
+        {:reply, :ok, state}
+
+      true ->
+        holders = Map.put(state.holders, holder, Process.monitor(holder))
+        {:reply, :ok, %{state | holders: holders}}
+    end
+  end
+
+  def handle_call({:settle, holder, outcome}, _from, state) do
+    case Map.pop(state.holders, holder) do
+      {nil, _holders} ->
+        {:reply, :ok, state}
+
+      {monitor, holders} ->
+        Process.demonitor(monitor, [:flush])
+        state = %{state | holders: holders}
+        {:reply, :ok, %{state | circuit_breaker: settled(outcome, state)}}
     end
   end
 
@@ -271,6 +353,21 @@ defmodule Arbor.MCP.Reliability.CircuitBreaker do
     {:noreply, %{state | circuit_breaker: updated_cb}}
   end
 
+  @impl GenServer
+  def handle_info({:DOWN, monitor, :process, holder, reason}, state) do
+    case Map.get(state.holders, holder) do
+      ^monitor ->
+        state = %{state | holders: Map.delete(state.holders, holder)}
+        outcome = if reason == :normal, do: :release, else: :failure
+        {:noreply, %{state | circuit_breaker: settled(outcome, state)}}
+
+      _other ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_info(_message, state), do: {:noreply, state}
+
   # Private helpers
 
   # Success/failure accounting, preserving the pre-existing semantics:
@@ -286,6 +383,10 @@ defmodule Arbor.MCP.Reliability.CircuitBreaker do
 
   defp record_outcome({:raised, error}, state), do: record_filtered(error, state)
   defp record_outcome(_failure, state), do: Core.record_failure(state.circuit_breaker, now_ms())
+
+  defp settled({:result, result}, state), do: record_outcome({:ok, result}, state)
+  defp settled(:failure, state), do: Core.record_failure(state.circuit_breaker, now_ms())
+  defp settled(:release, state), do: state.circuit_breaker
 
   defp record_filtered(reason, state) do
     if state.error_filter.(reason) do

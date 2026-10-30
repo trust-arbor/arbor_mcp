@@ -116,7 +116,13 @@ defmodule Arbor.MCP.Client.RequestDeliveryTest do
         %{type: :transport_error, reason: {:transport_error, {:send_failed, :badarg}}},
         %{type: :transport_error, reason: {:validation_error, {:invalid_json, "x"}}},
         {:transport_error, :deadline_expired},
-        %{type: :invalid_request_meta, message: "bad"}
+        %{type: :invalid_request_meta, message: "bad"},
+        # Refused by the HTTP transport before it wrote anything.
+        Error.transport_error(:http, {:auth_provider_token_failed, Provider, :expired}),
+        %{type: :transport_error, reason: {:auth_provider_token_failed, Provider, :redacted}},
+        %{type: :transport_error, reason: {:authentication_failed, :rejected_credential}},
+        {:transport_error, {:auth_refused, {:auth_provider_token_failed, Provider, :throw}}},
+        {:transport_error, {:auth_refused, {:authentication_failed, :rejected_credential}}}
       ]
 
       for reason <- not_sent do
@@ -133,6 +139,10 @@ defmodule Arbor.MCP.Client.RequestDeliveryTest do
         %{type: :transport_error, reason: {:http_receive_failed, :timeout}},
         %{type: :transport_error, reason: {:http_error, 500, ""}},
         {:transport_error, {:http_receive_failed, :closed}},
+        # Refused once the server had answered.
+        %{type: :transport_error, reason: {:authentication_failed, :unauthorized}},
+        {:transport_error, {:auth_refused, {:authentication_failed, :unauthorized}}},
+        {:transport_error, {:auth_refused, :timeout}},
         :something_else
       ]
 

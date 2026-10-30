@@ -51,6 +51,51 @@ defmodule Arbor.MCP.Server.RequestStateTest do
              RequestState.unseal(token, context, params(), %{"other" => %{}}, opts)
   end
 
+  test "leaves the progress token out of the binding and keeps the rest of _meta in it" do
+    without_meta = Map.delete(params(), "_meta")
+
+    same = [
+      {put_in(params(), ["_meta", "progressToken"], 1),
+       put_in(params(), ["_meta", "progressToken"], 2)},
+      {put_in(params(), ["_meta", "progressToken"], "a"), params()},
+      {Map.put(without_meta, "_meta", %{"progressToken" => 1}), without_meta},
+      {Map.put(without_meta, :_meta, %{progressToken: "a"}), without_meta},
+      {Map.put(without_meta, "_meta", %{}), without_meta}
+    ]
+
+    for {left, right} <- same do
+      assert binding_of(left) == binding_of(right)
+    end
+
+    other_meta = put_in(params(), ["_meta", "example.com/trace"], "t-2")
+    refute binding_of(other_meta) == binding_of(params())
+  end
+
+  test "binds an argument named _meta whole unless the handler server injected it" do
+    with_argument_meta = fn meta -> put_in(params(), ["arguments", "_meta"], meta) end
+    token_1 = with_argument_meta.(%{"progressToken" => 1, "trace" => "t-1"})
+    token_2 = with_argument_meta.(%{"progressToken" => 2, "trace" => "t-1"})
+
+    # Caller data, as over HTTP: the progress token in it stays bound.
+    refute binding_of(token_1) == binding_of(token_2)
+
+    # The handler server's copy of the request's _meta, which _meta binds.
+    injected = [injected_argument_meta: true]
+    assert binding_of(token_1, injected) == binding_of(token_2, injected)
+    assert binding_of(token_1, injected) == binding_of(params(), injected)
+
+    other_argument = put_in(token_1, ["arguments", "city"], "Chicago")
+    refute binding_of(other_argument, injected) == binding_of(token_1, injected)
+  end
+
+  test "the injection marker keeps atom-form caller argument metadata bound" do
+    original = put_in(params(), ["arguments", :_meta], %{progressToken: "caller-1"})
+    changed = put_in(original, ["arguments", :_meta, :progressToken], "caller-2")
+    injected = [injected_argument_meta: true]
+
+    refute binding_of(original, injected) == binding_of(changed, injected)
+  end
+
   test "supports decrypt-only rotation keys and expiry" do
     old_opts = options(now: 1_000)
     assert {:ok, binding} = RequestState.binding(context(), params(), [], 1, old_opts)
@@ -156,13 +201,20 @@ defmodule Arbor.MCP.Server.RequestStateTest do
                request_state: [active_key_id: "bad", keys: %{"bad" => "too short"}]
              )
 
-    assert_raise ArgumentError, ~r/invalid MRTR requestState configuration/, fn ->
-      Arbor.MCP.HttpPlug.init(
-        runtime: __MODULE__.UnstartedRuntime,
-        mrtr: true,
-        request_state: [active_key_id: "bad", keys: %{"bad" => "too short"}]
-      )
-    end
+    assert {:error, {:mrtr_configuration_error, :invalid_request_state_configuration}} =
+             Arbor.MCP.Server.Runtime.start_link(
+               handler: __MODULE__,
+               transport: :mounted_http,
+               mrtr: true,
+               request_state: [active_key_id: "bad", keys: %{"bad" => "too short"}]
+             )
+  end
+
+  defp binding_of(params, opts \\ []) do
+    assert {:ok, binding} =
+             RequestState.binding(context(), params, ["answer"], 1, options(now: 1_000) ++ opts)
+
+    binding
   end
 
   defp context do

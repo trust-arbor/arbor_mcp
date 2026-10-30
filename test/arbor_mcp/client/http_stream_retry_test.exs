@@ -99,6 +99,27 @@ defmodule Arbor.MCP.Client.HTTPStreamRetryTest do
     assert length(GenServer.call(tool_client, :calls)) == 2
   end
 
+  # The retry not going out doesn't make the first attempt undelivered.
+  test "a retry that is never sent reports outcome_unknown" do
+    for not_sent <- [
+          %{type: :transport_error, reason: %Mint.TransportError{reason: :econnrefused}},
+          %{
+            type: :transport_error,
+            reason: {:auth_refused, {:auth_provider_token_failed, P, :x}}
+          },
+          Error.transport_error(:http, :not_sent, %{cause: :deadline_expired})
+        ] do
+      {:ok, client} = FakeClient.start_link([broken(:closed), {:error, not_sent}])
+
+      assert {:error, %Error.TransportError{reason: :outcome_unknown, details: details} = error} =
+               request(client, "tools/call", http_stream_retry_delay: 0)
+
+      assert %{attempts: 2, cause: %{cause: :closed, delivery: :ambiguous}} = details
+      assert Client.delivery_outcome(error) == :unknown
+      assert length(GenServer.call(client, :calls)) == 2
+    end
+  end
+
   test "a second broken response reports outcome_unknown without a third attempt" do
     {:ok, client} = FakeClient.start_link([broken(:closed), broken(:reset)])
 

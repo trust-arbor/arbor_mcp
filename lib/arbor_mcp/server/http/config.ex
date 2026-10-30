@@ -15,6 +15,7 @@ defmodule Arbor.MCP.Server.HTTP.Config do
     :allowed_hosts,
     :allowed_origins,
     :principal_id,
+    :client_principals,
     :tenant_id,
     :authorize_subscription_filter,
     :authorize_subscription_publication,
@@ -57,6 +58,11 @@ defmodule Arbor.MCP.Server.HTTP.Config do
     :replay_cache,
     :server
   ]
+
+  def option_keys do
+    @plug_keys ++
+      @retired ++ [:host, :port, :http_adapter, :http_listener_options, :ranch_ref]
+  end
 
   def new(opts, ownership \\ :owned) do
     with {:ok, opts} <- options(opts),

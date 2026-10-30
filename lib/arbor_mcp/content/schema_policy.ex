@@ -4,7 +4,7 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
 
   Cross-document references are disabled by default before either validator
   sees a schema. Allowed remotes are fetched through ArborMCP's allowlisted
-  resolver and inlined as local definitions before ExJsonSchema compiles.
+  resolver and sealed in a per-build cache before ExJsonSchema compiles.
   Compilation never consults ExJsonSchema's global `:remote_schema_resolver`.
   Local fragment references remain supported. Network references can be
   enabled only through that allowlisted, IP-pinned fetch path.
@@ -26,7 +26,7 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   `network_refs: [cacerts: ...]` lists the DER-encoded CA certificates to trust.
   """
 
-  alias Arbor.MCP.Content.{SchemaDNS, SchemaHTTPClient, SchemaInliner, SchemaRemoteResolver}
+  alias Arbor.MCP.Content.{SchemaDNS, SchemaGraph, SchemaHTTPClient, SchemaRemoteResolver}
   alias Arbor.MCP.Content.SchemaPolicy.{Compiled, Instance, Modern}
   alias Arbor.MCP.Internal.CACerts
 
@@ -35,7 +35,6 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   @named_schema_maps MapSet.new(
                        ~w(properties patternProperties $defs definitions dependentSchemas dependencies dependentRequired)
                      )
-  @reference_keywords MapSet.new(~w($ref $recursiveRef $dynamicRef))
 
   @defaults [
     max_schema_bytes: 262_144,
@@ -238,10 +237,30 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   end
 
   defp preflight_normalized(schema, opts) do
-    with :ok <- check_encoded_size(schema, opts) do
-      opts = Keyword.put(opts, :pointer_targets, local_pointer_targets(schema))
+    with :ok <- check_encoded_size(schema, opts),
+         {:ok, count} <- walk(schema, 0, 0, 0, opts) do
+      graph = SchemaGraph.build(schema)
 
-      with {:ok, _count} <- walk(schema, 0, 0, 0, opts), do: :ok
+      nonlocal? =
+        Enum.any?(SchemaGraph.references(graph), fn {_source, ref} ->
+          ref != "" and not String.starts_with?(ref, "#")
+        end)
+
+      if not network_refs_enabled?(opts) and nonlocal? do
+        {:error, :network_ref_forbidden}
+      else
+        Enum.reduce_while(SchemaGraph.additional_schemas(graph), {:ok, count}, fn
+          {target, depth}, {:ok, count} ->
+            case walk(target, depth, 0, count, opts) do
+              {:ok, next_count} -> {:cont, {:ok, next_count}}
+              error -> {:halt, error}
+            end
+        end)
+        |> case do
+          {:ok, _count} -> :ok
+          error -> error
+        end
+      end
     end
   end
 
@@ -511,32 +530,11 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   end
 
   defp walk_map_child(key, child, depth, composition_depth, count, opts, named_keys?) do
-    cond do
-      skip_untargeted_literal?(named_keys?, key, child, opts) ->
-        {:cont, {:ok, count}}
-
-      MapSet.member?(@reference_keywords, key) and is_binary(child) and external_ref?(child) ->
-        walk_external_ref(count, opts)
-
-      true ->
-        walk_nested_schema(key, child, depth, composition_depth, count, opts, named_keys?)
+    if not named_keys? and MapSet.member?(@literal_keywords, key) do
+      {:cont, {:ok, count}}
+    else
+      walk_nested_schema(key, child, depth, composition_depth, count, opts, named_keys?)
     end
-  end
-
-  defp skip_untargeted_literal?(named_keys?, key, child, opts) do
-    not named_keys? and MapSet.member?(@literal_keywords, key) and
-      not pointer_target?(child, opts)
-  end
-
-  defp pointer_target?(child, opts) do
-    targets = opts[:pointer_targets]
-    is_map(targets) and MapSet.member?(targets, child)
-  end
-
-  defp walk_external_ref(count, opts) do
-    if network_refs_enabled?(opts),
-      do: {:cont, {:ok, count}},
-      else: {:halt, {:error, :network_ref_forbidden}}
   end
 
   defp walk_nested_schema(key, child, depth, composition_depth, count, opts, named_keys?) do
@@ -552,10 +550,6 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
       {:error, _reason} = error -> {:halt, error}
     end
   end
-
-  defp external_ref?(ref) when is_binary(ref), do: ref != "" and not String.starts_with?(ref, "#")
-
-  defp local_pointer_targets(root), do: SchemaInliner.pointer_nodes(root)
 
   defp resolve_schema(schema, opts) do
     with {:ok, draft} <- schema_draft(schema) do

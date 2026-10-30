@@ -33,6 +33,35 @@ defmodule Arbor.MCP.Server.HTTPRequestStreamCloseTest do
         :release -> {:ok, %{content: [%{type: "text", text: "progressed"}]}, test_pid}
       end
     end
+
+    # Reports progress each time it is told to and tells the test what each
+    # report returned. After a report fails it waits for its cancellation,
+    # or to be released.
+    def handle_call_tool("report", _arguments, test_pid) do
+      send(test_pid, {:tool_started, self()})
+      report(test_pid, 1)
+    end
+
+    defp report(test_pid, progress) do
+      receive do
+        :report ->
+          result = Context.report_progress(progress)
+          send(test_pid, {:reported, progress, result})
+          if result == :ok, do: report(test_pid, progress + 1), else: after_closed(test_pid)
+
+        :release ->
+          {:ok, %{content: [%{type: "text", text: "reported"}]}, test_pid}
+      end
+    end
+
+    defp after_closed(test_pid) do
+      receive do
+        {:arbor_mcp_cancelled, _token, reason} -> send(test_pid, {:tool_cancelled, reason})
+        :release -> :ok
+      end
+
+      {:ok, %{content: [%{type: "text", text: "reported"}]}, test_pid}
+    end
   end
 
   # A borrowed adapter that reports every write to the test process and can
@@ -64,10 +93,7 @@ defmodule Arbor.MCP.Server.HTTPRequestStreamCloseTest do
         do: send(state.observer, {:keepalive_stack, self(), Process.info(self(), :stack_size)})
 
       cond do
-        wire == ":\r\n\r\n" and state.fail_keepalive ->
-          {:error, :closed}
-
-        String.starts_with?(wire, "data: ") and state.fail_terminal ->
+        fail?(wire, state) ->
           {:error, :closed}
 
         wire == ":\r\n\r\n" and state.hold_keepalive ->
@@ -79,6 +105,14 @@ defmodule Arbor.MCP.Server.HTTPRequestStreamCloseTest do
           Conn.chunk(state, body)
       end
     end
+
+    defp fail?(":\r\n\r\n", state), do: state.fail_keepalive
+    defp fail?("data: " <> _frame, state), do: state.fail_terminal or closed?(state.fail_frames)
+    defp fail?(_wire, _state), do: false
+
+    # fail_frames is an atomics array the test sets to close the stream.
+    defp closed?(false), do: false
+    defp closed?(stream), do: :atomics.get(stream, 1) == 1
   end
 
   # Plug.Cowboy's chunk/2 never returns an error. Cowboy notices the closed
@@ -528,6 +562,139 @@ defmodule Arbor.MCP.Server.HTTPRequestStreamCloseTest do
     assert_released(runtime)
   end
 
+  # Closing the stream is how a modern client cancels, so a frame that finds
+  # it closed ends the response as a failed keepalive does, instead of raising
+  # RuntimeWriter.AdmissionError for the adapter to log (#179).
+  test "a progress frame on a closed stream cancels the request without raising" do
+    runtime = start_runtime([])
+    stream = :atomics.new(1, [])
+    socket = report_request(runtime, stream)
+    assert_receive {:tool_started, worker}, 1_000
+
+    send(worker, :report)
+    assert_receive {:reported, 1, :ok}, 1_000
+    :atomics.put(stream, 1, 1)
+    send(worker, :report)
+
+    assert_receive {:reported, 2, {:error, :stream_closed}}, 1_000
+    assert_receive {:tool_cancelled, _reason}, 1_000
+    {wires, {:returned, conn}} = finish_stream(socket)
+    assert wire_shape(wires) == "12"
+    assert conn.state == :chunked
+    assert_released(runtime)
+  end
+
+  test "a first frame whose chunk fails returns the chunked conn and cancels the request" do
+    runtime = start_runtime([])
+    stream = :atomics.new(1, [])
+    :atomics.put(stream, 1, 1)
+    socket = report_request(runtime, stream)
+    assert_receive {:tool_started, worker}, 1_000
+
+    send(worker, :report)
+    assert_receive {:stream_headers, ^socket, 200}, 1_000
+    assert_receive {:reported, 1, {:error, :stream_closed}}, 1_000
+    assert_receive {:tool_cancelled, _reason}, 1_000
+    {wires, {:returned, conn}} = finish_stream(socket)
+    assert wire_shape(wires) == "1"
+
+    # An :unset conn here makes Bandit raise Plug.Conn.NotSentError.
+    assert conn.state == :chunked
+    assert_released(runtime)
+  end
+
+  test "a response frame on a closed stream ends the response without raising" do
+    runtime = start_runtime([])
+    stream = :atomics.new(1, [])
+    socket = report_request(runtime, stream)
+    assert_receive {:tool_started, worker}, 1_000
+
+    send(worker, :report)
+    assert_receive {:reported, 1, :ok}, 1_000
+    :atomics.put(stream, 1, 1)
+    send(worker, :release)
+
+    {wires, {:returned, conn}} = finish_stream(socket)
+    assert wire_shape(wires) == "1R"
+    assert conn.state == :chunked
+    assert_released(runtime)
+  end
+
+  test "a progress frame on a closed legacy stream ends the response and the request runs on" do
+    runtime = start_runtime(protocol_mode: :prefer_modern)
+    session = legacy_session(runtime)
+    stream = :atomics.new(1, [])
+
+    body =
+      Jason.encode!(%{
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: %{name: "report", arguments: %{}, _meta: %{"progressToken" => "legacy"}}
+      })
+
+    headers = [{"mcp-protocol-version", "2025-11-25"}, {"mcp-session-id", session}]
+
+    socket =
+      stream_post(runtime, body, headers, [fail_frames: stream], protocol_mode: :prefer_modern)
+
+    assert_receive {:tool_started, worker}, 1_000
+    send(worker, :report)
+    assert_receive {:reported, 1, :ok}, 1_000
+    :atomics.put(stream, 1, 1)
+    send(worker, :report)
+
+    assert_receive {:reported, 2, {:error, :stream_closed}}, 1_000
+    {wires, {:returned, conn}} = finish_stream(socket)
+    assert wire_shape(wires) == "12"
+    assert conn.state == :chunked
+
+    # The legacy revisions say a disconnect SHOULD NOT be taken for a
+    # cancellation, so the tool keeps running until it is released.
+    refute_receive {:tool_cancelled, _reason}, 200
+    send(worker, :release)
+    assert_released(runtime)
+  end
+
+  @tag :physical_http
+  test "bandit logs no error when a progress frame finds the request stream closed" do
+    handler = {__MODULE__, make_ref()}
+    events = [:bandit, :request, :start]
+    :ok = :telemetry.attach(handler, events, &__MODULE__.report_bandit_request/4, self())
+    on_exit(fn -> :telemetry.detach(handler) end)
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        {runtime, port} = start_server(:bandit, request_keepalive_interval_ms: :infinity)
+        conn = connect(port)
+        {:ok, conn, ref} = request(conn, "report")
+        assert_receive {:bandit_request, request_process}, 1_000
+        monitor = Process.monitor(request_process)
+        assert_receive {:tool_started, worker}, 1_000
+
+        send(worker, :report)
+        assert_receive {:reported, 1, :ok}, 1_000
+        {conn, _events} = receive_until(conn, ref, &progress?/1)
+        Mint.HTTP.close(conn)
+
+        # Over TCP the first write after the client closes usually succeeds
+        # and the next one fails.
+        assert {:error, :stream_closed} = report_until_closed(worker, 2)
+        assert_receive {:tool_cancelled, _reason}, 1_000
+
+        # Bandit would log a raised plug error from the request process
+        # before that process ends.
+        assert_receive {:DOWN, ^monitor, :process, ^request_process, _reason}, 2_000
+        assert_released(runtime)
+      end)
+
+    refute log =~ "AdmissionError"
+    refute log =~ "[error]"
+  end
+
+  def report_bandit_request(_event, _measurements, _metadata, test_pid),
+    do: send(test_pid, {:bandit_request, self()})
+
   test "keepalives keep the request process stack bounded" do
     runtime = start_runtime([])
 
@@ -575,6 +742,26 @@ defmodule Arbor.MCP.Server.HTTPRequestStreamCloseTest do
   defp stream_request(runtime, name, adapter_opts, plug_opts \\ [], id \\ nil) do
     headers = [{"mcp-method", "tools/call"}, {"mcp-name", name}]
     stream_post(runtime, tool_body(name, true, id), headers, adapter_opts, plug_opts)
+  end
+
+  # A "report" tool call whose data frames fail once `stream` is set. With no
+  # keepalives, each failed write is a frame.
+  defp report_request(runtime, stream) do
+    stream_request(runtime, "report", [fail_frames: stream],
+      request_keepalive_interval_ms: :infinity
+    )
+  end
+
+  # Has the tool report until a report finds the stream closed.
+  defp report_until_closed(worker, progress) when progress <= 20 do
+    send(worker, :report)
+
+    receive do
+      {:reported, ^progress, :ok} -> report_until_closed(worker, progress + 1)
+      {:reported, ^progress, result} -> result
+    after
+      1_000 -> flunk("report #{progress} did not return")
+    end
   end
 
   # A subscriptions/listen request that, with its progress token, also selects
@@ -640,7 +827,8 @@ defmodule Arbor.MCP.Server.HTTPRequestStreamCloseTest do
                   fail_keepalive: false,
                   raise_headers: false,
                   report_stack: false,
-                  fail_terminal: false
+                  fail_terminal: false,
+                  fail_frames: false
                 ],
                 Keyword.delete(adapter_opts, :gate)
               )
@@ -776,7 +964,7 @@ defmodule Arbor.MCP.Server.HTTPRequestStreamCloseTest do
     end
   end
 
-  defp start_server(adapter) do
+  defp start_server(adapter, plug_opts \\ []) do
     runtime =
       start_supervised!(
         {Runtime,
@@ -786,12 +974,16 @@ defmodule Arbor.MCP.Server.HTTPRequestStreamCloseTest do
          protocol_mode: :modern_only}
       )
 
-    opts = [
-      runtime: runtime,
-      path: "/mcp",
-      protocol_mode: :modern_only,
-      request_keepalive_interval_ms: 40
-    ]
+    opts =
+      Keyword.merge(
+        [
+          runtime: runtime,
+          path: "/mcp",
+          protocol_mode: :modern_only,
+          request_keepalive_interval_ms: 40
+        ],
+        plug_opts
+      )
 
     port = free_port()
 
@@ -883,6 +1075,13 @@ defmodule Arbor.MCP.Server.HTTPRequestStreamCloseTest do
     do:
       Enum.any?(events, fn
         {:data, _ref, data} -> String.contains?(data, ":\r\n\r\n")
+        _ -> false
+      end)
+
+  defp progress?(events),
+    do:
+      Enum.any?(events, fn
+        {:data, _ref, data} -> String.contains?(data, "notifications/progress")
         _ -> false
       end)
 

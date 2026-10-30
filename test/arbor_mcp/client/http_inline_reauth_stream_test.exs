@@ -90,11 +90,14 @@ defmodule Arbor.MCP.Client.HTTPInlineReauthStreamTest do
     retired = :sys.get_state(client).transport_state
     assert retired.access_token == nil
 
-    assert {:error, %{reason: {:authentication_failed, :rejected_credential}}} =
+    assert {:error, %{reason: {:authentication_failed, :rejected_credential}} = refusal} =
              Client.call_tool(client, "protected", %{},
                format: :map,
                retry_policy: [max_attempts: 3, initial_delay: 0, should_retry?: fn _ -> true end]
              )
+
+    # Refused before it was sent.
+    assert Client.delivery_outcome(refusal) == :not_sent
 
     assert {:error,
             {:stream_error, {:auth_refused, {:authentication_failed, :rejected_credential}}}} =
@@ -628,7 +631,7 @@ defmodule Arbor.MCP.Client.HTTPInlineReauthStreamTest do
   end
 
   test "a legacy request cancelled before its challenge is not authenticated or re-sent" do
-    {client, counter} = start_client(&finish/2, barrier: true)
+    {client, counter, bypass} = start_fixture(&finish/2, barrier: true)
     task = call(client)
     server = receive_challenge()
     [id] = Client.get_pending_requests(client)
@@ -642,12 +645,20 @@ defmodule Arbor.MCP.Client.HTTPInlineReauthStreamTest do
     assert :ok = Client.send_cancelled(client, id, "test cancellation")
     assert {:error, :cancelled} = Task.await(task)
     send(server, :challenge)
-    assert_receive {:DOWN, ^monitor, :process, ^post_task, :normal}, 2_000
+    assert_receive {:DOWN, ^monitor, :process, ^post_task, :killed}, 2_000
     assert {:ok, %{connection_status: :ready}} = Client.get_status(client)
 
     assert Agent.get(counter, & &1.tokens) == 0
     assert Agent.get(counter, & &1.posts) == %{id => [[]]}
     refute_received {:oauth_started, _}
+
+    Arbor.MCP.TestHelpers.wait_until(fn ->
+      map_size(:sys.get_state(client).async_post_tasks) == 0
+    end)
+
+    # Wait for Bypass to release the closed POST handler before its on_exit
+    # verification. The worker's DOWN does not confirm server-side cleanup.
+    Bypass.down(bypass)
   end
 
   for opt <- [
@@ -990,6 +1001,11 @@ defmodule Arbor.MCP.Client.HTTPInlineReauthStreamTest do
   end
 
   defp start_client(answer_call, opts \\ []) do
+    {client, counter, _bypass} = start_fixture(answer_call, opts)
+    {client, counter}
+  end
+
+  defp start_fixture(answer_call, opts) do
     bypass = Bypass.open()
     origin = "http://127.0.0.1:#{bypass.port}"
     era = Keyword.get(opts, :era, :legacy)
@@ -1110,7 +1126,7 @@ defmodule Arbor.MCP.Client.HTTPInlineReauthStreamTest do
     )
 
     on_exit(fn -> :telemetry.detach(handler) end)
-    {client, counter}
+    {client, counter, bypass}
   end
 
   defp synchronous_response(conn, kind, owner, opts) do
@@ -1134,10 +1150,12 @@ defmodule Arbor.MCP.Client.HTTPInlineReauthStreamTest do
     case authorization do
       [] ->
         if opts[:barrier] && attempt == 1 do
+          Process.flag(:trap_exit, true)
           send(owner, {:unauthenticated, self()})
 
           receive do
             :challenge -> :ok
+            {:EXIT, _from, _reason} -> :ok
           after
             10_000 -> flunk("test did not release the challenge")
           end

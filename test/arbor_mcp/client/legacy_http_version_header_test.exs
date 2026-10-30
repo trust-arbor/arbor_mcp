@@ -133,7 +133,9 @@ defmodule Arbor.MCP.Client.LegacyHTTPVersionHeaderTest do
     assert {:error, {:transport_connect_failed, reason}} =
              start_client(modern_url, :prefer_legacy)
 
-    assert reason =~ "pinned_modern_era_probe_failed"
+    assert {:pinned_modern_era_probe_failed, %{probe: {:json_rpc_error, %{"code" => -32_600}}}} =
+             reason
+
     assert_receive {:pinned_server, "server/discover", ["2026-07-28"]}, 2_000
     refute_received {:pinned_server, "initialize", _header}
 

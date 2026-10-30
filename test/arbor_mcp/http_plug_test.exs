@@ -1840,7 +1840,8 @@ defmodule Arbor.MCP.HttpPlugTest do
       assert conn.status == 200
       assert get_resp_header(conn, "content-type") == ["text/event-stream"]
       assert get_resp_header(conn, "cache-control") == ["no-cache"]
-      assert get_resp_header(conn, "connection") == ["keep-alive"]
+      # Connection-specific headers are malformed over HTTP/2 (#182).
+      assert get_resp_header(conn, "connection") == []
       assert conn.resp_body =~ "event: endpoint"
       assert conn.resp_body =~ "data: http://www.example.com/message?sessionId="
       refute conn.resp_body =~ "event: connected"

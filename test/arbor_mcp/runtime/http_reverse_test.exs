@@ -913,7 +913,8 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverseTest do
     assert {:error, :invalid_elicitation_params} =
              Elicitation.validate(params, deadline)
 
-    assert {:error, :invalid_elicitation_params} =
+    # An expired deadline leaves nothing known about the params: a timeout.
+    assert {:error, {:elicitation_validation_timeout, 0}} =
              Elicitation.validate(%{}, deadline - 1_000)
   end
 

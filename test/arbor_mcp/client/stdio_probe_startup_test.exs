@@ -89,8 +89,7 @@ defmodule Arbor.MCP.Client.StdioProbeStartupTest do
       # it waited for, rather than on a timeout.
       %{result: result, methods: methods} = results[:modern_only]
       assert {:error, {:transport_connect_failed, reason}} = result
-      assert reason =~ "{:era_probe_failed, {:json_rpc_error, "
-      assert reason =~ "-32601"
+      assert {:era_probe_failed, {:json_rpc_error, %{"code" => -32601}}} = reason
       assert methods == ["server/discover"]
     end
 
@@ -119,7 +118,7 @@ defmodule Arbor.MCP.Client.StdioProbeStartupTest do
         connect_concurrently(tmp_dir, :mute, [:modern_only], handshake_timeout: 4_000)
 
       assert {:error, {:transport_connect_failed, reason}} = result
-      assert reason == "{:era_probe_failed, {:transport_error, :handshake_timeout}}"
+      assert reason == {:era_probe_failed, {:transport_error, :handshake_timeout}}
       # The 2 s probe bound this used to have would have given up by now.
       assert elapsed_ms >= 4_000, "gave up after #{elapsed_ms} ms"
       # The probe's own bound, not the 8 s establishment bound, ended it.
@@ -133,7 +132,7 @@ defmodule Arbor.MCP.Client.StdioProbeStartupTest do
         connect_concurrently(tmp_dir, :mute, [:modern_only], era_probe_timeout: 300)
 
       assert {:error, {:transport_connect_failed, reason}} = result
-      assert reason == "{:era_probe_failed, {:transport_error, :handshake_timeout}}"
+      assert reason == {:era_probe_failed, {:transport_error, :handshake_timeout}}
       # Well short of the 10 s handshake bound it would get otherwise.
       assert elapsed_ms < 5_000, "took #{elapsed_ms} ms"
       assert methods == ["server/discover"]
@@ -146,7 +145,7 @@ defmodule Arbor.MCP.Client.StdioProbeStartupTest do
         connect_concurrently(tmp_dir, :garbage, [:prefer_modern], start_delay_s: @start_delay_s)
 
       assert {:error, {:transport_connect_failed, reason}} = result
-      assert reason =~ "{:era_probe_failed, {:unexpected_response, "
+      assert {:era_probe_failed, {:unexpected_response, _}} = reason
       assert methods == ["server/discover"]
       # The server answered, so nothing is respawned.
       assert starts == 1

@@ -50,6 +50,31 @@ defmodule Arbor.MCP.Server.Handler do
   ArborMCP preserves that protocol error, including its
   `data.requiredCapabilities` field, across every server transport.
 
+  ## Tool definitions for the `Mcp-Param` check
+
+  A modern `tools/call` over Streamable HTTP is checked against the
+  `x-mcp-header` annotations of the tool's definition before
+  `c:handle_call_tool/3` runs. The server gets that definition from
+  `c:handle_get_tool/2` when the handler defines it, and otherwise by walking
+  `c:handle_list_tools/2` from the first page until the tool turns up.
+
+  On a Runtime, which serves every `Arbor.MCP.HttpPlug` mount, that walk
+  calls `c:handle_list_tools/2` in the `tools/call` request's context. A list
+  callback that must tell the two apart can read
+  `Arbor.MCP.Server.Context.current().method`: `"tools/list"` for a client's
+  listing and `"tools/call"` for the check. Leaving the tool out of the
+  list for `"tools/call"` skips the check, so define `c:handle_get_tool/2`
+  instead.
+
+  The server trusts the definition `c:handle_get_tool/2` returns and doesn't
+  compare it with the list. It must be the definition `tools/list`
+  advertises for that name, with the same `inputSchema` and every
+  `x-mcp-header` annotation; one without an annotation lets through
+  requests the walk would reject. Return `nil` when unsure: the server then
+  walks the list. The DSL's generated callback reads the same definitions
+  as its `tools/list`, and the DSL leaves it out for a module that
+  overrides `c:handle_list_tools/2`.
+
   ## Basic Example
 
   > #### Tip
@@ -280,6 +305,24 @@ defmodule Arbor.MCP.Server.Handler do
 
   The `use` macro provides default implementations for optional callbacks.
   You only need to implement the callbacks for features your server supports.
+
+  A default answers its method with the JSON-RPC error `-32601` (Method not
+  found), as the MCP specification asks for a method behind a capability the
+  server did not advertise. Over modern Streamable HTTP that error is sent
+  with HTTP status `404`. The defaults for `logging/setLevel` and
+  `notifications/elicitation/complete` succeed instead, and with
+  `tasks: :store` the task defaults serve the task store.
+
+  A server that does serve the method's capability answers the part a
+  handler leaves out as the TypeScript SDK does, not with `-32601`:
+  `resources/list`, `resources/templates/list` and `prompts/list` with an
+  empty list (plus any entries added with `Arbor.MCP.Server.add_tool/3` and
+  its siblings), `completion/complete` with no values, and `resources/read`
+  or `prompts/get` for an unknown name as not found. The server serves a
+  capability when it advertises it in `server/discover`: through the DSL,
+  through such added entries, or through the handler's own
+  `__server_capabilities__/0`. A DSL prompt argument without `complete:`
+  therefore completes to nothing.
   """
 
   @type state :: any()
@@ -414,6 +457,72 @@ defmodule Arbor.MCP.Server.Handler do
   @callback handle_list_tools(cursor :: String.t() | nil, state()) ::
               {:ok, tools :: [tool()], next_cursor :: String.t() | nil, state()}
               | {:error, any(), state()}
+
+  @doc """
+  Looks up one tool definition by name for the `Mcp-Param` header check.
+
+  Before a modern (2026-07-28) `tools/call` over Streamable HTTP reaches
+  `c:handle_call_tool/3`, the server checks the request's `Mcp-Param-*`
+  headers against the `x-mcp-header` annotations of the tool's
+  `inputSchema`. It rejects a mismatched, missing or malformed header with
+  `-32020`, so it needs the definition even when the request has no such
+  header. Without this callback the server finds the definition by calling
+  `c:handle_list_tools/2` from the first page and following its cursors
+  until the tool turns up, on every call. Define this callback when listing
+  is costly or dynamic, as in a gateway that asks upstream servers, and the
+  server asks it for the one definition instead.
+
+  Return:
+
+    * `{:ok, tool, state}` with the definition. Its `name` must be `name`.
+    * `{:ok, nil, state}` when this callback doesn't know the tool. The
+      server then walks `c:handle_list_tools/2`, as it does without this
+      callback, so `nil` never skips the check.
+    * `{:error, reason, state}` when the definition can't be had.
+
+  > #### The server trusts the definition {: .warning}
+  >
+  > The definition must be the one `c:handle_list_tools/2` lists for that
+  > name, with the same `inputSchema` and every `x-mcp-header` annotation in
+  > it. The server checks the headers against it as given, and can't compare
+  > it with the list without the walk this callback saves. A definition that
+  > leaves out an annotation the list has lets a request through without
+  > that header, or with a wrong one, which the walk would reject with
+  > `-32020`. Only the handler can make that mistake, not a client.
+  > Returning `nil` is always safe.
+
+  An error, an invalid reply, or a definition with another name fails the
+  request closed with "Tool schema unavailable", the error a failed
+  `tools/list` page gives (`-32020` on a Runtime). A raise or a timeout is
+  handled as in the walk too. The callback runs under the walk's deadline:
+  the request's `:request_timeout_ms` on a Runtime, or one
+  `:handler_call_timeout` for the lookup and any walk after it when
+  `Arbor.MCP.MessageProcessor` calls a handler process. It runs in the
+  `tools/call` request's context, so `Arbor.MCP.Server.Context.current/0`
+  gives its `method`, `auth_info` and `request_headers`. Under the default
+  `execution: :stateless` it must return the state unchanged.
+
+  Tools added with `Arbor.MCP.Server.add_tool/3` are checked against their
+  own definition, without this callback. `use Arbor.MCP.Server.DSL` defines
+  it for the tools the module declares, from the definitions its
+  `tools/list` pages through. It leaves it out when the module defines it
+  itself, or overrides `c:handle_list_tools/2`, even through `super`: the
+  declared definitions might not be the ones that list advertises, so the
+  check walks it. It can't see a `c:handle_list_tools/2` defined by a later
+  `@before_compile` hook, such as one from a library `use`d after the DSL; a
+  module whose list is changed that way must define this callback itself.
+  `use Arbor.MCP.Server.Handler` defines no default, so a handler without it
+  keeps the walk.
+
+      @impl true
+      def handle_get_tool(name, state) do
+        {:ok, MyApp.Gateway.tool_definition(name), state}
+      end
+
+  @doc api: :public
+  """
+  @callback handle_get_tool(name :: String.t(), state()) ::
+              {:ok, tool() | string_keyed() | nil, state()} | {:error, any(), state()}
 
   @doc """
   Handles a tool call.
@@ -680,8 +789,10 @@ defmodule Arbor.MCP.Server.Handler do
   # `@behaviour Arbor.MCP.Server.Handler` should annotate their GenServer callbacks
   # with `@impl GenServer` (or omit `@impl`), not `@impl true`.
 
-  # Optional callbacks with defaults provided in __using__.
+  # Optional callbacks. __using__ provides defaults for all of them except
+  # handle_get_tool/2, whose absence keeps the tools/list walk.
   @optional_callbacks [
+    handle_get_tool: 2,
     handle_list_resources: 2,
     handle_read_resource: 2,
     handle_list_prompts: 2,
@@ -723,60 +834,48 @@ defmodule Arbor.MCP.Server.Handler do
       def init(_args), do: {:ok, %{}}
 
       # Defaults for optional callbacks — user inline overrides work
-      # via defoverridable.
+      # via defoverridable. A default answers its method with -32601 (Method
+      # not found), which every server transport passes through, so clients
+      # can tell a method the handler doesn't serve from a failure.
       @impl Arbor.MCP.Server.Handler
-      def handle_list_resources(_cursor, state) do
-        {:error, "Resources not implemented", state}
-      end
+      def handle_list_resources(_cursor, state),
+        do: {:error, HandlerBridge.method_not_found("resources/list"), state}
 
       @impl Arbor.MCP.Server.Handler
-      def handle_read_resource(uri, state) do
-        {:error,
-         Arbor.MCP.Error.protocol_error(
-           Arbor.MCP.Protocol.ErrorCodes.resource_not_found(:modern),
-           "Resource not found: #{uri}"
-         ), state}
-      end
+      def handle_read_resource(_uri, state),
+        do: {:error, HandlerBridge.method_not_found("resources/read"), state}
 
       @impl Arbor.MCP.Server.Handler
-      def handle_list_prompts(_cursor, state) do
-        {:error, "Prompts not implemented", state}
-      end
+      def handle_list_prompts(_cursor, state),
+        do: {:error, HandlerBridge.method_not_found("prompts/list"), state}
 
       @impl Arbor.MCP.Server.Handler
-      def handle_get_prompt(name, _arguments, state) do
-        {:error, Arbor.MCP.Error.protocol_error(-32602, "Prompt not found: #{name}"), state}
-      end
+      def handle_get_prompt(_name, _arguments, state),
+        do: {:error, HandlerBridge.method_not_found("prompts/get"), state}
 
       @impl Arbor.MCP.Server.Handler
-      def handle_complete(_ref, _params, state) do
-        {:error, "Completion not implemented", state}
-      end
+      def handle_complete(_ref, _params, state),
+        do: {:error, HandlerBridge.method_not_found("completion/complete"), state}
 
       @impl Arbor.MCP.Server.Handler
-      def handle_create_message(_params, state) do
-        {:error, "Sampling not implemented", state}
-      end
+      def handle_create_message(_params, state),
+        do: {:error, HandlerBridge.method_not_found("sampling/createMessage"), state}
 
       @impl Arbor.MCP.Server.Handler
-      def handle_list_roots(state) do
-        {:error, "Roots not implemented", state}
-      end
+      def handle_list_roots(state),
+        do: {:error, HandlerBridge.method_not_found("roots/list"), state}
 
       @impl Arbor.MCP.Server.Handler
-      def handle_subscribe_resource(_uri, state) do
-        {:error, "Resource subscriptions not implemented", state}
-      end
+      def handle_subscribe_resource(_uri, state),
+        do: {:error, HandlerBridge.method_not_found("resources/subscribe"), state}
 
       @impl Arbor.MCP.Server.Handler
-      def handle_unsubscribe_resource(_uri, state) do
-        {:error, "Resource subscriptions not implemented", state}
-      end
+      def handle_unsubscribe_resource(_uri, state),
+        do: {:error, HandlerBridge.method_not_found("resources/unsubscribe"), state}
 
       @impl Arbor.MCP.Server.Handler
-      def handle_list_resource_templates(_cursor, state) do
-        {:error, "Resource templates not implemented", state}
-      end
+      def handle_list_resource_templates(_cursor, state),
+        do: {:error, HandlerBridge.method_not_found("resources/templates/list"), state}
 
       @impl Arbor.MCP.Server.Handler
       def handle_set_log_level(level, state) do
@@ -790,26 +889,24 @@ defmodule Arbor.MCP.Server.Handler do
         if @ex_mcp_task_store_opts do
           TaskServer.get(task_id, state, @ex_mcp_task_store_opts)
         else
-          {:error, "Tasks not implemented", state}
+          {:error, HandlerBridge.method_not_found("tasks/get"), state}
         end
       end
 
       @impl Arbor.MCP.Server.Handler
-      def handle_task_result(_task_id, state) do
-        {:error, "Tasks not implemented", state}
-      end
+      def handle_task_result(_task_id, state),
+        do: {:error, HandlerBridge.method_not_found("tasks/result"), state}
 
       @impl Arbor.MCP.Server.Handler
-      def handle_task_list(_cursor, state) do
-        {:error, "Tasks not implemented", state}
-      end
+      def handle_task_list(_cursor, state),
+        do: {:error, HandlerBridge.method_not_found("tasks/list"), state}
 
       @impl Arbor.MCP.Server.Handler
       def handle_task_cancel(task_id, state) do
         if @ex_mcp_task_store_opts do
           TaskServer.cancel(task_id, state, @ex_mcp_task_store_opts)
         else
-          {:error, "Tasks not implemented", state}
+          {:error, HandlerBridge.method_not_found("tasks/cancel"), state}
         end
       end
 
@@ -818,7 +915,7 @@ defmodule Arbor.MCP.Server.Handler do
         if @ex_mcp_task_store_opts do
           TaskServer.update(task_id, input_responses, state, @ex_mcp_task_store_opts)
         else
-          {:error, "Tasks not implemented", state}
+          {:error, HandlerBridge.method_not_found("tasks/update"), state}
         end
       end
 
@@ -872,6 +969,10 @@ defmodule Arbor.MCP.Server.Handler do
 
       def handle_call({:list_tools, cursor}, _from, state),
         do: HandlerBridge.list(__MODULE__, :handle_list_tools, [cursor], state)
+
+      # Sent only when the module exports handle_get_tool/2.
+      def handle_call({:get_tool, name}, _from, state),
+        do: HandlerBridge.call(__MODULE__, :handle_get_tool, [name], state)
 
       def handle_call({:call_tool, name, args}, _from, state),
         do: HandlerBridge.call(__MODULE__, :handle_call_tool, [name, args], state)

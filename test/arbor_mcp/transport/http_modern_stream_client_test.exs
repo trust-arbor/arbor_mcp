@@ -119,6 +119,43 @@ defmodule Arbor.MCP.Transport.HTTP.ModernStreamClientTest do
                    1_000
   end
 
+  # 2026-07-28: a method the server doesn't implement is a 404 whose body is
+  # the JSON-RPC error for the request, the request's answer as in a 200.
+  test "a 404 carrying the request's JSON-RPC error delivers that error" do
+    error = %{
+      "jsonrpc" => "2.0",
+      "id" => @request_id,
+      "error" => %{"code" => -32601, "message" => "Method not found: tools/call"}
+    }
+
+    bypass = Bypass.open()
+
+    Bypass.expect_once(bypass, "POST", "/mcp", fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.resp(404, Jason.encode!(error))
+    end)
+
+    assert {:ok, pid} = start_stream(bypass, [])
+    assert_receive {:modern_http_stream_message, ^pid, @request_id, ^error}, 1_000
+    send(pid, {:modern_http_stream_ack, self(), @request_id})
+    assert_receive {:modern_http_stream_finished, ^pid, @request_id}, 1_000
+    refute_received {:modern_http_stream_closed, ^pid, @request_id, _reason}
+  end
+
+  test "any other 404 stays an HTTP error" do
+    other = %{"jsonrpc" => "2.0", "id" => 7, "error" => %{"code" => -32601, "message" => "x"}}
+
+    for body <- ["", "Not Found", Jason.encode!(%{"error" => "Not found"}), Jason.encode!(other)] do
+      bypass = Bypass.open()
+      Bypass.expect_once(bypass, "POST", "/mcp", &Plug.Conn.resp(&1, 404, body))
+
+      assert {:ok, pid} = start_stream(bypass, [])
+      assert_receive {:modern_http_stream_closed, ^pid, @request_id, {:http_error, 404}}, 1_000
+      refute_received {:modern_http_stream_message, ^pid, @request_id, _message}
+    end
+  end
+
   test "a stalled consumer gets at most one complete SSE event before the stream closes" do
     bypass = Bypass.open()
 

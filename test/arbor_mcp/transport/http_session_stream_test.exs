@@ -5,6 +5,8 @@ defmodule Arbor.MCP.Transport.HTTPSessionStreamTest do
   # the stream closing, and stops when the server no longer offers it.
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias Arbor.MCP.Client.ConnectionManager
   alias Arbor.MCP.Transport.{HTTP, SSEClient}
 
@@ -85,6 +87,21 @@ defmodule Arbor.MCP.Transport.HTTPSessionStreamTest do
       assert {:error, {:sse_error, {:http_error, 404}}} = HTTP.receive_message(state)
     end
 
+    # The GET carries the session's Mcp-Session-Id, so its 404 means the
+    # server ended the session, as one for a POST does.
+    test "reports a 404 for the session's stream as the session's end",
+         %{state: state, sse: sse} do
+      state = %{state | session_id: "ended-session"}
+
+      send(self(), {:sse_error, sse, {:http_error, 404}})
+
+      assert {:error, {:session_expired, {:sse_error, {:http_error, 404}}}} =
+               HTTP.receive_message(state)
+
+      send(self(), {:sse_error, sse, {:http_error, 500}})
+      assert {:error, {:sse_error, {:http_error, 500}}} = HTTP.receive_message(state)
+    end
+
     # A 405 for the reopened GET: the SSE client gives up, so the reader must
     # stop rather than wait for events that won't come.
     test "stops when the server no longer offers the stream", %{state: state, sse: sse} do
@@ -113,6 +130,24 @@ defmodule Arbor.MCP.Transport.HTTPSessionStreamTest do
       assert :ok = ConnectionManager.receive_loop(self(), WithdrawnTransport, :withdrawn)
       assert_received {:transport_receiver_stopped, reader} when reader == self()
       refute_received {:transport_closed, _reason}
+    end
+
+    defmodule EndedSessionTransport do
+      def receive_message(:ended),
+        do: {:error, {:session_expired, {:sse_error, {:http_error, 404}}}}
+    end
+
+    # The server ending a session is no transport fault, so it isn't logged
+    # as one: the client starts a new session.
+    test "hands the client a session's end without logging a transport error" do
+      log =
+        capture_log(fn ->
+          assert :ok = ConnectionManager.receive_loop(self(), EndedSessionTransport, :ended)
+        end)
+
+      assert_received {:transport_closed, {:session_expired, {:sse_error, {:http_error, 404}}}}
+
+      refute log =~ "Transport error in receive loop"
     end
   end
 

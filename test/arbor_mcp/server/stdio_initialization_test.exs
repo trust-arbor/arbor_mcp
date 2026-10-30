@@ -113,7 +113,8 @@ defmodule Arbor.MCP.Server.StdioInitializationTest do
 
     caller =
       spawn(fn ->
-        {:ok, config, deadline} = Initialization.configure(opts)
+        runtime_opts = Keyword.take(opts, Arbor.MCP.Server.Runtime.Config.option_keys())
+        {:ok, config, deadline} = Initialization.configure(runtime_opts)
         {:ok, authority} = OutputAuthority.default(deadline)
         {:ok, lease} = OutputAuthority.acquire(authority, output, config, deadline)
 

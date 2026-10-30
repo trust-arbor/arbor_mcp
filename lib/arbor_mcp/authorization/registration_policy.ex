@@ -6,11 +6,12 @@ defmodule Arbor.MCP.Authorization.RegistrationPolicy do
   Document, deprecated Dynamic Client Registration, then an actionable error.
   A metadata URL is never invented and `application_type` is never inferred.
 
-  For modern MCP, pre-registered credentials also require a
-  `:credential_issuer` configuration value. It is compared exactly with the
-  discovered authorization-server issuer before any secret reference is
-  resolved. Client ID Metadata Document identifiers remain portable across
-  authorization servers.
+  Pre-registered credentials require a `:credential_issuer` configuration
+  value on every protocol version, including the default legacy revision
+  (`2025-11-25`) and the `client_id` / `client_secret` compatibility aliases.
+  It is compared exactly with the discovered authorization-server issuer
+  before any secret reference is resolved. Client ID Metadata Document
+  identifiers remain portable across authorization servers.
 
   Existing `client_id`, `client_secret`, and `client_metadata_url` keys remain
   accepted as compatibility aliases for the explicit `:client_registration`
@@ -18,7 +19,6 @@ defmodule Arbor.MCP.Authorization.RegistrationPolicy do
   """
 
   alias Arbor.MCP.Authorization.{ClientIdMetadata, Issuer}
-  alias Arbor.MCP.Internal.VersionRegistry
 
   @type application_type :: :native | :web
   @type secret_ref ::
@@ -101,20 +101,9 @@ defmodule Arbor.MCP.Authorization.RegistrationPolicy do
     end
   end
 
-  defp validate_pre_registered_issuer(discovered_issuer, config) do
-    if explicit_pre_registration?(config) or VersionRegistry.modern?(config[:protocol_version]) do
-      {:error, {:pre_registered_credential_issuer_required, discovered_issuer}}
-    else
-      :ok
-    end
+  defp validate_pre_registered_issuer(discovered_issuer, _config) do
+    {:error, {:pre_registered_credential_issuer_required, discovered_issuer}}
   end
-
-  defp explicit_pre_registration?(%{
-         client_registration: {:pre_registered, _client_id, _secret_ref}
-       }),
-       do: true
-
-  defp explicit_pre_registration?(_config), do: false
 
   defp select_cimd(client_id_url, as_metadata, config) do
     with true <- ClientIdMetadata.supported?(as_metadata),

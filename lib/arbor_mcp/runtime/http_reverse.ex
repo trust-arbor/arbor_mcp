@@ -257,8 +257,9 @@ defmodule Arbor.MCP.Server.Runtime.HTTPReverse do
   defp request({:legacy_input, "roots/list", _params, timeout}, deadline),
     do: request({:list_roots, timeout}, deadline)
 
+  # Validation that runs out of time is the :timeout an expired request is.
   defp request({:elicit, params, _timeout}, deadline) do
-    with {:ok, normalized} <- Arbor.MCP.Protocol.Elicitation.validate(params, deadline),
+    with {:ok, normalized} <- Arbor.MCP.Protocol.Elicitation.validate_reverse(params, deadline),
          do: {:ok, "elicitation/create", normalized}
   end
 

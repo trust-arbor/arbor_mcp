@@ -2,6 +2,7 @@ defmodule Arbor.MCP.Server.Runtime.Config do
   @moduledoc false
 
   alias Arbor.MCP.Server.HTTP.Config, as: HTTPConfig
+  alias Arbor.MCP.Server.RequestState
   alias Arbor.MCP.Server.Runtime.{OwnedChildConfig, ServiceConfig}
   @timer_limit 4_294_967_295
 
@@ -12,6 +13,8 @@ defmodule Arbor.MCP.Server.Runtime.Config do
             dispatcher: Arbor.MCP.Server.Dispatch,
             cancellation_tracker: nil,
             dispatch_opts: [],
+            mrtr: false,
+            request_state: nil,
             middleware: [],
             cache_hints: %{},
             services: nil,
@@ -45,11 +48,12 @@ defmodule Arbor.MCP.Server.Runtime.Config do
             shutdown_timeout_ms: 5_000
 
   def new(opts) when is_list(opts) do
-    opts = http_service_defaults(opts)
-    keys = Map.keys(Map.from_struct(%__MODULE__{}))
-    config = opts |> Keyword.take(keys) |> then(&struct(__MODULE__, &1)) |> put_concurrency()
-
-    with {:ok, http} <- http_config(opts),
+    with :ok <- validate_options(opts),
+         opts = http_service_defaults(opts),
+         keys = Map.keys(Map.from_struct(%__MODULE__{})),
+         config = opts |> Keyword.take(keys) |> then(&struct(__MODULE__, &1)) |> put_concurrency(),
+         {:ok, http} <- http_config(opts),
+         {:ok, config} <- put_mrtr(config, opts),
          :ok <- validate_name(Keyword.get(opts, :name)),
          :ok <- validate_legacy_services(opts),
          :ok <- validate_handler(config),
@@ -65,6 +69,57 @@ defmodule Arbor.MCP.Server.Runtime.Config do
       {:ok, %{config | http: http, services: services, store_children: stores}}
     end
   end
+
+  def option_keys do
+    Map.keys(Map.from_struct(%__MODULE__{})) ++
+      [:name, :id, :edge, :persistence_key, :require_replay_protection] ++
+      HTTPConfig.option_keys()
+  end
+
+  defp validate_options(opts) do
+    if Keyword.keyword?(opts) do
+      case Enum.uniq(Keyword.keys(opts)) -- option_keys() do
+        [] -> :ok
+        unknown -> {:error, {:unknown_runtime_options, Enum.uniq(unknown)}}
+      end
+    else
+      {:error, :invalid_runtime_options}
+    end
+  end
+
+  defp put_mrtr(config, opts) do
+    http_opts =
+      if config.transport in [:http, :mounted_http], do: Keyword.get(opts, :http, []), else: []
+
+    if Keyword.keyword?(http_opts) do
+      opts = Keyword.merge(opts, http_opts)
+      mrtr = Keyword.get(opts, :mrtr, false)
+      request_state = Keyword.get(opts, :request_state, config.dispatch_opts[:request_state])
+      validate_mrtr(config, mrtr, request_state)
+    else
+      {:error, :invalid_http_options}
+    end
+  end
+
+  defp validate_mrtr(config, mrtr, request_state) when mrtr in [true, false] do
+    result =
+      if mrtr, do: RequestState.validate_configuration(request_state: request_state), else: :ok
+
+    case result do
+      :ok ->
+        dispatch_opts =
+          if is_nil(request_state),
+            do: config.dispatch_opts,
+            else: Keyword.put(config.dispatch_opts, :request_state, request_state)
+
+        {:ok, %{config | mrtr: mrtr, request_state: request_state, dispatch_opts: dispatch_opts}}
+
+      {:error, reason} ->
+        {:error, {:mrtr_configuration_error, reason}}
+    end
+  end
+
+  defp validate_mrtr(_config, _mrtr, _request_state), do: {:error, :invalid_mrtr_option}
 
   defp http_service_defaults(opts) do
     if Keyword.get(opts, :transport) in [:http, :mounted_http],

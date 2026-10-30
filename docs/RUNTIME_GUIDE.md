@@ -115,9 +115,20 @@ These are separate settings, not interchangeable timeouts:
 | `max_queue` | 128 | Queued data work beyond active callback capacity |
 | `max_request_bytes` | 1,000,000 | Per-request retained input limit |
 | `max_pending_bytes` | 8,000,000 | Aggregate admitted input/context/options budget |
+| `max_control_queue` | 32 | Retained control permits |
+| `max_control_bytes` | 65,536 | Retained control bytes |
+| `max_output_frame_bytes` | 1,048,576 | One encoded output frame |
+| `max_output_term_bytes` | 1,048,576 | One retained output term |
 | `max_output_frames` | 128 | Retained output frame count |
 | `max_output_bytes` | 4,194,304 | Aggregate retained output budget |
+| `max_output_scope_bytes` | 65,536 | Aggregate scope and pending-control metadata budget |
+| `max_http_writers` | 128 | Concurrent HTTP writers |
+| `max_http_writer_metadata_bytes` | 65,536 | Retained HTTP writer metadata byte budget |
+| `max_http_io_frames` | 128 | Retained HTTP IO frame count |
+| `max_http_io_bytes` | 4,194,304 | Aggregate retained HTTP IO bytes |
+| `max_http_io_frame_bytes` | 1,048,576 | One retained HTTP IO frame |
 | `output_timeout_ms` | 5,000 ms | Output lifetime budget |
+| `cancel_grace_ms` | 100 ms | Cooperative callback cleanup before task kill |
 | `shutdown_timeout_ms` | 5,000 ms | One budget for Runtime shutdown |
 
 Admission fails explicitly when capacity is exhausted. Legacy batches consume
@@ -131,6 +142,17 @@ and cancellation cannot undo external effects already performed by a callback.
 
 These limits cover library-owned work. They do not bound arbitrary handler
 state, raw Erlang sends, peer mailboxes, external processes or OS buffers.
+
+A cancelled callback receives `{:arbor_mcp_cancelled, token, reason}`, with
+`:request_cancelled`, `:owner_down`, or `:handler_timeout` as the reason. It
+may poll `Context.cancelled?/0` or handle that message while finishing cleanup.
+After `cancel_grace_ms`, the Runtime kills a callback that has not stopped.
+This applies to every Runtime-backed transport and cannot undo external effects.
+
+For MRTR, configure `mrtr: true` and optionally `request_state: [...]` on the
+Runtime itself. Missing or invalid key rings fail startup with
+`{:error, {:mrtr_configuration_error, reason}}`, including mounted HTTP.
+Unknown Runtime option names fail with `{:unknown_runtime_options, keys}`.
 
 ## Connections and stores
 

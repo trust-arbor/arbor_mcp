@@ -195,11 +195,33 @@ defmodule Arbor.MCP.HttpPlug.RuntimeWriter do
     end
   end
 
+  # A frame on a request's SSE response stream, which a keepalive or an
+  # earlier frame may already have started. A chunk the adapter refuses means
+  # the client has gone, which is how a modern client cancels: the frame is
+  # completed as failed, so its sender sees the stream closed, and
+  # {:closed, conn} carries the chunked conn back instead of raising, as for a
+  # failed keepalive. A frame refused before IO, or a write that raised, is
+  # not evidence that the client left, and still raises.
+  def stream_frame(conn, effect, wire) do
+    case perform(conn, effect, wire, &write_frame/2) do
+      {:closed, conn} -> {:closed, conn}
+      conn -> {:ok, conn}
+    end
+  end
+
+  defp write_frame(conn, wire) do
+    conn = if conn.state == :chunked, do: conn, else: Plug.Conn.send_chunked(conn, 200)
+
+    case Plug.Conn.chunk(conn, wire) do
+      {:ok, conn} -> conn
+      {:error, _reason} -> {:closed, conn}
+    end
+  end
+
   defp write_checked_out(conn, effect, wire, write) do
     result = write.(conn, wire)
-    outcome = if match?({:error, _}, result), do: {:error, :http_write_failed}, else: :ok
-    HTTPWriterRegistry.complete(effect, outcome)
-    if outcome == :ok, do: result, else: raise(AdmissionError)
+    HTTPWriterRegistry.complete(effect, write_outcome(result))
+    if match?({:error, _}, result), do: raise(AdmissionError), else: result
   rescue
     _exception ->
       HTTPWriterRegistry.complete(effect, {:error, :http_write_uncertain})
@@ -209,6 +231,10 @@ defmodule Arbor.MCP.HttpPlug.RuntimeWriter do
       HTTPWriterRegistry.complete(effect, {:error, :http_write_uncertain})
       raise AdmissionError
   end
+
+  defp write_outcome({:error, _reason}), do: {:error, :http_write_failed}
+  defp write_outcome({:closed, _conn}), do: {:error, :http_write_failed}
+  defp write_outcome(_written), do: :ok
 
   def retire(%{private: %{arbor_mcp_http_binding: binding}}),
     do: HTTPWriterRegistry.retire(binding, :http_socket_returned)

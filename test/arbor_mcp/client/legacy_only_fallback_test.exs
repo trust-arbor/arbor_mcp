@@ -290,7 +290,7 @@ defmodule Arbor.MCP.Client.LegacyOnlyFallbackTest do
                  accepts: @legacy_versions
                )
 
-      assert reason =~ "{:era_probe_failed, {:no_mutually_supported_modern_version, "
+      assert {:era_probe_failed, {:no_mutually_supported_modern_version, _}} = reason
       assert_receive {:scripted, "server/discover", "2026-07-28"}
       refute_received {:scripted, "initialize", _version}
     end
@@ -318,7 +318,7 @@ defmodule Arbor.MCP.Client.LegacyOnlyFallbackTest do
                  accepts: []
                )
 
-      assert reason =~ "{:initialize_and_era_probe_failed, "
+      assert {:initialize_and_era_probe_failed, %{initialize: _, probe: _}} = reason
       assert_receive {:scripted, "initialize", "2025-11-25"}
       assert_receive {:scripted, "server/discover", "2026-07-28"}
       refute_received {:scripted, "initialize", _version}
@@ -347,7 +347,7 @@ defmodule Arbor.MCP.Client.LegacyOnlyFallbackTest do
                    accepts: @legacy_versions
                  )
 
-        assert reason =~ "{:era_probe_failed, {:no_mutually_supported_modern_version, "
+        assert {:era_probe_failed, {:no_mutually_supported_modern_version, _}} = reason
         assert_receive {:scripted, "server/discover", "2026-07-28"}
         assert_receive {:scripted, "server/discover", "2026-07-28"}
         refute_received {:scripted, "initialize", _version}
@@ -365,8 +365,12 @@ defmodule Arbor.MCP.Client.LegacyOnlyFallbackTest do
                    accepts: @legacy_versions
                  )
 
-        assert reason =~ "{:era_probe_failed, {:no_mutually_supported_modern_version, "
-        assert reason =~ inspect(unquote(versions))
+        assert {:era_probe_failed, {:no_mutually_supported_modern_version, _}} = reason
+
+        assert {:era_probe_failed, {:no_mutually_supported_modern_version, %{server: versions}}} =
+                 reason
+
+        assert versions == unquote(versions)
         refute_received {:scripted, "initialize", _version}
       end
     end
@@ -384,7 +388,7 @@ defmodule Arbor.MCP.Client.LegacyOnlyFallbackTest do
                    era_cache_key: cache_key
                  )
 
-        assert reason =~ "{:pinned_modern_era_probe_failed, "
+        assert {:pinned_modern_era_probe_failed, %{probe: _}} = reason
         assert_receive {:scripted, "server/discover", "2026-07-28"}
         refute_received {:scripted, "initialize", _version}
         assert {:ok, %{era: :modern}} = EraCache.lookup(identity)
@@ -490,7 +494,7 @@ defmodule Arbor.MCP.Client.LegacyOnlyFallbackTest do
           assert {:error, {:transport_connect_failed, reason}} =
                    start_client(mode, http400(unquote(id)))
 
-          assert reason =~ "{:http_error, 400, "
+          assert {:http_error, 400, _} = reason
           assert_receive {:http400, "initialize"}
           refute_received {:http400, "server/discover"}
         end
@@ -537,8 +541,9 @@ defmodule Arbor.MCP.Client.LegacyOnlyFallbackTest do
       {:error, reason} ->
         assert mode == :modern_only, "#{mode}: #{inspect(reason)}"
         assert {:transport_connect_failed, detail} = reason
-        assert detail =~ "{:era_probe_failed, {:no_mutually_supported_modern_version, "
-        assert detail =~ inspect(@legacy_versions)
+
+        assert {:era_probe_failed,
+                {:no_mutually_supported_modern_version, %{server: @legacy_versions}}} = detail
     end
   end
 

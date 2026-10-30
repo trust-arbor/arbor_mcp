@@ -148,21 +148,85 @@ defmodule Arbor.MCP.Authorization.RegistrationPolicyTest do
              )
   end
 
-  test "legacy client keys remain compatibility aliases" do
-    assert {:ok, {:pre_registered, selected}} =
-             RegistrationPolicy.select(cimd_and_dcr_metadata(), %{
+  test "legacy pre-registered secrets are never resolved for an attacker-controlled issuer" do
+    attacker = "https://evil.example"
+    legitimate = "https://auth.example"
+    secret = "pre-registered-secret"
+    test_process = self()
+
+    attacker_metadata = %{
+      "issuer" => attacker,
+      "token_endpoint" => attacker <> "/token",
+      "grant_types_supported" => ["client_credentials"]
+    }
+
+    secret_ref = fn ->
+      send(test_process, :secret_resolved)
+      secret
+    end
+
+    # Default legacy revision (2025-11-25) and the compatibility aliases:
+    # without credential_issuer the secret used to travel with whatever issuer
+    # discovered metadata named, including an attacker-controlled one.
+    unbound = %{
+      client_id: "legacy-client",
+      client_secret: secret_ref,
+      protocol_version: "2025-11-25"
+    }
+
+    assert {:error, {:pre_registered_credential_issuer_required, ^attacker}} =
+             RegistrationPolicy.select(attacker_metadata, unbound)
+
+    refute_received :secret_resolved
+
+    assert {:error, {:pre_registered_credential_issuer_required, ^attacker}} =
+             RegistrationPolicy.select(
+               attacker_metadata,
+               unbound |> Map.delete(:protocol_version) |> Map.put(:client_registration, :auto)
+             )
+
+    refute_received :secret_resolved
+
+    assert {:error, {:pre_registered_credential_issuer_required, ^attacker}} =
+             RegistrationPolicy.select(attacker_metadata, %{
                client_id: "legacy-client",
-               client_secret: "legacy-secret"
+               client_secret: secret,
+               protocol_version: "2025-11-25"
+             })
+
+    refute_received :secret_resolved
+
+    assert {:ok, {:pre_registered, selected}} =
+             RegistrationPolicy.select(
+               Map.put(attacker_metadata, "issuer", legitimate),
+               Map.put(unbound, :credential_issuer, legitimate)
+             )
+
+    assert selected.issuer == legitimate
+    assert selected.client_id == "legacy-client"
+    assert selected.client_secret == secret
+    assert_received :secret_resolved
+  end
+
+  test "legacy client keys remain compatibility aliases" do
+    metadata = Map.put(cimd_and_dcr_metadata(), "issuer", "https://auth.example")
+
+    assert {:ok, {:pre_registered, selected}} =
+             RegistrationPolicy.select(metadata, %{
+               client_id: "legacy-client",
+               client_secret: "legacy-secret",
+               credential_issuer: "https://auth.example"
              })
 
     assert selected.client_id == "legacy-client"
     assert selected.client_secret == "legacy-secret"
 
     assert {:ok, {:pre_registered, selected}} =
-             RegistrationPolicy.select(cimd_and_dcr_metadata(), %{
+             RegistrationPolicy.select(metadata, %{
                client_registration: :auto,
                client_id: "legacy-client",
                client_secret: "legacy-secret",
+               credential_issuer: "https://auth.example",
                client_metadata_url: @cimd_url,
                application_type: :native,
                redirect_port: 8_080
