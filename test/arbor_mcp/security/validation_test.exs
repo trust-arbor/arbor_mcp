@@ -96,6 +96,21 @@ defmodule Arbor.MCP.Security.ValidationTest do
       end
     end
 
+    test "rejects invalid ports and URL userinfo" do
+      for host <- [
+            "api.example.com:0",
+            "api.example.com:65536",
+            "https://api.example.com:65536/path",
+            "https://user@api.example.com/path",
+            "https://user:secret@api.example.com/path",
+            "https://user@127.0.0.1/path"
+          ] do
+        assert {:error, :host_not_allowed} =
+                 Validation.validate_request([{"host", host}], @allowed_api),
+               host
+      end
+    end
+
     # Guard: IPv4-mapped public addresses must stay off the loopback path.
     test "guard: IPv4-mapped public addresses are not loopback" do
       assert {:error, :host_not_allowed} =

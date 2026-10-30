@@ -26,11 +26,14 @@ defmodule Arbor.MCP.Content.SchemaInliner do
   end
 
   defp index(schema, documents) do
-    keys =
+    {keys, _used, _next_index} =
       documents
       |> Enum.sort_by(fn {uri, _schema} -> uri end)
-      |> Enum.with_index()
-      |> Map.new(fn {{uri, _schema}, index} -> {location(uri), remote_key(index)} end)
+      |> Enum.reduce({%{}, reserved_definition_keys(schema), 0}, fn {uri, _schema},
+                                                                    {keys, used, index} ->
+        {key, next_index} = next_remote_key(index, used)
+        {Map.put(keys, location(uri), key), MapSet.put(used, key), next_index}
+      end)
 
     anchors =
       Map.new(documents, fn {uri, document} ->
@@ -41,6 +44,21 @@ defmodule Arbor.MCP.Content.SchemaInliner do
   end
 
   defp remote_key(index), do: "__remote_#{index}"
+
+  defp reserved_definition_keys(schema) do
+    case Map.get(schema, "definitions") do
+      definitions when is_map(definitions) -> MapSet.new(Map.keys(definitions))
+      _other -> MapSet.new()
+    end
+  end
+
+  defp next_remote_key(index, used) do
+    key = remote_key(index)
+
+    if MapSet.member?(used, key),
+      do: next_remote_key(index + 1, used),
+      else: {key, index + 1}
+  end
 
   defp index_local(map, scope, path, named_keys?, keys, anchors)
        when is_map(map) and not is_struct(map) do
@@ -262,6 +280,7 @@ defmodule Arbor.MCP.Content.SchemaInliner do
     segment
     |> String.replace("~", "~0")
     |> String.replace("/", "~1")
+    |> String.replace("%", "%25")
   end
 
   defp decode_pointer_segment(segment) do

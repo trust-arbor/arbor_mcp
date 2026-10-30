@@ -34,6 +34,19 @@ defmodule Arbor.MCP.Content.SchemaPolicyTest do
       assert {:error, _errors} = SchemaPolicy.validate(%{"name" => 42}, resolved)
     end
 
+    test "resolves a local anchor nested under an absolute root identifier" do
+      schema = %{
+        "$schema" => "http://json-schema.org/draft-07/schema#",
+        "$id" => "https://schemas.example.com/root.json",
+        "definitions" => %{"inner" => %{"$anchor" => "word", "type" => "integer"}},
+        "$ref" => "#word"
+      }
+
+      assert {:ok, resolved} = SchemaPolicy.compile(schema)
+      assert :ok = SchemaPolicy.validate(42, resolved)
+      assert {:error, _errors} = SchemaPolicy.validate("BAD", resolved)
+    end
+
     test "rejects network, file, and relative references without revealing their values" do
       references = [
         "https://schemas.example.test/secret.json",
@@ -209,6 +222,26 @@ defmodule Arbor.MCP.Content.SchemaPolicyTest do
           refute_receive {:global_resolver_called, _requested},
                          50,
                          "#{label} reached the global resolver with an unrelated allowlist"
+        end
+      end)
+    end
+
+    test "extension identifiers cannot scope a fragment ref into the global resolver" do
+      with_global_resolver_spy(fn ->
+        for {draft, identifier} <- [
+              {"http://json-schema.org/draft-04/schema#", "id"},
+              {"http://json-schema.org/draft-07/schema#", "$id"}
+            ] do
+          schema = %{
+            "$schema" => draft,
+            "extension" => %{
+              identifier => "ftp://127.0.0.1:4000/private.json#anchor",
+              "x" => %{"$ref" => "#"}
+            }
+          }
+
+          assert {:error, :network_ref_forbidden} = SchemaPolicy.compile(schema)
+          refute_receive {:global_resolver_called, _requested}
         end
       end)
     end

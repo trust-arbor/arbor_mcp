@@ -57,6 +57,81 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolverTest do
       assert {:error, _errors} = SchemaPolicy.validate("42", resolved)
     end
 
+    test "keeps user definitions distinct from inlined remote documents" do
+      url = "https://schemas.example.com/word.json"
+      {opts, _agent} = resolver_options(%{url => response(~s({"type":"string"}))})
+
+      for {definitions, reference} <- [
+            {%{"__remote_0" => %{"type" => "integer"}}, "__remote_0"},
+            {%{"__remote_0" => %{"type" => "string"}, "__remote_1" => %{"type" => "integer"}},
+             "__remote_1"}
+          ] do
+        schema = %{
+          "$schema" => "http://json-schema.org/draft-07/schema#",
+          "definitions" => definitions,
+          "allOf" => [
+            %{"$ref" => "#/definitions/#{reference}"},
+            %{"$ref" => url}
+          ]
+        }
+
+        assert {:ok, resolved} = SchemaPolicy.compile(schema, opts)
+        assert {:error, _errors} = SchemaPolicy.validate("BAD", resolved)
+      end
+    end
+
+    test "preserves percent escapes when inlining remote JSON pointers" do
+      url = "https://schemas.example.com/pointers.json"
+
+      remote = %{
+        "definitions" => %{
+          "a/b" => %{"type" => "string"},
+          "a%2Fb" => %{"type" => "integer"}
+        }
+      }
+
+      {opts, _agent} = resolver_options(%{url => response(Jason.encode!(remote))})
+
+      for fragment <- ["a~1b", "a%2Fb"] do
+        schema = %{
+          "$schema" => "http://json-schema.org/draft-07/schema#",
+          "$ref" => url <> "#/definitions/" <> fragment
+        }
+
+        assert {:ok, resolved} = SchemaPolicy.compile(schema, opts)
+        assert :ok = SchemaPolicy.validate("BAD", resolved)
+        assert {:error, _errors} = SchemaPolicy.validate(42, resolved)
+      end
+
+      schema = %{
+        "$schema" => "http://json-schema.org/draft-07/schema#",
+        "$ref" => url <> "#/definitions/a%252Fb"
+      }
+
+      assert {:ok, resolved} = SchemaPolicy.compile(schema, opts)
+      assert :ok = SchemaPolicy.validate(42, resolved)
+      assert {:error, _errors} = SchemaPolicy.validate("BAD", resolved)
+    end
+
+    test "rejects dynamic keywords in fetched documents for both backends" do
+      url = "https://schemas.example.com/dynamic.json"
+
+      for draft <- [
+            "http://json-schema.org/draft-07/schema#",
+            "https://json-schema.org/draft/2020-12/schema"
+          ],
+          remote <- [
+            %{"$dynamicAnchor" => "node", "type" => "string"},
+            %{"$dynamicAnchor" => "node", "$dynamicRef" => "#node", "type" => "string"},
+            %{"$defs" => %{"inner" => %{"$dynamicRef" => "#node"}}, "type" => "string"}
+          ] do
+        {opts, _agent} = resolver_options(%{url => response(Jason.encode!(remote))})
+        schema = %{"$schema" => draft, "$ref" => url}
+
+        assert {:error, :network_ref_forbidden} = SchemaPolicy.compile(schema, opts)
+      end
+    end
+
     test "keeps the requested URI as an alias after an allowlisted redirect" do
       routes = %{
         "https://schemas.example.com/old.json" =>

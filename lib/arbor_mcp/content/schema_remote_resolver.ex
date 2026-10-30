@@ -139,6 +139,7 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
              false,
              local_pointer_targets(identified_schema)
            ),
+         :ok <- reject_fetched_dynamic_keywords(schema),
          :ok <- preflight.(schema, policy_opts),
          {:ok, nested_references} <- referenced_documents(schema, response.final_uri) do
       next_state =
@@ -333,9 +334,6 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   end
 
   defp normalize_references(value, _base_uri, _named_keys?, _targets), do: {:ok, value}
-
-  defp normalize_reference(reference, _scope) when not is_binary(reference),
-    do: {:ok, reference}
 
   defp normalize_reference("#" <> _fragment = reference, _scope), do: {:ok, reference}
   defp normalize_reference("", _scope), do: {:ok, ""}
@@ -581,6 +579,30 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
       _other -> network_error(:invalid_json_schema)
     end
   end
+
+  defp reject_fetched_dynamic_keywords(map) when is_map(map) do
+    if Map.has_key?(map, "$dynamicAnchor") or Map.has_key?(map, "$dynamicRef") do
+      {:error, :network_ref_forbidden}
+    else
+      Enum.reduce_while(map, :ok, fn {_key, value}, :ok ->
+        case reject_fetched_dynamic_keywords(value) do
+          :ok -> {:cont, :ok}
+          error -> {:halt, error}
+        end
+      end)
+    end
+  end
+
+  defp reject_fetched_dynamic_keywords(list) when is_list(list) do
+    Enum.reduce_while(list, :ok, fn value, :ok ->
+      case reject_fetched_dynamic_keywords(value) do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp reject_fetched_dynamic_keywords(_value), do: :ok
 
   defp seal_local(schema, policy_opts, preflight) do
     targets = local_pointer_targets(schema)

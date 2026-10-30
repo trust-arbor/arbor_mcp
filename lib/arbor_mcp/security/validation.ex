@@ -229,9 +229,10 @@ defmodule Arbor.MCP.Security.Validation do
 
     case uri.host do
       hostname when is_binary(hostname) and hostname != "" ->
-        if host == format_authority(hostname, uri.port),
-          do: {:ok, hostname},
-          else: :error
+        if is_nil(uri.userinfo) and valid_port?(uri.port) and
+             host == format_authority(hostname, uri.port),
+           do: {:ok, hostname},
+           else: :error
 
       _missing ->
         :error
@@ -245,7 +246,7 @@ defmodule Arbor.MCP.Security.Validation do
       hostname when is_binary(hostname) and hostname != "" ->
         authority = url_authority(url)
 
-        if is_binary(authority) and
+        if is_nil(uri.userinfo) and valid_port?(uri.port) and is_binary(authority) and
              (authority == format_authority(hostname, uri.port) or
                 authority == format_authority(hostname, nil)) do
           {:ok, hostname}
@@ -264,19 +265,14 @@ defmodule Arbor.MCP.Security.Validation do
         rest
         |> String.split(["/", "?", "#"], parts: 2)
         |> hd()
-        |> strip_userinfo()
 
       _missing ->
         nil
     end
   end
 
-  defp strip_userinfo(authority) do
-    case String.split(authority, "@") do
-      [_userinfo, hostport] -> hostport
-      [hostport] -> hostport
-    end
-  end
+  defp valid_port?(nil), do: true
+  defp valid_port?(port) when is_integer(port), do: port in 1..65_535
 
   defp format_authority(host, port) do
     name = if String.contains?(host, ":"), do: "[" <> host <> "]", else: host
