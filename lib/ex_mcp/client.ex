@@ -1234,6 +1234,10 @@ defmodule ExMCP.Client do
     {:transport_connect_failed, details}
   end
 
+  # Its reason is already free of the provider's config.
+  defp normalize_connection_error({:auth_provider_init_failed, _provider, _reason} = reason),
+    do: {:transport_connect_failed, reason}
+
   defp normalize_connection_error({:method_not_found, message}) do
     {:initialize_error, %{"code" => ErrorCodes.method_not_found(), "message" => message}}
   end
