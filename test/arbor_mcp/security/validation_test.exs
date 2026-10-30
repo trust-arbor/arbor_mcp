@@ -117,6 +117,36 @@ defmodule Arbor.MCP.Security.ValidationTest do
                Validation.validate_request([{"host", "[::ffff:8.8.8.8]:8080"}], @allowed_api)
     end
 
+    test "rejects scheme-smuggled hosts and non-canonical loopback spellings" do
+      for host <- [
+            "evil.com://api.example.com",
+            "evil.com://127.0.0.1",
+            "attacker.example://0x7f.0.0.1",
+            "http://0x7f.0.0.1",
+            "0x7f.0.0.1",
+            "127.1",
+            "0177.0.0.1",
+            "2130706433",
+            "127.00.0.1"
+          ] do
+        assert {:error, :host_not_allowed} =
+                 Validation.validate_request([{"host", host}], @allowed_api),
+               host
+      end
+    end
+
+    test "accepts an http or https request-target whose host is allowed or canonical loopback" do
+      assert :ok =
+               Validation.validate_request(
+                 [{"host", "https://api.example.com/path"}],
+                 @allowed_api
+               )
+
+      assert :ok = Validation.validate_request([{"host", "http://127.0.0.1"}], @allowed_api)
+      assert :ok = Validation.validate_request([{"host", "127.0.0.1"}], @allowed_api)
+      assert :ok = Validation.validate_request([{"host", "127.0.0.2"}], @allowed_api)
+    end
+
     test "matches allowed hosts exactly after stripping a port" do
       assert :ok =
                Validation.validate_request([{"host", "api.example.com"}], @allowed_api)

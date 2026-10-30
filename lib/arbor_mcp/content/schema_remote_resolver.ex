@@ -308,8 +308,6 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   defp normalize_references(map, base_uri, named_keys?, targets)
 
   defp normalize_references(map, base_uri, named_keys?, targets) when is_map(map) do
-    targets = targets || MapSet.new()
-
     with {:ok, scope} <- map_scope(map, base_uri, named_keys?) do
       Enum.reduce_while(map, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
         normalize_entry(key, value, scope, acc, named_keys?, targets)
@@ -318,8 +316,6 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   end
 
   defp normalize_references(list, base_uri, _named_keys?, targets) when is_list(list) do
-    targets = targets || MapSet.new()
-
     list
     |> Enum.reduce_while({:ok, []}, fn value, {:ok, acc} ->
       case normalize_references(value, base_uri, false, targets) do
@@ -347,8 +343,6 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   defp walk_references(map, base_uri, references, named_keys?, targets)
 
   defp walk_references(map, base_uri, references, named_keys?, targets) when is_map(map) do
-    targets = targets || MapSet.new()
-
     with {:ok, scope} <- map_scope(map, base_uri, named_keys?) do
       Enum.reduce_while(map, {:ok, references}, fn {key, value}, {:ok, acc} ->
         walk_entry(key, value, scope, acc, named_keys?, targets)
@@ -357,8 +351,6 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   end
 
   defp walk_references(list, base_uri, references, _named_keys?, targets) when is_list(list) do
-    targets = targets || MapSet.new()
-
     Enum.reduce_while(list, {:ok, references}, fn value, {:ok, acc} ->
       case walk_references(value, base_uri, acc, false, targets) do
         {:ok, next_acc} -> {:cont, {:ok, next_acc}}
@@ -427,88 +419,7 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
     end
   end
 
-  defp local_pointer_targets(root) do
-    root
-    |> collect_ref_strings([])
-    |> Enum.reduce(MapSet.new(), fn ref, acc ->
-      case pointer_target(root, ref) do
-        {:ok, target} -> MapSet.put(acc, target)
-        :error -> acc
-      end
-    end)
-  end
-
-  defp collect_ref_strings(map, acc) when is_map(map) and not is_struct(map) do
-    acc =
-      Enum.reduce(@reference_keywords, acc, fn key, acc ->
-        case Map.get(map, key) do
-          ref when is_binary(ref) -> [ref | acc]
-          _other -> acc
-        end
-      end)
-
-    Enum.reduce(map, acc, fn {_key, value}, acc -> collect_ref_strings(value, acc) end)
-  end
-
-  defp collect_ref_strings(list, acc) when is_list(list) do
-    Enum.reduce(list, acc, fn value, acc -> collect_ref_strings(value, acc) end)
-  end
-
-  defp collect_ref_strings(_value, acc), do: acc
-
-  defp pointer_target(root, "#"), do: {:ok, root}
-
-  defp pointer_target(root, "#" <> fragment) do
-    if String.starts_with?(fragment, "/") do
-      follow_pointer(root, fragment)
-    else
-      :error
-    end
-  end
-
-  defp pointer_target(root, ref) when is_binary(ref) do
-    case URI.parse(ref) do
-      %URI{scheme: nil, host: nil, path: path, fragment: fragment}
-      when path in [nil, ""] and is_binary(fragment) ->
-        pointer_target(root, "#" <> fragment)
-
-      _other ->
-        :error
-    end
-  end
-
-  defp pointer_target(_root, _ref), do: :error
-
-  defp follow_pointer(node, pointer) do
-    pointer
-    |> String.split("/")
-    |> tl()
-    |> Enum.map(&decode_pointer_segment/1)
-    |> Enum.reduce_while({:ok, node}, fn segment, {:ok, current} ->
-      case pointer_child(current, segment) do
-        {:ok, child} -> {:cont, {:ok, child}}
-        :error -> {:halt, :error}
-      end
-    end)
-  end
-
-  defp decode_pointer_segment(segment) do
-    segment
-    |> URI.decode()
-    |> String.replace("~1", "/")
-    |> String.replace("~0", "~")
-  end
-
-  defp pointer_child(map, key) when is_map(map) and not is_struct(map), do: Map.fetch(map, key)
-
-  defp pointer_child(list, key) when is_list(list) do
-    case Integer.parse(key) do
-      {index, ""} when index >= 0 -> Enum.fetch(list, index)
-      _other -> :error
-    end
-  end
-
-  defp pointer_child(_node, _key), do: :error
+  defp local_pointer_targets(root), do: SchemaInliner.pointer_nodes(root)
 
   defp schema_scope(schema, base_uri) do
     case Map.get(schema, "$id") || Map.get(schema, "id") do

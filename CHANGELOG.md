@@ -109,11 +109,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Host header policy no longer treats `localhost` or `127.0.0.1` as a
-  substring match. `validate_host_against_policy/2` parses the header or URL
-  with `URI`, strips the port, compares allowed hosts exactly, and recognizes
-  loopback through `:inet.parse_address/1` (including `[::1]`, a trailing
+  substring match. `validate_host_against_policy/2` parses the header or an
+  `http`/`https` URL with `URI`, strips the port, compares allowed hosts
+  exactly, and recognizes loopback through `:inet.parse_address/1` only when
+  the spelling is that address's canonical form (including `[::1]`, a trailing
   FQDN dot on `localhost.`, and IPv4-mapped IPv6 loopback `::ffff:127.0.0.0/8`).
-  Trailing garbage after a port or bracketed address is rejected.
+  Any other scheme is rejected, so `evil.com://api.example.com` cannot borrow
+  an allowlisted or loopback host. Decimal, octal, and hex spellings such as
+  `2130706433` and `0x7f.0.0.1` are not loopback. Trailing garbage after a
+  port or bracketed address is rejected.
 - JSON Schema compilation never asks ExJsonSchema's global
   `:remote_schema_resolver` to fetch. Allowed remotes are fetched through
   ArborMCP's policy and inlined as local definitions; any remaining remote
@@ -122,9 +126,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `$recursiveRef` strings as refs wherever they appear, walks named
   containers without dialect spoofing from a nested `$schema`, and still
   skips untargeted `const` / `default` / `enum` / `examples` instance data.
-  Local JSON pointers are resolved so a targeted node is walked even under
-  those keywords. Named-property maps keep the enclosing schema scope, so a
-  property named `id` is not treated as a schema identifier.
+  Local JSON pointers are resolved so a targeted node and its ancestors are
+  walked even under those keywords, and the inlined pointer percent-encodes
+  `~` so a definition key containing `~1` is not resolved as a slash.
+  Named-property maps keep the enclosing schema scope, so a property named
+  `id` is not treated as a schema identifier.
 
 - `Accept: application/json, text/event-stream;q` — a `q` parameter with no
   value — and `q =1` / `q= 1`, whose whitespace around the equals sign

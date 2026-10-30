@@ -208,10 +208,11 @@ defmodule Arbor.MCP.Security.Validation do
     end
   end
 
-  # Host headers are `name`, `name:port`, `[ipv6]`, or `[ipv6]:port`. A full
-  # URL is accepted so callers that pass a request target still compare the
-  # hostname, not a substring of the raw string. Trailing garbage after the
-  # port or bracketed address is rejected.
+  # Host headers are `name`, `name:port`, `[ipv6]`, or `[ipv6]:port`. An http
+  # or https URL is accepted so a request-target still compares its host.
+  # Any other scheme is rejected: `evil.com://allowed.example` parses with
+  # the allowed host while the raw value is not that host. Trailing garbage
+  # after the port or bracketed address is rejected.
   defp parse_request_host(host) when is_binary(host) do
     if String.contains?(host, "://") do
       parse_url_host(host)
@@ -246,7 +247,8 @@ defmodule Arbor.MCP.Security.Validation do
       hostname when is_binary(hostname) and hostname != "" ->
         authority = url_authority(url)
 
-        if is_nil(uri.userinfo) and valid_port?(uri.port) and is_binary(authority) and
+        if uri.scheme in ["http", "https"] and is_nil(uri.userinfo) and valid_port?(uri.port) and
+             is_binary(authority) and
              (authority == format_authority(hostname, uri.port) or
                 authority == format_authority(hostname, nil)) do
           {:ok, hostname}
@@ -299,9 +301,19 @@ defmodule Arbor.MCP.Security.Validation do
 
   defp loopback_ip?(hostname) do
     case :inet.parse_address(String.to_charlist(hostname)) do
-      {:ok, address} -> loopback_address?(address)
-      {:error, _reason} -> false
+      {:ok, address} ->
+        loopback_address?(address) and canonical_loopback_spelling?(hostname, address)
+
+      {:error, _reason} ->
+        false
     end
+  end
+
+  # inet accepts `127.1`, `0x7f.0.0.1`, `0177.0.0.1`, and `2130706433` as
+  # 127.0.0.1. Only the canonical spelling may skip the allowlist.
+  defp canonical_loopback_spelling?(hostname, address) do
+    canonical = address |> :inet.ntoa() |> List.to_string() |> String.downcase()
+    hostname == canonical
   end
 
   defp normalize_hostname(hostname) do

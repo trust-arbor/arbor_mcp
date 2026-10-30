@@ -113,6 +113,64 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolverTest do
       assert {:error, _errors} = SchemaPolicy.validate("BAD", resolved)
     end
 
+    test "does not confuse a tilde definition key with a slash when inlining" do
+      url = "https://schemas.example.com/tildes.json"
+
+      remote = %{
+        "definitions" => %{
+          "a/b" => %{"type" => "string"},
+          "a~1b" => %{"type" => "integer"}
+        }
+      }
+
+      {opts, _agent} = resolver_options(%{url => response(Jason.encode!(remote))})
+
+      string_schema = %{
+        "$schema" => "http://json-schema.org/draft-07/schema#",
+        "$ref" => url <> "#/definitions/a~1b"
+      }
+
+      assert {:ok, resolved} = SchemaPolicy.compile(string_schema, opts)
+      assert :ok = SchemaPolicy.validate("str", resolved)
+      assert {:error, _errors} = SchemaPolicy.validate(1, resolved)
+
+      integer_schema = %{
+        "$schema" => "http://json-schema.org/draft-07/schema#",
+        "$ref" => url <> "#/definitions/a~01b"
+      }
+
+      assert {:ok, resolved} = SchemaPolicy.compile(integer_schema, opts)
+      assert :ok = SchemaPolicy.validate(1, resolved)
+      assert {:error, _errors} = SchemaPolicy.validate("str", resolved)
+    end
+
+    test "inlines an allowlisted ref targeted inside a literal keyword" do
+      url = "https://schemas.example.com/secret.json"
+      {opts, _agent} = resolver_options(%{url => response(~s({"type":"integer"}))})
+
+      for schema <- [
+            %{
+              "$schema" => "http://json-schema.org/draft-07/schema#",
+              "const" => %{"$ref" => url},
+              "$ref" => "#/const"
+            },
+            %{
+              "$schema" => "http://json-schema.org/draft-07/schema#",
+              "const" => %{"nested" => %{"$ref" => url}},
+              "$ref" => "#/const/nested"
+            },
+            %{
+              "$schema" => "http://json-schema.org/draft-07/schema#",
+              "examples" => [%{"$ref" => url}],
+              "$ref" => "#/examples/0"
+            }
+          ] do
+        assert {:ok, resolved} = SchemaPolicy.compile(schema, opts)
+        assert :ok = SchemaPolicy.validate(1, resolved)
+        assert {:error, _errors} = SchemaPolicy.validate("str", resolved)
+      end
+    end
+
     test "rejects dynamic keywords in fetched documents for both backends" do
       url = "https://schemas.example.com/dynamic.json"
 

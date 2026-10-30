@@ -99,6 +99,32 @@ defmodule Arbor.MCP.Content.SchemaPolicyTest do
       assert {:ok, _resolved} = SchemaPolicy.compile(schema)
     end
 
+    test "rejects a remote ref nested under a targeted literal keyword" do
+      remote = "https://evil.example/secret.json"
+
+      for schema <- [
+            %{
+              "const" => %{"nested" => %{"$ref" => remote}},
+              "$ref" => "#/const/nested"
+            },
+            %{
+              "examples" => [%{"$ref" => remote}],
+              "$ref" => "#/examples/0"
+            },
+            %{
+              "enum" => [%{"$ref" => remote}],
+              "$ref" => "#/enum/0"
+            },
+            %{
+              "default" => %{"nested" => %{"$ref" => remote}},
+              "$ref" => "#/default/nested"
+            }
+          ] do
+        assert {:error, :network_ref_forbidden} = SchemaPolicy.preflight(schema)
+        assert {:error, :network_ref_forbidden} = SchemaPolicy.compile(schema)
+      end
+    end
+
     test "does not treat reference-shaped literal instance data as a schema reference" do
       schema = %{
         "type" => "object",
