@@ -147,6 +147,11 @@ defmodule ExMCP.HttpPlug do
 
   @session_id_max_bytes 128
 
+  # RFC 9110 section 12.4.2: `weight = OWS ";" OWS "q=" qvalue`, with
+  # `qvalue = ( "0" [ "." 0*3DIGIT ] ) / ( "1" [ "." 0*3("0") ] )`. ABNF
+  # literals are case-insensitive, so `q` and `Q` name the weight.
+  @weight ~r/\A[qQ]=(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)\z/
+
   @deprecated "The session table is owned by ExMCP.HttpPlug.SessionRegistry, started with the :ex_mcp application"
   def start_link(opts \\ []) do
     case SessionRegistry.start_link(opts) do
@@ -447,14 +452,10 @@ defmodule ExMCP.HttpPlug do
   end
 
   # Per MCP spec, SSE GET uses the same endpoint as POST.
-  # Handle GET requests with Accept: text/event-stream on any path.
+  # Handle GET requests whose Accept names an event stream (with a quality
+  # above zero) on any path.
   defp do_dispatch("GET", _path, conn, opts) do
-    accepts_sse =
-      conn
-      |> get_req_header("accept")
-      |> Enum.any?(&String.contains?(&1, "text/event-stream"))
-
-    if legacy_http_sse_enabled?(opts) and accepts_sse do
+    if legacy_http_sse_enabled?(opts) and accepts_event_stream?(conn) do
       handle_sse_connection(conn, opts)
     else
       conn
@@ -2021,11 +2022,112 @@ defmodule ExMCP.HttpPlug do
 
   defp request_stream?(_conn, _request), do: false
 
+  # A client accepts an event stream when its Accept header names
+  # `text/event-stream` with a quality above zero (RFC 9110 section 12.5.1),
+  # so `text/event-stream;q=0` refuses one. A wildcard such as `*/*` or
+  # `text/*` doesn't opt in: the MCP spec asks clients to list
+  # `text/event-stream` itself, and JSON is always a valid answer to a POST.
+  # Commas and semicolons inside a quoted parameter value don't separate
+  # anything, so a range's own `q` can't be cut off from it; a header with an
+  # unterminated quoted string doesn't opt in.
   defp accepts_event_stream?(conn) do
     conn
     |> get_req_header("accept")
-    |> Enum.any?(&String.contains?(&1, "text/event-stream"))
+    |> Enum.any?(fn header ->
+      case split_unquoted(header, ?,) do
+        {:ok, ranges} -> Enum.any?(ranges, &event_stream_range?/1)
+        :error -> false
+      end
+    end)
   end
+
+  defp event_stream_range?(range) do
+    with {:ok, [media | params]} <- split_unquoted(range, ?;),
+         "text/event-stream" <- media |> trim_ows() |> String.downcase() do
+      positive_quality?(quality(params))
+    else
+      _other -> false
+    end
+  end
+
+  # The weight is the `q` parameter, and its grammar is exact (RFC 9110
+  # section 12.4.2): `weight = OWS ";" OWS "q=" qvalue`, so optional
+  # whitespace surrounds the whole parameter, never the name, the equals
+  # sign or the value. A parameter named `q` — either case; ABNF literals
+  # are case-insensitive — is the weight only when it matches that grammar
+  # exactly. Any other spelling of one, a bare or empty `q`, whitespace
+  # around the equals sign, a malformed or quoted qvalue, is a malformed
+  # weight and makes the range unusable, so it doesn't opt in to an event
+  # stream. So does a second `q` parameter, whatever either value says.
+  # A range without a `q` parameter has quality 1.
+  defp quality(params) do
+    params
+    |> Enum.map(&trim_ows/1)
+    |> Enum.split_with(&q_parameter?/1)
+    |> case do
+      {[], _others} -> "1"
+      {[param], _others} -> weight_value(param)
+      {_several, _others} -> ""
+    end
+  end
+
+  # A parameter's name, with optional whitespace around it removed, names the
+  # weight when it is `q` in either case. A name so wrapped still fails the
+  # grammar below, which allows no whitespace inside the parameter.
+  defp q_parameter?(param) do
+    param
+    |> String.split("=", parts: 2)
+    |> hd()
+    |> trim_ows()
+    |> String.downcase()
+    |> Kernel.==("q")
+  end
+
+  # The whole parameter must match the weight grammar; the qvalue it carries
+  # is everything after the equals sign. A `q` parameter that doesn't match
+  # is malformed, so the empty qvalue makes its range unusable.
+  defp weight_value(param) do
+    case Regex.run(@weight, param) do
+      [match] -> binary_part(match, 2, byte_size(match) - 2)
+      nil -> ""
+    end
+  end
+
+  # OWS, optional whitespace, is only SP or HTAB (RFC 9110 section 5.6.3).
+  # Any other whitespace-like character, a no-break space for instance, is
+  # part of what it sits in, so trimming it away here would change a value
+  # the grammar below must judge.
+  defp trim_ows(value), do: String.replace(value, ~r/\A[ \t]+|[ \t]+\z/, "")
+
+  # A malformed qvalue, a quoted one included, makes its range unusable, so it
+  # doesn't opt in to an event stream. JSON is always a valid answer.
+  defp positive_quality?(q) do
+    Regex.match?(~r/\A(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)\z/, q) and
+      not Regex.match?(~r/\A0(?:\.0{0,3})?\z/, q)
+  end
+
+  # Splits a header value at `separator` outside quoted strings (RFC 9110
+  # section 5.6.4). Inside one, a backslash escapes the next byte, so an
+  # escaped quote doesn't end it.
+  defp split_unquoted(value, separator), do: split_unquoted(value, separator, false, "", [])
+
+  defp split_unquoted(<<>>, _separator, true, _part, _parts), do: :error
+
+  defp split_unquoted(<<>>, _separator, false, part, parts),
+    do: {:ok, Enum.reverse([part | parts])}
+
+  defp split_unquoted(<<?\\, byte, rest::binary>>, separator, true, part, parts),
+    do: split_unquoted(rest, separator, true, <<part::binary, ?\\, byte>>, parts)
+
+  defp split_unquoted(<<?", rest::binary>>, separator, quoted?, part, parts),
+    do: split_unquoted(rest, separator, not quoted?, <<part::binary, ?">>, parts)
+
+  defp split_unquoted(<<byte, rest::binary>>, separator, false, part, parts)
+       when byte == separator,
+       do: split_unquoted(rest, separator, false, "", [part | parts])
+
+  defp split_unquoted(<<byte, rest::binary>>, separator, quoted?, part, parts),
+    do: split_unquoted(rest, separator, quoted?, <<part::binary, byte>>, parts)
 
   defp process_mcp_request(%{"method" => "subscriptions/listen"} = request, opts) do
     open_http_subscription(request, opts)

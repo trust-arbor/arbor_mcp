@@ -60,6 +60,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The server read the `Accept` header by looking for the text
+  `text/event-stream`, so a modern request that asked for progress or request
+  logs got an event stream even from a client that refused one with
+  `text/event-stream;q=0`, and JSON from one that wrote `Text/Event-Stream`.
+  Both decision points — the modern request-owned stream and the legacy
+  standalone GET — now parse the header's media ranges: an event stream needs
+  `text/event-stream` named with a quality above zero, in any case. A comma
+  or semicolon inside a quoted parameter value, escaped quotes included,
+  separates nothing, so a range keeps its own `q`; a `q` parameter that
+  doesn't spell the weight grammar exactly — bare, empty, whitespace around
+  the equals sign, malformed or quoted qvalue (`Q`, either case, names it) —
+  a second `q` parameter, whatever either value says, or an unterminated
+  quoted string doesn't opt in, and JSON is always a valid answer. Optional
+  whitespace is only SP and HTAB, as RFC 9110 defines it: any other
+  whitespace-like character, a no-break space for instance, is part of the
+  value it sits in and fails the grammar. A wildcard such as `*/*` still gets JSON, since the MCP spec
+  asks clients to list `text/event-stream` (backport of 2.x PR #144 commits
+  `4462ba3` and `a887ff2`).
 - An HTTP `:auth_provider` whose `init/1` fails now fails the connection
   instead of being dropped. The transport used to go on without it, so every
   request went out without the credentials the application configured.
