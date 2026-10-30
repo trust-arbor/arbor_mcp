@@ -103,6 +103,18 @@ defmodule ExMCP.Transport.HTTPAuthProviderInitTest do
              HTTP.connect(url: "http://127.0.0.1:1/mcp", use_sse: false)
   end
 
+  test "explicit :none keeps inline auth config without creating a provider" do
+    auth = %{client_id: "inline-client", client_secret: "inline-secret"}
+
+    assert {:ok, %HTTP{auth_provider: nil, auth_provider_state: nil, auth_config: ^auth}} =
+             HTTP.connect(
+               url: "http://127.0.0.1:1/mcp",
+               use_sse: false,
+               auth_provider: :none,
+               auth: auth
+             )
+  end
+
   defp connect(provider_config) do
     HTTP.connect(
       url: "http://127.0.0.1:1/mcp",

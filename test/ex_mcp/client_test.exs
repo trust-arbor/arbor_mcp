@@ -3,6 +3,7 @@ defmodule ExMCP.ClientTest do
 
   alias ExMCP.Client
   alias ExMCP.{Error, Response}
+  import ExMCP.TestHelpers, only: [wait_until: 2]
 
   # Mock transport for testing
   defmodule MockTransport do
@@ -722,7 +723,18 @@ defmodule ExMCP.ClientTest do
         )
 
       # Give it time to initialize then disconnect
-      Process.sleep(100)
+      wait_until(
+        fn ->
+          case Client.get_status(client) do
+            {:ok, %{connection_status: status}} ->
+              status in [:disconnected, :connecting, :reconnecting, :error]
+
+            _ ->
+              false
+          end
+        end,
+        timeout: 5_000
+      )
 
       # Try to make a request - should fail with not connected
       {:ok, status} = Client.get_status(client)

@@ -143,14 +143,19 @@ defmodule ExMCP.HttpPlug.SSEHandler do
     {initial_event_type, initial_event_data} =
       Map.get(opts, :initial_sse_event, {"connected", %{session_id: session_id}})
 
-    event_id = generate_event_id(0)
-
+    # The greeting carries no id: it is not an MCP message and is never
+    # persisted, so an id of its own is not in the session's replay sequence.
+    # A client that adopted it as its Last-Event-ID (the transport's reader
+    # and its SSE client both remember the last id they saw) would resume
+    # from a point no persisted event can follow, and a notification stored
+    # while its stream was closed would never replay. Resuming is anchored to
+    # real, persisted message ids only.
     case send_sse_event(
            conn_module,
            conn,
            initial_event_type,
            initial_event_data,
-           event_id
+           nil
          ) do
       {:ok, conn} ->
         # Start heartbeat timer
@@ -240,16 +245,11 @@ defmodule ExMCP.HttpPlug.SSEHandler do
   def handle_cast({:send_error, error}, state) do
     error_data = format_error(error)
 
-    # Send error event
-    case send_sse_event(state, "error", error_data, generate_event_id(state.event_counter)) do
+    # Control events carry no id (see terminate/2).
+    case send_sse_event(state, "error", error_data, nil) do
       {:ok, conn} ->
         # Send close event
-        send_sse_event(
-          %{state | conn: conn},
-          "close",
-          %{reason: "error"},
-          generate_event_id(state.event_counter + 1)
-        )
+        send_sse_event(%{state | conn: conn}, "close", %{reason: "error"}, nil)
 
       _ ->
         :ok
@@ -311,14 +311,13 @@ defmodule ExMCP.HttpPlug.SSEHandler do
       Process.cancel_timer(state.heartbeat_ref)
     end
 
-    # Send close event if connection is still open
+    # Send close event if connection is still open. Like every control
+    # event, it carries no id: control events are not persisted, so an id of
+    # their own is outside the session's replay sequence, and a client that
+    # adopted one as its Last-Event-ID would never replay what was stored
+    # after it.
     if state.conn do
-      send_sse_event(
-        state,
-        "close",
-        %{reason: "shutdown"},
-        generate_event_id(state.event_counter)
-      )
+      send_sse_event(state, "close", %{reason: "shutdown"}, nil)
     end
 
     # Reply to any blocked producers
@@ -345,6 +344,9 @@ defmodule ExMCP.HttpPlug.SSEHandler do
     end
   end
 
+  # Only used where no session manager persists events, so nothing can be
+  # replayed after them; every event of a persisted session carries the
+  # manager's sequence-space id, and control events carry none.
   defp generate_event_id(counter) do
     "#{System.system_time(:microsecond)}-#{counter}"
   end
@@ -480,7 +482,11 @@ defmodule ExMCP.HttpPlug.SSEHandler do
 
   defp exports?(_module, _function, _arity), do: false
 
-  defp replay_events(%__MODULE__{last_event_id: nil} = state), do: {:ok, state}
+  # A client that presents no Last-Event-ID — its first stream, or one that
+  # carried no message before closing — resumes from the beginning of the
+  # session's retained log, so a notification stored while no stream was open
+  # still reaches it (ExMCP.HttpPlug.deliver_session_notification/3 promises
+  # exactly that). One that resumes by id gets only what follows it.
 
   defp replay_events(state) do
     session_manager = Map.get(state.opts, :session_manager)
@@ -491,9 +497,14 @@ defmodule ExMCP.HttpPlug.SSEHandler do
                state.session_id,
                state.last_event_id
              ]) do
-          events when is_list(events) -> replay_events(events, state)
-          {:error, reason} -> {:error, reason, state}
-          other -> {:error, {:unexpected_replay_reply, other}, state}
+          events when is_list(events) ->
+            replay_events(events, state)
+
+          {:error, reason} ->
+            {:error, reason, state}
+
+          other ->
+            {:error, {:unexpected_replay_reply, other}, state}
         end
 
       exports?(session_manager, :replay_events_after, 3) ->
