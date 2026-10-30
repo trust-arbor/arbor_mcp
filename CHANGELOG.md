@@ -274,6 +274,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Legacy Streamable HTTP cancellation stops the request's POST worker, including
+  an auth retry already approved before client or server cancellation (#194).
+- Concurrent HTTP `tools/list` pages retain every page's tool-header annotations
+  regardless of completion order; older listings cannot overwrite a newer
+  listing's cache (#195).
 - Mounted HTTP Runtimes validate explicitly enabled MRTR before starting their
   handler and pass per-Runtime request-state key rings into dispatch. Named
   HTTP mounts can initialize before runtime configuration loads. Runtime docs

@@ -2881,11 +2881,11 @@ defmodule Arbor.MCP.Client do
 
   defp cache_tool_list(
          %{transport_mod: HTTP, transport_state: %HTTP{} = transport} = state,
-         kind,
+         {kind, generation} = page,
          data
        )
-       when kind in [:first, :cursor],
-       do: %{state | transport_state: HTTP.cache_tool_list(transport, kind, data)}
+       when kind in [:first, :cursor] and (is_integer(generation) or generation == :ambiguous),
+       do: %{state | transport_state: HTTP.cache_tool_list(transport, page, data)}
 
   defp cache_tool_list(state, _kind, _data), do: state
 
@@ -3027,6 +3027,11 @@ defmodule Arbor.MCP.Client do
       %{transport_mod: HTTP, transport_state: %HTTP{protocol_era: :modern}} ->
         RequestHandler.close_request_stream(request_id, state, outcome)
 
+      %{transport_mod: HTTP, transport_state: %HTTP{}} ->
+        retired_state = RequestHandler.close_request_stream(request_id, state, outcome)
+        # A cancellation the server is slow to accept must not hold the client.
+        RequestHandler.send_notification_async(method, params, retired_state)
+
       %{transport_mod: LegacySSE} ->
         retired_state = RequestHandler.close_request_stream(request_id, state)
 
@@ -3036,8 +3041,6 @@ defmodule Arbor.MCP.Client do
         notified_state
 
       _other ->
-        # Over legacy HTTP this POSTs from its own task, so a cancellation the
-        # server is slow to accept cannot hold the client.
         RequestHandler.send_notification_async(method, params, state)
     end
   end

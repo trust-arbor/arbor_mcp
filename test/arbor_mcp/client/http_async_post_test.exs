@@ -114,17 +114,39 @@ defmodule Arbor.MCP.Client.HTTPAsyncPostTest do
     client = start_client()
 
     late = Task.async(fn -> Client.call_tool(client, "late", %{}, timeout: 5_000) end)
-    assert_receive {:tool_call_started, "late", late_handler, late_id}
+    assert_receive {:tool_call_started, "late", _late_handler, late_id}
     other = Task.async(fn -> Client.call_tool(client, "other", %{}, timeout: 5_000) end)
     assert_receive {:tool_call_started, "other", other_handler, other_id}
+
+    {late_ref, {late_post, ^late_id}} =
+      Enum.find(:sys.get_state(client).async_post_tasks, fn
+        {_ref, {_pid, ^late_id}} -> true
+        _other -> false
+      end)
+
+    monitor = Process.monitor(late_post)
 
     :ok = Client.send_cancelled(client, late_id, "user")
     assert {:error, :cancelled} = Task.await(late)
     assert_receive {:notification, "notifications/cancelled", %{"requestId" => ^late_id}}
+    assert_receive {:DOWN, ^monitor, :process, ^late_post, :killed}
 
-    # The cancelled request's POST answers with the other request's id.
-    send(late_handler, {:respond_with_id, other_id})
-    assert_receive {:responded, ^late_handler}
+    # Cancellation closes the POST now. A result queued before its worker
+    # stopped must still be ignored, even if it names another pending request.
+    stale_response =
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "id" => other_id,
+        "result" => %{"content" => [%{"type" => "text", "text" => "late"}]}
+      })
+
+    send(
+      client,
+      {:async_post_result, {:ok, nil, stale_response},
+       %{task_ref: late_ref, task_pid: late_post, request_id: late_id}}
+    )
+
+    _state = :sys.get_state(client)
     send(other_handler, :release)
 
     assert {:ok, response} = Task.await(other)
@@ -241,15 +263,12 @@ defmodule Arbor.MCP.Client.HTTPAsyncPostTest do
          test_pid
        )
        when name in ["late", "other"] do
+    Process.flag(:trap_exit, true)
     send(test_pid, {:tool_call_started, name, self(), id})
 
     receive do
-      {:respond_with_id, other_id} ->
-        send(test_pid, {:responded, self()})
-        text_result(conn, other_id, name)
-
-      :release ->
-        text_result(conn, id, name)
+      :release -> text_result(conn, id, name)
+      {:EXIT, _from, _reason} -> text_result(conn, id, name)
     after
       2_000 -> text_result(conn, id, name)
     end
