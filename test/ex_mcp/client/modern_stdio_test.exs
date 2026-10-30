@@ -52,7 +52,6 @@ defmodule ExMCP.Client.ModernStdioTest do
         protocol_mode: :modern_only,
         capabilities: Extension.put_capability(%{"elicitation" => %{"form" => %{}}}),
         handler: {Handler, [owner: self()]},
-        era_probe_timeout: 10_000,
         health_check_interval: nil
       )
 

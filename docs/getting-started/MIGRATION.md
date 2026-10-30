@@ -64,7 +64,7 @@ forward "/mcp", ExMCP.HttpPlug,
 |---|---|---|---|
 | `:legacy_only` | Sends `initialize`; never probes modern | Accepts only legacy requests | Legacy protocol era (not an exact rc.5 package rollback) |
 | `:prefer_legacy` | Tries `initialize`; probes modern only after an eligible protocol failure on a live transport | Accepts both eras; advertises legacy versions first | First compatibility canary |
-| `:prefer_modern` | Probes with `server/discover`; falls back only when the response proves the peer is legacy and the transport remains usable | Accepts both eras; advertises modern versions first | Target dual-era deployment after canaries pass |
+| `:prefer_modern` | Probes with `server/discover`; falls back only when the response proves the peer is legacy and the transport remains usable, or over stdio starts the server again for `initialize` when it exits on the probe or never answers it | Accepts both eras; advertises modern versions first | Target dual-era deployment after canaries pass |
 | `:modern_only` | Uses `server/discover`; never falls back | Accepts only modern requests | Conformance, new closed ecosystems, and final legacy retirement |
 
 `1.0.0-rc.6` introduced the `:prefer_modern` application default. Stable

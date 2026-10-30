@@ -1,5 +1,6 @@
 defmodule ExMCP.Transport.HTTPSslOptionsTest do
-  use ExUnit.Case, async: true
+  # The request-policy test temporarily changes the VM-wide security config.
+  use ExUnit.Case, async: false
 
   alias ExMCP.Transport.HTTP
 

@@ -83,13 +83,19 @@ Client mode options:
 
 - `:era_probe_timeout` bounds the side-effect-free `server/discover` probe
   exchange, including a synchronous HTTP POST; the default is `2_000`
-  milliseconds.
+  milliseconds. Over stdio the probe is the first message a newly started
+  server reads, so the wait also covers the server starting up (a BEAM under
+  `mix run`, or `npx` or `uvx` on a cold cache, can take seconds); there the
+  default is `:handshake_timeout`, as for a legacy `initialize`.
 - `:handshake_timeout` bounds the legacy `initialize` exchange the same way;
   the default is `10_000` milliseconds.
 - `:establish_timeout` bounds establishing the connection as a whole, probe,
   fallback, handshake and connection retries included; the default is
-  `:handshake_timeout` plus `:era_probe_timeout`, and on expiry
-  `start_link/1` fails with `{:error, :establish_timeout}`.
+  `:handshake_timeout` plus the probe's bound (`:era_probe_timeout` or its
+  default): 12 s, or 20 s for a stdio client that opens with the probe
+  (`:prefer_modern` or `:modern_only`); `:legacy_only` and `:prefer_legacy`
+  keep 12 s. On expiry `start_link/1` fails with
+  `{:error, :establish_timeout}`.
 - `:era_cache_legacy_ttl` controls how long a legacy observation is reused;
   the default is `300_000` milliseconds. Modern observations do not expire
   and cannot be replaced by automatic fallback.
@@ -100,11 +106,43 @@ Client mode options:
   cannot be identified from its connected state. Never include raw secrets;
   ExMCP hashes the configured identity.
 
-Fallback is deliberately narrow. A modern timeout, transport failure,
-recognized modern error, authentication error, or cached-modern probe failure
-does not trigger `initialize`. Similarly, `:prefer_legacy` probes modern only
-after a protocol-level legacy failure while the transport remains usable.
-Strict modes never fall back.
+Fallback is deliberately narrow. `:prefer_modern` initializes after the probe
+only on evidence of a legacy server, as MCP 2026-07-28 defines it: a JSON-RPC
+error that is not a recognized modern one, an UnsupportedProtocolVersionError
+(`-32022`) whose `supported` list names only legacy revisions, an HTTP `400`,
+`404` or `405` rejection of the probe, or an HTTP probe that gets no answer
+within `:era_probe_timeout`. Each HTTP POST stands alone, so a late answer to
+the probe cannot reach the `initialize` that follows. A stdio probe that gets
+no answer is not evidence: the answer could still arrive on the same pipe.
+Any other recognized modern error, an authentication error, a transport
+failure, or a cached-modern probe failure does not trigger `initialize`.
+Similarly, `:prefer_legacy` probes modern only after a protocol-level legacy
+failure while the transport remains usable. Strict modes never fall back.
+
+Over stdio a server that exits without answering the probe at all, as
+Python `mcp` 1.8 and earlier do, or that does not answer it within its bound
+is no evidence on that pipe, which a late answer could still reach. Under
+`:prefer_modern` the client closes that process (EOF, then TERM and KILL),
+starts a fresh one from the same options and initializes it, once per
+connection attempt, reconnects included, within `:establish_timeout`. A
+modern-only server then fails on `initialize` with the versions it
+supports. Those are the only two triggers: malformed output (a JSON-looking
+line that is not a valid answer, or a frame cut off or over
+`:max_frame_bytes`) fails the connection, while non-JSON lines such as
+banners and logs are ignored and are no answer. `:modern_only` never
+respawns.
+
+The fresh process starts only once the old one is confirmed stopped: the
+transport's shutdown saw it gone, and with `process_group: true` everything
+left in its group too, within `:cleanup_timeout`. A server that cannot be
+confirmed stopped (its pid could not be checked before a signal, it was
+still running after SIGKILL, or the shutdown did not finish in time) is
+never replaced, by the respawn, a retry or a reconnect: the connection
+fails, or the client stops reconnecting, and
+`[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]` is emitted. A
+reconnect waits for the old server's stop however the old connection
+ended: the server exited (it may have left its group running), the
+transport broke, or a health check gave up on it.
 
 `protocol_version` is a legacy revision preference, not an era switch or a
 statement of the latest upstream MCP revision. The

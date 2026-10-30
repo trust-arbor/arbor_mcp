@@ -209,6 +209,17 @@ defmodule ExMCP.Transport.ReliabilityWrapper do
     stop_component(state.health_check_pid)
   end
 
+  @doc false
+  # close/1, saying whether the wrapped transport's server process was
+  # confirmed stopped (see ExMCP.Transport.close_confirmed/2).
+  @spec close_confirmed(t()) :: :ok | {:error, term()}
+  def close_confirmed(%__MODULE__{} = state) do
+    ExMCP.Transport.close_confirmed(state.wrapped_module, state.wrapped_state)
+  after
+    stop_component(state.circuit_breaker_pid)
+    stop_component(state.health_check_pid)
+  end
+
   @impl true
   def connected?(%__MODULE__{} = state) do
     # If health check is enabled, use its status

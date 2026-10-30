@@ -99,7 +99,7 @@ defmodule ExMCP.Client.Operations.Tools do
 
   defp do_call_tool(client, tool_name, arguments, opts) do
     started_at = System.monotonic_time(:millisecond)
-    timeout = Keyword.get(opts, :timeout, 30_000)
+    timeout = effective_timeout(client, opts)
     deadline = started_at + timeout
 
     params =
@@ -118,6 +118,16 @@ defmodule ExMCP.Client.Operations.Tools do
       enhanced_opts,
       deadline
     )
+  end
+
+  defp effective_timeout(client, opts) do
+    case Keyword.get(opts, :timeout, 30_000) do
+      timeout when is_integer(timeout) and timeout > 0 ->
+        timeout
+
+      _other ->
+        ExMCP.Client.fetch_default_timeout(client, 30_000)
+    end
   end
 
   defp inject_idempotency_key(arguments, opts) do
@@ -248,12 +258,14 @@ defmodule ExMCP.Client.Operations.Tools do
   defp header_mismatch?({:error, %{"code" => -32_020}}), do: true
   defp header_mismatch?(_result), do: false
 
-  defp remaining_timeout(deadline) do
+  defp remaining_timeout(deadline) when is_integer(deadline) do
     case deadline - System.monotonic_time(:millisecond) do
       remaining when remaining > 0 -> {:ok, remaining}
       _expired -> {:error, :timeout}
     end
   end
+
+  defp remaining_timeout(_deadline), do: {:error, :timeout}
 
   @doc """
   Finds a tool by name or pattern.

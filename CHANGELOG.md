@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Under `:prefer_modern`, a stdio server that exits without answering the
+  `server/discover` probe, as Python `mcp` 1.6 and 1.8 stdio servers do, or
+  that does not answer it within its bound is now reached with a legacy
+  `initialize`. The client closes that process (EOF, then TERM and KILL),
+  starts a fresh one from the same options and initializes it, once per
+  connection attempt and reconnect, within `:establish_timeout`. The probed
+  pipe carries nothing more, so a late answer to the probe cannot reach the
+  handshake. Malformed output (a JSON-looking line that is not a valid
+  answer, or a frame cut off or over `:max_frame_bytes`) never leads to a
+  respawn, and non-JSON stdout lines are no answer. A modern-only server
+  then fails on `initialize` with the versions it supports, reported as
+  `{:era_probe_and_initialize_failed, %{..., respawned: true}}`; the
+  `[:ex_mcp, :client, :era, :fallback]` event carries `respawned: true`.
+  `:modern_only` never respawns. The fresh process starts only once the
+  stdio shutdown has seen the old one gone (with `process_group: true`,
+  everything left in its group too), and so does any reconnect, however the
+  old connection ended: a server that exits can leave its group running
+  through the shutdown's grace, and the reconnect used to start beside it.
+  A server process that cannot be confirmed stopped (its pid could not be
+  checked before a signal, it was still running after SIGKILL, or the
+  shutdown did not finish within `:cleanup_timeout` plus 500 ms) is never
+  replaced, by a retry or a reconnect either: `start_link/1` returns
+  `{:error, {:transport_connect_failed, {:probed_server_stop_unconfirmed, ...}}}`
+  or `{:error, {:transport_connect_failed, {:cleanup_failed, ...}}}`, the
+  cleanup given as `{:error, {:server_stop_unconfirmed, reason}}`, and a
+  reconnecting client stops, settles in `:disconnected` and emits the new
+  `[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]` event.
+  `ExMCP.Transport.Stdio.close/1` still returns `:ok` either way. A stdio
+  server that wrote part of a frame and exited is now reported as
+  `{:connection_error, {:unfinished_frame, {:process_exited, status}}}`.
+  **Behavior change:** such servers, which failed to connect before, now
+  connect. Backport of ArborMCP `8d1f0b6`, `01c4e2c`, `beb25f2` and the
+  reconnect part of `9bdc531`.
+
+### Changed
+
+- `jose` `>= 1.11.13` is required and locked. 1.11.13 fixes five advisories:
+  EEF-CVE-2026-65625 (attacker-chosen AES-GCM tag length), EEF-CVE-2026-65626
+  (RSAES-PKCS1-v1_5 padding oracle), EEF-CVE-2026-65627 (unbounded JWE zip
+  decompression), EEF-CVE-2026-65628 (infinite recursion in
+  `JOSE.JWK.shared_secret/2` on mismatched key types) and EEF-CVE-2026-65629
+  (weak PBKDF2 parameters for password-encrypted private-key export). This
+  library reaches none of them: it only signs and verifies JWS, never decrypts
+  JWE, derives shared secrets or exports password-encrypted keys, and MRTR
+  request state is sealed with `:crypto` directly and checks the tag length.
+  The floor keeps applications' dependency graphs off the affected releases.
+- Upgraded the development-only Credo dependency to 1.7.19 so linting works
+  on Elixir 1.20; retained the maintenance line's existing style rules.
+
 ### Fixed
 
 - The server read the `Accept` header by looking for the text
@@ -27,22 +78,211 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value it sits in and fails the grammar. A wildcard such as `*/*` still gets JSON, since the MCP spec
   asks clients to list `text/event-stream` (backport of 2.x PR #144 commits
   `4462ba3` and `a887ff2`).
-
-### Changed
-
-- `jose` `>= 1.11.13` is required and locked. 1.11.13 fixes five advisories:
-  EEF-CVE-2026-65625 (attacker-chosen AES-GCM tag length), EEF-CVE-2026-65626
-  (RSAES-PKCS1-v1_5 padding oracle), EEF-CVE-2026-65627 (unbounded JWE zip
-  decompression), EEF-CVE-2026-65628 (infinite recursion in
-  `JOSE.JWK.shared_secret/2` on mismatched key types) and EEF-CVE-2026-65629
-  (weak PBKDF2 parameters for password-encrypted private-key export). This
-  library reaches none of them: it only signs and verifies JWS, never decrypts
-  JWE, derives shared secrets or exports password-encrypted keys, and MRTR
-  request state is sealed with `:crypto` directly and checks the tag length.
-  The floor keeps applications' dependency graphs off the affected releases.
-
-### Fixed
-
+- An HTTP `:auth_provider` whose `init/1` fails now fails the connection
+  instead of being dropped. The transport used to go on without it, so every
+  request went out without the credentials the application configured.
+  `ExMCP.Transport.HTTP.connect/1` returns
+  `{:error, {:auth_provider_init_failed, provider, reason}}`, and
+  `ExMCP.Client.start_link/1` returns it as
+  `{:error, {:transport_connect_failed, {:auth_provider_init_failed, provider, reason}}}`
+  before sending any request; a reconnect attempt fails the same way.
+  `reason` is the provider's own when it is an atom; any other error is
+  reported as `:redacted`, an exception as `{:raised, exception_module}`, a
+  throw or exit as `:throw` or `:exit`, and an unexpected return as
+  `:invalid_init_result`, so neither the result nor the logs carry the
+  provider's config. A connection without a provider is unchanged. This is
+  the 1.x backport of 2.x PR #161.
+- Retiring a request also stops its HTTP POST worker, so an authentication
+  reply already queued for that worker cannot restart settled work. This
+  covers client and server cancellation with provider and inline OAuth
+  authentication, without affecting unrelated POSTs.
+- A health check that gave up on a hung server dropped the connection
+  without closing it, so a stdio server kept running and a reconnect started
+  a second one beside it. The transport is now closed first, as the other
+  teardown paths already did, and when that server cannot be confirmed
+  stopped the client does not reconnect: it settles in `:disconnected` and
+  emits `[:ex_mcp, :client, :reconnect, :cleanup_unconfirmed]` with the
+  reason `{:server_stop_unconfirmed, reason}`. Backport of the health-check
+  part of ArborMCP `9bdc531`.
+- The configuration, transport and troubleshooting guides said a probe
+  timeout never leads to `initialize`. Over HTTP, under the preference
+  modes, it is legacy evidence, as MCP 2026-07-28 says, and has been since
+  the modern era landed: each POST stands alone, so a late answer cannot
+  reach the `initialize` that follows. The guides now say so and that a
+  stdio probe timeout is not evidence; behavior is unchanged. Backport of
+  the HTTP part of ArborMCP `fd72323`.
+- A client in the default `:prefer_modern` mode could not connect to an
+  ExMCP server running `protocol_mode: :legacy_only`, the documented
+  rollback, over any transport. The server answers the `server/discover`
+  probe with an UnsupportedProtocolVersionError (-32022) whose `supported`
+  list names only legacy revisions, and the client failed with
+  `{:era_probe_failed, {:no_mutually_supported_modern_version, ...}}` instead
+  of using one of them. MCP says to continue with a listed version, and for
+  a legacy one that is `initialize`: `:prefer_modern` now falls back to it,
+  offering its preferred revision among those listed (its legacy
+  `:protocol_version` when listed), and records the legacy observation.
+  `:prefer_legacy`, whose `initialize` comes first, retries it once with
+  such a revision when the server rejected the one it offered and the probe
+  then names others. A list that also names a modern or an unknown revision
+  is not legacy evidence, `:modern_only` never falls back, and a cached
+  modern observation still never downgrades. A cached legacy observation
+  now also keeps the revision the server negotiated, and the next
+  connection offers that one again, so a server that accepts only an older
+  revision stays reachable until the observation expires. Backport of
+  ArborMCP `47faf39` and `fba618d`.
+- Over HTTP, an `initialize` rejected with a 400 carrying a JSON-RPC error,
+  as an ExMCP `protocol_mode: :modern_only` server sends it, was taken for a
+  transport failure. `:prefer_legacy` therefore never moved forward to the
+  modern era over HTTP, unless an earlier connection had recorded it. The
+  error is now read as the rejection it is, the way the other transports
+  deliver it, when that error carries this `initialize` request's id (any
+  other id, `null` included, stays a transport error): `:prefer_legacy`
+  probes and connects, and **`:legacy_only` now fails with
+  `{:initialize_error, error}`** as it does on the other transports, instead
+  of `{:transport_connect_failed, "{:http_error, 400, ...}"}`. Backport of
+  ArborMCP `fba618d` and `5388272`.
+- Over stdio, the modern `server/discover` probe gave a newly spawned server
+  only `:era_probe_timeout` (2 s by default) to start and answer. Under the
+  default `:prefer_modern`, and under `:modern_only`, a server that took
+  longer to start failed to connect, and so did every reconnect to it, with
+  `{:era_probe_failed, {:transport_error, :handshake_timeout}}`: a BEAM
+  started with `mix run`, `npx` or `uvx` on a cold cache, or any server on a
+  loaded host. A slow legacy server's error answer, which `:prefer_modern`
+  falls back on, came too late as well. Over stdio the probe now waits as
+  long as a legacy `initialize` does, `:handshake_timeout` (10 s by
+  default), unless `:era_probe_timeout` is given. HTTP keeps the 2 s probe.
+  **Default change (accepted for 1.x):** for a stdio client that opens with
+  the probe (`:prefer_modern` or `:modern_only`) and sets no
+  `:establish_timeout`, the default establishment bound is now
+  `:handshake_timeout` plus the probe's bound, 20 s, instead of 12 s: a 10 s
+  probe needs room for the legacy fallback that may follow it. Every other
+  client, `:legacy_only` and `:prefer_legacy` over stdio included, keeps
+  12 s, and an explicit `:establish_timeout` always wins. **Behavior
+  change:** under `:modern_only` a stdio server that never answers now fails
+  after `:handshake_timeout` rather than 2 s, with the same error. Backport
+  of ArborMCP `87b4353` and `8d1f0b6` (its establishment default).
+- Authorization code flow now returns `{:error, :invalid_scopes}` when
+  `:scopes` is not a proper list of strings, including lists with an invalid
+  tail, instead of raising for invalid values. `nil` still omits the `scope`
+  parameter, so the authorization server applies its default scopes.
+- Progress (`notifications/progress`) and connection-level log messages
+  (`notifications/message`) received over connection streams (stdio, BEAM,
+  legacy HTTP) are now routed to the client handler's `handle_progress/3`
+  and `handle_log_message/3` callbacks. Requests carrying a duplicate
+  `progressToken` currently in use by an active pending request are refused
+  as not sent (backport of 2.x #112: `35fd26a` and #115: `0baa12f`).
+- In legacy SSE mode, concurrent `tools/list` page responses are merged directly
+  into the client process's tool header cache rather than having each async
+  task overwrite `:tool_headers` from its initial snapshot (backport of 2.x
+  #110: `adcf5f4`).
+- In legacy SSE mode, authentication challenges received by concurrent async
+  POST tasks are unified with the modern stream challenge path
+  (`answer_stream_challenge/2` in the client process). Both auth provider and
+  inline OAuth flows run in the client GenServer so concurrent challenges run
+  one flow at a time; challenges on an older token reuse the newest credentials
+  without running the flow again. The client replies with the token and the
+  task re-sends the request itself with its live `PostStream` consumer,
+  preventing deadlocks when retried SSE streams carry server requests and
+  ensuring tasks never bring credentials back or overwrite transport state
+  (backport of 2.x #110: `3065dc3` and `adcf5f4`).
+- Stale results, challenges, and `:DOWN` notifications from retired or untracked
+  async POST tasks are ignored on disconnect and reconnect, preventing 401 crashes
+  against a nil transport and preventing stale tool listings from polluting
+  the active connection's header cache.
+- Async POST tasks use a start/ack handshake so that monitors and request mappings
+  are registered in the client GenServer before task execution starts, eliminating
+  races where fast completions or abnormal exits could precede task registration.
+- Concurrent `tools/list` cursor pages no longer have their tool headers wiped if
+  the first page completes after cursor pages, and listing generation counters
+  ensure fresh first pages legitimately reset the cache while stale pages are discarded.
+  The captured listing generation is carried through authenticated retries of cursor
+  requests, preventing pages from older generations from merging into a newer generation's
+  cache.
+- Settled requests release their `progressToken` upon completion, error, timeout,
+  cancellation, or modern stream closure, and all progress tokens are cleared on disconnect.
+  (Note on protocol design: once request A completes, request B may reuse A's progress token,
+  and a late notification of A's still in flight then reaches B. The MCP specification requires
+  tokens to be unique only among active requests, so this race is inherent to the protocol,
+  and 2.x behaves the same.)
+- In legacy SSE mode, health-check ping responses are recognized and settled on response,
+  clearing `health_check_id` and updating last activity, and HTTP health POSTs are bounded
+  by the health interval. This prevents healthy connections from falsely timing out on
+  subsequent health checks (backport of 2.x PR #170: `296e037`).
+- In legacy SSE mode, every path that removes a pending request (including incoming server
+  `notifications/cancelled` notifications, client `send_cancelled`, timeouts, responses,
+  errors, and stream closure) retires its async POST task (`drop_pending_request/2`), while
+  failed POST tasks carrying no request ID (notifications, batches, and server replies) only
+  untrack the failed task itself rather than retiring other in-flight `request_id: nil` POSTs.
+  Delayed authentication challenges from retired tasks are refused with `{:error, :stream_retired}`
+  and never re-sent, preventing requests from executing tool calls on the server after cancellation
+  (backport of 2.x PR #170).
+- When an auth provider refreshes a token in legacy SSE mode, the refreshed `access_token`
+  and headers are retained together with the provider state in the returned transport, so
+  delayed challenges against older tokens reuse the refreshed token without re-triggering an
+  unnecessary second refresh (backport of 2.x PR #170).
+- Requests without an explicit `:timeout` carry an effective deadline derived from the client's
+  `default_timeout`. The auth wait and re-send in the async POST task, as well as `-32020`
+  HeaderMismatch recovery in `ExMCP.Client.Operations.Tools`, are bounded by a concrete
+  effective deadline, and a request past its deadline is never re-sent (backport of 2.x PR #170).
+- Legacy SSE async POST responses are matched by the request the POST carried
+  rather than solely by the `id` echoed in the response body. Responses with a
+  null or different id answer the caller instead of timing out, and responses
+  arriving after a request has settled (cancelled or timed out) are dropped
+  rather than misrouted to another request. A POST that fails at or after its
+  deadline replies `:timeout` and cancels the request on the server (backport of
+  2.x #110: `3065dc3` and `adcf5f4`).
+- A server mounted through `ExMCP.HttpPlug` could not send progress or
+  list-change notifications to a legacy Streamable HTTP client, even when the
+  client's GET stream was open (`legacy_http_sse: true`, the documented way a
+  mounted 1.x server serves one). `ExMCP.Server.notify_progress/3,4`,
+  `notify_tools_changed/1`, `notify_prompts_changed/1`,
+  `notify_resources_changed/1`, `notify_resource_update/2` and
+  `send_log_message/4`, called from inside a request callback, now deliver to
+  that request's HTTP session only — persisted to its event log (under the
+  session manager the plug was configured with) and written to its live GET
+  stream, never to another session's, including one an earlier request on
+  the same handler process used. Notifications must be sent while the
+  request callback is in flight, which is when its context names the session:
+  a notify cast outside a callback keeps the long-standing cast path, and a
+  mounted request's per-request handler is stopped once it has replied, so
+  such a cast finds no process and is dropped (a cast never fails, crashes
+  or hangs on a dead pid).
+- An event arriving on a legacy HTTP GET stream in the gap between the
+  stream's connection and the receiver task taking it over (an ExMCP server's
+  `connected` greeting, written as soon as the stream opens) stalled the
+  stream until the 5-second consumer-acknowledgement timeout closed it: the
+  event went to the client process, which never reads the stream, while the
+  receiver's handoff sat behind it, and nothing the server sent on the GET
+  stream reached the client after that. While an event waits for its
+  acknowledgement, the SSE client now takes a change of consumer and hands
+  the event to the new one, within the original deadline. The reader also
+  skips SSE events that aren't MCP `message` events (as the TypeScript SDK's
+  client does), and a clean end of the GET stream no longer ends the
+  connection: the SSE client reopens the stream with `Last-Event-ID`, so the
+  receiver keeps waiting instead of dropping the session and failing every
+  pending request; stream errors still end it (backport of the client part
+  of the 2.x legacy HTTP notifications fix).
+- A legacy HTTP client whose reopened GET stream was refused with 405 — the
+  server no longer offers one — waited for events that would never come while
+  the connection looked healthy. The connection now carries on POST-only, as
+  with a server that never offered a GET stream: the receiver stops and the
+  client drops it without dropping the session (backport of the 2.x fix).
+- A notification stored while a legacy session's GET stream was closed never
+  replayed when the stream reopened. The stream's control events (`connected`,
+  `close`, `error`) carried wall-clock ids outside the session's replay
+  sequence, which a client adopted as its `Last-Event-ID` so every persisted
+  event compared as older than it; and a client presenting no `Last-Event-ID`
+  resumed from nothing rather than the beginning of the session's log. Control
+  events now carry no id, and a stream without a `Last-Event-ID` resumes from
+  the beginning of the retained log, so a notification stored during a
+  reconnect gap reaches its session's client when the stream reopens.
+- `ExMCP.Server.notify_resource_update/2`, called from a request callback on
+  a server mounted through `ExMCP.HttpPlug` configured with another
+  `:session_manager`, persisted its broadcast through the default
+  `ExMCP.SessionManager`, so the subscribed session never got the update.
+  `ExMCP.HttpPlug.broadcast_resource_update/2` now takes the session manager
+  (defaulting to `ExMCP.SessionManager`) and the mounted path passes the
+  configured one.
 - Nested atom keys in a client's declared capabilities are now normalized
   for the Local transport too, matching the HTTP wire shape. This closes a
   Local-transport gap in the 1.x backport of 2.x PR #116.
@@ -82,6 +322,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `notifications/*/list_changed`; the TypeScript SDK's servers send both that
   way. Such a message now parses with empty params, and a response that also
   names a method stays a response (backport of 2.x PR #122).
+- The stdio transport follows the MCP shutdown order: `close/1` closes the
+  server's stdin, waits up to `:eof_grace` (default 2_000 ms, as in the MCP
+  reference SDKs) for it to exit, then sends SIGTERM and, after `:term_grace`,
+  SIGKILL. A server that exits on EOF is no longer signalled. The subprocess
+  `:cleanup_timeout` defaults to `eof_grace + term_grace + 400` (2_500 ms);
+  when only `:cleanup_timeout` is set, the EOF grace shrinks to fit it.
+  SIGKILL goes out within `:cleanup_timeout`, and `close/1` returns within
+  it plus 500 ms. The shutdown is run by a process started with the
+  connection, which acts when the port closes, so a server that ignores EOF
+  is still stopped when the process owning the connection (a client its
+  supervisor kills, say) dies first, before or during `close/1`. A signal
+  goes only to the process the connection started, checked by its start
+  time just before every signal, so a server that exited on its own, whose
+  pid may since name another process, is left alone; a process group is
+  still stopped when its leader has exited and left children in it. The
+  checks are cheap and end at the shutdown's deadline: a helper shell started
+  with the connection answers them without starting a process per check
+  (`connect/1` waits, a bounded time, for it and for the server's start
+  time), the schedule keeps 100 ms of the budget for the check before each
+  signal, and a server that can't be confirmed in time is left unsignalled,
+  with a warning, rather than signalled late. A helper that stops answering
+  is killed, with any `ps` it waits on, so no signal it was handed can run
+  after the reaper has decided, and no helper outlives its reaper. It is
+  killed through `/bin/sh` (or `/bin/kill`), not whatever `PATH` holds, and
+  a helper whose exit can't be confirmed is logged as an error. Killing a
+  helper must happen even once the budget is spent, so a stalled helper can
+  push `close/1` up to 300 ms past `:cleanup_timeout` (100 ms each for the
+  kill, its fallback and the wait for its exit). The TERM grace runs from
+  when SIGTERM actually goes out, however long its check took, as far as the
+  budget allows. On Windows, `taskkill` runs only from `close/1`, bounded by
+  the budget, while the open port still holds the server's process handle. A server whose connection owner dies
+  before closing it may be left running on Windows, with a warning logged.
+  Negative graces, a non-positive budget and an explicit `nil` are rejected
+  before the server starts. Backport of 2.x #109.
+- A client's default close limit (`Deadline.cleanup_timeout/1`) covers a stdio
+  server's shutdown budget plus 500 ms: 3_000 ms with the stdio defaults. Other
+  transports keep 1_000 ms.
+- A modern `tools/call` checked its `Mcp-Param-*` headers against the first
+  `tools/list` page only, so a tool on a later page of a paginated list
+  skipped the check. The server now follows the cursors until it finds the
+  tool, for up to 100 pages and one `handler_call_timeout` in all, and fails
+  the request closed past either bound, when a page is ready only after the
+  deadline, and when the timeout isn't one `GenServer.call/3` takes.
+  Backport of 2.x #114.
+- The default OAuth provider renews an access token with its refresh
+  token, before the token expires and when the server rejects it, instead
+  of running the browser flow again (which also found the same
+  authorization server and stopped with `:auth_loop_detected`). Backport of
+  2.x #112 and #115.
+- The HTTP transport keeps an auth provider's new state on every path: a
+  refreshed token (a rotating refresh token is spent once) after a request
+  that succeeds or fails, and a failed flow's loop guards, including for
+  modern request streams. `send_message/2` and the client still return the
+  error shapes they did. Concurrent modern request streams rejected together
+  run one refresh or flow: the client answers their auth challenges one at a
+  time, and reuses a token another stream already got. A stream waits for
+  that answer no longer than its request's deadline, and the client runs no
+  provider for a request whose deadline has passed.
+- Auth provider callbacks run inside the `ExMCP.Client` process: for
+  synchronous HTTP, as before, and now also when the client answers a
+  modern request stream's 401 or 403. While one runs, the client handles
+  nothing else. A callback must not call the client it authenticates,
+  directly or indirectly (from a `Task` it awaits, say): that deadlocks
+  until a timeout. As a best effort, the client refuses a direct call from a
+  stream's challenge callback with `{:error, :auth_provider_called_client}`;
+  elsewhere a direct call exits with `:calling_self`, and an indirect call
+  is not detected. See "Where callbacks run" in
+  `ExMCP.Authorization.Provider`.
 
 ## [1.7.3] - 2026-10-26
 

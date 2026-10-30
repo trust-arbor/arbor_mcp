@@ -22,6 +22,25 @@ defmodule ExMCP.Transport.Stdio do
   - `:process_group` - when `true`, stopping the server signals its whole
     process group rather than the one process the port started (default:
     `false`). See "Process groups" below.
+  - `:eof_grace` - time in milliseconds to wait for the server to exit after
+    stdin closes before sending SIGTERM (default: 2_000)
+  - `:term_grace` - time in milliseconds to wait after SIGTERM before sending
+    SIGKILL (default: 100)
+  - `:cleanup_timeout` - subprocess shutdown budget, defaulting to
+    `eof_grace + term_grace + 400` (default: 2_500). SIGKILL goes out within
+    it, the graces shortened if they don't fit, and `close/1` returns within
+    it plus 500 ms. One case can run past the budget: a shutdown helper that
+    stops answering is killed even once the budget is spent, and that takes
+    at most 300 ms more (100 ms each for the kill, its fallback and the wait
+    for the helper's exit). The shutdown is run by a process started with the
+    connection, which acts when the port closes, so it completes even if the
+    process that owns the connection dies first, before or during `close/1`.
+    It signals only the process (or process group) the connection started:
+    a server that exited on its own is left alone. On Windows, which has no
+    cheap way to confirm a pid, `taskkill` runs only from `close/1`, while
+    the port still holds the server's process handle. A server whose
+    connection owner dies before closing it may therefore be left running
+    on Windows, and a warning is logged.
 
   The command is resolved against the `PATH` the child will see (an explicit
   `PATH` in `:env`, else the inherited one), not the VM's own. When the VM
@@ -57,9 +76,18 @@ defmodule ExMCP.Transport.Stdio do
 
   alias ExMCP.Internal.{LineBuffer, LogSummary, Options, PortEnvironment, SecurityConfig}
   alias ExMCP.Transport.{Error, SecurityGuard}
+  alias ExMCP.Transport.Stdio.Reaper
 
-  @termination_poll_ms 10
-  @termination_grace_attempts 10
+  @eof_grace 2_000
+  @term_grace 100
+  @shutdown_slack 400
+  # Kept back from the cleanup budget for sending SIGKILL.
+  @kill_allowance 50
+  # Kept back for checking, just before each signal, that its target is
+  # still the connection's own (two signals: SIGTERM, SIGKILL).
+  @check_allowance 100
+  # What close/1 allows past the budget for the shutdown to be confirmed.
+  @reply_allowance 500
   @default_max_frame_bytes 1_048_576
   defstruct [
     :port,
@@ -67,15 +95,61 @@ defmodule ExMCP.Transport.Stdio do
     :line_buffer,
     :subscriber,
     :reader_pid,
+    # Stops the server when the connection ends (see Stdio.Reaper), and
+    # records there whether it was confirmed gone.
+    :reaper,
+    :reaper_outcome,
     max_frame_bytes: @default_max_frame_bytes,
-    process_group: false
+    process_group: false,
+    eof_grace: @eof_grace,
+    term_grace: @term_grace,
+    cleanup_timeout: @eof_grace + @term_grace + @shutdown_slack
   ]
 
   @impl true
   def connect(opts) do
+    opts = shutdown_options(opts)
+
     with :ok <- PortEnvironment.validate_policy(opts),
-         :ok <- validate_process_group(opts) do
+         :ok <- validate_process_group(opts),
+         :ok <- validate_shutdown_options(opts) do
       do_connect(opts)
+    end
+  end
+
+  @doc false
+  # Subprocess shutdown options for an MCP server. Explicit values win; a
+  # caller-chosen budget keeps whatever EOF grace still fits inside it.
+  def shutdown_options(opts) do
+    term_grace = Keyword.get(opts, :term_grace, @term_grace)
+
+    case {Keyword.fetch(opts, :eof_grace), Keyword.fetch(opts, :cleanup_timeout)} do
+      _ when not is_integer(term_grace) ->
+        opts
+
+      {:error, :error} ->
+        opts
+        |> Keyword.put(:eof_grace, @eof_grace)
+        |> Keyword.put(:cleanup_timeout, @eof_grace + term_grace + @shutdown_slack)
+
+      {{:ok, eof_grace}, :error} when is_integer(eof_grace) ->
+        Keyword.put(opts, :cleanup_timeout, eof_grace + term_grace + @shutdown_slack)
+
+      {:error, {:ok, budget}} when is_integer(budget) ->
+        Keyword.put(opts, :eof_grace, min(@eof_grace, max(0, budget - term_grace - 50)))
+
+      _explicit_or_invalid ->
+        opts
+    end
+  end
+
+  @doc false
+  # How long the client must allow `close/1`: the subprocess budget plus the
+  # helper's reply allowance.
+  def close_budget(opts) do
+    case Keyword.get(shutdown_options(opts), :cleanup_timeout) do
+      budget when is_integer(budget) and budget > 0 -> budget + @reply_allowance
+      _invalid -> nil
     end
   end
 
@@ -84,6 +158,28 @@ defmodule ExMCP.Transport.Stdio do
       flag when is_boolean(flag) -> :ok
       invalid -> {:error, {:invalid_process_group, invalid}}
     end
+  end
+
+  # Every shutdown option given, nil included, must be usable before the
+  # server is started: the reaper's schedule is built from them.
+  defp validate_shutdown_options(opts) do
+    Enum.reduce_while([eof_grace: 0, term_grace: 0, cleanup_timeout: 1], :ok, fn
+      {name, min}, :ok ->
+        case Keyword.fetch(opts, name) do
+          :error -> {:cont, :ok}
+          {:ok, value} when is_integer(value) and value >= min -> {:cont, :ok}
+          {:ok, invalid} -> {:halt, {:error, {:invalid_shutdown_option, name, invalid}}}
+        end
+    end)
+  end
+
+  @doc false
+  # The EOF and SIGTERM graces close/1 waits, shortened if need be so that
+  # SIGKILL goes out within the cleanup budget.
+  def shutdown_schedule(%__MODULE__{} = state) do
+    available = max(state.cleanup_timeout - @kill_allowance - 2 * @check_allowance, 0)
+    eof_grace = min(state.eof_grace, available)
+    {eof_grace, min(state.term_grace, available - eof_grace)}
   end
 
   defp do_connect(opts) do
@@ -131,28 +227,42 @@ defmodule ExMCP.Transport.Stdio do
       end
 
     try do
-      port = Port.open({:spawn_executable, to_charlist(executable_path)}, port_opts)
-
-      state = %__MODULE__{
-        port: port,
-        os_pid: port_os_pid(port),
-        line_buffer: "",
-        max_frame_bytes:
-          Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes),
-        process_group: Keyword.get(opts, :process_group, false)
-      }
-
-      :telemetry.execute([:ex_mcp, :transport, :connection, :opened], %{}, %{
-        transport: :stdio,
-        command_basename: Path.basename(executable_path),
-        command_hash: LogSummary.fingerprint(executable_path)
-      })
-
-      {:ok, state}
+      Port.open({:spawn_executable, to_charlist(executable_path)}, port_opts)
     catch
-      :error, reason ->
-        Error.connection_error({:spawn_failed, reason})
+      :error, reason -> Error.connection_error({:spawn_failed, reason})
+    else
+      port -> connected(port, executable_path, opts)
     end
+  end
+
+  # Once the port is open, a failure closes it again rather than leaving a
+  # server running without a reaper.
+  defp connected(port, executable_path, opts) do
+    state = %__MODULE__{
+      port: port,
+      os_pid: port_os_pid(port),
+      line_buffer: "",
+      max_frame_bytes: Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes),
+      process_group: Keyword.get(opts, :process_group, false),
+      eof_grace: Keyword.get(opts, :eof_grace, @eof_grace),
+      term_grace: Keyword.get(opts, :term_grace, @term_grace),
+      cleanup_timeout:
+        Keyword.get(opts, :cleanup_timeout, @eof_grace + @term_grace + @shutdown_slack)
+    }
+
+    state = with_reaper(state)
+
+    :telemetry.execute([:ex_mcp, :transport, :connection, :opened], %{}, %{
+      transport: :stdio,
+      command_basename: Path.basename(executable_path),
+      command_hash: LogSummary.fingerprint(executable_path)
+    })
+
+    {:ok, state}
+  catch
+    kind, reason ->
+      close_port(port)
+      Error.connection_error({:spawn_failed, {kind, reason}})
   end
 
   @impl true
@@ -397,14 +507,34 @@ defmodule ExMCP.Transport.Stdio do
   end
 
   @impl true
-  def close(%__MODULE__{port: port, os_pid: os_pid, reader_pid: reader_pid} = state) do
+  def close(%__MODULE__{} = state) do
+    _stopped = close_confirmed(state)
+    :ok
+  end
+
+  @doc false
+  # close/1, saying whether the server was confirmed stopped: :ok once the
+  # reaper saw it (and with :process_group its group) gone, else
+  # {:error, {:server_stop_unconfirmed, reason}}. ExMCP.Client starts no
+  # other server from the same command while one may still be running: it
+  # could hold the port or lock the new one needs.
+  @spec close_confirmed(%__MODULE__{}) :: :ok | {:error, {:server_stop_unconfirmed, term()}}
+  def close_confirmed(%__MODULE__{} = state) do
     :telemetry.execute([:ex_mcp, :transport, :connection, :closed], %{}, %{transport: :stdio})
+
+    # A state built without connect/1 has no reaper yet.
+    %{port: port, reader_pid: reader_pid, reaper: reaper} =
+      state = if state.reaper, do: state, else: with_reaper(state)
+
+    # The reaper sends SIGKILL (or runs taskkill) within the cleanup budget;
+    # close/1 allows it a little more to confirm, and returns either way.
+    deadline = System.monotonic_time(:millisecond) + state.cleanup_timeout + @reply_allowance
 
     # Close the port before killing the reader: port_close exits the port
     # with reason :normal, which linked processes ignore, whereas killing
     # the port's owner (the reader, in push mode) first would cascade a
     # :killed exit through the port to its other linked processes.
-    close_port(port)
+    close_port_through(reaper, port, deadline)
 
     if is_pid(reader_pid) and Process.alive?(reader_pid) do
       # The reader is a plain spawn_link receive loop that does not trap
@@ -415,39 +545,87 @@ defmodule ExMCP.Transport.Stdio do
       Process.exit(reader_pid, :kill)
     end
 
-    # Port.close/1 tears down the Erlang port, but on Unix it does not
-    # guarantee that the spawned OS process exits. Explicitly terminate the
-    # child after detaching the reader so repeated stdio connections cannot
-    # leak servers and exhaust the runner's process/thread budget.
-    terminate_os_process(signal_target(os_pid, state.process_group))
-
-    :ok
+    reaper
+    |> await_reaper(time_left(deadline))
+    |> stop_result(state.reaper_outcome)
   end
 
-  # A negative pid addresses the process group the port program leads.
-  defp signal_target(nil, _process_group), do: nil
-  defp signal_target(os_pid, true), do: {:group, os_pid}
-  defp signal_target(os_pid, false), do: os_pid
+  # Without a reaper there was no server process to stop.
+  defp stop_result(:no_reaper, _outcome), do: :ok
+  # A reaper with nowhere to record its outcome confirms nothing.
+  defp stop_result(_waited, nil), do: {:error, {:server_stop_unconfirmed, :no_outcome}}
 
-  # A server that exits on its own is not signalled by anyone, so what it
-  # left running in its group would outlive the connection. The group keeps
-  # the leader's pid as its id after the leader is gone; a pid is not reused
-  # while a group with that id still has members, so the risk accepted here
-  # is only a group that emptied and whose id was handed to a new group
-  # leader within the grace period. Runs in its own process so neither the
-  # client nor the reader waits for it.
-  defp reap_group(%__MODULE__{process_group: true, os_pid: os_pid}) when is_integer(os_pid) do
-    reap_group(os_pid)
+  defp stop_result(waited, outcome) do
+    case {Reaper.outcome(outcome), waited} do
+      {:confirmed, _waited} -> :ok
+      {{:unconfirmed, reason}, _waited} -> {:error, {:server_stop_unconfirmed, reason}}
+      {:pending, :timeout} -> {:error, {:server_stop_unconfirmed, :reaper_timeout}}
+      {:pending, {:down, reason}} -> {:error, {:server_stop_unconfirmed, {:reaper_exit, reason}}}
+    end
   end
 
-  defp reap_group(%__MODULE__{}), do: :ok
-
-  defp reap_group(os_pid) when is_integer(os_pid) do
-    spawn(fn -> terminate_os_process({:group, os_pid}) end)
-    :ok
+  defp with_reaper(state) do
+    outcome = Reaper.new_outcome()
+    %{state | reaper_outcome: outcome, reaper: start_reaper(state, outcome)}
   end
 
-  defp reap_group(_os_pid), do: :ok
+  # Port.close/1 tears down the Erlang port, but it does not guarantee that
+  # the spawned OS process exits. The reaper, started with the connection
+  # and linked to nothing, stops the server when the connection ends: on
+  # close/1, or when the port's owner dies (a client killed by its
+  # supervisor before or during close/1, say). Repeated stdio connections
+  # therefore cannot leak servers and exhaust the runner's process/thread
+  # budget. See ExMCP.Transport.Stdio.Reaper.
+  defp start_reaper(%__MODULE__{port: port, os_pid: os_pid} = state, outcome)
+       when is_port(port) and is_integer(os_pid) do
+    {eof_grace, term_grace} = shutdown_schedule(state)
+
+    Reaper.start(port, os_pid,
+      process_group: state.process_group,
+      eof_grace: eof_grace,
+      term_grace: term_grace,
+      budget: state.cleanup_timeout,
+      outcome: outcome
+    )
+  end
+
+  defp start_reaper(_state, _outcome), do: nil
+
+  # The reaper closes the port itself, so it knows the close was asked for.
+  # On Windows it runs taskkill first, while the open port still holds the
+  # server's process handle, so close/1 leaves the port open until then.
+  defp close_port_through(nil, port, _deadline), do: close_port(port)
+
+  defp close_port_through(reaper, port, deadline) when is_port(port) do
+    monitor = :erlang.monitor(:port, port)
+    Reaper.close(reaper)
+
+    receive do
+      {:DOWN, ^monitor, :port, _port, _reason} -> :ok
+    after
+      time_left(deadline) ->
+        :erlang.demonitor(monitor, [:flush])
+        close_port(port)
+    end
+  end
+
+  defp close_port_through(_reaper, _no_port, _deadline), do: :ok
+
+  defp time_left(deadline), do: max(deadline - System.monotonic_time(:millisecond), 0)
+
+  defp await_reaper(nil, _budget), do: :no_reaper
+
+  defp await_reaper(reaper, budget) do
+    monitor = Process.monitor(reaper)
+
+    receive do
+      {:DOWN, ^monitor, :process, ^reaper, reason} -> {:down, reason}
+    after
+      budget ->
+        Process.demonitor(monitor, [:flush])
+        :timeout
+    end
+  end
 
   # Tolerate a port that is nil or already closed (e.g. the spawned process
   # exited on its own before close/1 was called).
@@ -465,56 +643,6 @@ defmodule ExMCP.Transport.Stdio do
     end
   end
 
-  defp terminate_os_process(nil), do: :ok
-
-  defp terminate_os_process(target) do
-    case :os.type() do
-      {:win32, _name} ->
-        run_command("taskkill", ["/PID", Integer.to_string(target_pid(target)), "/T", "/F"])
-
-      {:unix, _name} ->
-        signal_process(target, "TERM")
-
-        unless wait_for_process_exit(target, @termination_grace_attempts) do
-          signal_process(target, "KILL")
-        end
-    end
-
-    :ok
-  end
-
-  defp target_pid({:group, os_pid}), do: os_pid
-  defp target_pid(os_pid), do: os_pid
-
-  # `kill` addresses a process group by the negated group id; `--` keeps the
-  # negative number from being read as an option.
-  defp kill_args(signal, {:group, os_pid}), do: ["-#{signal}", "--", "-#{os_pid}"]
-  defp kill_args(signal, os_pid), do: ["-#{signal}", Integer.to_string(os_pid)]
-
-  defp wait_for_process_exit(_os_pid, 0), do: false
-
-  defp wait_for_process_exit(os_pid, attempts_left) do
-    if os_process_alive?(os_pid) do
-      Process.sleep(@termination_poll_ms)
-      wait_for_process_exit(os_pid, attempts_left - 1)
-    else
-      true
-    end
-  end
-
-  # For a group, true while any member is left.
-  defp os_process_alive?(target) do
-    case run_command("kill", kill_args("0", target)) do
-      {_output, 0} -> true
-      _other -> false
-    end
-  end
-
-  defp signal_process(target, signal) do
-    run_command("kill", kill_args(signal, target))
-    :ok
-  end
-
   defp find_executable(name, nil), do: System.find_executable(name)
 
   # :os.find_executable/2 searches an explicit path with the platform's own
@@ -529,15 +657,6 @@ defmodule ExMCP.Transport.Stdio do
         found -> List.to_string(found)
       end
     end
-  end
-
-  defp run_command(command, args) do
-    case System.find_executable(command) do
-      nil -> {"", 127}
-      executable -> System.cmd(executable, args, stderr_to_stdout: true)
-    end
-  rescue
-    _error -> {"", 1}
   end
 
   @impl true
@@ -564,12 +683,12 @@ defmodule ExMCP.Transport.Stdio do
     # (the current port owner). Transferring from the caller instead of from
     # inside the reader avoids a race where the port dies before the reader
     # is scheduled, which would crash the subscriber through the link.
-    group = if state.process_group, do: state.os_pid
+    reaper = state.reaper
 
     reader =
       spawn_link(fn ->
         receive do
-          :port_transferred -> stdio_reader_loop(port, "", pid, state.max_frame_bytes, group)
+          :port_transferred -> stdio_reader_loop(port, "", pid, state.max_frame_bytes, reaper)
         end
       end)
 
@@ -605,14 +724,47 @@ defmodule ExMCP.Transport.Stdio do
         do_process_data(data, state, remaining(timeout, started))
 
       {port, {:exit_status, status}} when port == state.port ->
-        reap_group(state)
-        Error.connection_error({:process_exited, status})
+        Reaper.server_exited(state.reaper)
+
+        case pending_output(port, state.line_buffer, state.max_frame_bytes) do
+          {:ok, unread} -> Error.connection_error(exit_reason(unread, {:process_exited, status}))
+          {:error, :frame_too_large} = error -> error
+        end
 
       {port, :eof} when port == state.port ->
         Error.connection_error(:eof)
     after
       timeout -> {:error, :handshake_timeout}
     end
+  end
+
+  # The port can report the exit before the last of the output, so whatever
+  # output is still queued belongs with what was buffered, within the same
+  # frame limit as any other read: more than that is :frame_too_large.
+  defp pending_output(port, buffer, limit) do
+    receive do
+      {^port, {:data, data}} ->
+        with {:ok, buffer} <- append_frame(buffer, port_data(data), limit),
+             do: pending_output(port, buffer, limit)
+    after
+      0 -> {:ok, buffer}
+    end
+  end
+
+  defp port_data({:eol, line}), do: line <> "\n"
+  defp port_data({:noeol, line}), do: line
+  defp port_data(data) when is_binary(data), do: data
+  defp port_data(_data), do: ""
+
+  # Output that looks like a frame and was not read as one is not silence:
+  # part of a frame (or, should the exit be reported first, a whole one the
+  # read never reached). A banner or log line is not.
+  defp exit_reason(unfinished, reason) do
+    trimmed = String.trim(unfinished)
+
+    if String.starts_with?(trimmed, ["{", "["]),
+      do: {:unfinished_frame, reason},
+      else: reason
   end
 
   defp remaining(:infinity, _started), do: :infinity
@@ -673,7 +825,7 @@ defmodule ExMCP.Transport.Stdio do
 
   # Internal reader process for push mode.
   # Reads port data, buffers lines, parses JSON, pushes to subscriber.
-  defp stdio_reader_loop(port, line_buffer, subscriber, max_frame_bytes, group) do
+  defp stdio_reader_loop(port, line_buffer, subscriber, max_frame_bytes, reaper) do
     receive do
       {^port, {:data, data}} ->
         binary_data =
@@ -687,7 +839,7 @@ defmodule ExMCP.Transport.Stdio do
         case append_frame(line_buffer, binary_data, max_frame_bytes) do
           {:ok, new_buffer} ->
             remaining = process_buffer(new_buffer, subscriber, max_frame_bytes)
-            stdio_reader_loop(port, remaining, subscriber, max_frame_bytes, group)
+            stdio_reader_loop(port, remaining, subscriber, max_frame_bytes, reaper)
 
           {:error, :frame_too_large} ->
             Kernel.send(subscriber, {:transport_closed, :frame_too_large})
@@ -695,8 +847,9 @@ defmodule ExMCP.Transport.Stdio do
         end
 
       {^port, {:exit_status, status}} ->
+        # The reaper stops what the server left in its group, if it led one.
+        Reaper.server_exited(reaper)
         Kernel.send(subscriber, {:transport_closed, {:process_exited, status}})
-        reap_group(group)
 
       {^port, :eof} ->
         Kernel.send(subscriber, {:transport_closed, :eof})

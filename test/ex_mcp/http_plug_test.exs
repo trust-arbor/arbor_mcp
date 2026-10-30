@@ -114,6 +114,8 @@ defmodule ExMCP.HttpPlugTest do
       }
     }
 
+    def tool, do: @tool
+
     @impl true
     def handle_list_tools(_cursor, state), do: {:ok, [@tool], nil, state}
 
@@ -121,6 +123,72 @@ defmodule ExMCP.HttpPlugTest do
     def handle_call_tool(_name, arguments, state) do
       {:ok, %{"content" => [%{"type" => "text", "text" => inspect(arguments)}]}, state}
     end
+  end
+
+  # The routed tool is on the second tools/list page.
+  defmodule PagedHeaderToolServer do
+    use ExMCP.Server.Handler
+
+    @filler %{"name" => "filler", "inputSchema" => %{"type" => "object"}}
+
+    @impl true
+    def handle_list_tools(nil, state), do: {:ok, [@filler], "page-2", state}
+    def handle_list_tools("page-2", state), do: {:ok, [HeaderToolServer.tool()], nil, state}
+
+    @impl true
+    def handle_call_tool(_name, arguments, state) do
+      {:ok, %{"content" => [%{"type" => "text", "text" => inspect(arguments)}]}, state}
+    end
+  end
+
+  # A tools/list whose cursor never ends.
+  defmodule EndlessToolServer do
+    use ExMCP.Server.Handler
+
+    @impl true
+    def handle_list_tools(_cursor, state),
+      do: {:ok, [%{"name" => "filler", "inputSchema" => %{"type" => "object"}}], "more", state}
+
+    @impl true
+    def handle_call_tool(_name, _arguments, state), do: {:ok, %{"content" => []}, state}
+  end
+
+  # Reports every tools/list page it is asked for. A page takes `page_ms`;
+  # the routed tool is on the first page, behind a cursor, when `tool_first`.
+  defmodule CountingToolServer do
+    use ExMCP.Server.Handler
+
+    @filler %{"name" => "filler", "inputSchema" => %{"type" => "object"}}
+
+    # Atom keys: cheap to send, slow to normalize (each becomes a string).
+    @filler_keys Enum.map(1..30, &String.to_atom("filler_key_#{&1}"))
+
+    @impl true
+    def init(opts) do
+      state = Map.new(opts)
+      tools = if state.tool_first, do: [HeaderToolServer.tool()], else: [@filler]
+      # `fillers` entries ahead of the tool make the page slow to normalize.
+      fillers = Map.get(state, :fillers, 0)
+      filler = Map.new(@filler_keys, &{&1, 1})
+
+      tools =
+        if fillers > 0,
+          do: Enum.map(1..fillers, &Map.put(filler, :name, "filler-#{&1}")) ++ tools,
+          else: tools
+
+      {:ok, Map.put(state, :tools, tools)}
+    end
+
+    @impl true
+    def handle_list_tools(cursor, state) do
+      send(state.test_pid, {:tools_page, cursor})
+      # A handler that is slow on purpose: what is measured is the time.
+      if state.page_ms > 0, do: Process.sleep(state.page_ms)
+      {:ok, state.tools, "more", state}
+    end
+
+    @impl true
+    def handle_call_tool(_name, _arguments, state), do: {:ok, %{"content" => []}, state}
   end
 
   defmodule TrackingSessionManager do
@@ -620,6 +688,30 @@ defmodule ExMCP.HttpPlugTest do
   # Plug.Test forbids put_req_header("host", _); the Host is modelled by
   # conn.host, which is what HttpPlug falls back to when no header is present.
   defp with_host(conn, host), do: %{conn | host: host}
+
+  defp counted_tool_call_request do
+    modern_request(
+      "tools/call",
+      %{"name" => "routed_tool", "arguments" => %{"region" => "us-west1", "limit" => 42}},
+      110
+    )
+  end
+
+  defp post_counted_tool_call(request, handler_opts, handler_call_timeout) do
+    conn(:post, "/", Jason.encode!(request))
+    |> put_req_header("content-type", "application/json")
+    |> put_modern_headers(request)
+    |> put_req_header("mcp-param-region", "us-west1")
+    |> put_req_header("mcp-param-limit", "42")
+    |> HttpPlug.call(
+      HttpPlug.init(
+        handler: CountingToolServer,
+        handler_opts: [test_pid: self()] ++ handler_opts,
+        handler_call_timeout: handler_call_timeout,
+        sse_enabled: false
+      )
+    )
+  end
 
   defp put_modern_headers(conn, request) do
     meta = get_in(request, ["params", "_meta"])
@@ -1536,6 +1628,91 @@ defmodule ExMCP.HttpPlugTest do
 
       assert mismatched.status == 400
       assert Jason.decode!(mismatched.resp_body)["error"]["code"] == -32020
+    end
+
+    test "validates x-mcp-header values for a tool on a later tools/list page" do
+      request =
+        modern_request(
+          "tools/call",
+          %{"name" => "routed_tool", "arguments" => %{"region" => "us-west1", "limit" => 42}},
+          109
+        )
+
+      post = fn handler, headers ->
+        Enum.reduce(
+          headers,
+          conn(:post, "/", Jason.encode!(request))
+          |> put_req_header("content-type", "application/json")
+          |> put_modern_headers(request),
+          fn {name, value}, conn ->
+            put_req_header(conn, name, value)
+          end
+        )
+        |> HttpPlug.call(HttpPlug.init(handler: handler, sse_enabled: false))
+      end
+
+      matching = [{"mcp-param-region", "us-west1"}, {"mcp-param-limit", "42"}]
+      assert %{status: 200} = post.(PagedHeaderToolServer, matching)
+
+      mismatched = [{"mcp-param-region", "eu-central1"}, {"mcp-param-limit", "42"}]
+      assert %{status: 400} = conn = post.(PagedHeaderToolServer, mismatched)
+      assert Jason.decode!(conn.resp_body)["error"]["code"] == -32020
+
+      # A list that never ends fails closed instead of skipping the check.
+      conn = post.(EndlessToolServer, matching)
+      assert conn.status == 200
+      error = Jason.decode!(conn.resp_body)["error"]
+      assert error["code"] == -32603
+      assert error["data"]["type"] == "tool_schema_unavailable"
+    end
+
+    test "looks for a tool's x-mcp-header annotations within one handler deadline" do
+      request =
+        modern_request(
+          "tools/call",
+          %{"name" => "routed_tool", "arguments" => %{"region" => "us-west1", "limit" => 42}},
+          110
+        )
+
+      post = fn handler_opts -> post_counted_tool_call(request, handler_opts, 300) end
+
+      # Pages of 100 ms each never end: the walk stops at the 300 ms
+      # deadline, not after 100 pages of up to 300 ms each.
+      started = System.monotonic_time(:millisecond)
+      conn = post.(page_ms: 100, tool_first: false)
+      assert System.monotonic_time(:millisecond) - started < 2_000
+      assert Jason.decode!(conn.resp_body)["error"]["data"]["type"] == "tool_schema_unavailable"
+
+      pages = Stream.repeatedly(fn -> receive do: ({:tools_page, _} -> 1), after: (0 -> nil) end)
+      assert Enum.sum(Enum.take_while(pages, & &1)) <= 4
+
+      # The walk ends at the first page holding the tool.
+      assert %{status: 200} = post.(page_ms: 0, tool_first: true)
+      assert_received {:tools_page, nil}
+      refute_received {:tools_page, _cursor}
+    end
+
+    # Without the fix the walk took :bogus for :infinity and waited for ever on
+    # a page that never comes.
+    @tag timeout: 10_000
+    test "a handler_call_timeout GenServer.call/3 wouldn't take fails the walk closed" do
+      request = counted_tool_call_request()
+      conn = post_counted_tool_call(request, [page_ms: 60_000, tool_first: false], :bogus)
+
+      assert Jason.decode!(conn.resp_body)["error"]["data"]["type"] == "tool_schema_unavailable"
+      refute_received {:tools_page, _cursor}
+    end
+
+    test "a tools/list page ready only after the walk's deadline isn't used" do
+      # The page arrives before the 300 ms deadline, and normalizing its
+      # fillers takes it past: the tool it holds comes too late.
+      request = counted_tool_call_request()
+
+      conn =
+        post_counted_tool_call(request, [page_ms: 200, tool_first: true, fillers: 40_000], 300)
+
+      assert Jason.decode!(conn.resp_body)["error"]["data"]["type"] == "tool_schema_unavailable"
+      assert_received {:tools_page, nil}
     end
 
     test "does not expose Mcp-Param values through server logs or telemetry" do

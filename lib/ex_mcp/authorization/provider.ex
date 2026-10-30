@@ -50,6 +50,25 @@ defmodule ExMCP.Authorization.Provider do
         url: "https://api.example.com/mcp",
         auth_provider: {MyAuthProvider, api_key: "sk-..."}
       )
+
+  ## Where callbacks run
+
+  With `ExMCP.Client`, the callbacks run inside the client process itself
+  whenever it sends a request synchronously (HTTP without an open SSE
+  stream) and when it answers a modern request stream's 401 or 403, one
+  challenge at a time. While a callback runs, which for a browser sign-in
+  can take minutes, the client handles nothing else.
+
+  A callback must therefore not call the client it authenticates, directly
+  or indirectly: not from the callback itself, and not from a `Task` or any
+  other process the callback waits on. The client is busy running the
+  callback, so the call deadlocks until one side times out.
+
+  The client catches only the plainest case, and only on a best-effort
+  basis: a direct call from the callback answering a stream's challenge is
+  refused with `{:error, :auth_provider_called_client}`. Elsewhere a direct
+  call exits with `:calling_self`, which stops the client. An indirect call
+  is not detected.
   """
 
   @type state :: any()
@@ -59,6 +78,16 @@ defmodule ExMCP.Authorization.Provider do
   Initialize the provider with configuration.
 
   Called once when the transport is created. Returns initial provider state.
+
+  An error fails the connection rather than leaving it unauthenticated: the
+  HTTP transport's `connect/1` returns
+  `{:error, {:auth_provider_init_failed, module, reason}}`, and
+  `ExMCP.Client.start_link/1` returns that reason inside
+  `{:error, {:transport_connect_failed, ...}}`. `reason` is kept only when it
+  is an atom; any other error is reported as `:redacted`, an exception as
+  `{:raised, exception_module}`, a throw or exit as `:throw` or `:exit`, and
+  any other return as `:invalid_init_result`, since those may carry the
+  provider's config.
   """
   @callback init(config()) :: {:ok, state()} | {:error, term()}
 

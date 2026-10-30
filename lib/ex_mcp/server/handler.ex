@@ -850,7 +850,6 @@ defmodule ExMCP.Server.Handler do
     end
   end
 
-  @doc false
   defmacro __before_compile__(env) do
     defaults =
       [
