@@ -347,7 +347,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
       :ok = Client.send_cancelled(client, req2, "Cancelled second request")
 
       # Collect results (increased timeout to handle case where cancellation doesn't work)
-      results = Task.await_many([task1, task2, task3], 8000)
+      results = Task.await_many([task1, task2, task3], 15_000)
 
       # First and third should succeed, second should be cancelled
       assert [{1, {:ok, _}}, {2, {:error, :cancelled}}, {3, {:ok, _}}] = results

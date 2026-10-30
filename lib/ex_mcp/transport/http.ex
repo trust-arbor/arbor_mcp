@@ -88,6 +88,7 @@ defmodule ExMCP.Transport.HTTP do
   require Logger
 
   alias ExMCP.Authorization.{FullOAuthFlow, LogSanitizer}
+  alias ExMCP.Client.Deadline
 
   alias ExMCP.Internal.{
     CACerts,
@@ -144,9 +145,12 @@ defmodule ExMCP.Transport.HTTP do
     # timeouts apply.
     :deadline,
     tool_headers: %{},
+    tool_listing_generation: 0,
+    tool_headers_generation: 0,
     modern_streams: %{},
     sse_deferred_attempted: false,
-    auth_completed: false
+    auth_completed: false,
+    granted_scopes: nil
   ]
 
   @type t :: %__MODULE__{
@@ -165,6 +169,8 @@ defmodule ExMCP.Transport.HTTP do
           protocol_version: String.t(),
           protocol_era: :legacy | :modern | :unknown,
           tool_headers: %{optional(String.t()) => [map()]},
+          tool_listing_generation: non_neg_integer(),
+          tool_headers_generation: non_neg_integer(),
           modern_streams: %{optional(ExMCP.Types.request_id()) => pid()},
           sse_deferred_attempted: boolean(),
           auth_provider: module() | nil,
@@ -175,7 +181,8 @@ defmodule ExMCP.Transport.HTTP do
           dns_timeout_ms: pos_integer(),
           dns_resolver: module() | function(),
           allowed_private_hosts: [String.t()],
-          deadline: integer() | nil
+          deadline: integer() | nil,
+          granted_scopes: [String.t()] | nil
         }
 
   @default_endpoint "/mcp/v1"
@@ -351,72 +358,84 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
+  @client_auth_fields [
+    :access_token,
+    :auth_completed,
+    :auth_provider_state,
+    :headers
+  ]
+
   def send_keeping_state(message, %__MODULE__{use_sse: true, sse_pid: sse_pid} = state)
       when is_pid(sse_pid) do
-    # SSE mode with active connection — use async POST so the GenServer
-    # can process SSE events (elicitation, sampling) while waiting for
-    # the POST response. The response arrives as {:async_post_result, result, meta}.
     parent = self()
     request_id = extract_request_id(message)
+    request_state = apply_provider_token(state)
+    {page_info, request_state} = prepare_tool_list_page(message, request_state)
 
-    # The provider's token is resolved here, in the calling (client)
-    # process, and returned with the state below: a refresh is kept whatever
-    # the POST's outcome, and concurrent POST tasks never refresh (and spend)
-    # the same refresh token.
-    state = apply_provider_token(state)
+    client_auth? = Process.get({ExMCP.Client, :client}) == true
 
-    # spawn_monitor rather than Task.start: the parent (the ExMCP.Client
-    # GenServer) owns the monitor, so a crashed POST task produces a
-    # {:DOWN, ref, ...} the client maps back to the pending request instead
-    # of leaving it hanging until timeout. No link is created, so the
-    # exit-trapping client's {:EXIT, ...} transport handling is untouched.
-    {_task_pid, task_ref} =
-      spawn_monitor(fn ->
-        # A legacy POST answered with an event stream carries the request's
-        # notifications and the server's own requests ahead of the response;
-        # this task hands each to the client as it arrives (see PostStream).
-        # The client process is free meanwhile: it is not blocked on this POST.
-        stream =
-          PostStream.consumer(parent,
-            max_buffer_bytes: state.max_stream_buffer_bytes,
-            max_kept_bytes: state.max_response_bytes
-          )
+    task_pid =
+      spawn(fn ->
+        task_ref =
+          receive do
+            {:start_async_post, ref} -> ref
+          after
+            5_000 -> nil
+          end
 
-        result = exchange(message, state, event_stream: stream)
+        result =
+          if client_auth? do
+            perform_async(message, request_state, parent, page_info: page_info)
+          else
+            perform_async_standalone(message, request_state, parent, page_info: page_info)
+          end
 
-        # Report the durable transport-state fields this POST changed
-        # (session rotation, OAuth token refresh, a failed provider's loop
-        # guards) so the client can merge them into its copy of the transport
-        # state instead of discarding. The result keeps send_message/2's
-        # shapes: the state travels in meta only.
-        meta = %{request_id: request_id, state_changes: result_state_changes(state, result)}
+        changes = result_state_changes(request_state, result)
+        changes = if client_auth?, do: Map.drop(changes, @client_auth_fields), else: changes
+
+        meta = %{
+          task_ref: task_ref,
+          task_pid: self(),
+          request_id: request_id,
+          deadline: request_state.deadline,
+          tool_list: page_info,
+          state_changes: changes
+        }
+
         send(parent, {:async_post_result, without_state(result), meta})
       end)
 
-    # Let the client associate the monitored task with the request it serves.
+    task_ref = Process.monitor(task_pid)
     send(parent, {:async_post_task, task_ref, request_id})
+    send(parent, {:async_post_task, task_ref, request_id, task_pid})
+    if not client_auth?, do: send(task_pid, {:start_async_post, task_ref})
 
-    # Return without response data — it will arrive via :async_post_result
-    # or via the GET SSE stream (for SSE-formatted POST responses)
-    {:ok, state}
+    {:ok,
+     %{
+       state
+       | access_token: request_state.access_token,
+         headers: request_state.headers,
+         auth_provider_state: request_state.auth_provider_state,
+         tool_listing_generation: request_state.tool_listing_generation
+     }}
   end
 
-  # Non-SSE mode, and the fallback: the request-response runs synchronously.
   def send_keeping_state(message, %__MODULE__{} = state), do: send_sync(message, state)
 
   defp send_sync(message, state), do: exchange(message, apply_provider_token(state), [])
 
-  # One request-response, with the provider's token already on `state`.
-  # `opts` may name an `:event_stream` consumer for the response body (see
-  # PostStream); auth retries keep that consumer so server requests arriving
-  # on the retried POST can still be answered.
+  @doc false
+  def send_authenticated(message, %__MODULE__{} = state, opts \\ []) do
+    exchange(message, state, opts)
+  end
+
   defp exchange(message, state, opts) do
     case perform_with_token(message, state, opts) do
       {:ok, response} ->
-        handle_http_response(response, state, message)
+        handle_http_response(response, state, message, opts)
 
       {:ok, response, new_state} ->
-        case handle_http_response(response, new_state, message) do
+        case handle_http_response(response, new_state, message, opts) do
           {:error, reason} -> {:error, reason, new_state}
           result -> result
         end
@@ -429,9 +448,6 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  # Perform HTTP request with automatic OAuth retry via auth provider. Every
-  # outcome returns the state: getting the token may have refreshed it, and
-  # so may a 401, and a rotating refresh token must not be used twice.
   defp perform_with_token(body, %{auth_provider: provider} = state, opts)
        when not is_nil(provider) do
     case perform_http_request(body, state, opts) do
@@ -443,26 +459,22 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  # Legacy inline OAuth path (when no auth provider configured)
   defp perform_with_token(body, state, opts) do
-    result = perform_http_request(body, state, opts)
-
-    case result do
+    case perform_http_request(body, state, opts) do
       {:ok, response} ->
         case handle_auth_challenge(response, body, state, opts) do
           :no_challenge ->
             {:ok, response}
 
           {:ok, retry_response, new_state} ->
-            # Check if retry got another 401 (scope step-up)
             case handle_auth_challenge(retry_response, body, new_state, opts) do
               :no_challenge -> {:ok, retry_response, new_state}
               {:ok, r, s} -> {:ok, r, s}
-              {:error, reason} -> {:error, reason}
+              {:error, reason, s} -> {:error, reason, s}
             end
 
-          {:error, reason} ->
-            {:error, reason}
+          {:error, reason, new_state} ->
+            {:error, reason, new_state}
         end
 
       {:error, reason} ->
@@ -470,9 +482,104 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  # Route provider auth challenge based on response status.
+  defp perform_async_standalone(message, state, parent, opts) do
+    stream =
+      PostStream.consumer(parent,
+        max_buffer_bytes: state.max_stream_buffer_bytes,
+        max_kept_bytes: state.max_response_bytes
+      )
+
+    exchange(message, state, [event_stream: stream] ++ opts)
+  end
+
+  defp perform_async(message, state, parent, opts, attempts \\ 0) do
+    stream =
+      PostStream.consumer(parent,
+        max_buffer_bytes: state.max_stream_buffer_bytes,
+        max_kept_bytes: state.max_response_bytes
+      )
+
+    request_opts = [event_stream: stream] ++ opts
+
+    case perform_http_request(message, state, request_opts) do
+      {:ok, response} ->
+        case extract_auth_status(response, state) do
+          :ok ->
+            handle_http_response(response, state, message, opts)
+
+          {kind, www_auth} when attempts < 2 ->
+            case await_authentication(parent, kind, www_auth, state) do
+              {:ok, token} ->
+                if is_integer(state.deadline) and Deadline.expired?(state.deadline) do
+                  {:error, :timeout}
+                else
+                  perform_async(
+                    message,
+                    apply_token_to_state(state, token),
+                    parent,
+                    opts,
+                    attempts + 1
+                  )
+                end
+
+              {:error, reason} ->
+                {:error, {:authentication_failed, reason}}
+            end
+
+          _challenge ->
+            handle_http_response(response, state, message, opts)
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @auth_wait_ms 600_000
+
+  defp await_authentication(parent, kind, www_auth, state) do
+    if is_integer(state.deadline) and Deadline.expired?(state.deadline) do
+      {:error, :timeout}
+    else
+      ref = make_ref()
+      monitor = Process.monitor(parent)
+
+      challenge = %{
+        status: if(kind == :unauthorized, do: 401, else: 403),
+        www_authenticate: www_auth,
+        scopes: extract_scope_from_www_auth(www_auth),
+        token: state.access_token || bearer_token(state.headers),
+        deadline: state.deadline
+      }
+
+      send(parent, {:http_post_auth_challenge, self(), ref, challenge})
+
+      wait =
+        case state.deadline do
+          deadline when is_integer(deadline) ->
+            min(max(deadline - System.monotonic_time(:millisecond), 0), @auth_wait_ms)
+
+          nil ->
+            @auth_wait_ms
+        end
+
+      receive do
+        {:http_post_auth_result, ^ref, result} ->
+          Process.demonitor(monitor, [:flush])
+          result
+
+        {:DOWN, ^monitor, :process, _pid, _reason} ->
+          {:error, :client_gone}
+      after
+        wait ->
+          Process.demonitor(monitor, [:flush])
+          {:error, :timeout}
+      end
+    end
+  end
+
   defp handle_provider_auth_challenge(response, body, state, opts) do
-    case extract_auth_status(response) do
+    case extract_auth_status(response, state) do
       {:unauthorized, www_auth} ->
         provider_authenticate(:handle_unauthorized, www_auth, body, state, opts)
 
@@ -484,14 +591,17 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  # Authenticate via provider, retry request, handle scope step-up on retry.
   defp provider_authenticate(callback, www_auth, body, state, opts) do
     provider = state.auth_provider
     scopes = extract_scope_from_www_auth(www_auth)
 
     case apply(provider, callback, [www_auth, scopes, state.auth_provider_state]) do
       {:ok, token, new_ps} ->
-        new_state = state |> Map.put(:auth_provider_state, new_ps) |> apply_token_to_state(token)
+        new_state =
+          state
+          |> Map.put(:auth_provider_state, new_ps)
+          |> apply_token_to_state(token)
+
         provider_retry_request(body, new_state, opts)
 
       {:error, reason, ps} ->
@@ -499,11 +609,10 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  # Retry request after auth; if 403 scope step-up, try once more.
   defp provider_retry_request(body, state, opts) do
     case perform_http_request(body, state, opts) do
       {:ok, retry_resp} ->
-        case extract_auth_status(retry_resp) do
+        case extract_auth_status(retry_resp, state) do
           {:forbidden, www_auth} ->
             provider_authenticate(:handle_forbidden, www_auth, body, state, opts)
 
@@ -516,13 +625,41 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  defp extract_auth_status({status_line, headers, _body}) do
-    case status_line do
-      {_, 401, _} -> {:unauthorized, Headers.get(headers, "www-authenticate")}
-      {_, 403, _} -> {:forbidden, Headers.get(headers, "www-authenticate")}
-      _ -> :ok
+  defp extract_auth_status({{_, 401, _}, headers, _body}, state) do
+    www_auth = Headers.get(headers, "www-authenticate")
+
+    if unauthorized_challenge?(state, www_auth) do
+      {:unauthorized, www_auth}
+    else
+      :ok
     end
   end
+
+  defp extract_auth_status({{_, 403, _}, headers, _body}, state) do
+    www_auth = Headers.get(headers, "www-authenticate")
+
+    if forbidden_challenge?(state, www_auth) do
+      {:forbidden, www_auth}
+    else
+      :ok
+    end
+  end
+
+  defp extract_auth_status(_response, _state), do: :ok
+
+  defp unauthorized_challenge?(%{auth_provider: p}, _www) when not is_nil(p), do: true
+  defp unauthorized_challenge?(%{auth_config: c}, _www) when not is_nil(c), do: true
+  defp unauthorized_challenge?(_state, "Bearer" <> _), do: true
+  defp unauthorized_challenge?(_state, "bearer" <> _), do: true
+  defp unauthorized_challenge?(_state, _www), do: false
+
+  defp forbidden_challenge?(%{auth_provider: p}, _www) when not is_nil(p), do: true
+
+  defp forbidden_challenge?(_state, www) when is_binary(www) do
+    String.contains?(www, "insufficient_scope")
+  end
+
+  defp forbidden_challenge?(_state, _www), do: false
 
   defp apply_provider_token(%{auth_provider: provider, auth_provider_state: ps} = state)
        when not is_nil(provider) do
@@ -546,8 +683,14 @@ defmodule ExMCP.Transport.HTTP do
   defp apply_provider_token(state), do: state
 
   defp apply_token_to_state(state, token) do
-    %{state | access_token: token, headers: put_bearer_header(state.headers, token)}
+    %{
+      state
+      | access_token: token,
+        headers: put_bearer_header(state.headers, token)
+    }
   end
+
+  defp init_auth_provider(:none, _auth_config, _base_url, _endpoint, _version), do: {nil, nil}
 
   defp init_auth_provider({mod, provider_config}, _auth_config, _base_url, _endpoint, _version) do
     case mod.init(provider_config) do
@@ -569,122 +712,142 @@ defmodule ExMCP.Transport.HTTP do
 
   defp init_auth_provider(nil, _auth_config, _base_url, _endpoint, _version), do: {nil, nil}
 
-  # Check if the response is a 401 that we can handle with OAuth
-  defp handle_auth_challenge({status_line, headers, _body}, original_body, state, opts) do
-    case status_line do
-      {_, 401, _} ->
-        maybe_oauth_retry(headers, original_body, state, opts)
+  @doc false
+  def run_inline_oauth_challenge(%__MODULE__{} = state, challenge) do
+    status = Map.get(challenge, :status, 401)
+    www_auth = Map.get(challenge, :www_authenticate)
+    scopes = Map.get(challenge, :scopes, [])
 
-      {_, 403, _} ->
-        # 403 with insufficient_scope → scope step-up
-        maybe_oauth_retry(headers, original_body, state, opts)
+    case validate_inline_challenge(status, www_auth, scopes, state) do
+      :ok -> execute_inline_oauth(state, www_auth, scopes, status)
+      {:error, reason} -> {{:error, reason}, state}
+    end
+  end
+
+  defp validate_inline_challenge(403, www_auth, scopes, _state) do
+    has_scope_err = is_binary(www_auth) and String.contains?(www_auth, "insufficient_scope")
+    has_scopes = is_list(scopes) and scopes != []
+
+    if has_scope_err or has_scopes do
+      :ok
+    else
+      {:error, :forbidden}
+    end
+  end
+
+  defp validate_inline_challenge(401, www_auth, _scopes, state) do
+    if state.auth_config != nil or bearer_challenge?(www_auth) do
+      :ok
+    else
+      {:error, :unauthorized}
+    end
+  end
+
+  defp validate_inline_challenge(_status, _www, _scopes, _state), do: :ok
+
+  defp bearer_challenge?("Bearer" <> _), do: true
+  defp bearer_challenge?("bearer" <> _), do: true
+  defp bearer_challenge?(_), do: false
+
+  defp execute_inline_oauth(state, www_auth, challenge_scopes, status) do
+    scopes = resolve_oauth_scopes(challenge_scopes, state, www_auth)
+    config = build_inline_oauth_config(state, www_auth, scopes)
+
+    Logger.info("Attempting full OAuth flow (status: #{status})")
+
+    case FullOAuthFlow.execute(config) do
+      {:ok, token_result} ->
+        access_token = token_result[:access_token] || token_result["access_token"]
+        granted = extract_granted_scopes(token_result, scopes)
+
+        new_state = %{
+          state
+          | access_token: access_token,
+            auth_completed: true,
+            granted_scopes: granted,
+            headers: put_bearer_header(state.headers, access_token)
+        }
+
+        {{:ok, access_token}, new_state}
+
+      {:error, reason} ->
+        Logger.warning("Full OAuth flow failed: #{LogSanitizer.format(reason)}")
+        {{:error, {:oauth_failed, reason}}, state}
+    end
+  end
+
+  defp resolve_oauth_scopes([_ | _] = scopes, %{granted_scopes: granted}, _www)
+       when is_list(granted) do
+    Enum.uniq(granted ++ scopes)
+  end
+
+  defp resolve_oauth_scopes([_ | _] = scopes, _state, _www), do: scopes
+
+  defp resolve_oauth_scopes(_empty, %{granted_scopes: [_ | _] = granted}, _www), do: granted
+
+  defp resolve_oauth_scopes(_empty, %{auth_config: %{scopes: s}}, _www) when is_list(s), do: s
+
+  defp resolve_oauth_scopes(_empty, _state, www_auth), do: extract_scope_from_www_auth(www_auth)
+
+  defp build_inline_oauth_config(state, www_auth, scopes) do
+    resource_url = build_url(state, "")
+
+    base_config =
+      (state.auth_config || %{})
+      |> Map.put(:resource_url, resource_url)
+      |> Map.put(:www_authenticate, www_auth)
+      |> Map.put(:protocol_version, state.protocol_version)
+      |> with_connection_trust(state)
+
+    case scopes do
+      [_ | _] -> Map.put(base_config, :scopes, scopes)
+      _ -> base_config
+    end
+  end
+
+  defp extract_granted_scopes(token_result, requested_scopes) do
+    case token_result[:scope] || token_result["scope"] do
+      scope when is_binary(scope) ->
+        String.split(scope, ~r/\s+/, trim: true)
+
+      _ ->
+        requested_scopes
+    end
+  end
+
+  defp handle_auth_challenge({status_line, headers, _body}, body, state, opts) do
+    case status_line do
+      {_, code, _} when code in [401, 403] ->
+        www_auth = Headers.get(headers, "www-authenticate")
+        scopes = extract_scope_from_www_auth(www_auth)
+        challenge = %{status: code, www_authenticate: www_auth, scopes: scopes}
+
+        case run_inline_oauth_challenge(state, challenge) do
+          {{:ok, _token}, new_state} ->
+            case perform_http_request(body, new_state, opts) do
+              {:ok, retry_resp} -> {:ok, retry_resp, new_state}
+              {:error, reason} -> {:error, reason, new_state}
+            end
+
+          {{:error, :unauthorized}, ^state} ->
+            :no_challenge
+
+          {{:error, :forbidden}, ^state} ->
+            :no_challenge
+
+          {{:error, reason}, new_state} ->
+            {:error, reason, new_state}
+        end
 
       _ ->
         :no_challenge
     end
   end
 
-  # Attempt OAuth discovery and retry if auth_config is available
-  defp maybe_oauth_retry(headers, original_body, %{auth_config: nil} = state, opts) do
-    # No explicit auth config — try full OAuth flow if this looks like an OAuth challenge
-    www_auth = Headers.get(headers, "www-authenticate")
-
-    if www_auth && String.starts_with?(www_auth, "Bearer") do
-      run_full_oauth_flow(www_auth, original_body, state, opts)
-    else
-      :no_challenge
-    end
-  end
-
-  defp maybe_oauth_retry(headers, original_body, %{access_token: token} = state, opts)
-       when is_binary(token) and byte_size(token) > 0 do
-    # Already have a token but got 401/403 — check if this is a scope step-up
-    www_auth = Headers.get(headers, "www-authenticate") || ""
-
-    if String.contains?(www_auth, "insufficient_scope") do
-      # Scope step-up: clear token and re-auth with new scope requirements
-      Logger.info("Scope step-up required, re-authorizing")
-      new_state = %{state | access_token: nil, auth_completed: false}
-      maybe_oauth_retry(headers, original_body, new_state, opts)
-    else
-      # Token rejected for other reason — auth loop protection
-      Logger.warning("Auth failed after successful OAuth flow, not retrying")
-      :no_challenge
-    end
-  end
-
-  defp maybe_oauth_retry(headers, original_body, state, opts) do
-    # Have auth_config with credentials — use FullOAuthFlow which handles
-    # PRM discovery with header fallback and pre-existing credentials
-    www_auth = Headers.get(headers, "www-authenticate")
-    resource_url = build_url(state, "")
-
-    config =
-      (state.auth_config || %{})
-      |> Map.put(:resource_url, resource_url)
-      |> Map.put(:www_authenticate, www_auth)
-
-    Logger.info("Received 401, attempting OAuth flow with credentials")
-
-    case FullOAuthFlow.execute(config) do
-      {:ok, token_result} ->
-        access_token = token_result[:access_token] || token_result["access_token"]
-        Logger.info("OAuth token obtained, retrying request")
-
-        # Update state with token and add Authorization header
-        new_state = %{
-          state
-          | access_token: access_token,
-            auth_completed: true,
-            headers: put_bearer_header(state.headers, access_token)
-        }
-
-        # Retry the original request with auth headers
-        case perform_http_request(original_body, new_state, opts) do
-          {:ok, response} -> {:ok, response, new_state}
-          {:error, reason} -> {:error, reason}
-        end
-
-      {:error, reason} ->
-        Logger.warning("OAuth discovery flow failed: #{LogSanitizer.format(reason)}")
-        {:error, {:oauth_failed, reason}}
-    end
-  end
-
-  defp run_full_oauth_flow(www_auth, original_body, state, opts) do
-    Logger.info("Attempting full OAuth flow (authorization code + PKCE)")
-    resource_url = build_url(state, "")
-
-    # Extract scope from WWW-Authenticate header if present
-    scopes = extract_scope_from_www_auth(www_auth)
-
-    config = %{
-      resource_url: resource_url,
-      www_authenticate: www_auth,
-      scopes: scopes,
-      protocol_version: state.protocol_version
-    }
-
-    case FullOAuthFlow.execute(config) do
-      {:ok, token_result} ->
-        access_token = token_result[:access_token] || token_result["access_token"]
-        Logger.info("Full OAuth flow succeeded, retrying request")
-
-        new_state = %{
-          state
-          | access_token: access_token,
-            auth_completed: true,
-            headers: put_bearer_header(state.headers, access_token)
-        }
-
-        case perform_http_request(original_body, new_state, opts) do
-          {:ok, response} -> {:ok, response, new_state}
-          {:error, reason} -> {:error, reason}
-        end
-
-      {:error, reason} ->
-        Logger.warning("Full OAuth flow failed: #{LogSanitizer.format(reason)}")
-        {:error, {:oauth_failed, reason}}
+  defp bearer_token(headers) do
+    case Headers.get(headers, "authorization") do
+      "Bearer " <> token -> token
+      _none -> nil
     end
   end
 
@@ -807,17 +970,98 @@ defmodule ExMCP.Transport.HTTP do
 
   # Transport-state fields an async POST may durably change. Everything else
   # is either transient (:last_response) or owned by the connection lifecycle
-  # (:sse_pid, :sse_deferred_attempted) and must never be reported back.
+  # (:sse_pid, :sse_deferred_attempted) and must never be reported back. The
+  # client updates :tool_headers itself from each tools/list result (see
+  # cache_tool_list/3), so concurrent pages cannot overwrite one another.
   @async_merge_fields [
     :session_id,
     :access_token,
     :auth_completed,
     :auth_provider_state,
     :headers,
-    :tool_headers,
     :retry_delay,
     :last_event_id
   ]
+
+  @doc false
+  # Applies a tools/list response from an async POST to the client's own
+  # transport state.
+  #
+  # A new listing generation (a fresh first page whose generation exceeds
+  # tool_headers_generation) legitimately resets the cache. Pages belonging to
+  # the current listing generation merge into the cache, ensuring that if cursor
+  # pages complete before their first page, the first page does not erase the
+  # cursor pages' cached tool headers. Pages from an older generation are ignored
+  # as stale.
+  @spec cache_tool_list(
+          t(),
+          :first | :cursor | {:first, pos_integer()} | {:cursor, pos_integer()} | nil,
+          term()
+        ) :: t()
+  def cache_tool_list(%__MODULE__{} = state, page_info, response_data) do
+    case Jason.decode(response_data) do
+      {:ok, %{"result" => %{"tools" => tools}}} when is_list(tools) ->
+        apply_tool_list_cache(state, page_info, tools)
+
+      _other ->
+        state
+    end
+  rescue
+    _invalid -> state
+  end
+
+  defp apply_tool_list_cache(state, {:first, gen}, tools) when is_integer(gen) do
+    current_gen = state.tool_headers_generation || 0
+
+    cond do
+      gen < current_gen ->
+        state
+
+      gen > current_gen ->
+        %{state | tool_headers_generation: gen, tool_headers: ToolHeaders.cache(tools)}
+
+      true ->
+        %{state | tool_headers: Map.merge(state.tool_headers || %{}, ToolHeaders.cache(tools))}
+    end
+  end
+
+  defp apply_tool_list_cache(state, {:cursor, gen}, tools) when is_integer(gen) do
+    current_gen = state.tool_headers_generation || 0
+
+    cond do
+      gen < current_gen ->
+        state
+
+      gen > current_gen ->
+        %{state | tool_headers_generation: gen, tool_headers: ToolHeaders.cache(tools)}
+
+      true ->
+        %{state | tool_headers: Map.merge(state.tool_headers || %{}, ToolHeaders.cache(tools))}
+    end
+  end
+
+  defp apply_tool_list_cache(state, kind, tools) when kind in [:first, :cursor] do
+    %{state | tool_headers: Map.merge(state.tool_headers || %{}, ToolHeaders.cache(tools))}
+  end
+
+  defp apply_tool_list_cache(state, _page_info, _tools), do: state
+
+  defp prepare_tool_list_page(message, state) do
+    case Jason.decode(message) do
+      {:ok, %{"method" => "tools/list"} = request} ->
+        if get_in(request, ["params", "cursor"]) do
+          {{:cursor, state.tool_listing_generation || 0}, state}
+        else
+          gen = (state.tool_listing_generation || 0) + 1
+          {{:first, gen}, %{state | tool_listing_generation: gen}}
+        end
+
+      _other ->
+        {nil, state}
+    end
+  rescue
+    _invalid -> {nil, state}
+  end
 
   defp result_state_changes(snapshot, {:ok, new_state}) do
     async_state_changes(snapshot, new_state)
@@ -904,7 +1148,7 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  defp handle_http_response({status_line, headers, body}, state, request_body) do
+  defp handle_http_response({status_line, headers, body}, state, request_body, opts) do
     # Convert charlist to binary if needed (httpc returns charlists by default)
     body_binary = if is_list(body), do: List.to_string(body), else: body
     {_, status_code, _} = status_line
@@ -923,7 +1167,7 @@ defmodule ExMCP.Transport.HTTP do
         # Always parse the response body — per MCP spec, POST responses
         # contain the result even in SSE mode. The SSE stream is for
         # server-initiated messages (notifications, progress updates).
-        handle_non_sse_response(body_binary, headers, state, request_body)
+        handle_non_sse_response(body_binary, headers, state, request_body, opts)
 
       {_, 202, _} ->
         # 202 Accepted - notification was accepted, no response body expected
@@ -939,15 +1183,15 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  defp handle_non_sse_response(body, headers, state, request_body) do
+  defp handle_non_sse_response(body, headers, state, request_body, opts) do
     content_type = Headers.get(headers, "content-type") || ""
 
     if String.contains?(String.downcase(content_type), "text/event-stream") do
-      handle_sse_post_response(body, state, request_body)
+      handle_sse_post_response(body, state, request_body, opts)
     else
       case Jason.decode(body) do
         {:ok, response} ->
-          state = cache_tool_headers(state, request_body, response)
+          state = cache_tool_headers(state, request_body, response, opts)
           {:ok, %{state | last_response: response}, Jason.encode!(response)}
 
         {:error, reason} ->
@@ -956,34 +1200,59 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  defp cache_tool_headers(state, request_body, %{"result" => %{"tools" => tools}})
+  defp cache_tool_headers(
+         state,
+         request_body,
+         %{"result" => %{"tools" => tools}},
+         opts
+       )
        when is_list(tools) do
     case Jason.decode(request_body) do
       {:ok, %{"method" => "tools/list"} = request} ->
-        page = ToolHeaders.cache(tools)
-
-        tool_headers =
-          if get_in(request, ["params", "cursor"]),
-            do: Map.merge(state.tool_headers || %{}, page),
-            else: page
-
-        %{state | tool_headers: tool_headers}
+        page_info = resolve_tool_list_page(request, state, opts)
+        state = maybe_advance_listing_generation(state, page_info)
+        apply_tool_list_cache(state, page_info, tools)
 
       _other ->
         state
     end
+  rescue
+    _invalid -> state
   end
 
-  defp cache_tool_headers(state, _request_body, _response), do: state
+  defp cache_tool_headers(state, _request_body, _response, _opts), do: state
+
+  defp resolve_tool_list_page(request, state, opts) do
+    case Keyword.get(opts, :page_info) do
+      nil ->
+        if get_in(request, ["params", "cursor"]) do
+          {:cursor, state.tool_listing_generation || 0}
+        else
+          gen = (state.tool_listing_generation || 0) + 1
+          {:first, gen}
+        end
+
+      captured_page_info ->
+        captured_page_info
+    end
+  end
+
+  defp maybe_advance_listing_generation(state, {:first, gen}) when is_integer(gen) do
+    if gen > (state.tool_listing_generation || 0),
+      do: %{state | tool_listing_generation: gen},
+      else: state
+  end
+
+  defp maybe_advance_listing_generation(state, _page_info), do: state
 
   # Process SSE-formatted POST response.
   # Extracts JSON data, retry fields, and event IDs.
   # If no JSON result is found (just priming events), the response
   # will come via GET SSE stream — start/ensure SSE is connected.
-  defp handle_sse_post_response(body, state, request_body) do
+  defp handle_sse_post_response(body, state, request_body, opts) do
     events = SSE.parse_complete(body)
     state = apply_sse_event_metadata(events, state)
-    handle_sse_json_data(sse_json_data(events), state, request_body)
+    handle_sse_json_data(sse_json_data(events), state, request_body, opts)
   end
 
   defp apply_sse_event_metadata(events, state) do
@@ -1022,12 +1291,12 @@ defmodule ExMCP.Transport.HTTP do
     end)
   end
 
-  defp handle_sse_json_data("", state, _request_body), do: reconnect_deferred_sse(state)
+  defp handle_sse_json_data("", state, _request_body, _opts), do: reconnect_deferred_sse(state)
 
-  defp handle_sse_json_data(json_data, state, request_body) do
+  defp handle_sse_json_data(json_data, state, request_body, opts) do
     case Jason.decode(json_data) do
       {:ok, response} ->
-        state = cache_tool_headers(state, request_body, response)
+        state = cache_tool_headers(state, request_body, response, opts)
         {:ok, %{state | last_response: response}, Jason.encode!(response)}
 
       {:error, _reason} ->

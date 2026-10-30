@@ -865,6 +865,34 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
 
   defp build_client_credentials_body(client_info, config, :private_key_jwt) do
     # JWT-based client authentication for client_credentials grant
+    with {:ok, assertion_params} <- build_assertion_params_for_jwt(client_info, config) do
+      resource = config[:resource] || config[:resource_url] || ""
+      scope = join_scopes(config)
+
+      body =
+        [{"grant_type", "client_credentials"}, {"resource", resource}, {"scope", scope}]
+        |> Enum.concat(assertion_params)
+        |> Enum.reject(fn {_, v} -> is_nil(v) or v == "" end)
+
+      {:ok, body}
+    end
+  end
+
+  defp build_client_credentials_body(client_info, config, _auth_method) do
+    body =
+      [
+        grant_type: "client_credentials",
+        client_id: client_info.client_id,
+        client_secret: Map.get(client_info, :client_secret),
+        resource: config[:resource] || config[:resource_url],
+        scope: join_scopes(config)
+      ]
+      |> Enum.reject(fn {_, v} -> is_nil(v) end)
+
+    {:ok, body}
+  end
+
+  defp build_assertion_params_for_jwt(client_info, config) do
     token_endpoint = config[:token_endpoint] || ""
     private_key = config[:private_key] || client_info[:private_key]
     alg = config[:signing_algorithm] || "ES256"
@@ -875,33 +903,13 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
            private_key: private_key,
            alg: alg
          ) do
-      {:ok, assertion_params} ->
-        resource = config[:resource] || config[:resource_url] || ""
-
-        body =
-          [{"grant_type", "client_credentials"}, {"resource", resource}]
-          |> Enum.concat(assertion_params)
-          |> Enum.reject(fn {_, v} -> is_nil(v) or v == "" end)
-
-        {:ok, body}
-
-      {:error, reason} ->
-        {:error, {:client_assertion_failed, reason}}
+      {:ok, assertion_params} -> {:ok, assertion_params}
+      {:error, reason} -> {:error, {:client_assertion_failed, reason}}
     end
   end
 
-  defp build_client_credentials_body(client_info, config, _auth_method) do
-    body =
-      [
-        grant_type: "client_credentials",
-        client_id: client_info.client_id,
-        client_secret: Map.get(client_info, :client_secret),
-        resource: config[:resource] || config[:resource_url]
-      ]
-      |> Enum.reject(fn {_, v} -> is_nil(v) end)
-
-    {:ok, body}
-  end
+  defp join_scopes(%{scopes: [_ | _] = scopes}), do: Enum.join(scopes, " ")
+  defp join_scopes(_config), do: nil
 
   # Step 4b: Run authorization code flow with PKCE
   defp run_auth_code_flow(as_metadata, client_info, config) do

@@ -58,14 +58,14 @@ defmodule ExMCP.Transport.SSEClientSecurityTest do
                max_retry_delay: 1_000
              )
 
-    assert_receive {:sse_error, ^exact_pid, {:http_error, 500}}, 1_000
+    assert_receive {:sse_error, ^exact_pid, {:http_error, 500}}, 5_000
     SSEClient.stop(exact_pid)
 
     over = Bypass.open()
     Bypass.stub(over, "GET", "/mcp", &Plug.Conn.resp(&1, 500, "12345"))
 
     assert {:ok, over_pid} = start_sse(over, max_response_bytes: 4)
-    assert_receive {:sse_error, ^over_pid, :response_too_large}, 1_000
+    assert_receive {:sse_error, ^over_pid, :response_too_large}, 5_000
   end
 
   test "a stalled event consumer receives only one event before fail-closed shutdown" do

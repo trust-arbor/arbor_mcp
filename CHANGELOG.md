@@ -60,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retiring a request also stops its HTTP POST worker, so an authentication
+  reply already queued for that worker cannot restart settled work. This
+  covers client and server cancellation with provider and inline OAuth
+  authentication, without affecting unrelated POSTs.
 - A health check that gave up on a hung server dropped the connection
   without closing it, so a stdio server kept running and a reconnect started
   a second one beside it. The transport is now closed first, as the other
@@ -129,6 +133,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `:scopes` is not a proper list of strings, including lists with an invalid
   tail, instead of raising for invalid values. `nil` still omits the `scope`
   parameter, so the authorization server applies its default scopes.
+- Progress (`notifications/progress`) and connection-level log messages
+  (`notifications/message`) received over connection streams (stdio, BEAM,
+  legacy HTTP) are now routed to the client handler's `handle_progress/3`
+  and `handle_log_message/3` callbacks. Requests carrying a duplicate
+  `progressToken` currently in use by an active pending request are refused
+  as not sent (backport of 2.x #112: `35fd26a` and #115: `0baa12f`).
+- In legacy SSE mode, concurrent `tools/list` page responses are merged directly
+  into the client process's tool header cache rather than having each async
+  task overwrite `:tool_headers` from its initial snapshot (backport of 2.x
+  #110: `adcf5f4`).
+- In legacy SSE mode, authentication challenges received by concurrent async
+  POST tasks are unified with the modern stream challenge path
+  (`answer_stream_challenge/2` in the client process). Both auth provider and
+  inline OAuth flows run in the client GenServer so concurrent challenges run
+  one flow at a time; challenges on an older token reuse the newest credentials
+  without running the flow again. The client replies with the token and the
+  task re-sends the request itself with its live `PostStream` consumer,
+  preventing deadlocks when retried SSE streams carry server requests and
+  ensuring tasks never bring credentials back or overwrite transport state
+  (backport of 2.x #110: `3065dc3` and `adcf5f4`).
+- Stale results, challenges, and `:DOWN` notifications from retired or untracked
+  async POST tasks are ignored on disconnect and reconnect, preventing 401 crashes
+  against a nil transport and preventing stale tool listings from polluting
+  the active connection's header cache.
+- Async POST tasks use a start/ack handshake so that monitors and request mappings
+  are registered in the client GenServer before task execution starts, eliminating
+  races where fast completions or abnormal exits could precede task registration.
+- Concurrent `tools/list` cursor pages no longer have their tool headers wiped if
+  the first page completes after cursor pages, and listing generation counters
+  ensure fresh first pages legitimately reset the cache while stale pages are discarded.
+  The captured listing generation is carried through authenticated retries of cursor
+  requests, preventing pages from older generations from merging into a newer generation's
+  cache.
+- Settled requests release their `progressToken` upon completion, error, timeout,
+  cancellation, or modern stream closure, and all progress tokens are cleared on disconnect.
+  (Note on protocol design: once request A completes, request B may reuse A's progress token,
+  and a late notification of A's still in flight then reaches B. The MCP specification requires
+  tokens to be unique only among active requests, so this race is inherent to the protocol,
+  and 2.x behaves the same.)
+- In legacy SSE mode, health-check ping responses are recognized and settled on response,
+  clearing `health_check_id` and updating last activity, and HTTP health POSTs are bounded
+  by the health interval. This prevents healthy connections from falsely timing out on
+  subsequent health checks (backport of 2.x PR #170: `296e037`).
+- In legacy SSE mode, every path that removes a pending request (including incoming server
+  `notifications/cancelled` notifications, client `send_cancelled`, timeouts, responses,
+  errors, and stream closure) retires its async POST task (`drop_pending_request/2`), while
+  failed POST tasks carrying no request ID (notifications, batches, and server replies) only
+  untrack the failed task itself rather than retiring other in-flight `request_id: nil` POSTs.
+  Delayed authentication challenges from retired tasks are refused with `{:error, :stream_retired}`
+  and never re-sent, preventing requests from executing tool calls on the server after cancellation
+  (backport of 2.x PR #170).
+- When an auth provider refreshes a token in legacy SSE mode, the refreshed `access_token`
+  and headers are retained together with the provider state in the returned transport, so
+  delayed challenges against older tokens reuse the refreshed token without re-triggering an
+  unnecessary second refresh (backport of 2.x PR #170).
+- Requests without an explicit `:timeout` carry an effective deadline derived from the client's
+  `default_timeout`. The auth wait and re-send in the async POST task, as well as `-32020`
+  HeaderMismatch recovery in `ExMCP.Client.Operations.Tools`, are bounded by a concrete
+  effective deadline, and a request past its deadline is never re-sent (backport of 2.x PR #170).
+- Legacy SSE async POST responses are matched by the request the POST carried
+  rather than solely by the `id` echoed in the response body. Responses with a
+  null or different id answer the caller instead of timing out, and responses
+  arriving after a request has settled (cancelled or timed out) are dropped
+  rather than misrouted to another request. A POST that fails at or after its
+  deadline replies `:timeout` and cancels the request on the server (backport of
+  2.x #110: `3065dc3` and `adcf5f4`).
 - Nested atom keys in a client's declared capabilities are now normalized
   for the Local transport too, matching the HTTP wire shape. This closes a
   Local-transport gap in the 1.x backport of 2.x PR #116.
