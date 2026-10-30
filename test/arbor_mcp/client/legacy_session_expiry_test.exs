@@ -591,6 +591,8 @@ defmodule Arbor.MCP.Client.LegacySessionExpiryTest do
       transport: :http,
       url: url,
       protocol_mode: :legacy_only,
+      # Bypass ports can be reused by a later test with a different era.
+      reset_era_cache: true,
       protocol_version: @version,
       use_sse: false,
       response_cache: false,
