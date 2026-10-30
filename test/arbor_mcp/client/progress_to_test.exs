@@ -877,6 +877,12 @@ defmodule Arbor.MCP.Client.ProgressToTest do
 
       assert_receive {:wire, %{"id" => id, "method" => "tools/call"}}
 
+      # The monitor's :noconnection signal is asynchronous with the wire event.
+      assert :ok =
+               Arbor.MCP.TestHelpers.wait_until(fn ->
+                 match?(%{pid: nil}, Map.get(:sys.get_state(client).progress_targets, id))
+               end)
+
       state = :sys.get_state(client)
       assert Map.has_key?(state.pending_requests, id)
       assert %{pid: nil} = state.progress_targets[id]

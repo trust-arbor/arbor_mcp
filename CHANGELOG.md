@@ -150,6 +150,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING:** `Arbor.MCP.Authorization.JWT.validate_claims/2` and
+  `verify_and_validate/3` require an expected `:aud`; omitting it returns
+  `{:error, :missing_expected_audience}`. See `docs/SECURITY.md`.
 - **BREAKING:** Client startup failures preserve structured connection reasons
   inside `{:transport_connect_failed, reason}` instead of stringifying them.
   Initial connection diagnostics use debug logging and the redacted
@@ -274,6 +277,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Host policy validates complete HTTP authorities and supported request-target
+  URLs, compares allowed hosts exactly, and accepts canonical loopback forms,
+  including IPv4-mapped IPv6. Malformed authorities, unsupported URL schemes,
+  and noncanonical numeric loopback spellings are rejected.
+- JSON Schema compilation resolves permitted remote references through the
+  configured policy and seals them in a per-build cache before ExJsonSchema
+  runs, preserving each document's meta-schema. The walker preserves schema scope across named containers, handles
+  targeted literal nodes without changing instance data, and retains escaped
+  pointer keys. Relative identifiers, declared document IDs and retrieval aliases
+  resolve consistently; anchors remain within their resource. Literal keys are
+  not interpreted as schema keywords. ExJsonSchema's application-wide resolver
+  configuration remains unchanged.
 - Legacy Streamable HTTP cancellation stops the request's POST worker, including
   an auth retry already approved before client or server cancellation (#194).
 - Concurrent HTTP `tools/list` pages retain every page's tool-header annotations

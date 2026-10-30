@@ -73,6 +73,92 @@ defmodule Arbor.MCP.Security.ValidationTest do
     end
   end
 
+  describe "validate_request/2 host policy" do
+    @allowed_api %{allowed_hosts: ["api.example.com"]}
+
+    test "rejects substring localhost and loopback bypasses" do
+      for host <- ["localhost.evil.com", "evil.com#127.0.0.1", "attacker-127.0.0.1.nip.io"] do
+        assert {:error, :host_not_allowed} =
+                 Validation.validate_request([{"host", host}], @allowed_api)
+      end
+    end
+
+    test "treats loopback hosts exactly after stripping a port or trailing FQDN dot" do
+      for host <- ["localhost:8080", "[::1]:80", "localhost.", "[::ffff:127.0.0.1]:8080"] do
+        assert :ok = Validation.validate_request([{"host", host}], @allowed_api)
+      end
+    end
+
+    test "rejects trailing garbage after a port or bracketed address" do
+      for host <- ["api.example.com:443.evil.com", "[::ffff:7f00:1].evil.com"] do
+        assert {:error, :host_not_allowed} =
+                 Validation.validate_request([{"host", host}], @allowed_api)
+      end
+    end
+
+    test "rejects invalid ports and URL userinfo" do
+      for host <- [
+            "api.example.com:0",
+            "api.example.com:65536",
+            "https://api.example.com:65536/path",
+            "https://user@api.example.com/path",
+            "https://user:secret@api.example.com/path",
+            "https://user@127.0.0.1/path"
+          ] do
+        assert {:error, :host_not_allowed} =
+                 Validation.validate_request([{"host", host}], @allowed_api),
+               host
+      end
+    end
+
+    # Guard: IPv4-mapped public addresses must stay off the loopback path.
+    test "guard: IPv4-mapped public addresses are not loopback" do
+      assert {:error, :host_not_allowed} =
+               Validation.validate_request([{"host", "[::ffff:8.8.8.8]:8080"}], @allowed_api)
+    end
+
+    test "rejects scheme-smuggled hosts and non-canonical loopback spellings" do
+      for host <- [
+            "evil.com://api.example.com",
+            "evil.com://127.0.0.1",
+            "attacker.example://0x7f.0.0.1",
+            "http://0x7f.0.0.1",
+            "0x7f.0.0.1",
+            "127.1",
+            "0177.0.0.1",
+            "2130706433",
+            "127.00.0.1"
+          ] do
+        assert {:error, :host_not_allowed} =
+                 Validation.validate_request([{"host", host}], @allowed_api),
+               host
+      end
+    end
+
+    test "accepts an http or https request-target whose host is allowed or canonical loopback" do
+      assert :ok =
+               Validation.validate_request(
+                 [{"host", "https://api.example.com/path"}],
+                 @allowed_api
+               )
+
+      assert :ok = Validation.validate_request([{"host", "http://127.0.0.1"}], @allowed_api)
+      assert :ok = Validation.validate_request([{"host", "127.0.0.1"}], @allowed_api)
+      assert :ok = Validation.validate_request([{"host", "127.0.0.2"}], @allowed_api)
+    end
+
+    test "matches allowed hosts exactly after stripping a port" do
+      assert :ok =
+               Validation.validate_request([{"host", "api.example.com"}], @allowed_api)
+
+      assert :ok =
+               Validation.validate_request([{"host", "api.example.com:443"}], @allowed_api)
+
+      assert {:error, :host_not_allowed} =
+               Validation.validate_request([{"host", "other.example.com"}], @allowed_api)
+    end
+  end
+
   describe "validate_config/1 allowed origins" do
     test "rejects an improper or non-string allowed origins list" do
       assert {:error, :invalid_allowed_origins} =

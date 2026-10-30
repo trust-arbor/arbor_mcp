@@ -57,6 +57,139 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolverTest do
       assert {:error, _errors} = SchemaPolicy.validate("42", resolved)
     end
 
+    test "keeps user definitions distinct from inlined remote documents" do
+      url = "https://schemas.example.com/word.json"
+      {opts, _agent} = resolver_options(%{url => response(~s({"type":"string"}))})
+
+      for {definitions, reference} <- [
+            {%{"__remote_0" => %{"type" => "integer"}}, "__remote_0"},
+            {%{"__remote_0" => %{"type" => "string"}, "__remote_1" => %{"type" => "integer"}},
+             "__remote_1"}
+          ] do
+        schema = %{
+          "$schema" => "http://json-schema.org/draft-07/schema#",
+          "definitions" => definitions,
+          "allOf" => [
+            %{"$ref" => "#/definitions/#{reference}"},
+            %{"$ref" => url}
+          ]
+        }
+
+        assert {:ok, resolved} = SchemaPolicy.compile(schema, opts)
+        assert {:error, _errors} = SchemaPolicy.validate("BAD", resolved)
+      end
+    end
+
+    test "preserves percent escapes when inlining remote JSON pointers" do
+      url = "https://schemas.example.com/pointers.json"
+
+      remote = %{
+        "definitions" => %{
+          "a/b" => %{"type" => "string"},
+          "a%2Fb" => %{"type" => "integer"}
+        }
+      }
+
+      {opts, _agent} = resolver_options(%{url => response(Jason.encode!(remote))})
+
+      for fragment <- ["a~1b", "a%2Fb"] do
+        schema = %{
+          "$schema" => "http://json-schema.org/draft-07/schema#",
+          "$ref" => url <> "#/definitions/" <> fragment
+        }
+
+        assert {:ok, resolved} = SchemaPolicy.compile(schema, opts)
+        assert :ok = SchemaPolicy.validate("BAD", resolved)
+        assert {:error, _errors} = SchemaPolicy.validate(42, resolved)
+      end
+
+      schema = %{
+        "$schema" => "http://json-schema.org/draft-07/schema#",
+        "$ref" => url <> "#/definitions/a%252Fb"
+      }
+
+      assert {:ok, resolved} = SchemaPolicy.compile(schema, opts)
+      assert :ok = SchemaPolicy.validate(42, resolved)
+      assert {:error, _errors} = SchemaPolicy.validate("BAD", resolved)
+    end
+
+    test "does not confuse a tilde definition key with a slash when inlining" do
+      url = "https://schemas.example.com/tildes.json"
+
+      remote = %{
+        "definitions" => %{
+          "a/b" => %{"type" => "string"},
+          "a~1b" => %{"type" => "integer"}
+        }
+      }
+
+      {opts, _agent} = resolver_options(%{url => response(Jason.encode!(remote))})
+
+      string_schema = %{
+        "$schema" => "http://json-schema.org/draft-07/schema#",
+        "$ref" => url <> "#/definitions/a~1b"
+      }
+
+      assert {:ok, resolved} = SchemaPolicy.compile(string_schema, opts)
+      assert :ok = SchemaPolicy.validate("str", resolved)
+      assert {:error, _errors} = SchemaPolicy.validate(1, resolved)
+
+      integer_schema = %{
+        "$schema" => "http://json-schema.org/draft-07/schema#",
+        "$ref" => url <> "#/definitions/a~01b"
+      }
+
+      assert {:ok, resolved} = SchemaPolicy.compile(integer_schema, opts)
+      assert :ok = SchemaPolicy.validate(1, resolved)
+      assert {:error, _errors} = SchemaPolicy.validate("str", resolved)
+    end
+
+    test "inlines an allowlisted ref targeted inside a literal keyword" do
+      url = "https://schemas.example.com/secret.json"
+      {opts, _agent} = resolver_options(%{url => response(~s({"type":"integer"}))})
+
+      for schema <- [
+            %{
+              "$schema" => "http://json-schema.org/draft-07/schema#",
+              "const" => %{"$ref" => url},
+              "$ref" => "#/const"
+            },
+            %{
+              "$schema" => "http://json-schema.org/draft-07/schema#",
+              "const" => %{"nested" => %{"$ref" => url}},
+              "$ref" => "#/const/nested"
+            },
+            %{
+              "$schema" => "http://json-schema.org/draft-07/schema#",
+              "examples" => [%{"$ref" => url}],
+              "$ref" => "#/examples/0"
+            }
+          ] do
+        assert {:ok, resolved} = SchemaPolicy.compile(schema, opts)
+        assert :ok = SchemaPolicy.validate(1, resolved)
+        assert {:error, _errors} = SchemaPolicy.validate("str", resolved)
+      end
+    end
+
+    test "rejects dynamic keywords in fetched documents for both backends" do
+      url = "https://schemas.example.com/dynamic.json"
+
+      for draft <- [
+            "http://json-schema.org/draft-07/schema#",
+            "https://json-schema.org/draft/2020-12/schema"
+          ],
+          remote <- [
+            %{"$dynamicAnchor" => "node", "type" => "string"},
+            %{"$dynamicAnchor" => "node", "$dynamicRef" => "#node", "type" => "string"},
+            %{"$defs" => %{"inner" => %{"$dynamicRef" => "#node"}}, "type" => "string"}
+          ] do
+        {opts, _agent} = resolver_options(%{url => response(Jason.encode!(remote))})
+        schema = %{"$schema" => draft, "$ref" => url}
+
+        assert {:error, :network_ref_forbidden} = SchemaPolicy.compile(schema, opts)
+      end
+    end
+
     test "keeps the requested URI as an alias after an allowlisted redirect" do
       routes = %{
         "https://schemas.example.com/old.json" =>
@@ -74,6 +207,103 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolverTest do
 
       assert :ok = SchemaPolicy.validate("value", resolved)
       assert {:error, _errors} = SchemaPolicy.validate(10, resolved)
+    end
+
+    @named_container_keys ~w(id $id default enum examples const $ref properties)
+
+    test "does not treat a property named id as a schema identifier" do
+      {opts, _agent} = resolver_options(%{})
+
+      schema = %{
+        "type" => "object",
+        "properties" => %{
+          "default" => %{
+            "type" => "object",
+            "properties" => %{
+              "id" => %{"type" => "string"}
+            }
+          }
+        }
+      }
+
+      assert {:ok, resolved} = SchemaPolicy.compile(schema, opts)
+      assert :ok = SchemaPolicy.validate(%{"default" => %{"id" => "abc"}}, resolved)
+
+      assert {:error, _errors} =
+               SchemaPolicy.validate(%{"default" => %{"id" => 1}}, resolved)
+    end
+
+    test "does not treat dependentRequired keys as schema identifiers" do
+      {opts, _agent} = resolver_options(%{})
+
+      for name <- @named_container_keys do
+        schema = %{
+          "type" => "object",
+          "properties" => %{
+            "default" => %{
+              "dependentRequired" => %{name => ["other"]}
+            }
+          }
+        }
+
+        result = SchemaPolicy.compile(schema, opts)
+
+        refute result == {:error, {:network_schema_error, :invalid_schema_id}},
+               "dependentRequired child #{inspect(name)}"
+
+        # JSV treats a nested `$id` as a schema identifier, so only that
+        # name fails compilation after the walker accepts it.
+        if name != "$id" do
+          assert match?({:ok, _}, result), "dependentRequired child #{inspect(name)}"
+        end
+      end
+    end
+
+    test "does not treat draft-7 dependencies keys as schema identifiers" do
+      {opts, _agent} = resolver_options(%{})
+
+      for name <- @named_container_keys do
+        schema = %{
+          "$schema" => "http://json-schema.org/draft-07/schema#",
+          "type" => "object",
+          "properties" => %{
+            "default" => %{
+              "dependencies" => %{name => ["other"]}
+            }
+          }
+        }
+
+        assert match?({:ok, _}, SchemaPolicy.compile(schema, opts)),
+               "dependencies array child #{inspect(name)}"
+      end
+    end
+
+    test "fetches $ref schemas stored under dependencies names" do
+      routes = %{
+        "https://schemas.example.com/dep.json" => response(~s({"type":"string"}))
+      }
+
+      for name <- @named_container_keys do
+        {opts, agent} = resolver_options(routes)
+
+        schema = %{
+          "$schema" => "http://json-schema.org/draft-07/schema#",
+          "type" => "object",
+          "properties" => %{
+            "default" => %{
+              "dependencies" => %{
+                name => %{"$ref" => "https://schemas.example.com/dep.json"}
+              }
+            }
+          }
+        }
+
+        assert match?({:ok, _}, SchemaPolicy.compile(schema, opts)),
+               "dependencies $ref child #{inspect(name)}"
+
+        assert [{"https://schemas.example.com/dep.json", @public_ipv4}] = fetch_calls(agent),
+               "dependencies $ref child #{inspect(name)} must be fetched"
+      end
     end
 
     test "supports boolean root and remote schemas" do

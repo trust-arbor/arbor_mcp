@@ -523,8 +523,10 @@ present. Time comparisons allow 30 seconds of clock skew, tunable with
 has no expiry. Only asymmetric algorithms are accepted (RS/PS/ES) — `none` and
 the HMAC family are rejected, so an attacker cannot swap the header's `alg`.
 
-`iss` and `aud` are checked only when you supply the expected values; always
-supply them when validating tokens from an identity provider.
+`iss` is checked only when you supply the expected value. `:aud` is required:
+`validate_claims/2` and `verify_and_validate/3` return
+`{:error, :missing_expected_audience}` when it is omitted. Always supply both
+when validating tokens from an identity provider.
 
 ### Authorization callback issuer validation
 

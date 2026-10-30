@@ -1,12 +1,12 @@
 defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   @moduledoc false
 
+  alias Arbor.MCP.Content.{SchemaGraph, SchemaInliner}
   alias Arbor.MCP.Internal.NetworkPolicy
   alias ExJsonSchema.Schema.Root
 
   require Logger
 
-  @literal_keywords MapSet.new(~w(const default enum examples))
   @redirect_statuses [301, 302, 303, 307, 308]
 
   @type network_error :: {:network_schema_error, atom()}
@@ -17,11 +17,16 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   @type preflight :: (map() | boolean(), keyword() -> :ok | {:error, term()})
 
   @spec resolve(map() | boolean(), keyword(), preflight()) ::
-          {:ok, Root.t()} | {:error, term()}
+          {:ok, ExJsonSchema.Schema.Root.t()} | {:error, term()}
   def resolve(schema, policy_opts, preflight) when is_function(preflight, 2) do
-    with {:ok, {normalized_schema, documents}} <- fetch_documents(schema, policy_opts, preflight),
-         {:ok, resolved_documents} <- resolve_documents(documents) do
-      resolve_root(normalized_schema, resolved_documents)
+    fetched =
+      if policy_opts[:network_refs][:enabled] == true,
+        do: fetch_documents(schema, policy_opts, preflight),
+        else: local_documents(schema, policy_opts, preflight)
+
+    with {:ok, {schema, documents}} <- fetched,
+         {:ok, {root_location, sealed}} <- SchemaInliner.bundle(schema, documents) do
+      resolve_sealed(root_location, sealed)
     end
   end
 
@@ -29,20 +34,18 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   @spec fetch_documents(map() | boolean(), keyword(), preflight()) ::
           {:ok, {map() | boolean(), map()}} | {:error, term()}
   def fetch_documents(schema, policy_opts, preflight) do
+    state = %{root: schema, documents: %{}, owners: %{}, aggregate_bytes: 0, document_count: 0}
     network_opts = policy_opts[:network_refs]
-    state = %{documents: %{}, fetched: %{}, aggregate_bytes: 0, document_count: 0}
 
-    with {:ok, normalized_schema} <- normalize_references(schema, nil),
-         :ok <- preflight.(normalized_schema, policy_opts),
-         {:ok, references} <- referenced_documents(normalized_schema, nil),
-         {:ok, state} <- fetch_references(references, state, [], 0, policy_opts, preflight) do
+    with :ok <- preflight.(schema, policy_opts),
+         {:ok, state} <- fetch_pending(state, policy_opts, preflight) do
       Logger.info(
         "Resolved remote JSON Schema documents count=#{state.document_count} " <>
           "bytes=#{state.aggregate_bytes} " <>
           "trust_partition_sha256=#{hash_term(network_opts[:trust_partition])}"
       )
 
-      {:ok, {normalized_schema, state.documents}}
+      {:ok, {schema, state.documents}}
     else
       {:error, {:network_schema_error, reason}} = error ->
         Logger.warning(
@@ -61,78 +64,120 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   @spec public_address?(:inet.ip_address()) :: boolean()
   defdelegate public_address?(address), to: NetworkPolicy
 
-  defp fetch_references([], state, _stack, _depth, _policy_opts, _preflight), do: {:ok, state}
-
-  defp fetch_references([reference | rest], state, stack, depth, policy_opts, preflight) do
-    with {:ok, next_state} <-
-           fetch_document(reference, state, stack, depth, policy_opts, preflight) do
-      fetch_references(rest, next_state, stack, depth, policy_opts, preflight)
-    end
-  end
-
-  defp fetch_document(reference, state, stack, depth, policy_opts, preflight) do
+  # Discovery must retain the root's selection of nodes inside fetched literal
+  # data. Rebuild the combined graph after each fetch so aliases, targets and
+  # their dependencies are known before deciding whether another fetch is needed.
+  defp fetch_pending(state, policy_opts, preflight) do
+    graph = SchemaGraph.build(state.root, documents: state.documents)
     network_opts = policy_opts[:network_refs]
 
-    with :ok <- check_reference_depth(depth, network_opts),
-         {:ok, uri} <- parse_fetch_uri(reference),
-         canonical = canonical_uri(uri),
-         :ok <- check_reference_cycle(canonical, stack) do
-      case state.fetched do
-        %{^canonical => schema} ->
-          {:ok, put_document(state, reference, schema)}
+    with :ok <- SchemaGraph.check_limits(graph, policy_opts),
+         :ok <- reject_fetched_dynamic_keywords(graph),
+         :ok <- check_reference_graph(graph, state, network_opts) do
+      case SchemaGraph.external_references(graph) |> Enum.uniq() do
+        [] ->
+          {:ok, state}
 
-        _missing ->
-          fetch_new_document(
-            reference,
-            uri,
-            canonical,
-            state,
-            stack,
-            depth,
-            policy_opts,
-            preflight
-          )
+        references ->
+          reference = Enum.min_by(references, &fetch_priority(&1, network_opts))
+
+          with {:ok, document} <- reference_document(reference, nil),
+               {:ok, state} <- fetch_document(document, state, policy_opts, preflight) do
+            fetch_pending(state, policy_opts, preflight)
+          end
       end
     end
   end
 
-  defp fetch_new_document(
-         reference,
-         uri,
-         canonical,
-         state,
-         stack,
-         depth,
-         policy_opts,
-         preflight
-       ) do
+  defp fetch_priority(reference, opts) do
+    uri = URI.parse(reference)
+
+    permitted? =
+      uri.scheme in allowed_schemes(opts) and is_binary(uri.host) and
+        allowed_host?(uri.host, opts[:allowed_hosts])
+
+    {not permitted?, reference}
+  end
+
+  defp fetch_document(reference, state, policy_opts, preflight) do
     network_opts = policy_opts[:network_refs]
 
-    with :ok <- check_document_count(state, network_opts),
+    with {:ok, uri} <- parse_fetch_uri(reference),
+         :ok <- check_document_count(state, network_opts),
          {:ok, response} <- fetch_with_redirects(uri, network_opts, 0, [], 0),
          {:ok, next_bytes} <-
            add_aggregate_bytes(state.aggregate_bytes, response.bytes, network_opts),
          {:ok, decoded} <- decode_schema(response.body),
-         identified_schema = ensure_retrieval_id(decoded, response.final_uri),
-         {:ok, schema} <- normalize_references(identified_schema, response.final_uri),
-         :ok <- preflight.(schema, policy_opts),
-         {:ok, nested_references} <- referenced_documents(schema, response.final_uri) do
-      next_state =
-        state
-        |> Map.put(:aggregate_bytes, next_bytes)
-        |> Map.update!(:document_count, &(&1 + 1))
-        |> put_fetched(canonical, response.final_uri, schema)
-        |> put_document(reference, schema)
-        |> put_document(document_uri(response.final_uri), schema)
+         schema = ensure_retrieval_id(decoded, response.final_uri),
+         :ok <- preflight.(schema, policy_opts) do
+      owner = canonical_uri(response.final_uri)
+      requested = document_uri(uri)
+      final = document_uri(response.final_uri)
 
-      fetch_references(
-        nested_references,
-        next_state,
-        [canonical_uri(response.final_uri), canonical | stack],
-        depth + 1,
-        policy_opts,
-        preflight
-      )
+      {:ok,
+       state
+       |> Map.put(:aggregate_bytes, next_bytes)
+       |> Map.update!(:document_count, &(&1 + 1))
+       |> put_document(requested, schema)
+       |> put_document(final, schema)
+       |> Map.update!(
+         :owners,
+         &(&1
+           |> Map.put(SchemaGraph.location(requested), owner)
+           |> Map.put(SchemaGraph.location(final), owner))
+       )}
+    end
+  end
+
+  defp check_reference_graph(graph, state, opts) do
+    edges =
+      Enum.reduce(SchemaGraph.references(graph), %{}, fn {source, ref}, edges ->
+        owner = document_owner(elem(source, 0), state)
+
+        target =
+          case SchemaGraph.resolve(graph, source, ref) do
+            {:ok, target} -> document_owner(elem(target, 0), state)
+            {:external, uri} -> {:pending, SchemaGraph.location(uri)}
+            :missing -> owner
+          end
+
+        if owner == target,
+          do: edges,
+          else: Map.update(edges, owner, MapSet.new([target]), &MapSet.put(&1, target))
+      end)
+
+    with {:ok, length, _memo} <- reference_length(:root, edges, %{}, %{}),
+         do: check_reference_depth(max(length - 1, 0), opts)
+  end
+
+  defp document_owner(:root, _state), do: :root
+
+  defp document_owner(document, state),
+    do: Map.fetch!(state.owners, SchemaGraph.location(document))
+
+  defp reference_length(vertex, edges, stack, memo) do
+    cond do
+      Map.has_key?(stack, vertex) ->
+        network_error(:reference_cycle)
+
+      Map.has_key?(memo, vertex) ->
+        {:ok, memo[vertex], memo}
+
+      true ->
+        stack = Map.put(stack, vertex, true)
+
+        Enum.reduce_while(Map.get(edges, vertex, MapSet.new()), {:ok, 0, memo}, fn child,
+                                                                                   {:ok, length,
+                                                                                    memo} ->
+          case reference_length(child, edges, stack, memo) do
+            {:ok, child_length, memo} -> {:cont, {:ok, max(length, child_length + 1), memo}}
+            error -> {:halt, error}
+          end
+        end)
+        |> case do
+          {:ok, length, memo} -> {:ok, length, Map.put(memo, vertex, length)}
+          error -> error
+        end
     end
   end
 
@@ -273,102 +318,19 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
   end
 
   defp referenced_documents(schema, base_uri) do
-    with {:ok, references} <- walk_references(schema, base_uri, []) do
-      {:ok, references |> Enum.uniq() |> Enum.sort()}
-    end
-  end
-
-  defp normalize_references(map, base_uri) when is_map(map) do
-    with {:ok, scope} <- schema_scope(map, base_uri) do
-      Enum.reduce_while(map, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
-        cond do
-          MapSet.member?(@literal_keywords, key) or key in ["$id", "id"] ->
-            {:cont, {:ok, Map.put(acc, key, value)}}
-
-          key in ["$ref", "$dynamicRef"] ->
-            case normalize_reference(value, scope) do
-              {:ok, normalized} -> {:cont, {:ok, Map.put(acc, key, normalized)}}
-              {:error, _reason} = error -> {:halt, error}
-            end
-
-          true ->
-            case normalize_references(value, scope) do
-              {:ok, normalized} -> {:cont, {:ok, Map.put(acc, key, normalized)}}
-              {:error, _reason} = error -> {:halt, error}
-            end
-        end
-      end)
-    end
-  end
-
-  defp normalize_references(list, base_uri) when is_list(list) do
-    list
-    |> Enum.reduce_while({:ok, []}, fn value, {:ok, acc} ->
-      case normalize_references(value, base_uri) do
-        {:ok, normalized} -> {:cont, {:ok, [normalized | acc]}}
-        {:error, _reason} = error -> {:halt, error}
+    schema
+    |> SchemaGraph.build(base_uri: base_uri)
+    |> SchemaGraph.external_references()
+    |> Enum.reduce_while({:ok, []}, fn reference, {:ok, acc} ->
+      case reference_document(reference, nil) do
+        {:ok, nil} -> {:cont, {:ok, acc}}
+        {:ok, document} -> {:cont, {:ok, [document | acc]}}
+        error -> {:halt, error}
       end
     end)
     |> case do
-      {:ok, reversed} -> {:ok, Enum.reverse(reversed)}
-      {:error, _reason} = error -> error
-    end
-  end
-
-  defp normalize_references(value, _base_uri), do: {:ok, value}
-
-  defp normalize_reference(reference, _scope) when not is_binary(reference),
-    do: {:ok, reference}
-
-  defp normalize_reference("#" <> _fragment = reference, _scope), do: {:ok, reference}
-  defp normalize_reference("", _scope), do: {:ok, ""}
-
-  defp normalize_reference(reference, scope) do
-    with {:ok, uri} <- merge_uri(scope, reference) do
-      {:ok, to_string(uri)}
-    end
-  end
-
-  defp walk_references(map, base_uri, references) when is_map(map) do
-    with {:ok, scope} <- schema_scope(map, base_uri) do
-      Enum.reduce_while(map, {:ok, references}, fn {key, value}, {:ok, acc} ->
-        cond do
-          MapSet.member?(@literal_keywords, key) or key in ["$id", "id"] ->
-            {:cont, {:ok, acc}}
-
-          key in ["$ref", "$dynamicRef"] ->
-            case reference_document(value, scope) do
-              {:ok, nil} -> {:cont, {:ok, acc}}
-              {:ok, document} -> {:cont, {:ok, [document | acc]}}
-              {:error, _reason} = error -> {:halt, error}
-            end
-
-          true ->
-            case walk_references(value, scope, acc) do
-              {:ok, next_acc} -> {:cont, {:ok, next_acc}}
-              {:error, _reason} = error -> {:halt, error}
-            end
-        end
-      end)
-    end
-  end
-
-  defp walk_references(list, base_uri, references) when is_list(list) do
-    Enum.reduce_while(list, {:ok, references}, fn value, {:ok, acc} ->
-      case walk_references(value, base_uri, acc) do
-        {:ok, next_acc} -> {:cont, {:ok, next_acc}}
-        {:error, _reason} = error -> {:halt, error}
-      end
-    end)
-  end
-
-  defp walk_references(_value, _base_uri, references), do: {:ok, references}
-
-  defp schema_scope(schema, base_uri) do
-    case Map.get(schema, "$id") || Map.get(schema, "id") do
-      nil -> {:ok, base_uri}
-      identifier when is_binary(identifier) -> merge_uri(base_uri, identifier)
-      _invalid -> network_error(:invalid_schema_id)
+      {:ok, references} -> {:ok, references |> Enum.uniq() |> Enum.sort()}
+      error -> error
     end
   end
 
@@ -394,12 +356,6 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
     if uri.scheme,
       do: {:ok, uri},
       else: network_error(:relative_reference_without_base)
-  end
-
-  defp merge_uri(%URI{} = base, value) do
-    {:ok, URI.merge(base, value)}
-  rescue
-    _exception -> network_error(:invalid_uri)
   end
 
   defp ensure_retrieval_id(schema, %URI{} = retrieval_uri) when is_map(schema) do
@@ -434,34 +390,50 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
     end
   end
 
-  defp resolve_documents(documents) do
-    resolved =
-      Map.new(documents, fn {location, schema} ->
-        if is_boolean(schema) do
-          {location, schema}
-        else
-          root =
-            ExJsonSchema.Schema.resolve(%Root{
-              schema: schema,
-              refs: documents,
-              location: location
-            })
+  defp reject_fetched_dynamic_keywords(graph) do
+    unsupported? =
+      Enum.any?(graph.nodes, fn
+        {{document, _path, _named?}, %{value: map, named?: false, role: :schema}}
+        when document != :root and is_map(map) ->
+          Map.has_key?(map, "$dynamicAnchor") or Map.has_key?(map, "$dynamicRef")
 
-          {location, root.schema}
-        end
+        _other ->
+          false
       end)
 
-    {:ok, resolved}
-  rescue
-    _exception -> network_error(:invalid_remote_schema)
+    if unsupported?, do: {:error, :network_ref_forbidden}, else: :ok
   end
 
-  defp resolve_root(schema, _documents) when is_boolean(schema) do
-    {:ok, ExJsonSchema.Schema.resolve(schema)}
+  defp local_documents(schema, policy_opts, preflight) do
+    with :ok <- preflight.(schema, policy_opts),
+         {:ok, remotes} <- referenced_documents(schema, nil),
+         :ok <- reject_remote_documents(remotes) do
+      {:ok, {schema, %{}}}
+    end
   end
 
-  defp resolve_root(schema, documents) do
-    {:ok, ExJsonSchema.Schema.resolve(%Root{schema: schema, refs: documents})}
+  defp reject_remote_documents([]), do: :ok
+  defp reject_remote_documents(_remotes), do: {:error, :network_ref_forbidden}
+
+  defp resolve_sealed(root_location, documents) do
+    roots =
+      Map.new(documents, fn {location, schema} ->
+        root =
+          if is_boolean(schema),
+            do: ExJsonSchema.Schema.resolve(schema),
+            else:
+              ExJsonSchema.Schema.resolve(%Root{
+                schema: schema,
+                refs: documents,
+                location: location
+              })
+
+        {location, root}
+      end)
+
+    root = Map.fetch!(roots, root_location)
+    refs = Map.new(roots, fn {location, root} -> {location, root.schema} end)
+    {:ok, %{root | refs: refs}}
   rescue
     exception -> {:error, {:invalid_schema, Exception.message(exception)}}
   end
@@ -486,12 +458,6 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
       else: network_error(:reference_depth)
   end
 
-  defp check_reference_cycle(canonical, stack) do
-    if canonical in stack,
-      do: network_error(:reference_cycle),
-      else: :ok
-  end
-
   defp check_redirect_count(count, opts) do
     if count <= opts[:max_redirects],
       do: :ok,
@@ -510,14 +476,6 @@ defmodule Arbor.MCP.Content.SchemaRemoteResolver do
     if total <= opts[:max_aggregate_bytes],
       do: {:ok, total},
       else: network_error(:aggregate_response_too_large)
-  end
-
-  defp put_fetched(state, requested_canonical, final_uri, schema) do
-    final_canonical = canonical_uri(final_uri)
-
-    state
-    |> put_in([:fetched, requested_canonical], schema)
-    |> put_in([:fetched, final_canonical], schema)
   end
 
   defp put_document(state, reference, schema),

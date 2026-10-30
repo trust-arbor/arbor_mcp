@@ -130,8 +130,8 @@ defmodule Arbor.MCP.Authorization.JWTTest do
     end
 
     test "validates exp - valid token", %{now: now} do
-      claims = %{"exp" => now + 300}
-      assert {:ok, _} = JWT.validate_claims(claims)
+      claims = %{"exp" => now + 300, "aud" => "test-audience"}
+      assert {:ok, _} = JWT.validate_claims(claims, aud: "test-audience")
     end
 
     test "validates exp - expired token", %{now: now} do
@@ -144,7 +144,11 @@ defmodule Arbor.MCP.Authorization.JWTTest do
     end
 
     test "accepts a token with no exp claim when require_exp: false" do
-      assert {:ok, _} = JWT.validate_claims(%{"sub" => "user123"}, require_exp: false)
+      assert {:ok, _} =
+               JWT.validate_claims(%{"sub" => "user123", "aud" => "test-audience"},
+                 require_exp: false,
+                 aud: "test-audience"
+               )
     end
 
     test "rejects a non-numeric exp claim" do
@@ -168,22 +172,29 @@ defmodule Arbor.MCP.Authorization.JWTTest do
 
     test "honors the leeway option for expired tokens", %{now: now} do
       # 45s past expiry: outside the 30s default leeway, inside a 120s leeway.
-      claims = %{"exp" => now - 45}
+      claims = %{"exp" => now - 45, "aud" => "test-audience"}
       assert {:error, :token_expired} = JWT.validate_claims(claims)
-      assert {:ok, _} = JWT.validate_claims(claims, leeway: 120)
+      assert {:ok, _} = JWT.validate_claims(claims, leeway: 120, aud: "test-audience")
       assert {:error, :token_expired} = JWT.validate_claims(claims, leeway: 0)
     end
 
     test "honors the leeway option for nbf", %{now: now} do
-      claims = %{"exp" => now + 300, "nbf" => now + 45}
+      claims = %{"exp" => now + 300, "nbf" => now + 45, "aud" => "test-audience"}
       assert {:error, :token_not_yet_valid} = JWT.validate_claims(claims)
-      assert {:ok, _} = JWT.validate_claims(claims, leeway: 120)
+      assert {:ok, _} = JWT.validate_claims(claims, leeway: 120, aud: "test-audience")
     end
 
     test "validates iss", %{valid_exp: valid_exp} do
-      claims = Map.put(valid_exp, "iss", "correct-issuer")
-      assert {:ok, _} = JWT.validate_claims(claims, iss: "correct-issuer")
+      claims = Map.merge(valid_exp, %{"iss" => "correct-issuer", "aud" => "test-audience"})
+      assert {:ok, _} = JWT.validate_claims(claims, iss: "correct-issuer", aud: "test-audience")
       assert {:error, {:invalid_issuer, _}} = JWT.validate_claims(claims, iss: "wrong-issuer")
+    end
+
+    test "rejects validation when no expected audience is provided", %{valid_exp: valid_exp} do
+      claims = Map.merge(valid_exp, %{"aud" => "my-audience", "iss" => "issuer"})
+
+      assert {:error, :missing_expected_audience} = JWT.validate_claims(claims)
+      assert {:error, :missing_expected_audience} = JWT.validate_claims(claims, iss: "issuer")
     end
 
     test "validates aud - string", %{valid_exp: valid_exp} do
@@ -200,23 +211,29 @@ defmodule Arbor.MCP.Authorization.JWTTest do
     end
 
     test "validates sub", %{valid_exp: valid_exp} do
-      claims = Map.put(valid_exp, "sub", "user123")
-      assert {:ok, _} = JWT.validate_claims(claims, sub: "user123")
-      assert {:error, {:invalid_subject, _}} = JWT.validate_claims(claims, sub: "other")
+      claims = Map.merge(valid_exp, %{"sub" => "user123", "aud" => "test-audience"})
+      assert {:ok, _} = JWT.validate_claims(claims, sub: "user123", aud: "test-audience")
+
+      assert {:error, {:invalid_subject, _}} =
+               JWT.validate_claims(claims, sub: "other", aud: "test-audience")
     end
 
     test "validates max_age", %{now: now, valid_exp: valid_exp} do
-      claims = Map.put(valid_exp, "iat", now - 10)
-      assert {:ok, _} = JWT.validate_claims(claims, max_age: 60)
-      assert {:error, :token_too_old} = JWT.validate_claims(claims, max_age: 5)
+      claims = Map.merge(valid_exp, %{"iat" => now - 10, "aud" => "test-audience"})
+      assert {:ok, _} = JWT.validate_claims(claims, max_age: 60, aud: "test-audience")
+
+      assert {:error, :token_too_old} =
+               JWT.validate_claims(claims, max_age: 5, aud: "test-audience")
     end
 
     test "validates required claims", %{valid_exp: valid_exp} do
-      claims = Map.merge(valid_exp, %{"iss" => "test", "sub" => "user"})
-      assert {:ok, _} = JWT.validate_claims(claims, required: ["iss", "sub"])
+      claims = Map.merge(valid_exp, %{"iss" => "test", "sub" => "user", "aud" => "test-audience"})
 
-      assert {:error, {:missing_required_claims, ["aud"]}} =
-               JWT.validate_claims(claims, required: ["iss", "aud"])
+      assert {:ok, _} =
+               JWT.validate_claims(claims, required: ["iss", "sub"], aud: "test-audience")
+
+      assert {:error, {:missing_required_claims, ["jti"]}} =
+               JWT.validate_claims(claims, required: ["iss", "jti"], aud: "test-audience")
     end
 
     test "validates nbf - not yet valid", %{now: now, valid_exp: valid_exp} do

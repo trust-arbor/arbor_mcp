@@ -106,8 +106,14 @@ defmodule Arbor.MCP.Security.Validation do
   def validate_localhost_binding(_config), do: :ok
 
   # IPv4 loopback is the whole 127.0.0.0/8 block; IPv6 loopback is ::1.
+  # IPv4-mapped IPv6 loopback is ::ffff:127.0.0.0/8.
   defp loopback_address?({127, _b, _c, _d}), do: true
   defp loopback_address?({0, 0, 0, 0, 0, 0, 0, 1}), do: true
+
+  defp loopback_address?({0, 0, 0, 0, 0, 0xFFFF, hi, _lo})
+       when hi >= 0x7F00 and hi <= 0x7FFF,
+       do: true
+
   defp loopback_address?(_other), do: false
 
   @doc """
@@ -183,20 +189,142 @@ defmodule Arbor.MCP.Security.Validation do
   end
 
   defp validate_host_against_policy(host, config) do
-    # Basic validation - could be enhanced based on security policy
-    if String.contains?(host, ["localhost", "127.0.0.1", "[::1]"]) do
-      :ok
-    else
-      # For non-localhost hosts, ensure they match expected patterns
-      allowed_hosts = Map.get(config, :allowed_hosts, [])
+    case parse_request_host(host) do
+      {:ok, hostname} ->
+        if loopback_hostname?(hostname) do
+          :ok
+        else
+          allowed_hosts = Map.get(config, :allowed_hosts, [])
 
-      if allowed_hosts == [] or host in allowed_hosts do
-        :ok
-      else
+          if allowed_hosts == [] or hostname_allowed?(hostname, allowed_hosts) do
+            :ok
+          else
+            {:error, :host_not_allowed}
+          end
+        end
+
+      :error ->
         {:error, :host_not_allowed}
-      end
     end
   end
+
+  # Host headers are `name`, `name:port`, `[ipv6]`, or `[ipv6]:port`. An http
+  # or https URL is accepted so a request-target still compares its host.
+  # Any other scheme is rejected: `evil.com://allowed.example` parses with
+  # the allowed host while the raw value is not that host. Trailing garbage
+  # after the port or bracketed address is rejected.
+  defp parse_request_host(host) when is_binary(host) do
+    if String.contains?(host, "://") do
+      parse_url_host(host)
+    else
+      parse_host_header(host)
+    end
+  rescue
+    _exception -> :error
+  end
+
+  defp parse_request_host(_host), do: :error
+
+  defp parse_host_header(host) do
+    uri = URI.parse("//" <> host)
+
+    case uri.host do
+      hostname when is_binary(hostname) and hostname != "" ->
+        if is_nil(uri.userinfo) and valid_port?(uri.port) and
+             host == format_authority(hostname, uri.port),
+           do: {:ok, hostname},
+           else: :error
+
+      _missing ->
+        :error
+    end
+  end
+
+  defp parse_url_host(url) do
+    uri = URI.parse(url)
+
+    case uri.host do
+      hostname when is_binary(hostname) and hostname != "" ->
+        authority = url_authority(url)
+
+        if uri.scheme in ["http", "https"] and is_nil(uri.userinfo) and valid_port?(uri.port) and
+             is_binary(authority) and
+             (authority == format_authority(hostname, uri.port) or
+                authority == format_authority(hostname, nil)) do
+          {:ok, hostname}
+        else
+          :error
+        end
+
+      _missing ->
+        :error
+    end
+  end
+
+  defp url_authority(url) do
+    case String.split(url, "://", parts: 2) do
+      [_scheme, rest] ->
+        rest
+        |> String.split(["/", "?", "#"], parts: 2)
+        |> hd()
+
+      _missing ->
+        nil
+    end
+  end
+
+  defp valid_port?(nil), do: true
+  defp valid_port?(port) when is_integer(port), do: port in 1..65_535
+
+  defp format_authority(host, port) do
+    name = if String.contains?(host, ":"), do: "[" <> host <> "]", else: host
+
+    if is_integer(port), do: name <> ":" <> Integer.to_string(port), else: name
+  end
+
+  defp hostname_allowed?(hostname, allowed_hosts) do
+    normalized = normalize_hostname(hostname)
+
+    Enum.any?(allowed_hosts, fn allowed ->
+      case parse_request_host(allowed) do
+        {:ok, allowed_hostname} -> normalize_hostname(allowed_hostname) == normalized
+        :error -> false
+      end
+    end)
+  end
+
+  defp loopback_hostname?(hostname) do
+    normalized = normalize_hostname(hostname)
+
+    normalized == "localhost" or loopback_ip?(normalized)
+  end
+
+  defp loopback_ip?(hostname) do
+    case :inet.parse_address(String.to_charlist(hostname)) do
+      {:ok, address} ->
+        loopback_address?(address) and canonical_loopback_spelling?(hostname, address)
+
+      {:error, _reason} ->
+        false
+    end
+  end
+
+  # inet accepts `127.1`, `0x7f.0.0.1`, `0177.0.0.1`, and `2130706433` as
+  # 127.0.0.1. Only the canonical spelling may skip the allowlist.
+  defp canonical_loopback_spelling?(hostname, address) do
+    canonical = address |> :inet.ntoa() |> List.to_string() |> String.downcase()
+    hostname == canonical
+  end
+
+  defp normalize_hostname(hostname) do
+    hostname
+    |> strip_ipv6_brackets()
+    |> String.downcase()
+    |> String.trim_trailing(".")
+  end
+
+  defp strip_ipv6_brackets("[" <> rest), do: String.trim_trailing(rest, "]")
+  defp strip_ipv6_brackets(hostname), do: hostname
 
   defp validate_https_requirement(headers, %{enforce_https: true}) do
     # Check if this is an HTTPS request

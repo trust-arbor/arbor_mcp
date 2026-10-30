@@ -3,9 +3,11 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   Fail-closed resource policy for JSON Schema compilation and validation.
 
   Cross-document references are disabled by default before either validator
-  sees a schema, even if the host application configured ExJsonSchema's global
-  remote resolver. Local fragment references remain supported. Network
-  references can be enabled only through ArborMCP's allowlisted, IP-pinned resolver.
+  sees a schema. Allowed remotes are fetched through ArborMCP's allowlisted
+  resolver and sealed in a per-build cache before ExJsonSchema compiles.
+  Compilation never consults ExJsonSchema's global `:remote_schema_resolver`.
+  Local fragment references remain supported. Network references can be
+  enabled only through that allowlisted, IP-pinned fetch path.
 
   Omitted or explicit draft 2020-12 declarations use JSV. Explicit drafts 4,
   6 and 7 use ExJsonSchema. Unknown dialects reject. Modern compiled artifacts
@@ -24,13 +26,15 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   `network_refs: [cacerts: ...]` lists the DER-encoded CA certificates to trust.
   """
 
-  alias Arbor.MCP.Content.{SchemaDNS, SchemaHTTPClient, SchemaRemoteResolver}
+  alias Arbor.MCP.Content.{SchemaDNS, SchemaGraph, SchemaHTTPClient, SchemaRemoteResolver}
   alias Arbor.MCP.Content.SchemaPolicy.{Compiled, Instance, Modern}
   alias Arbor.MCP.Internal.CACerts
 
   @composition_keywords MapSet.new(~w(allOf anyOf oneOf not if then else))
   @literal_keywords MapSet.new(~w(const default enum examples))
-  @reference_keywords MapSet.new(~w($ref $recursiveRef $dynamicRef))
+  @named_schema_maps MapSet.new(
+                       ~w(properties patternProperties $defs definitions dependentSchemas dependencies dependentRequired)
+                     )
 
   @defaults [
     max_schema_bytes: 262_144,
@@ -234,8 +238,30 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
 
   defp preflight_normalized(schema, opts) do
     with :ok <- check_encoded_size(schema, opts),
-         {:ok, _count} <- walk(schema, 0, 0, 0, opts),
-         do: :ok
+         {:ok, count} <- walk(schema, 0, 0, 0, opts) do
+      graph = SchemaGraph.build(schema)
+
+      nonlocal? =
+        Enum.any?(SchemaGraph.references(graph), fn {_source, ref} ->
+          ref != "" and not String.starts_with?(ref, "#")
+        end)
+
+      if not network_refs_enabled?(opts) and nonlocal? do
+        {:error, :network_ref_forbidden}
+      else
+        Enum.reduce_while(SchemaGraph.additional_schemas(graph), {:ok, count}, fn
+          {target, depth}, {:ok, count} ->
+            case walk(target, depth, 0, count, opts) do
+              {:ok, next_count} -> {:cont, {:ok, next_count}}
+              error -> {:halt, error}
+            end
+        end)
+        |> case do
+          {:ok, _count} -> :ok
+          error -> error
+        end
+      end
+    end
   end
 
   defp normalize_schema(schema, opts)
@@ -462,7 +488,9 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
 
   defp invalid_json_schema, do: {:error, {:invalid_schema, "schema is not JSON-compatible"}}
 
-  defp walk(value, depth, composition_depth, count, opts) when is_map(value) do
+  defp walk(value, depth, composition_depth, count, opts, named_keys? \\ false)
+
+  defp walk(value, depth, composition_depth, count, opts, named_keys?) when is_map(value) do
     count = count + 1
 
     cond do
@@ -476,11 +504,11 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
         {:error, {:schema_limit_exceeded, :max_subschemas, count}}
 
       true ->
-        walk_map_children(value, depth, composition_depth, count, opts)
+        walk_map_children(value, depth, composition_depth, count, opts, named_keys?)
     end
   end
 
-  defp walk(values, depth, composition_depth, count, opts) when is_list(values) do
+  defp walk(values, depth, composition_depth, count, opts, _named_keys?) when is_list(values) do
     if depth > opts[:max_schema_depth] do
       {:error, {:schema_limit_exceeded, :max_schema_depth, depth}}
     else
@@ -493,35 +521,35 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
     end
   end
 
-  defp walk(_value, _depth, _composition_depth, count, _opts), do: {:ok, count}
+  defp walk(_value, _depth, _composition_depth, count, _opts, _named_keys?), do: {:ok, count}
 
-  defp walk_map_children(value, depth, composition_depth, count, opts) do
+  defp walk_map_children(value, depth, composition_depth, count, opts, named_keys?) do
     Enum.reduce_while(value, {:ok, count}, fn {key, child}, {:ok, current_count} ->
-      cond do
-        MapSet.member?(@literal_keywords, key) ->
-          {:cont, {:ok, current_count}}
-
-        MapSet.member?(@reference_keywords, key) and external_ref?(child) ->
-          if key in ["$ref", "$dynamicRef"] and network_refs_enabled?(opts),
-            do: {:cont, {:ok, current_count}},
-            else: {:halt, {:error, :network_ref_forbidden}}
-
-        true ->
-          next_composition_depth =
-            if MapSet.member?(@composition_keywords, key),
-              do: composition_depth + 1,
-              else: composition_depth
-
-          case walk(child, depth + 1, next_composition_depth, current_count, opts) do
-            {:ok, next_count} -> {:cont, {:ok, next_count}}
-            {:error, _reason} = error -> {:halt, error}
-          end
-      end
+      walk_map_child(key, child, depth, composition_depth, current_count, opts, named_keys?)
     end)
   end
 
-  defp external_ref?(ref) when is_binary(ref), do: ref != "" and not String.starts_with?(ref, "#")
-  defp external_ref?(_ref), do: true
+  defp walk_map_child(key, child, depth, composition_depth, count, opts, named_keys?) do
+    if not named_keys? and MapSet.member?(@literal_keywords, key) do
+      {:cont, {:ok, count}}
+    else
+      walk_nested_schema(key, child, depth, composition_depth, count, opts, named_keys?)
+    end
+  end
+
+  defp walk_nested_schema(key, child, depth, composition_depth, count, opts, named_keys?) do
+    next_composition_depth =
+      if not named_keys? and MapSet.member?(@composition_keywords, key),
+        do: composition_depth + 1,
+        else: composition_depth
+
+    next_named_keys? = not named_keys? and MapSet.member?(@named_schema_maps, key)
+
+    case walk(child, depth + 1, next_composition_depth, count, opts, next_named_keys?) do
+      {:ok, next_count} -> {:cont, {:ok, next_count}}
+      {:error, _reason} = error -> {:halt, error}
+    end
+  end
 
   defp resolve_schema(schema, opts) do
     with {:ok, draft} <- schema_draft(schema) do
@@ -544,9 +572,7 @@ defmodule Arbor.MCP.Content.SchemaPolicy do
   end
 
   defp resolve_legacy_schema(schema, opts) do
-    if network_refs_enabled?(opts),
-      do: SchemaRemoteResolver.resolve(schema, opts, &preflight_document/2),
-      else: {:ok, ExJsonSchema.Schema.resolve(schema)}
+    SchemaRemoteResolver.resolve(schema, opts, &preflight_document/2)
   end
 
   defp preflight_document(schema, opts) do
