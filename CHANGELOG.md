@@ -199,6 +199,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than misrouted to another request. A POST that fails at or after its
   deadline replies `:timeout` and cancels the request on the server (backport of
   2.x #110: `3065dc3` and `adcf5f4`).
+- A server mounted through `ExMCP.HttpPlug` could not send progress or
+  list-change notifications to a legacy Streamable HTTP client, even when the
+  client's GET stream was open (`legacy_http_sse: true`, the documented way a
+  mounted 1.x server serves one). `ExMCP.Server.notify_progress/3,4`,
+  `notify_tools_changed/1`, `notify_prompts_changed/1`,
+  `notify_resources_changed/1`, `notify_resource_update/2` and
+  `send_log_message/4`, called from inside a request callback, now deliver to
+  that request's HTTP session only — persisted to its event log (under the
+  session manager the plug was configured with) and written to its live GET
+  stream, never to another session's, including one an earlier request on
+  the same handler process used. Notifications must be sent while the
+  request callback is in flight, which is when its context names the session:
+  a notify cast outside a callback keeps the long-standing cast path, and a
+  mounted request's per-request handler is stopped once it has replied, so
+  such a cast finds no process and is dropped (a cast never fails, crashes
+  or hangs on a dead pid).
+- An event arriving on a legacy HTTP GET stream in the gap between the
+  stream's connection and the receiver task taking it over (an ExMCP server's
+  `connected` greeting, written as soon as the stream opens) stalled the
+  stream until the 5-second consumer-acknowledgement timeout closed it: the
+  event went to the client process, which never reads the stream, while the
+  receiver's handoff sat behind it, and nothing the server sent on the GET
+  stream reached the client after that. While an event waits for its
+  acknowledgement, the SSE client now takes a change of consumer and hands
+  the event to the new one, within the original deadline. The reader also
+  skips SSE events that aren't MCP `message` events (as the TypeScript SDK's
+  client does), and a clean end of the GET stream no longer ends the
+  connection: the SSE client reopens the stream with `Last-Event-ID`, so the
+  receiver keeps waiting instead of dropping the session and failing every
+  pending request; stream errors still end it (backport of the client part
+  of the 2.x legacy HTTP notifications fix).
+- A legacy HTTP client whose reopened GET stream was refused with 405 — the
+  server no longer offers one — waited for events that would never come while
+  the connection looked healthy. The connection now carries on POST-only, as
+  with a server that never offered a GET stream: the receiver stops and the
+  client drops it without dropping the session (backport of the 2.x fix).
+- A notification stored while a legacy session's GET stream was closed never
+  replayed when the stream reopened. The stream's control events (`connected`,
+  `close`, `error`) carried wall-clock ids outside the session's replay
+  sequence, which a client adopted as its `Last-Event-ID` so every persisted
+  event compared as older than it; and a client presenting no `Last-Event-ID`
+  resumed from nothing rather than the beginning of the session's log. Control
+  events now carry no id, and a stream without a `Last-Event-ID` resumes from
+  the beginning of the retained log, so a notification stored during a
+  reconnect gap reaches its session's client when the stream reopens.
+- `ExMCP.Server.notify_resource_update/2`, called from a request callback on
+  a server mounted through `ExMCP.HttpPlug` configured with another
+  `:session_manager`, persisted its broadcast through the default
+  `ExMCP.SessionManager`, so the subscribed session never got the update.
+  `ExMCP.HttpPlug.broadcast_resource_update/2` now takes the session manager
+  (defaulting to `ExMCP.SessionManager`) and the mounted path passes the
+  configured one.
 - Nested atom keys in a client's declared capabilities are now normalized
   for the Local transport too, matching the HTTP wire shape. This closes a
   Local-transport gap in the 1.x backport of 2.x PR #116.

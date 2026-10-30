@@ -571,6 +571,7 @@ defmodule ExMCP.Client.RequestHandler do
   This function is intended to be called from the client's `handle_info/2` callback.
   It decodes the message and delegates to the appropriate response handler.
   """
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def parse_transport_message(message, state) do
     case Protocol.parse_message(message) do
       {:result, result, id} ->

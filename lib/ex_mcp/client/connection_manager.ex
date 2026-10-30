@@ -727,6 +727,13 @@ defmodule ExMCP.Client.ConnectionManager do
         # SSE not started yet — retry (SSE will start when server provides session ID)
         receive_loop(parent, transport_mod, transport_state)
 
+      {:error, :stream_withdrawn} ->
+        # The server stopped offering the stream this loop reads, such as a
+        # legacy GET stream reopened with a 405, while requests and their
+        # responses still work. The connection goes on without a receiver.
+        send(parent, {:transport_receiver_stopped, self()})
+        :ok
+
       {:error, :not_supported_in_sync_mode} ->
         # Non-SSE HTTP mode — responses come from send_message directly.
         # Keep the loop alive but sleep to avoid busy-waiting.
