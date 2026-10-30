@@ -320,12 +320,14 @@ defmodule Arbor.MCP.Content.SchemaReferenceSemanticsTest do
              SchemaPolicy.compile(schema, documents_options(%{b => %{"$ref" => root}}))
   end
 
-  test "empty HTTP paths and a root slash share one document admission" do
+  test "equivalent HTTP document locations share one admission" do
     schema = %{
       "$schema" => "http://json-schema.org/draft-07/schema#",
       "allOf" => [
         %{"$ref" => "https://schemas.example.com"},
-        %{"$ref" => "https://schemas.example.com/"}
+        %{"$ref" => "https://schemas.example.com/"},
+        %{"$ref" => "https://SCHEMAS.example.com:443/"},
+        %{"$ref" => "https://schemas.example.com./"}
       ]
     }
 
@@ -438,6 +440,33 @@ defmodule Arbor.MCP.Content.SchemaReferenceSemanticsTest do
       remote = Map.put(bounds, "$schema", "http://json-schema.org/draft-#{remote_draft}/schema#")
       assert {:ok, _compiled} = SchemaPolicy.compile(schema, resolver_options(remote))
     end
+  end
+
+  test "referenced literal copies retain their existing validation context" do
+    schema = %{
+      "$schema" => "http://json-schema.org/draft-07/schema#",
+      "$ref" => "https://schemas.example.com/bounds.json#/default"
+    }
+
+    remote = %{
+      "$schema" => "http://json-schema.org/draft-04/schema#",
+      "default" => %{"exclusiveMaximum" => 5}
+    }
+
+    assert {:ok, compiled} = SchemaPolicy.compile(schema, resolver_options(remote))
+    assert :ok = SchemaPolicy.validate(4, compiled)
+    assert {:error, _} = SchemaPolicy.validate(6, compiled)
+  end
+
+  test "draft4 boolean literal targets do not acquire a definitions meta-schema check" do
+    schema = %{
+      "$schema" => "http://json-schema.org/draft-04/schema#",
+      "default" => false,
+      "$ref" => "#/default"
+    }
+
+    assert {:ok, compiled} = SchemaPolicy.compile(schema)
+    assert {:error, _} = SchemaPolicy.validate(1, compiled)
   end
 
   defp resolver_options(document) do

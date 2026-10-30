@@ -370,7 +370,12 @@ defmodule Arbor.MCP.Content.SchemaGraph do
 
   def location(uri) do
     uri = URI.parse(to_string(uri))
-    host = if is_binary(uri.host), do: String.downcase(uri.host), else: nil
+
+    host =
+      if is_binary(uri.host),
+        do: uri.host |> String.downcase() |> String.trim_trailing("."),
+        else: nil
+
     scheme = if is_binary(uri.scheme), do: String.downcase(uri.scheme), else: nil
     path = if scheme in ["http", "https"] and uri.path in [nil, ""], do: "/", else: uri.path
     uri |> Map.merge(%{fragment: nil, scheme: scheme, host: host, path: path}) |> to_string()

@@ -12,19 +12,24 @@ defmodule Arbor.MCP.Content.SchemaInliner do
           {:ok, {String.t(), documents()}} | {:error, :network_ref_forbidden}
   def bundle(schema, documents) do
     graph = SchemaGraph.build(schema, documents: documents)
-    {locations, definitions} = output_locations(graph)
+    locations = output_locations(graph)
     {root_location, []} = locations[{:root, [], false}]
 
-    graph.documents
-    |> Enum.reduce_while({:ok, %{}}, fn {document, _schema}, {:ok, acc} ->
-      key = {document, [], false}
-      {location, []} = locations[key]
+    roots = for {document, _schema} <- graph.documents, do: {document, [], false}
 
-      with {:ok, root} <- rewrite(graph, key, locations),
-           {:ok, copies} <- rewrite_definitions(graph, definitions[document], locations) do
-        {:cont, {:ok, Map.put(acc, location, attach_definitions(root, copies))}}
-      else
-        error -> {:halt, error}
+    (roots ++ Enum.to_list(graph.additional))
+    |> Enum.reduce_while({:ok, %{}}, fn key = {_document, path, _named?}, {:ok, acc} ->
+      {location, _output} = locations[key]
+
+      case rewrite(graph, key, locations) do
+        {:ok, value} ->
+          # The source document's meta-schema never examined literal data.
+          # Keep that boundary when resolving a separate schema occurrence.
+          value = if path == [], do: value, else: %{"x-arbor-target" => value}
+          {:cont, {:ok, Map.put(acc, location, value)}}
+
+        error ->
+          {:halt, error}
       end
     end)
     |> case do
@@ -33,45 +38,23 @@ defmodule Arbor.MCP.Content.SchemaInliner do
     end
   end
 
-  # A referenced node inside instance data gets a separate schema copy in
-  # the same document. Its original occurrence retains its instance value.
+  # A referenced node inside instance data gets a separate cache entry. An
+  # annotation wrapper preserves the original meta-schema boundary while
+  # allowing ExJsonSchema to resolve the copy's references and attributes.
   defp output_locations(graph) do
-    graph.documents
+    roots =
+      graph.documents
+      |> Enum.sort()
+      |> Enum.with_index()
+      |> Map.new(fn {{document, _schema}, index} ->
+        {{document, [], false}, {"arbor-schema:document-#{index}", []}}
+      end)
+
+    graph.additional
     |> Enum.sort()
     |> Enum.with_index()
-    |> Enum.reduce({%{}, %{}}, fn {{document, schema}, index}, {locations, copies} ->
-      location = "arbor-schema:document-#{index}"
-      locations = Map.put(locations, {document, [], false}, {location, []})
-      names = if is_map(schema), do: Map.keys(Map.get(schema, "definitions", %{})), else: []
-      initial = {locations, %{}, MapSet.new(names), 0}
-
-      {locations, definitions, _used, _index} =
-        graph.additional
-        |> Enum.filter(fn {owner, _path, _named?} -> owner == document end)
-        |> Enum.sort()
-        |> Enum.reduce(initial, fn key, {locations, definitions, used, index} ->
-          {name, index} = next_key(index, used)
-          output = {location, ["definitions", name]}
-
-          {Map.put(locations, key, output), Map.put(definitions, name, key),
-           MapSet.put(used, name), index}
-        end)
-
-      {locations, Map.put(copies, document, definitions)}
-    end)
-  end
-
-  defp next_key(index, used) do
-    name = "__remote_#{index}"
-    if MapSet.member?(used, name), do: next_key(index + 1, used), else: {name, index + 1}
-  end
-
-  defp rewrite_definitions(graph, definitions, locations) do
-    Enum.reduce_while(definitions, {:ok, %{}}, fn {name, key}, {:ok, acc} ->
-      case rewrite(graph, key, locations) do
-        {:ok, schema} -> {:cont, {:ok, Map.put(acc, name, schema)}}
-        error -> {:halt, error}
-      end
+    |> Enum.reduce(roots, fn {key, index}, locations ->
+      Map.put(locations, key, {"arbor-schema:target-#{index}", ["x-arbor-target"]})
     end)
   end
 
@@ -160,12 +143,6 @@ defmodule Arbor.MCP.Content.SchemaInliner do
       |> Enum.max_by(fn {{_document, prefix, _named?}, _output} -> length(prefix) end)
 
     {location, output ++ Enum.drop(path, length(prefix))}
-  end
-
-  defp attach_definitions(root, definitions) when definitions == %{}, do: root
-
-  defp attach_definitions(root, definitions) do
-    Map.update(root, "definitions", definitions, &Map.merge(&1, definitions))
   end
 
   defp encode_pointer({location, []}), do: location
