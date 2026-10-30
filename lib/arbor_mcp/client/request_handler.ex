@@ -990,13 +990,14 @@ defmodule Arbor.MCP.Client.RequestHandler do
         request_id,
         %{
           transport_mod: HTTP,
-          transport_state: %HTTP{protocol_era: :modern} = transport_state
+          transport_state: %HTTP{} = transport_state
         } = state,
         outcome
-      ) do
-    # Closing the connection is how modern HTTP cancels a request, whether
-    # its response is a stream or a pending POST. The POST task is forgotten
-    # first, so neither its exit nor a late result reaches the client.
+      )
+      when not is_nil(request_id) do
+    # Retire the owned POST in either era, including an already-approved auth
+    # retry. Forget it first so neither its exit nor a queued result reaches
+    # another request. Modern HTTP also closes a request's response stream.
     {posts, tasks} =
       Map.split_with(state.async_post_tasks || %{}, fn {_monitor, entry} ->
         match?({_pid, ^request_id}, entry)
@@ -2519,12 +2520,12 @@ defmodule Arbor.MCP.Client.RequestHandler do
         {from, :single, _method} ->
           # Reply with cancelled error and remove from pending
           GenServer.reply(from, {:error, :cancelled})
-          {:noreply, drop_pending(updated_state, request_id)}
+          {:noreply, retire_cancelled_request(updated_state, request_id)}
 
         {from, :single} ->
           # Reply with cancelled error and remove from pending
           GenServer.reply(from, {:error, :cancelled})
-          {:noreply, drop_pending(updated_state, request_id)}
+          {:noreply, retire_cancelled_request(updated_state, request_id)}
 
         _ ->
           # Other types of requests (batch, etc.)
@@ -2534,6 +2535,14 @@ defmodule Arbor.MCP.Client.RequestHandler do
       Logger.warning("Received cancellation notification without requestId")
       {:noreply, state}
     end
+  end
+
+  defp retire_cancelled_request(state, request_id) do
+    state
+    |> settle_posts(request_id, :release)
+    |> HTTPAuth.cancel_request(request_id)
+    |> then(&close_request_stream(request_id, &1))
+    |> drop_pending(request_id)
   end
 
   defp build_success_response(result, request_id) do

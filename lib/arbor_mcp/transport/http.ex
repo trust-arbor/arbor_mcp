@@ -97,10 +97,20 @@ defmodule Arbor.MCP.Transport.HTTP do
   alias Arbor.MCP.Authorization.Provider.OAuth
   alias Arbor.MCP.Client.{ConnectionScope, Deadline, Lifetime}
 
-  alias Arbor.MCP.Internal.{CACerts, DNSResolver, Headers, Options, Security, SecurityConfig, SSE}
+  alias Arbor.MCP.Internal.{
+    CACerts,
+    DNSResolver,
+    Headers,
+    Options,
+    Protocol,
+    Security,
+    SecurityConfig,
+    SSE
+  }
+
   alias Arbor.RPC.LogSummary
 
-  alias Arbor.MCP.Protocol.VersionNegotiator
+  alias Arbor.MCP.Protocol.{ResultEnvelope, VersionNegotiator}
   alias Arbor.MCP.Transport.{ReliabilityWrapper, SecurityGuard, SSEClient}
 
   alias Arbor.MCP.Transport.HTTP.{
@@ -144,6 +154,10 @@ defmodule Arbor.MCP.Transport.HTTP do
     # timeouts apply.
     :deadline,
     tool_headers: %{},
+    tool_listing_generation: 0,
+    tool_headers_generation: 0,
+    tool_cursor_generations: %{},
+    tool_cursor_history_complete: true,
     modern_streams: %{},
     sse_deferred_attempted: false,
     auth_completed: false,
@@ -180,6 +194,10 @@ defmodule Arbor.MCP.Transport.HTTP do
           protocol_version: String.t(),
           protocol_era: :legacy | :modern | :unknown,
           tool_headers: %{optional(String.t()) => [map()]},
+          tool_listing_generation: non_neg_integer(),
+          tool_headers_generation: non_neg_integer(),
+          tool_cursor_generations: %{optional(binary()) => non_neg_integer() | :ambiguous},
+          tool_cursor_history_complete: boolean(),
           modern_streams: %{optional(Arbor.MCP.Types.request_id()) => pid()},
           sse_deferred_attempted: boolean(),
           auth_provider: module() | nil,
@@ -501,6 +519,7 @@ defmodule Arbor.MCP.Transport.HTTP do
   defp start_async_post(message, state, request_state) do
     parent = self()
     request_id = extract_request_id(message)
+    {tool_list_page, state} = prepare_tool_list_page(message, state)
     nonce = make_ref()
     # Resolved here, in the client process, so tasks never refresh (and
     # possibly rotate) a provider's token concurrently.
@@ -535,7 +554,7 @@ defmodule Arbor.MCP.Transport.HTTP do
           request_id: request_id,
           task_pid: self(),
           deadline: request_state.deadline,
-          tool_list: tool_list_page(message),
+          tool_list: tool_list_page,
           state_changes: result_state_changes(sent_state, result)
         }
 
@@ -1343,33 +1362,97 @@ defmodule Arbor.MCP.Transport.HTTP do
 
   @doc false
   # Applies a tools/list response from an async POST to the client's own
-  # transport state: a first page replaces the header cache, a cursor page
-  # adds to it, as cache_tool_headers/3 does for a synchronous send.
-  @spec cache_tool_list(t(), :first | :cursor, term()) :: t()
-  def cache_tool_list(%__MODULE__{} = state, kind, response_data) do
-    case Jason.decode(response_data) do
-      {:ok, %{"result" => %{"tools" => tools}}} when is_list(tools) and kind == :first ->
-        %{state | tool_headers: ToolHeaders.cache(tools)}
-
-      {:ok, %{"result" => %{"tools" => tools}}} when is_list(tools) ->
-        %{state | tool_headers: Map.merge(state.tool_headers || %{}, ToolHeaders.cache(tools))}
-
-      _other ->
-        state
+  # transport state. The first successful page of a newer listing replaces
+  # the cache; all pages of that listing merge, in any completion order.
+  @spec cache_tool_list(t(), {:first | :cursor, non_neg_integer() | :ambiguous}, term()) :: t()
+  def cache_tool_list(%__MODULE__{} = state, {kind, generation}, response_data)
+      when kind in [:first, :cursor] and (is_integer(generation) or generation == :ambiguous) do
+    with {:result, %{"tools" => tools} = result, _id} when is_list(tools) <-
+           Protocol.parse_message(response_data),
+         {:ok, :complete, _result} <-
+           ResultEnvelope.validate(result, state.protocol_era, method: "tools/list") do
+      state
+      |> remember_tool_cursor(result["nextCursor"], generation)
+      |> apply_tool_list_cache(generation, tools)
+    else
+      _invalid -> state
     end
   rescue
     _invalid -> state
   end
 
-  defp tool_list_page(message) do
-    case Jason.decode(message) do
-      {:ok, %{"method" => "tools/list"} = request} ->
-        if get_in(request, ["params", "cursor"]), do: :cursor, else: :first
+  defp apply_tool_list_cache(state, :ambiguous, _tools), do: state
 
-      _other ->
-        nil
+  defp apply_tool_list_cache(state, generation, tools) do
+    cond do
+      generation < state.tool_headers_generation ->
+        state
+
+      generation > state.tool_headers_generation ->
+        %{state | tool_headers_generation: generation, tool_headers: ToolHeaders.cache(tools)}
+
+      true ->
+        %{state | tool_headers: Map.merge(state.tool_headers || %{}, ToolHeaders.cache(tools))}
     end
   end
+
+  # A returned cursor belongs to its originating listing, even if a newer
+  # listing was started before that response arrived. When the server reuses
+  # a token, the newest listing that issued it owns subsequent requests for
+  # that token. Requests dispatched earlier keep their captured generation.
+  defp remember_tool_cursor(state, cursor, generation) when is_binary(cursor) do
+    key = :crypto.hash(:sha256, cursor)
+
+    cursors =
+      Map.update(state.tool_cursor_generations, key, generation, fn previous ->
+        newest_cursor_generation(previous, generation)
+      end)
+
+    # Bound connection history. Once history is forgotten, unknown cursors
+    # cannot safely be assigned to the latest listing. Hashes also keep opaque
+    # cursor contents and potentially large values out of retained state.
+    if map_size(cursors) > 1_024 do
+      %{
+        state
+        | tool_cursor_generations: Map.take(cursors, [key]),
+          tool_cursor_history_complete: false
+      }
+    else
+      %{state | tool_cursor_generations: cursors}
+    end
+  end
+
+  defp remember_tool_cursor(state, _cursor, _generation), do: state
+
+  # Allocate in the client before spawning: workers' snapshots cannot decide
+  # which listing their responses belong to when completions race.
+  defp prepare_tool_list_page(message, state) do
+    case Jason.decode(message) do
+      {:ok, %{"method" => "tools/list"} = request} ->
+        if cursor = get_in(request, ["params", "cursor"]) do
+          {{:cursor, tool_cursor_generation(state, cursor)}, state}
+        else
+          generation = state.tool_listing_generation + 1
+          {{:first, generation}, %{state | tool_listing_generation: generation}}
+        end
+
+      _other ->
+        {nil, state}
+    end
+  end
+
+  defp newest_cursor_generation(:ambiguous, generation), do: generation
+  defp newest_cursor_generation(previous, :ambiguous), do: previous
+  defp newest_cursor_generation(previous, generation), do: max(previous, generation)
+
+  defp tool_cursor_generation(state, cursor) when is_binary(cursor) do
+    fallback =
+      if state.tool_cursor_history_complete, do: state.tool_listing_generation, else: :ambiguous
+
+    Map.get(state.tool_cursor_generations, :crypto.hash(:sha256, cursor), fallback)
+  end
+
+  defp tool_cursor_generation(_state, _cursor), do: :ambiguous
 
   defp result_state_changes(snapshot, {:ok, new_state}) do
     async_state_changes(snapshot, new_state)
