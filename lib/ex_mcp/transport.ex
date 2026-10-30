@@ -227,6 +227,18 @@ defmodule ExMCP.Transport do
     _error -> []
   end
 
+  @doc false
+  # Closes `transport_state` as close/1 does, and says whether a server
+  # process the transport started was confirmed stopped. Only a transport
+  # that runs a server process can say so (Stdio, directly or in
+  # ReliabilityWrapper); for any other this is close/1.
+  @spec close_confirmed(module(), state()) :: :ok | {:error, term()}
+  def close_confirmed(transport_mod, transport_state) do
+    if function_exported?(transport_mod, :close_confirmed, 1),
+      do: transport_mod.close_confirmed(transport_state),
+      else: transport_mod.close(transport_state)
+  end
+
   @doc """
   Helper to get the appropriate transport module for an atom identifier.
 

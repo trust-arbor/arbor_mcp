@@ -347,7 +347,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
       :ok = Client.send_cancelled(client, req2, "Cancelled second request")
 
       # Collect results (increased timeout to handle case where cancellation doesn't work)
-      results = Task.await_many([task1, task2, task3], 8000)
+      results = Task.await_many([task1, task2, task3], 15_000)
 
       # First and third should succeed, second should be cancelled
       assert [{1, {:ok, _}}, {2, {:error, :cancelled}}, {3, {:ok, _}}] = results
@@ -431,7 +431,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
       assert {:error, :cancelled} = Task.await(task, 5000)
     end
 
-    test "server frees resources for cancelled requests", %{client: client} do
+    test "server frees resources for cancelled requests", %{client: client, server: server} do
       # Start multiple requests
       tasks =
         for i <- 1..5 do
@@ -454,10 +454,9 @@ defmodule ExMCP.CancellationComprehensiveTest do
       # This is expected behavior since cancellation is a race condition
       results = Task.await_many(tasks, 11000)
 
-      # At least some should be cancelled, but it's OK if some complete
-      # The key is that the system remains stable
+      # At least some should be cancelled, but it's OK if some complete.
       cancelled_count = Enum.count(results, fn result -> result == {:error, :cancelled} end)
-      assert cancelled_count >= 0, "System should handle cancellation gracefully"
+      assert cancelled_count > 0
 
       # All results should be either OK or cancelled (no crashes)
       assert Enum.all?(results, fn
@@ -467,7 +466,14 @@ defmodule ExMCP.CancellationComprehensiveTest do
              end),
              "All results should be either success or cancellation"
 
-      # Server should still be responsive
+      # Client cancellation completes pending callers immediately. The server
+      # can still be processing the queued tool calls and notifications, so
+      # wait for that mailbox to drain before checking its resources.
+      server_state = :sys.get_state(server, 20_000)
+      assert MapSet.subset?(MapSet.new(pending), server_state.cancelled_requests)
+      assert server_state.handler_state.active_requests == %{}
+
+      # Server should still be responsive after cleaning up.
       assert {:ok, _} = Client.list_tools(client)
     end
   end

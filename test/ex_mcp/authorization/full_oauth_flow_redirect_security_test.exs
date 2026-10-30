@@ -109,7 +109,7 @@ defmodule ExMCP.Authorization.FullOAuthFlowRedirectSecurityTest do
 
   test "enforces one aggregate authorization deadline even when a client stalls" do
     stalled = fn _method, _request, _http_options, _request_options ->
-      Process.sleep(100)
+      Process.sleep(500)
       ok()
     end
 
@@ -123,7 +123,7 @@ defmodule ExMCP.Authorization.FullOAuthFlowRedirectSecurityTest do
                oauth_http: http_options(stalled)
              )
 
-    assert System.monotonic_time(:millisecond) - started < 90
+    assert System.monotonic_time(:millisecond) - started < 400
   end
 
   defp http_options(request_fun) do

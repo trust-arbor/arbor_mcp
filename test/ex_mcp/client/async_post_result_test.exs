@@ -126,6 +126,160 @@ defmodule ExMCP.Client.AsyncPostResultTest do
       assert new_state.transport_state.headers == []
     end
 
+    test "an async POST auth challenge returns token and updates client transport state" do
+      task_ref = make_ref()
+      req_ref = make_ref()
+      task_pid = self()
+
+      defmodule ProviderA do
+        @behaviour ExMCP.Authorization.Provider
+        def init(config), do: {:ok, config}
+        def get_token(_state), do: {:ok, nil, %{}}
+
+        def handle_unauthorized(_www, _scopes, state),
+          do: {:ok, "T_new", Map.put(state, :refreshed, true)}
+
+        def handle_forbidden(_www, _scopes, state), do: {:error, :forbidden, state}
+      end
+
+      ts = %HTTP{
+        session_id: "s1",
+        access_token: "T_old",
+        auth_provider: ProviderA,
+        auth_provider_state: %{refreshed: false}
+      }
+
+      state =
+        client_state(
+          connection_status: :connected,
+          transport_mod: HTTP,
+          transport_state: ts,
+          async_post_tasks: %{task_ref => {task_pid, 42}}
+        )
+
+      challenge = %{
+        status: 401,
+        www_authenticate: "Bearer",
+        scopes: [],
+        token: "T_old"
+      }
+
+      assert {:noreply, new_state} =
+               Client.handle_info(
+                 {:http_post_auth_challenge, task_pid, req_ref, challenge},
+                 state
+               )
+
+      assert_receive {:http_post_auth_result, ^req_ref, {:ok, "T_new"}}
+      assert new_state.transport_state.access_token == "T_new"
+      assert new_state.transport_state.auth_provider_state.refreshed == true
+    end
+
+    test "a challenge on a token older than current gets current token without running flow again" do
+      task_ref = make_ref()
+      req_ref = make_ref()
+      task_pid = self()
+
+      defmodule ProviderB do
+        @behaviour ExMCP.Authorization.Provider
+        def init(config), do: {:ok, config}
+        def get_token(_state), do: {:ok, nil, %{}}
+        def handle_unauthorized(_www, _scopes, _state), do: flunk("should not be called")
+        def handle_forbidden(_www, _scopes, state), do: {:error, :forbidden, state}
+      end
+
+      # Client already has T_current
+      ts = %HTTP{
+        session_id: "s1",
+        access_token: "T_current",
+        auth_provider: ProviderB,
+        auth_provider_state: %{}
+      }
+
+      state =
+        client_state(
+          connection_status: :connected,
+          transport_mod: HTTP,
+          transport_state: ts,
+          async_post_tasks: %{task_ref => {task_pid, 42}}
+        )
+
+      # Challenge was against older token "T_old"
+      challenge = %{
+        status: 401,
+        www_authenticate: "Bearer",
+        scopes: [],
+        token: "T_old"
+      }
+
+      assert {:noreply, new_state} =
+               Client.handle_info(
+                 {:http_post_auth_challenge, task_pid, req_ref, challenge},
+                 state
+               )
+
+      assert_receive {:http_post_auth_result, ^req_ref, {:ok, "T_current"}}
+      assert new_state.transport_state.access_token == "T_current"
+    end
+
+    test "challenge fails with :stream_retired when disconnected or task untracked" do
+      req_ref = make_ref()
+      task_pid = self()
+
+      state =
+        client_state(
+          connection_status: :disconnected,
+          transport_mod: HTTP,
+          transport_state: nil,
+          async_post_tasks: %{}
+        )
+
+      challenge = %{status: 401, www_authenticate: "Bearer", scopes: [], token: "T"}
+
+      assert {:noreply, ^state} =
+               Client.handle_info(
+                 {:http_post_auth_challenge, task_pid, req_ref, challenge},
+                 state
+               )
+
+      assert_receive {:http_post_auth_result, ^req_ref, {:error, :stream_retired}}
+    end
+
+    test "expired deadline returns :timeout" do
+      task_ref = make_ref()
+      req_ref = make_ref()
+      task_pid = self()
+
+      ts = %HTTP{session_id: "s1", access_token: "T"}
+
+      state =
+        client_state(
+          connection_status: :connected,
+          transport_mod: HTTP,
+          transport_state: ts,
+          async_post_tasks: %{task_ref => {task_pid, 42}}
+        )
+
+      # Deadline in the past
+      past_deadline = System.monotonic_time(:millisecond) - 1000
+
+      challenge = %{
+        status: 401,
+        www_authenticate: "Bearer",
+        scopes: [],
+        token: "T",
+        deadline: past_deadline
+      }
+
+      assert {:noreply, ^state} =
+               Client.handle_info(
+                 {:http_post_auth_challenge, task_pid, req_ref, challenge},
+                 state
+               )
+
+      assert_receive {:http_post_auth_result, ^req_ref, {:error, :timeout}}
+    end
+
     test "stale results from untracked tasks do not touch the transport state" do
       ts = %HTTP{session_id: "fresh", headers: []}
 

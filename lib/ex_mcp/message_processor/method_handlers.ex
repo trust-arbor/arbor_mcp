@@ -398,7 +398,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
          tool_name,
          params
        ) do
-    with {:ok, tools} <- load_tools_for_header_validation(server_pid, conn),
+    with {:ok, tools} <- load_tools_for_header_validation(server_pid, conn, tool_name),
          tool when is_map(tool) <- find_tool(tools, tool_name),
          {:ok, annotations} <- ToolHeaders.compile(tool) do
       ToolHeaders.validate_request(
@@ -415,18 +415,70 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
 
   defp validate_tool_request_headers(_conn, _server_pid, _tool_name, _params), do: :ok
 
-  defp load_tools_for_header_validation(server_pid, conn) do
-    case GenServer.call(server_pid, {:list_tools, nil}, call_timeout(conn))
-         |> normalize_list_reply() do
-      {:list, tools, _cursor} -> {:ok, ResultNormalizer.stringify_keys(tools)}
-      {:result, result} -> {:ok, Map.get(ResultNormalizer.stringify_keys(result), "tools", [])}
-      {:error, _reason} -> {:error, :tool_schema_unavailable}
+  # The tool may be on any page of tools/list, so follow the cursors until it
+  # turns up, stopping at the first page that has it. A list that runs past
+  # the page bound, or past one handler call timeout for the whole walk,
+  # fails closed: a slow handler can't hold a tools/call for a timeout per
+  # page.
+  @max_tool_pages 100
+
+  defp load_tools_for_header_validation(server_pid, conn, tool_name) do
+    case walk_deadline(call_timeout(conn)) do
+      {:ok, deadline} -> load_tool_pages(server_pid, tool_name, nil, @max_tool_pages, deadline)
+      # A timeout GenServer.call/3 would not take fails closed, as the call did.
+      :error -> {:error, :tool_schema_unavailable}
+    end
+  end
+
+  defp walk_deadline(:infinity), do: {:ok, :infinity}
+
+  defp walk_deadline(timeout) when is_integer(timeout) and timeout >= 0,
+    do: {:ok, System.monotonic_time(:millisecond) + timeout}
+
+  defp walk_deadline(_invalid), do: :error
+
+  defp load_tool_pages(_server_pid, _tool_name, _cursor, 0, _deadline),
+    do: {:error, :tool_schema_unavailable}
+
+  defp load_tool_pages(server_pid, tool_name, cursor, pages, deadline) do
+    case remaining_time(deadline) do
+      0 -> {:error, :tool_schema_unavailable}
+      timeout -> load_tool_page(server_pid, tool_name, cursor, pages, deadline, timeout)
+    end
+  end
+
+  defp load_tool_page(server_pid, tool_name, cursor, pages, deadline, timeout) do
+    page =
+      case GenServer.call(server_pid, {:list_tools, cursor}, timeout) |> normalize_list_reply() do
+        {:list, tools, next} -> {ResultNormalizer.stringify_keys(tools), next}
+        {:result, result} -> {Map.get(ResultNormalizer.stringify_keys(result), "tools", []), nil}
+        {:error, _reason} -> :unavailable
+      end
+
+    # A page that arrived in time but was ready only after the deadline
+    # isn't used either.
+    case {page, remaining_time(deadline)} do
+      {_page, 0} ->
+        {:error, :tool_schema_unavailable}
+
+      {:unavailable, _remaining} ->
+        {:error, :tool_schema_unavailable}
+
+      {{tools, next}, _remaining} ->
+        if is_binary(next) and is_nil(find_tool(tools, tool_name)),
+          do: load_tool_pages(server_pid, tool_name, next, pages - 1, deadline),
+          else: {:ok, tools}
     end
   rescue
     _error -> {:error, :tool_schema_unavailable}
   catch
     :exit, _reason -> {:error, :tool_schema_unavailable}
   end
+
+  defp remaining_time(:infinity), do: :infinity
+
+  defp remaining_time(deadline),
+    do: max(deadline - System.monotonic_time(:millisecond), 0)
 
   defp find_tool(tools, name) when is_list(tools) do
     Enum.find(tools, &(Map.get(&1, "name") == name))
