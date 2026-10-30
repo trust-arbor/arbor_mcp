@@ -60,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retiring a request also stops its HTTP POST worker, so an authentication
+  reply already queued for that worker cannot restart settled work. This
+  covers client and server cancellation with provider and inline OAuth
+  authentication, without affecting unrelated POSTs.
 - A health check that gave up on a hung server dropped the connection
   without closing it, so a stdio server kept running and a reconnect started
   a second one beside it. The transport is now closed first, as the other

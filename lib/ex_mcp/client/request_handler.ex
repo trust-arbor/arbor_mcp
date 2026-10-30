@@ -1148,8 +1148,11 @@ defmodule ExMCP.Client.RequestHandler do
       %{} = tasks ->
         filtered =
           Map.reject(tasks, fn
-            {ref, {_pid, ^request_id}} ->
+            {ref, {pid, ^request_id}} ->
               Process.demonitor(ref, [:flush])
+              # The worker may already have its authentication reply queued.
+              # Stop it as well as forgetting it, so it cannot retry retired work.
+              Process.exit(pid, :kill)
               true
 
             {ref, ^request_id} ->

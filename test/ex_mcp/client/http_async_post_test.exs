@@ -124,17 +124,39 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
     client = start_client()
 
     late = Task.async(fn -> Client.call_tool(client, "late", %{}, timeout: 5_000) end)
-    assert_receive {:tool_call_started, "late", late_handler, late_id}
+    assert_receive {:tool_call_started, "late", _late_handler, late_id}
     other = Task.async(fn -> Client.call_tool(client, "other", %{}, timeout: 5_000) end)
     assert_receive {:tool_call_started, "other", other_handler, other_id}
+
+    {late_ref, {late_post, ^late_id}} =
+      Enum.find(:sys.get_state(client).async_post_tasks, fn
+        {_ref, {_pid, ^late_id}} -> true
+        _other -> false
+      end)
+
+    monitor = Process.monitor(late_post)
 
     :ok = Client.send_cancelled(client, late_id, "user")
     assert {:error, :cancelled} = Task.await(late)
     assert_receive {:notification, "notifications/cancelled", %{"requestId" => ^late_id}}
+    assert_receive {:DOWN, ^monitor, :process, ^late_post, :killed}
 
-    # The cancelled request's POST answers with the other request's id.
-    send(late_handler, {:respond_with_id, other_id})
-    assert_receive {:responded, ^late_handler}
+    # Cancellation closes the POST now. A result queued before its worker
+    # stopped must still be ignored, even if it names another pending request.
+    stale_response =
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "id" => other_id,
+        "result" => %{"content" => [%{"type" => "text", "text" => "late"}]}
+      })
+
+    send(
+      client,
+      {:async_post_result, {:ok, nil, stale_response},
+       %{task_ref: late_ref, task_pid: late_post, request_id: late_id}}
+    )
+
+    _state = :sys.get_state(client)
     send(other_handler, :release)
 
     assert {:ok, response} = Task.await(other)
@@ -582,6 +604,10 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
          _counter
        )
        when name in ["late", "other"] do
+    # A cancelled POST closes its connection while this fixture is held.
+    # Let the callback finish normally so Bypass doesn't report the expected
+    # Cowboy shutdown as an unexpected handler failure during teardown.
+    Process.flag(:trap_exit, true)
     send(test_pid, {:tool_call_started, name, self(), id})
 
     receive do
@@ -590,6 +616,9 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
         text_result(conn, other_id, name)
 
       :release ->
+        text_result(conn, id, name)
+
+      {:EXIT, _from, :shutdown} ->
         text_result(conn, id, name)
     after
       2_000 -> text_result(conn, id, name)
@@ -740,6 +769,7 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
   end
 
   defp respond_tool(conn, id, "cancel_then_401", test_pid) do
+    Process.flag(:trap_exit, true)
     send(test_pid, {:tool_cancel_attempt, id, self()})
 
     receive do
@@ -749,6 +779,9 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
         |> Plug.Conn.resp(401, "")
 
       :allow ->
+        json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"content" => []}})
+
+      {:EXIT, _from, :shutdown} ->
         json(conn, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"content" => []}})
     after
       2_000 ->
