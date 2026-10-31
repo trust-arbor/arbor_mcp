@@ -64,6 +64,39 @@ defmodule ExMCP.Reliability.CircuitBreaker do
     end
   end
 
+  @doc false
+  # Resource-owning receives must keep the caller alive. The bounded callback
+  # receives the remaining breaker budget and must honor it; late results are
+  # rejected by the same execution cutoff as call/3.
+  @spec call_in_owner(GenServer.server(), (timeout() -> any())) :: any()
+  def call_in_owner(server, fun) do
+    case GenServer.call(server, :acquire, 5000) do
+      {:error, :circuit_open} = error ->
+        error
+
+      {:ok, configured} ->
+        deadline = now_ms() + effective_timeout(configured, 5000)
+
+        outcome =
+          if execution_open?(deadline) do
+            try do
+              {:ok, fun.(execution_remaining(deadline))}
+            rescue
+              error -> {:raised, error}
+            catch
+              :throw, value -> {:threw, value}
+              :exit, reason -> {:exited, reason}
+            end
+          else
+            :timeout
+          end
+
+        outcome = if execution_open?(deadline), do: outcome, else: :timeout
+        GenServer.cast(server, {:report, outcome})
+        outcome_to_result(outcome)
+    end
+  end
+
   defp effective_timeout(:infinity, timeout), do: timeout
   defp effective_timeout(config_timeout, :infinity), do: config_timeout
   defp effective_timeout(config_timeout, timeout), do: min(config_timeout, timeout)
@@ -262,6 +295,7 @@ defmodule ExMCP.Reliability.CircuitBreaker do
   # ok results record success; {:error, _} returns and raised exceptions go
   # through the error filter; throws, exits and timeouts always count.
   defp record_outcome({:ok, {:error, reason}}, state), do: record_filtered(reason, state)
+  defp record_outcome({:ok, {:error, reason, _state}}, state), do: record_filtered(reason, state)
 
   defp record_outcome({:ok, _value}, state),
     do: Core.record_success(state.circuit_breaker, now_ms())

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Circuit-breaker protected stdio receives retain the port's owner, so a successful
+  read no longer closes the connection when a temporary breaker worker exits.
+  The configured breaker cap and the receive deadline still bound the read;
+  receive failures continue to trip the breaker.
+- Modern discovery skips notifications while retaining its original deadline and
+  updated transport state. Continuous notifications cannot keep the probe alive.
+- Reliability wrappers preserve the HTTP send response/state ordering and
+  updated state on failed sends; those failures still count toward the breaker.
+
+
 ## [1.8.0] - 2026-10-31
 
 ### Added

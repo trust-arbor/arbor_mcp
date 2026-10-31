@@ -71,9 +71,10 @@ defmodule ExMCP.Client.StdioLegacyRespawnTest do
   describe "a legacy server that writes something other than an answer and exits" do
     # Non-JSON stdout lines (banners, logs) are ignored, so a server that
     # prints one and then exits has not answered: it is replaced like any
-    # other. (On 1.x the probe does not skip notifications: one is taken for
-    # an unexpected answer, so the `notifies` era is not covered here.)
-    for era <- [:banner] do
+    # other. A JSON notification is skipped by the same rule: it is not an
+    # answer and does not count as the child exiting, so a server that sends
+    # one and then exits is replaced like any other.
+    for era <- [:banner, :notifies] do
       test "is respawned and initialized after #{era} output", %{tmp_dir: tmp_dir} do
         %{prefer_modern: %{result: result, methods: methods, starts: starts}} =
           connect_concurrently(tmp_dir, unquote(era), [:prefer_modern], [])
