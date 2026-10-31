@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-10-31
+
+This first published 1.8 release includes the ACP additions and MCP backports
+recorded in the unpublished 1.8.0 preparation below.
+
 ### Fixed
 
 - Circuit-breaker protected stdio receives retain the port's owner, so a successful
@@ -45,6 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default. Document raising both it and the caller timeout for long operations.
 
 ## [1.8.0] - 2026-10-31
+
+Unpublished preparation tag; these changes are included in 1.8.1.
 
 ### Added
 
