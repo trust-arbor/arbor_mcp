@@ -39,6 +39,68 @@ defmodule ExMCP.Client.RequestDeadlineCapTest do
     Client.stop(client)
   end
 
+  test "the HTTP transport retains its configurable 30-second default cap" do
+    assert {:ok, transport} =
+             ExMCP.Transport.HTTP.connect(url: "http://127.0.0.1:1/mcp", use_sse: false)
+
+    assert transport.timeouts.request == 30_000
+  end
+
+  test "a larger caller budget does not override the configured transport cap" do
+    port = start_server(self())
+
+    client =
+      start_supervised!(
+        {Client,
+         transport: :http,
+         url: "http://127.0.0.1:#{port}/mcp",
+         use_sse: false,
+         protocol_mode: :legacy_only,
+         health_check_interval: nil,
+         reconnect: false,
+         request_timeout: 150}
+      )
+
+    started = System.monotonic_time(:millisecond)
+
+    assert {:error,
+            %ExMCP.Error.TransportError{
+              reason: {:http_receive_failed, %Mint.TransportError{reason: :timeout}}
+            }} = Client.call_tool(client, "hang", %{}, timeout: 5_000)
+
+    assert_receive {:tool_call_started, "hang", _handler}, 2_000
+    assert System.monotonic_time(:millisecond) - started < 3_000
+    assert :sys.get_state(client).connection_status == :ready
+  end
+
+  test "raising both budgets allows an operation past a smaller transport cap" do
+    port = start_server(self())
+
+    client =
+      start_supervised!(
+        {Client,
+         transport: :http,
+         url: "http://127.0.0.1:#{port}/mcp",
+         use_sse: false,
+         protocol_mode: :legacy_only,
+         health_check_interval: nil,
+         reconnect: false,
+         request_timeout: 2_000}
+      )
+
+    task =
+      Task.async(fn ->
+        Client.call_tool(client, "controlled", %{}, timeout: 2_000, format: :map)
+      end)
+
+    assert_receive {:tool_call_started, "controlled", handler}, 1_000
+    # The operation is deliberately held beyond the smaller cap above.
+    ref = task.ref
+    refute_receive {^ref, _result}, 250
+    send(handler, :release)
+    assert {:ok, %{"content" => []}} = Task.await(task, 1_000)
+  end
+
   # Answers initialize, accepts notifications, and never answers tools/call.
   defp start_server(test_pid) do
     {:ok, listener} =
@@ -95,6 +157,16 @@ defmodule ExMCP.Client.RequestDeadlineCapTest do
             "serverInfo" => %{"name" => "hang", "version" => "1"}
           }
         })
+
+      %{"method" => "tools/call", "id" => id, "params" => %{"name" => "controlled"}} ->
+        send(test_pid, {:tool_call_started, "controlled", self()})
+
+        receive do
+          :release ->
+            reply(socket, 200, %{"jsonrpc" => "2.0", "id" => id, "result" => %{"content" => []}})
+        after
+          5_000 -> :ok
+        end
 
       %{"method" => "tools/call", "params" => %{"name" => name}} ->
         send(test_pid, {:tool_call_started, name, self()})

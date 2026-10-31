@@ -40,7 +40,7 @@ defmodule ExMCP.Client.HTTPAsyncPostTest do
     def init(config), do: {:ok, %{test_pid: Keyword.fetch!(config, :test_pid)}}
 
     @impl true
-    def get_token(state), do: {:ok, nil, state}
+    def get_token(state), do: {:ok, Map.get(state, :token), state}
 
     @impl true
     def handle_unauthorized(_www_authenticate, _scopes, state) do

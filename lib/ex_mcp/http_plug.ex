@@ -651,7 +651,6 @@ defmodule ExMCP.HttpPlug do
           |> put_resp_header("content-type", "text/event-stream")
           |> put_resp_header("x-accel-buffering", "no")
           |> put_resp_header("cache-control", "no-cache")
-          |> send_chunked(200)
           |> RequestStream.serve(request_id, opts, process_fun)
 
         {:subscription, entry} ->
@@ -792,7 +791,7 @@ defmodule ExMCP.HttpPlug do
         |> send_resp(400, Jason.encode!(error_response))
 
       {:error, {:unsupported_protocol_version, request_id, version}} ->
-        supported = VersionRegistry.known_versions()
+        supported = mount_supported_versions(opts)
 
         error_response =
           JSONRPC.error(
@@ -1503,7 +1502,6 @@ defmodule ExMCP.HttpPlug do
         |> put_resp_header("content-type", "text/event-stream")
         |> put_resp_header("x-accel-buffering", "no")
         |> put_resp_header("cache-control", "no-cache")
-        |> put_resp_header("connection", "keep-alive")
         |> send_chunked(200)
 
       serve_sse(conn, session_id, session_manager, initial_sse_opts(opts, session_id))
@@ -2423,6 +2421,22 @@ defmodule ExMCP.HttpPlug do
     |> add_protocol_version_header()
     |> put_resp_content_type("application/json")
     |> send_resp(400, Jason.encode!(error_response))
+  end
+
+  defp mount_supported_versions(%{protocol_mode: mode})
+       when mode in [:legacy_only, :modern_only, :prefer_legacy, :prefer_modern],
+       do: VersionRegistry.supported_versions(mode)
+
+  defp mount_supported_versions(_opts) do
+    # An unrestricted mount accepts both eras, even when clients default to one.
+    preference =
+      case VersionRegistry.protocol_mode() do
+        :legacy_only -> :prefer_legacy
+        :modern_only -> :prefer_modern
+        mode -> mode
+      end
+
+    VersionRegistry.supported_versions(preference)
   end
 
   defp reject_unknown_session(conn, opts) do

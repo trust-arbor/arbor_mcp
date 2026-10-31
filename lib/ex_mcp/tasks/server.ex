@@ -7,7 +7,7 @@ defmodule ExMCP.Tasks.Server do
   installs them as the default modern task callbacks.
   """
 
-  alias ExMCP.Server.Context
+  alias ExMCP.Server.{Context, HandlerBridge}
   alias ExMCP.Tasks
   alias ExMCP.Tasks.Extension
 
@@ -39,7 +39,7 @@ defmodule ExMCP.Tasks.Server do
         {:error, reason} -> {:error, error_message(reason), state}
       end
     else
-      {:error, "Tasks not implemented", state}
+      {:error, HandlerBridge.method_not_found("tasks/get"), state}
     end
   end
 
@@ -51,7 +51,7 @@ defmodule ExMCP.Tasks.Server do
         {:error, reason} -> {:error, error_message(reason), state}
       end
     else
-      {:error, "Tasks not implemented", state}
+      {:error, HandlerBridge.method_not_found("tasks/update"), state}
     end
   end
 
@@ -63,7 +63,7 @@ defmodule ExMCP.Tasks.Server do
         {:error, reason} -> {:error, error_message(reason), state}
       end
     else
-      {:error, "Tasks not implemented", state}
+      {:error, HandlerBridge.method_not_found("tasks/cancel"), state}
     end
   end
 

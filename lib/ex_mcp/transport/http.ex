@@ -75,6 +75,16 @@ defmodule ExMCP.Transport.HTTP do
   Setting `use_sse: false` disables the legacy standalone GET stream. It does
   not disable a modern request-owned SSE response.
 
+  When the server rejects a legacy session with HTTP 404, automatic
+  reconnection initializes a fresh session without replaying the operation
+  that found it expired. A configured `:session_id` rejected during startup
+  is retried once without the id, within the establishment deadline. With
+  `reconnect: false`, an established client stays disconnected after expiry.
+
+  `:request_timeout` retains its 30-second default HTTP POST cap. Longer
+  operations need both a larger transport cap and a larger caller timeout;
+  the earlier deadline wins. SSE handshake and idle limits remain separate.
+
   > #### Security Best Practices {: .warning}
   >
   > 1. **Always use HTTPS** in production
@@ -150,7 +160,8 @@ defmodule ExMCP.Transport.HTTP do
     modern_streams: %{},
     sse_deferred_attempted: false,
     auth_completed: false,
-    granted_scopes: nil
+    granted_scopes: nil,
+    configured_session_ended: false
   ]
 
   @type t :: %__MODULE__{
@@ -173,6 +184,7 @@ defmodule ExMCP.Transport.HTTP do
           tool_headers_generation: non_neg_integer(),
           modern_streams: %{optional(ExMCP.Types.request_id()) => pid()},
           sse_deferred_attempted: boolean(),
+          configured_session_ended: boolean(),
           auth_provider: module() | nil,
           auth_provider_state: any(),
           max_response_bytes: pos_integer(),
@@ -309,7 +321,12 @@ defmodule ExMCP.Transport.HTTP do
     # SSE is deferred until after the first successful POST (which provides
     # the session ID needed for the GET SSE stream).
     with {:ok, {auth_provider, auth_provider_state}} <- provider,
-         state = %{state | auth_provider: auth_provider, auth_provider_state: auth_provider_state},
+         state =
+           provider_owns_authorization(%{
+             state
+             | auth_provider: auth_provider,
+               auth_provider_state: auth_provider_state
+           }),
          :ok <- validate_security(state),
          :ok <- TargetPolicy.validate_options(network_policy_options(state)) do
       if use_sse do
@@ -367,9 +384,17 @@ defmodule ExMCP.Transport.HTTP do
 
   def send_keeping_state(message, %__MODULE__{use_sse: true, sse_pid: sse_pid} = state)
       when is_pid(sse_pid) do
+    case apply_provider_token(state) do
+      {:ok, request_state} -> start_async_post(message, state, request_state)
+      {:error, _reason, _state} = error -> error
+    end
+  end
+
+  def send_keeping_state(message, %__MODULE__{} = state), do: send_sync(message, state)
+
+  defp start_async_post(message, state, request_state) do
     parent = self()
     request_id = extract_request_id(message)
-    request_state = apply_provider_token(state)
     {page_info, request_state} = prepare_tool_list_page(message, request_state)
 
     client_auth? = Process.get({ExMCP.Client, :client}) == true
@@ -397,6 +422,7 @@ defmodule ExMCP.Transport.HTTP do
           task_ref: task_ref,
           task_pid: self(),
           request_id: request_id,
+          sent_session_key: session_key(request_state),
           deadline: request_state.deadline,
           tool_list: page_info,
           state_changes: changes
@@ -420,9 +446,12 @@ defmodule ExMCP.Transport.HTTP do
      }}
   end
 
-  def send_keeping_state(message, %__MODULE__{} = state), do: send_sync(message, state)
-
-  defp send_sync(message, state), do: exchange(message, apply_provider_token(state), [])
+  defp send_sync(message, state) do
+    case apply_provider_token(state) do
+      {:ok, request_state} -> exchange(message, request_state, [])
+      {:error, _reason, _state} = error -> error
+    end
+  end
 
   @doc false
   def send_authenticated(message, %__MODULE__{} = state, opts \\ []) do
@@ -663,24 +692,60 @@ defmodule ExMCP.Transport.HTTP do
 
   defp apply_provider_token(%{auth_provider: provider, auth_provider_state: ps} = state)
        when not is_nil(provider) do
-    case provider.get_token(ps) do
-      {:ok, nil, new_ps} ->
-        %{state | auth_provider_state: new_ps}
+    case provider_call(fn -> provider.get_token(ps) end) do
+      {:ok, {:ok, nil, new_ps}} ->
+        {:ok, %{drop_provider_token(state) | auth_provider_state: new_ps}}
 
-      {:ok, token, new_ps} ->
-        %{
-          state
-          | auth_provider_state: new_ps,
-            access_token: token,
-            headers: put_bearer_header(state.headers, token)
-        }
+      {:ok, {:ok, token, new_ps}} when is_binary(token) ->
+        {:ok,
+         %{
+           state
+           | auth_provider_state: new_ps,
+             access_token: token,
+             headers: put_bearer_header(state.headers, token)
+         }}
 
-      {:error, _} ->
-        state
+      {:ok, {:error, reason}} ->
+        refuse_provider_token(state, provider, redact_provider_reason(reason))
+
+      {:ok, _invalid} ->
+        refuse_provider_token(state, provider, :invalid_token_result)
+
+      {:failed, reason} ->
+        refuse_provider_token(state, provider, reason)
     end
   end
 
-  defp apply_provider_token(state), do: state
+  defp apply_provider_token(state), do: {:ok, state}
+
+  defp refuse_provider_token(state, provider, reason),
+    do: {:error, {:auth_provider_token_failed, provider, reason}, drop_provider_token(state)}
+
+  defp drop_provider_token(state),
+    do: %{state | access_token: nil, headers: Headers.delete(state.headers, "authorization")}
+
+  defp provider_owns_authorization(%{auth_provider: nil} = state), do: state
+
+  defp provider_owns_authorization(state) do
+    if Headers.get(state.headers, "authorization") do
+      Logger.warning(
+        "Configured Authorization header is ignored when an HTTP auth provider supplies credentials"
+      )
+    end
+
+    drop_provider_token(state)
+  end
+
+  defp provider_call(callback) do
+    {:ok, callback.()}
+  rescue
+    exception -> {:failed, {:raised, exception.__struct__}}
+  catch
+    kind, _reason -> {:failed, kind}
+  end
+
+  defp redact_provider_reason(reason) when is_atom(reason), do: reason
+  defp redact_provider_reason(_reason), do: :redacted
 
   defp apply_token_to_state(state, token) do
     %{
@@ -1171,7 +1236,7 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  defp handle_http_response({status_line, headers, body}, state, request_body, opts) do
+  defp handle_http_response({status_line, headers, body}, sent_state, request_body, opts) do
     # Convert charlist to binary if needed (httpc returns charlists by default)
     body_binary = if is_list(body), do: List.to_string(body), else: body
     {_, status_code, _} = status_line
@@ -1183,7 +1248,7 @@ defmodule ExMCP.Transport.HTTP do
     )
 
     # Extract session ID from server response headers (per MCP spec)
-    state = maybe_update_session_id(headers, state)
+    state = maybe_update_session_id(headers, sent_state)
 
     case status_line do
       {_, 200, _} ->
@@ -1201,10 +1266,41 @@ defmodule ExMCP.Transport.HTTP do
         www_auth = Headers.get(headers, "www-authenticate")
         {:error, {:unauthorized, 401, body_binary, www_auth}}
 
+      {_, 404, _} ->
+        handle_not_found(body_binary, sent_state, request_body)
+
       {_, status, _} ->
         {:error, {:http_error, status, body_binary}}
     end
   end
+
+  # A modern (2026-07-28) server answers a method it doesn't implement with
+  # 404 and a JSON-RPC error for the request, which the body tells apart from
+  # a server without the endpoint. That error is the request's answer, as in
+  # a 200. Any other 404, and every legacy one, stays an HTTP error.
+  defp handle_not_found(body, %{protocol_era: :modern} = state, request_body) do
+    with {:ok, %{"error" => %{"code" => code, "message" => message}} = response}
+         when is_integer(code) and is_binary(message) <- Jason.decode(body),
+         true <- answers_request?(response, request_body) do
+      {:ok, %{state | last_response: response}, Jason.encode!(response)}
+    else
+      _not_json_rpc -> {:error, {:http_error, 404, body}}
+    end
+  end
+
+  defp handle_not_found(body, sent_state, request_body) do
+    reason = {:http_error, 404, body}
+
+    if RequestHeaders.session_request?(request_body, sent_state),
+      do: {:error, {:session_expired, reason}},
+      else: {:error, reason}
+  end
+
+  defp answers_request?(%{"jsonrpc" => "2.0", "id" => id} = response, request_body)
+       when not is_nil(id),
+       do: not Map.has_key?(response, "result") and extract_request_id(request_body) == id
+
+  defp answers_request?(_response, _request_body), do: false
 
   defp handle_non_sse_response(body, headers, state, request_body, opts) do
     content_type = Headers.get(headers, "content-type") || ""
@@ -1346,7 +1442,7 @@ defmodule ExMCP.Transport.HTTP do
         receive_sse_event(data, event, state)
 
       {:sse_error, ^sse_pid, reason} ->
-        {:error, {:sse_error, reason}}
+        {:error, stream_error(reason, state)}
 
       # A server may close the session's GET stream at any time, and an
       # ExMCP server closes it when its request process ends. The session
@@ -1429,6 +1525,13 @@ defmodule ExMCP.Transport.HTTP do
         {:error, {:json_decode_error, reason}}
     end
   end
+
+  # A legacy GET also carries the session it belongs to.
+  defp stream_error({:http_error, 404} = reason, %__MODULE__{session_id: session})
+       when is_binary(session),
+       do: {:session_expired, {:sse_error, reason}}
+
+  defp stream_error(reason, _state), do: {:sse_error, reason}
 
   @doc """
   Terminates the server-side session by sending DELETE to the endpoint.
@@ -1572,6 +1675,24 @@ defmodule ExMCP.Transport.HTTP do
     :ok
   end
 
+  @doc false
+  # Internal expiry correlation never puts a reusable session credential in
+  # an async result or queued control message.
+  @spec session_key(t()) :: binary() | nil
+  def session_key(%__MODULE__{session_id: session_id}) when is_binary(session_id),
+    do: :crypto.hash(:sha256, session_id)
+
+  def session_key(%__MODULE__{}), do: nil
+
+  @doc false
+  # A GET for a retired session must not retire its replacement. Keep the
+  # current session available through POST, as after a withdrawn GET stream.
+  @spec withdraw_session_stream(t()) :: t()
+  def withdraw_session_stream(%__MODULE__{} = state) do
+    if is_pid(state.sse_pid), do: stop_sse_client(state.sse_pid)
+    %{state | sse_pid: nil, use_sse: false, last_event_id: nil}
+  end
+
   defp stop_sse_client(pid) do
     GenServer.stop(pid, :normal, 1_000)
   catch
@@ -1598,9 +1719,13 @@ defmodule ExMCP.Transport.HTTP do
       # dedicated process, so it cannot call perform_with_token/3. It hands a
       # later 401/403 back to the client process, which answers the
       # challenges of all its streams one at a time.
-      state
-      |> apply_provider_token()
-      |> start_stream(message, request_id, stream_kind, parent, opts)
+      case apply_provider_token(state) do
+        {:ok, request_state} ->
+          start_stream(request_state, message, request_id, stream_kind, parent, opts)
+
+        {:error, _reason, _state} = error ->
+          error
+      end
     end
   end
 

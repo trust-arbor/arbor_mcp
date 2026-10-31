@@ -9,7 +9,7 @@ defmodule ExMCP.Client.RequestHandler do
   require Logger
 
   @default_max_server_requests 256
-  alias ExMCP.Client.{Deadline, InputDispatcher, MRTR, NotificationListener}
+  alias ExMCP.Client.{ConnectionManager, Deadline, InputDispatcher, MRTR, NotificationListener}
   alias ExMCP.Error
   alias ExMCP.Internal.{JSONRPC, LogSummary, Maps, Protocol, RequestParams, VersionRegistry}
   alias ExMCP.Protocol.{ErrorCodes, ResponseBuilder, ResultEnvelope}
@@ -345,7 +345,8 @@ defmodule ExMCP.Client.RequestHandler do
   # The transport's reason is kept as a term, so a caller can tell a request
   # that never left (see ExMCP.Client.delivery_outcome/1) from one that may
   # have; `message` is kept for callers that read the text.
-  defp send_failure(reason, state) do
+  @doc false
+  def send_failure(reason, state) do
     %{
       type: :transport_error,
       transport: transport_name(state.transport_mod),
@@ -665,6 +666,10 @@ defmodule ExMCP.Client.RequestHandler do
 
   def close_request_stream(_request_id, state), do: state
 
+  # Keep the 1.x send-error envelope when the stream never connected.
+  defp request_stream_error({:connect_failed, reason}),
+    do: send_failure(reason, %{transport_mod: HTTP})
+
   defp request_stream_error(reason) do
     if ambiguous_stream_break?(reason) do
       %Error.TransportError{
@@ -974,6 +979,10 @@ defmodule ExMCP.Client.RequestHandler do
   # refresh token) or recorded a failed flow's loop guards. Then the result
   # is {:error, reason, state}, and callers carry on with that state.
   defp transmit(message, state) do
+    message |> do_transmit(state) |> report_session_expiry(state)
+  end
+
+  defp do_transmit(message, state) do
     %{transport_mod: transport_mod, transport_state: transport_state} = state
 
     # Check if transport is available
@@ -1000,8 +1009,36 @@ defmodule ExMCP.Client.RequestHandler do
     end
   end
 
+  defp report_session_expiry(
+         {:error, {:session_expired, _detail} = reason, _latest} = result,
+         state
+       ) do
+    send(
+      self(),
+      {:http_session_expired,
+       {:session_key, ConnectionManager.http_session_key(state.transport_state)}, reason}
+    )
+
+    result
+  end
+
+  defp report_session_expiry({:error, {:session_expired, _detail} = reason} = result, state) do
+    send(
+      self(),
+      {:http_session_expired,
+       {:session_key, ConnectionManager.http_session_key(state.transport_state)}, reason}
+    )
+
+    result
+  end
+
+  defp report_session_expiry(result, _state), do: result
+
   defp transport_send(HTTP, message, %HTTP{} = transport_state),
     do: HTTP.send_keeping_state(message, transport_state)
+
+  defp transport_send(ExMCP.Transport.ReliabilityWrapper, message, transport_state),
+    do: ExMCP.Transport.ReliabilityWrapper.send_keeping_state(message, transport_state)
 
   defp transport_send(transport_mod, message, transport_state),
     do: transport_mod.send_message(message, transport_state)

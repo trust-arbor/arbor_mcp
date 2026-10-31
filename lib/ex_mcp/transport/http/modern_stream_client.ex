@@ -116,7 +116,7 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
         {:noreply, state |> Map.put(:request_ref, request_ref) |> reset_handshake_timer()}
 
       {:error, reason} ->
-        {:stop, :normal, notify_closed(state, reason)}
+        {:stop, :normal, notify_closed(state, {:connect_failed, reason})}
     end
   end
 
@@ -212,7 +212,10 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
 
   def handle_info({:bounded_http, ref, {:error, reason}}, %{request_ref: ref} = state) do
     {:stop, :normal,
-     state |> cancel_handshake_timer() |> cancel_idle_timer() |> notify_closed(reason)}
+     state
+     |> cancel_handshake_timer()
+     |> cancel_idle_timer()
+     |> notify_closed(close_reason(reason, state))}
   end
 
   def handle_info(:handshake_timeout, %{request_ref: ref} = state) when not is_nil(ref) do
@@ -401,6 +404,20 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
     end
   end
 
+  # A server answers a method it doesn't implement with 404 and a JSON-RPC
+  # error for the request (2026-07-28 Streamable HTTP): that error is the
+  # request's answer, as in a 200. Any other 404 is an HTTP error.
+  defp handle_complete_response(404, body, state) do
+    with {:ok, %{"error" => %{"code" => code, "message" => message}} = response}
+         when is_integer(code) and is_binary(message) <- Jason.decode(body),
+         :ok <- validate_message(response, state.request_id, state.stream_kind) do
+      deliver_message(response, state)
+      %{state | completed?: true}
+    else
+      _not_json_rpc -> notify_closed(state, {:http_error, 404})
+    end
+  end
+
   defp handle_complete_response(status, _body, state) do
     notify_closed(state, {:http_error, status})
   end
@@ -547,6 +564,13 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
   defp cancel_request(state) do
     BoundedStream.cancel(state.request_ref)
   end
+
+  # An authentication retry follows a delivered request; its connection failure
+  # cannot make the original operation safe to replay.
+  defp close_reason({:connect_failed, reason}, %{auth_attempts: attempts}) when attempts > 0,
+    do: reason
+
+  defp close_reason(reason, _state), do: reason
 
   defp notify_closed(%{close_notified?: true} = state, _reason), do: state
 

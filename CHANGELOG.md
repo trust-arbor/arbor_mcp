@@ -15,9 +15,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   receive failures continue to trip the breaker.
 - Modern discovery skips notifications while retaining its original deadline and
   updated transport state. Continuous notifications cannot keep the probe alive.
+- HTTP `-32022` errors advertise only the revisions accepted by the mount, in
+  preference order. A mount without an explicit mode continues to accept both
+  eras even when the application default enables only one for its clients.
+- HTTP auth-provider token failures refuse the request before sending it;
+  nil tokens clear earlier and configured Authorization headers. Exceptions,
+  throws, exits and malformed provider replies are contained and redacted.
+- Modern request-stream connection failures report that the request was not
+  sent and do not trigger a stream retry. A failed retry cannot erase an
+  earlier attempt's uncertain delivery.
+- Optional handler defaults report JSON-RPC `-32601` for unserved methods.
+  Advertised capabilities retain empty-list/completion and named-not-found
+  semantics. Modern HTTP returns matching JSON-RPC errors from 404 responses,
+  including a request stream's first response; HTTP/2 SSE responses omit
+  connection-specific headers.
+- Legacy HTTP session expiry ends pending work and reconnects with a fresh
+  initialize without replaying application requests. A rejected configured
+  session id is retried once without it, within the establishment deadline.
+  Synchronous POSTs, asynchronous POSTs and GET streams share this behavior;
+  operation retry policies cannot replay the expired-session request. Delayed
+  failures from a replaced session do not tear down its replacement; an expired
+  GET for the replaced session leaves the current session available through POST.
 - Reliability wrappers preserve the HTTP send response/state ordering and
   updated state on failed sends; those failures still count toward the breaker.
 
+### Documentation
+
+- Clarify the separate HTTP `request_timeout` cap, retaining its 30-second
+  default. Document raising both it and the caller timeout for long operations.
 
 ## [1.8.0] - 2026-10-31
 

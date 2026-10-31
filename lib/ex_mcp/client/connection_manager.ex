@@ -133,6 +133,7 @@ defmodule ExMCP.Client.ConnectionManager do
         |> Map.put(:server_capabilities, result["capabilities"])
         |> Map.put(:protocol_version, result["protocolVersion"])
         |> Map.put(:server_info, result["serverInfo"])
+        |> forget_unkept_session(transport_mod, transport_state, final_transport_state)
 
       {:ok, new_state}
     else
@@ -151,6 +152,24 @@ defmodule ExMCP.Client.ConnectionManager do
   defp check_deadline(deadline) do
     if Deadline.expired?(deadline), do: {:error, :establish_timeout}, else: :ok
   end
+
+  defp forget_unkept_session(state, HTTP, %HTTP{session_id: configured}, %HTTP{
+         protocol_era: :legacy,
+         session_id: kept
+       })
+       when is_binary(configured) and configured != kept,
+       do: %{state | transport_opts: forget_session_id(state.transport_opts)}
+
+  defp forget_unkept_session(state, ReliabilityWrapper, opened, established),
+    do:
+      forget_unkept_session(
+        state,
+        opened.wrapped_module,
+        opened.wrapped_state,
+        established.wrapped_state
+      )
+
+  defp forget_unkept_session(state, _transport_mod, _opened, _established), do: state
 
   # A connection attempt that fails after the transport was opened must not
   # leave it behind: a spawned stdio server, or a port and reader linked to
@@ -191,19 +210,32 @@ defmodule ExMCP.Client.ConnectionManager do
   # (a stdio server, say) is what the probe goes on to use.
   defp abandon_legacy_attempt(HTTP, %HTTP{} = snapshot, %HTTP{} = attempt) do
     HTTP.abandon_attempt(with_cleanup_deadline(HTTP, attempt), snapshot)
+
+    snapshot
+    |> Map.merge(
+      Map.take(attempt, [
+        :access_token,
+        :auth_completed,
+        :auth_provider_state,
+        :granted_scopes,
+        :headers,
+        :configured_session_ended
+      ])
+    )
+    |> without_ended_session()
   end
 
   defp abandon_legacy_attempt(ReliabilityWrapper, snapshot, attempt) do
     case {ReliabilityWrapper.unwrap(snapshot), ReliabilityWrapper.unwrap(attempt)} do
       {{HTTP, http_snapshot}, {HTTP, http_attempt}} ->
-        abandon_legacy_attempt(HTTP, http_snapshot, http_attempt)
+        %{snapshot | wrapped_state: abandon_legacy_attempt(HTTP, http_snapshot, http_attempt)}
 
       _other ->
-        :ok
+        snapshot
     end
   end
 
-  defp abandon_legacy_attempt(_transport_mod, _snapshot, _attempt), do: :ok
+  defp abandon_legacy_attempt(_transport_mod, snapshot, _attempt), do: snapshot
 
   # A stdio server counts as stopped only once its reaper saw it gone:
   # {:error, {:server_stop_unconfirmed, reason}} otherwise.
@@ -437,7 +469,7 @@ defmodule ExMCP.Client.ConnectionManager do
       {:error, initialize_error, latest_state} ->
         if legacy_protocol_failure?(initialize_error) and
              transport_alive?(transport_mod, transport_state) do
-          abandon_legacy_attempt(transport_mod, transport_state, latest_state)
+          transport_state = abandon_legacy_attempt(transport_mod, transport_state, latest_state)
 
           case probe_era(transport_mod, transport_state, opts) do
             {:ok, discovery, updated_state} ->
@@ -740,6 +772,10 @@ defmodule ExMCP.Client.ConnectionManager do
         Process.sleep(100)
         receive_loop(parent, transport_mod, transport_state)
 
+      {:error, {:session_expired, _detail} = reason} ->
+        send(parent, {:http_session_expired, self(), http_session_key(transport_state), reason})
+        :ok
+
       {:error, reason} ->
         Logger.error("Transport error in receive loop: #{inspect(reason)}")
         send(parent, {:transport_closed, reason})
@@ -783,6 +819,37 @@ defmodule ExMCP.Client.ConnectionManager do
         error
     end
   end
+
+  @doc false
+  @spec http_session_key(term()) :: binary() | nil
+  def http_session_key(%HTTP{} = state), do: HTTP.session_key(state)
+  def http_session_key(%ReliabilityWrapper{wrapped_state: state}), do: http_session_key(state)
+  def http_session_key(_state), do: nil
+
+  @doc false
+  # The client options without the `:session_id` a legacy HTTP connection
+  # resumes, wherever a transport spec carries it, for a server that has
+  # ended that session: a new connection must start a session of its own.
+  @spec forget_session_id(keyword()) :: keyword()
+  def forget_session_id(opts) when is_list(opts) do
+    opts
+    |> Keyword.delete(:session_id)
+    |> update_present(:transport, &forget_spec_session_id/1)
+    |> update_present(:transports, fn
+      specs when is_list(specs) -> Enum.map(specs, &forget_spec_session_id/1)
+      other -> other
+    end)
+  end
+
+  defp update_present(opts, key, fun) do
+    if Keyword.has_key?(opts, key), do: Keyword.update!(opts, key, fun), else: opts
+  end
+
+  defp forget_spec_session_id({transport, spec_opts}) when is_list(spec_opts),
+    do: {transport, Keyword.delete(spec_opts, :session_id)}
+
+  defp forget_spec_session_id(spec) when is_list(spec), do: Keyword.delete(spec, :session_id)
+  defp forget_spec_session_id(spec), do: spec
 
   def prepare_transport_config(opts) do
     cond do
@@ -953,24 +1020,50 @@ defmodule ExMCP.Client.ConnectionManager do
     handshake_timeout = handshake_timeout(opts)
     establish_deadline = Deadline.on_transport(transport_mod, transport_state)
 
-    exchange_deadline =
-      Deadline.earliest(
-        Deadline.after_ms(handshake_timeout),
-        Keyword.get(opts, :establish_deadline)
-      )
-
-    transport_state = Deadline.put_on_transport(transport_mod, transport_state, exchange_deadline)
-
-    # The client's declared capabilities (the :capabilities option), as a
-    # modern client sends with every request. Servers that respect declared
-    # capabilities never send a client that declares none an elicitation,
-    # sampling or roots request.
     capabilities = initialize_capabilities(opts)
 
-    transport_mod
-    |> exchange_initialize(transport_state, protocol_version, capabilities, exchange_deadline)
+    exchange = fn state ->
+      exchange_deadline =
+        Deadline.earliest(
+          Deadline.after_ms(handshake_timeout),
+          Keyword.get(opts, :establish_deadline)
+        )
+
+      state = Deadline.put_on_transport(transport_mod, state, exchange_deadline)
+      exchange_initialize(transport_mod, state, protocol_version, capabilities, exchange_deadline)
+    end
+
+    transport_state
+    |> without_ended_session()
+    |> exchange.()
+    |> start_new_session(exchange)
     |> restore_deadline(transport_mod, establish_deadline)
   end
+
+  defp start_new_session({:error, {:session_expired, _detail}, %HTTP{} = latest}, exchange),
+    do: exchange.(%{latest | session_id: nil, configured_session_ended: true})
+
+  defp start_new_session(
+         {:error, {:session_expired, _detail}, %ReliabilityWrapper{} = latest},
+         exchange
+       ),
+       do: exchange.(end_configured_session(latest))
+
+  defp start_new_session(result, _exchange), do: result
+
+  defp without_ended_session(%HTTP{configured_session_ended: true} = state),
+    do: %{state | session_id: nil}
+
+  defp without_ended_session(%ReliabilityWrapper{} = state),
+    do: %{state | wrapped_state: without_ended_session(state.wrapped_state)}
+
+  defp without_ended_session(state), do: state
+
+  defp end_configured_session(%HTTP{} = state),
+    do: %{state | session_id: nil, configured_session_ended: true}
+
+  defp end_configured_session(%ReliabilityWrapper{} = state),
+    do: %{state | wrapped_state: end_configured_session(state.wrapped_state)}
 
   # An in-process client may be configured with atom keys; over the wire the
   # same map arrives with string keys, so they're normalized to strings for
@@ -1043,6 +1136,9 @@ defmodule ExMCP.Client.ConnectionManager do
             {:error, initialize_send_error(error, deadline), transport_state}
         end
 
+      {:error, reason, latest_state} ->
+        {:error, initialize_send_error({:error, reason}, deadline), latest_state}
+
       {:error, _reason} = error ->
         {:error, initialize_send_error(error, deadline), transport_state}
 
@@ -1065,7 +1161,7 @@ defmodule ExMCP.Client.ConnectionManager do
 
   defp send_initialize_request(transport_mod, transport_state, request) do
     with {:ok, outbound_request} <- encode_for_transport(transport_mod, request) do
-      case transport_mod.send_message(outbound_request, transport_state) do
+      case initialize_send(transport_mod, outbound_request, transport_state) do
         {:ok, new_state, response_data} ->
           # Non-SSE HTTP mode returns response immediately
           {:ok, new_state, response_data}
@@ -1079,6 +1175,14 @@ defmodule ExMCP.Client.ConnectionManager do
       end
     end
   end
+
+  defp initialize_send(HTTP, request, state), do: HTTP.send_keeping_state(request, state)
+
+  defp initialize_send(ReliabilityWrapper, request, state),
+    do: ReliabilityWrapper.send_keeping_state(request, state)
+
+  defp initialize_send(transport_mod, request, state),
+    do: transport_mod.send_message(request, state)
 
   defp encode_for_transport(Local, message), do: {:ok, message}
   defp encode_for_transport(_transport_mod, message), do: Protocol.encode_to_string(message)

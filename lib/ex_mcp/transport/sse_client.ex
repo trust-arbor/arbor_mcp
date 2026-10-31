@@ -347,6 +347,10 @@ defmodule ExMCP.Transport.SSEClient do
     {:stop, :normal, state}
   end
 
+  # GET carries no application operation whose delivery needs classification.
+  def handle_info({:bounded_http, ref, {:error, {:connect_failed, reason}}}, %{ref: ref} = state),
+    do: handle_info({:bounded_http, ref, {:error, reason}}, state)
+
   def handle_info({:bounded_http, ref, {:error, reason}}, %{ref: ref} = state) do
     state = cancel_handshake_timer(state)
 
