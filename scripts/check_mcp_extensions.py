@@ -256,6 +256,11 @@ def main(argv=None):
     parser.add_argument("--baseline", type=Path, default=BASELINE)
     parser.add_argument("--output", type=Path, default=Path("tmp/mcp-extensions"))
     args = parser.parse_args(argv)
+    targets = [args.output / name for name in ("report.json", "report.md")]
+    if any(args.baseline.resolve() == target.resolve() or
+           (args.baseline.exists() and target.exists() and args.baseline.samefile(target))
+           for target in targets):
+        parser.error("Output would overwrite the input baseline; choose a separate output directory")
     try:
         report = compare(GitHub(os.environ.get("GITHUB_TOKEN")), load_baseline(args.baseline))
         code = 0

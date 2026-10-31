@@ -171,6 +171,35 @@ class ExtensionCheckTest(unittest.TestCase):
             self.assertEqual(report["status"], "error")
             self.assertIn("Check incomplete", (root / "out/report.md").read_text())
 
+    def test_output_collision_cannot_overwrite_a_custom_input_baseline(self):
+        client = FakeGitHub([CATALOG], {(CATALOG, OLD): {}, (CATALOG, NEW): {}})
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            baseline = root / "report.json"
+            baseline.write_text(json.dumps({"version": 1, "sources": {CATALOG: entry()}}))
+            original = baseline.read_bytes()
+            with patch.object(CHECK, "GitHub", return_value=client):
+                with self.assertRaises(SystemExit) as rejected:
+                    CHECK.main(["--baseline", str(baseline), "--output", str(root)])
+            self.assertEqual(rejected.exception.code, 2)
+            self.assertEqual(baseline.read_bytes(), original)
+
+    def test_output_alias_cannot_overwrite_a_case_insensitive_or_hardlinked_baseline(self):
+        client = FakeGitHub([CATALOG], {(CATALOG, OLD): {}, (CATALOG, NEW): {}})
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            baseline = root / "REPORT.JSON"
+            baseline.write_text(json.dumps({"version": 1, "sources": {CATALOG: entry()}}))
+            output = root / "report.json"
+            if not output.exists():
+                output.hardlink_to(baseline)
+            original = baseline.read_bytes()
+            with patch.object(CHECK, "GitHub", return_value=client):
+                with self.assertRaises(SystemExit) as rejected:
+                    CHECK.main(["--baseline", str(baseline), "--output", str(root)])
+            self.assertEqual(rejected.exception.code, 2)
+            self.assertEqual(baseline.read_bytes(), original)
+
 
 if __name__ == "__main__":
     unittest.main()

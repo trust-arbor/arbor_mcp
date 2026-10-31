@@ -44,7 +44,8 @@ python3 -B scripts/check_mcp_extensions.py
 ```
 
 Reports are written to `tmp/mcp-extensions/report.json` and `report.md`. Use
-`--output DIRECTORY` to preserve a separate run. `GITHUB_TOKEN` is optional for
+`--output DIRECTORY` to preserve a separate run; paths that would overwrite a
+custom input baseline are refused. `GITHUB_TOKEN` is optional for
 local runs and supplied with read-only permissions in CI. An anonymous run is
 subject to GitHub's lower rate limit. Credentials are used only for the GitHub
 API; HTTP redirects are refused and upstream code is never executed.
