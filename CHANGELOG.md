@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-10-31
+
 ### Added
 
 - ACP request handlers can return `{:async, work, state}` so long operations do not block cancellation or other callbacks. Workers follow the owning request deadline and stop on cancellation or disconnect.

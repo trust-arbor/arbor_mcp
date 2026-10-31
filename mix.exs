@@ -1,7 +1,7 @@
 defmodule ExMCP.MixProject do
   use Mix.Project
 
-  @version "1.7.3"
+  @version "1.8.0"
   @github_url "https://github.com/trust-arbor/arbor_mcp"
 
   def project do
@@ -159,6 +159,7 @@ defmodule ExMCP.MixProject do
           docs/MAINTENANCE_POLICY.md
           docs/MAINTENANCE_1_6_RELEASE.md
           docs/MAINTENANCE_1_7_RELEASE.md
+          docs/MAINTENANCE_1_8_RELEASE.md
           docs/ACP_GUIDE.md
           docs/ARCHITECTURE.md
           docs/CONFIGURATION.md
@@ -219,6 +220,7 @@ defmodule ExMCP.MixProject do
         "docs/MAINTENANCE_POLICY.md",
         "docs/MAINTENANCE_1_6_RELEASE.md",
         "docs/MAINTENANCE_1_7_RELEASE.md",
+        "docs/MAINTENANCE_1_8_RELEASE.md",
         "CHANGELOG.md"
       ],
       extra_section: "GUIDES",
