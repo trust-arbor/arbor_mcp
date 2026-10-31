@@ -39,6 +39,10 @@ defmodule ExMCP.ACP.Client do
     (default: 30_000 ms)
   - `:max_update_queue` — mailbox cutoff for handler/listener session updates;
     excess updates are dropped (default: 32)
+  - `:notify_update_drops` — opt in to coalesced event-listener messages
+    `{:acp_session_updates_dropped, session_id, count}` once mailbox room is
+    available (default: false). Notices obey the same queue bounds; a notice
+    too large for the byte limit is telemetry-only.
   - `:max_update_queue_bytes` — aggregate encoded size cutoff for queued
     handler/listener session updates (default: 8 MiB)
   - `:name` — GenServer name registration
@@ -51,6 +55,7 @@ defmodule ExMCP.ACP.Client do
   alias ExMCP.ACP.{Capabilities, LifecycleParams, Maps, PendingRequests, RequestValidation}
   alias ExMCP.ACP.Client.DefaultHandler
   alias ExMCP.ACP.Client.HandlerRunner
+  alias ExMCP.ACP.Internal.UpdateQueue
   alias ExMCP.ACP.Protocol
   alias ExMCP.Internal.{LogSummary, Options, WorkspacePath}
   alias ExMCP.Transport.Stdio
@@ -85,6 +90,9 @@ defmodule ExMCP.ACP.Client do
     handler_request_timeout: @default_handler_request_timeout,
     max_update_queue: @default_max_update_queue,
     max_update_queue_bytes: @default_max_update_queue_bytes,
+    notify_update_drops: false,
+    update_drops: %{},
+    update_drop_timer: nil,
     pending_requests: %{},
     pending_caller_monitors: %{},
     pending_agent_requests: %{},
@@ -310,6 +318,7 @@ defmodule ExMCP.ACP.Client do
           handler_mod: handler_mod,
           handler_pid: handler_pid,
           event_listener: Keyword.get(opts, :event_listener),
+          notify_update_drops: Keyword.get(opts, :notify_update_drops, false) == true,
           protocol_version: Keyword.get(opts, :protocol_version, 1),
           max_frame_bytes:
             Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes),
@@ -543,6 +552,7 @@ defmodule ExMCP.ACP.Client do
 
       {:error, {:unsupported_capability, :session_close}} ->
         emit_session_ended(session_id)
+        state = forget_update_drops(state, session_id)
         {:reply, :ok, %{state | sessions: Map.delete(state.sessions, session_id)}}
     end
   end
@@ -550,6 +560,23 @@ defmodule ExMCP.ACP.Client do
   def handle_call(:disconnect, _from, state) do
     state = do_disconnect(state)
     {:reply, :ok, state}
+  end
+
+  def handle_call({:handler_worker_admit, ref, pid}, _from, state) do
+    case Map.get(state.pending_agent_requests, ref) do
+      request when is_map(request) and state.status == :ready ->
+        if agent_request_current?(ref, request, state) do
+          pending = Map.put(state.pending_agent_requests, ref, Map.put(request, :worker, pid))
+
+          {:reply, {:ok, Map.get(request, :deadline, :infinity)},
+           %{state | pending_agent_requests: pending}}
+        else
+          {:reply, false, state}
+        end
+
+      _cancelled ->
+        {:reply, false, state}
+    end
   end
 
   # Not ready
@@ -599,6 +626,17 @@ defmodule ExMCP.ACP.Client do
     {:noreply, state}
   end
 
+  def handle_info({:flush_update_drop_notices, token}, state) do
+    case state.update_drop_timer do
+      {^token, _timer} ->
+        state = %{state | update_drop_timer: nil}
+        {:noreply, flush_update_drop_notices(state)}
+
+      _stale ->
+        {:noreply, state}
+    end
+  end
+
   def handle_info({:acp_handler_result, ref, result}, state) do
     state = handle_handler_result(ref, result, state)
     {:noreply, state}
@@ -636,6 +674,8 @@ defmodule ExMCP.ACP.Client do
         {:noreply, state}
 
       {request, pending} ->
+        cancel_timer(request.timer_ref)
+        stop_handler_worker(request)
         response = Protocol.encode_error(-32603, "Client handler timed out", nil, request.id)
         send_to_transport(response, state)
         {:noreply, %{state | pending_agent_requests: pending}}
@@ -861,6 +901,7 @@ defmodule ExMCP.ACP.Client do
     :max_prompt_text_bytes,
     :pending_request_timeout,
     :handler_request_timeout,
+    :notify_update_drops,
     :max_update_queue,
     :max_update_queue_bytes,
     :transport_mod,
@@ -1022,6 +1063,7 @@ defmodule ExMCP.ACP.Client do
         cancel_timer(timer_ref)
         Process.demonitor(monitor_ref, [:flush])
         {reply, state} = maybe_merge_prompt_text(telemetry_tag, reply, state)
+        state = %{state | pending_requests: pending}
         state = apply_session_resolution(telemetry_tag, reply, state)
         emit_resolve_telemetry(telemetry_tag, reply)
         GenServer.reply(from, reply)
@@ -1129,6 +1171,14 @@ defmodule ExMCP.ACP.Client do
   defp apply_session_resolution({kind, session_id}, {:ok, _result}, state)
        when kind in [:close_session, :delete_session] do
     %{state | sessions: Map.delete(state.sessions, session_id)}
+    |> forget_update_drops(session_id)
+  end
+
+  defp apply_session_resolution({kind, session_id, _roots}, {:error, _}, state)
+       when kind in [:load_session, :resume_session] do
+    if authorized_session_id?(session_id, state),
+      do: state,
+      else: forget_update_drops(state, session_id)
   end
 
   defp apply_session_resolution(_tag, _reply, state), do: state
@@ -1237,6 +1287,8 @@ defmodule ExMCP.ACP.Client do
   end
 
   defp reply_all_pending(error, state) do
+    if state.update_drop_timer, do: cancel_timer(elem(state.update_drop_timer, 1))
+
     for pending <- PendingRequests.values(state.pending_requests) do
       case pending do
         {from, _tag, monitor_ref, timer_ref} ->
@@ -1258,6 +1310,7 @@ defmodule ExMCP.ACP.Client do
 
     Enum.each(state.pending_agent_requests, fn {_ref, request} ->
       cancel_timer(Map.get(request, :timer_ref))
+      stop_handler_worker(request)
     end)
 
     %{
@@ -1265,6 +1318,8 @@ defmodule ExMCP.ACP.Client do
       | pending_requests: PendingRequests.empty(),
         pending_caller_monitors: %{},
         pending_agent_requests: %{},
+        update_drops: %{},
+        update_drop_timer: nil,
         prompt_text: %{},
         sessions: %{}
     }
@@ -1274,36 +1329,141 @@ defmodule ExMCP.ACP.Client do
     session_id = params["sessionId"]
     update = params["update"]
     update_bytes = :erlang.external_size(update)
+    state = state |> accumulate_prompt_text(session_id, update) |> flush_update_drop_notices()
 
-    # Buffer streamed answer text so prompt/3 can return it (see prompt_text).
-    state = accumulate_prompt_text(state, session_id, update)
+    state =
+      if is_pid(state.event_listener) do
+        case UpdateQueue.check(
+               state.event_listener,
+               state.max_update_queue,
+               state.max_update_queue_bytes,
+               update_bytes,
+               :listener
+             ) do
+          :ok ->
+            send(state.event_listener, {:acp_session_update, session_id, update})
+            state
 
-    # Notify event listener from the client process so a slow handler cannot
-    # stall the update stream.
-    if is_pid(state.event_listener) and
-         update_mailbox_below_limits?(
-           state.event_listener,
+          {:error, reason} ->
+            note_update_drop(state, session_id, :event_listener, update_bytes, reason)
+        end
+      else
+        state
+      end
+
+    handler_message = handler_message(state, :handle_session_update, 4, message)
+    bytes = :erlang.external_size(handler_message || update)
+
+    case HandlerRunner.session_update_status(
+           state.handler_pid,
+           session_id,
+           update,
            state.max_update_queue,
            state.max_update_queue_bytes,
-           update_bytes,
-           :listener
+           handler_message
          ) do
-      send(state.event_listener, {:acp_session_update, session_id, update})
+      :ok -> state
+      {:dropped, reason} -> note_update_drop(state, session_id, :handler, bytes, reason)
     end
-
-    if state.handler_pid do
-      HandlerRunner.session_update(
-        state.handler_pid,
-        session_id,
-        update,
-        state.max_update_queue,
-        state.max_update_queue_bytes,
-        handler_message(state, :handle_session_update, 4, message)
-      )
-    end
-
-    state
   end
+
+  defp note_update_drop(state, session_id, target, bytes, reason) do
+    :telemetry.execute([:ex_mcp, :acp, :session, :update_dropped], %{count: 1, bytes: bytes}, %{
+      session_id: session_id,
+      target: target,
+      limit: reason,
+      max_queue: state.max_update_queue,
+      max_bytes: state.max_update_queue_bytes
+    })
+
+    {pid, kind, enabled?} = drop_destination(state, target)
+    key = {target, session_id}
+    count = Map.get(state.update_drops, key, 0) + 1
+    notice_bytes = drop_notice_size(kind, session_id, count)
+
+    if enabled? and is_pid(pid) and reason != :unavailable and
+         notice_bytes <= state.max_update_queue_bytes do
+      %{state | update_drops: Map.put(state.update_drops, key, count)} |> schedule_drop_notices()
+    else
+      state
+    end
+  end
+
+  defp drop_destination(state, :event_listener),
+    do: {state.event_listener, :listener, state.notify_update_drops}
+
+  defp drop_destination(state, :handler),
+    do:
+      {state.handler_pid, :handler,
+       function_exported?(state.handler_mod, :handle_session_updates_dropped, 3)}
+
+  defp drop_notice_size(:listener, session_id, count),
+    do: :erlang.external_size({:acp_session_updates_dropped, session_id, count})
+
+  defp drop_notice_size(:handler, session_id, count),
+    do: :erlang.external_size({:"$gen_cast", {:session_updates_dropped, session_id, count}})
+
+  defp flush_update_drop_notices(%{status: status} = state) when status != :ready,
+    do: %{state | update_drops: %{}}
+
+  defp flush_update_drop_notices(state) do
+    pending =
+      Enum.reduce(state.update_drops, %{}, fn {{target, session_id} = key, count}, pending ->
+        {pid, kind, enabled?} = drop_destination(state, target)
+        bytes = drop_notice_size(kind, session_id, count)
+
+        if enabled? and authorized_session_id?(session_id, state) and
+             bytes <= state.max_update_queue_bytes do
+          case UpdateQueue.check(
+                 pid,
+                 state.max_update_queue,
+                 state.max_update_queue_bytes,
+                 bytes,
+                 kind
+               ) do
+            :ok ->
+              if target == :event_listener,
+                do: send(pid, {:acp_session_updates_dropped, session_id, count}),
+                else: HandlerRunner.session_updates_dropped(pid, session_id, count)
+
+              pending
+
+            {:error, :unavailable} ->
+              pending
+
+            {:error, _full} ->
+              Map.put(pending, key, count)
+          end
+        else
+          pending
+        end
+      end)
+
+    %{state | update_drops: pending} |> schedule_drop_notices()
+  end
+
+  defp forget_update_drops(state, session_id) do
+    pending = Map.reject(state.update_drops, fn {{_target, id}, _count} -> id == session_id end)
+
+    timer =
+      if map_size(pending) == 0 do
+        if state.update_drop_timer, do: cancel_timer(elem(state.update_drop_timer, 1))
+        nil
+      else
+        state.update_drop_timer
+      end
+
+    %{state | update_drops: pending, update_drop_timer: timer}
+  end
+
+  defp schedule_drop_notices(%{update_drop_timer: nil, update_drops: pending} = state)
+       when map_size(pending) > 0 do
+    token = make_ref()
+    timer = Process.send_after(self(), {:flush_update_drop_notices, token}, 100)
+    %{state | update_drop_timer: {token, timer}}
+  end
+
+  defp schedule_drop_notices(state), do: state
 
   # Append agent_message_chunk text to the per-session buffer. Only the assistant's
   # message text is buffered — thought chunks and other update types are ignored.
@@ -1353,6 +1513,16 @@ defmodule ExMCP.ACP.Client do
          state
        ),
        do: %{state | prompt_text: Map.delete(state.prompt_text, session_id)}
+
+  defp clear_abandoned_prompt_text(
+         {_from, {kind, session_id, _roots}, _monitor, _timer},
+         state
+       )
+       when kind in [:load_session, :resume_session] do
+    if authorized_session_id?(session_id, state),
+      do: state,
+      else: forget_update_drops(state, session_id)
+  end
 
   defp clear_abandoned_prompt_text(_pending, state), do: state
 
@@ -1528,7 +1698,7 @@ defmodule ExMCP.ACP.Client do
     options = params["options"] || []
 
     if state.handler_pid do
-      ref = make_ref()
+      ref = HandlerRunner.new_request_ref()
 
       HandlerRunner.permission_request(
         state.handler_pid,
@@ -1559,7 +1729,7 @@ defmodule ExMCP.ACP.Client do
     callback = if mode == "form", do: :handle_form_elicitation, else: :handle_url_elicitation
 
     if state.handler_pid && function_exported?(state.handler_mod, callback, 2) do
-      ref = make_ref()
+      ref = HandlerRunner.new_request_ref()
       HandlerRunner.elicitation_request(state.handler_pid, ref, mode, params)
       track_agent_request(state, ref, :elicitation, id, params["sessionId"], %{mode: mode})
     else
@@ -1575,7 +1745,7 @@ defmodule ExMCP.ACP.Client do
     opts = Map.drop(params, ["sessionId", "path"])
 
     if state.handler_pid && function_exported?(state.handler_mod, :handle_file_read, 4) do
-      ref = make_ref()
+      ref = HandlerRunner.new_request_ref()
       HandlerRunner.file_read(state.handler_pid, ref, session_id, path, opts)
       track_agent_request(state, ref, :file_read, id, session_id)
     else
@@ -1591,7 +1761,7 @@ defmodule ExMCP.ACP.Client do
     content = params["content"]
 
     if state.handler_pid && function_exported?(state.handler_mod, :handle_file_write, 4) do
-      ref = make_ref()
+      ref = HandlerRunner.new_request_ref()
       HandlerRunner.file_write(state.handler_pid, ref, session_id, path, content)
       track_agent_request(state, ref, :file_write, id, session_id)
     else
@@ -1605,7 +1775,7 @@ defmodule ExMCP.ACP.Client do
   defp handle_agent_request("terminal/" <> _ = method, params, id, state) do
     if state.handler_pid && function_exported?(state.handler_mod, :handle_terminal_request, 4) do
       params = terminal_params_with_workspace_default(method, params, state)
-      ref = make_ref()
+      ref = HandlerRunner.new_request_ref()
       HandlerRunner.terminal_request(state.handler_pid, ref, method, params, id)
       track_agent_request(state, ref, :terminal, id, params["sessionId"], %{method: method})
     else
@@ -1645,6 +1815,7 @@ defmodule ExMCP.ACP.Client do
 
       {request, pending} ->
         cancel_timer(request.timer_ref)
+        stop_handler_worker(request)
         state = %{state | pending_agent_requests: pending}
         response = encode_handler_response(request, result)
         send_to_transport(response, state)
@@ -1697,12 +1868,42 @@ defmodule ExMCP.ACP.Client do
     Protocol.encode_error(-32603, "Client handler returned an invalid result", nil, id)
   end
 
+  defp agent_request_current?(ref, request, state) do
+    cond do
+      state.status != :ready or not is_map(request) ->
+        false
+
+      Map.get(request, :deadline, :infinity) == :infinity ->
+        true
+
+      request.deadline > System.monotonic_time(:millisecond) ->
+        true
+
+      true ->
+        if gate = Map.get(request, :handler_gate), do: :atomics.put(gate, 1, 0)
+        send(self(), {:agent_handler_timeout, ref})
+        false
+    end
+  end
+
   defp track_agent_request(state, ref, kind, id, session_id, extra \\ %{}) do
+    deadline = System.monotonic_time(:millisecond) + state.handler_request_timeout
+
     timer_ref =
       Process.send_after(self(), {:agent_handler_timeout, ref}, state.handler_request_timeout)
 
     request =
-      Map.merge(%{kind: kind, id: id, session_id: session_id, timer_ref: timer_ref}, extra)
+      Map.merge(
+        %{
+          kind: kind,
+          id: id,
+          session_id: session_id,
+          timer_ref: timer_ref,
+          deadline: deadline,
+          handler_gate: HandlerRunner.request_gate(ref)
+        },
+        extra
+      )
 
     %{
       state
@@ -1713,6 +1914,7 @@ defmodule ExMCP.ACP.Client do
   defp fail_pending_agent_requests(reason, state) do
     Enum.each(state.pending_agent_requests, fn {_ref, request} ->
       cancel_timer(request.timer_ref)
+      stop_handler_worker(request)
       response = Protocol.encode_error(-32603, reason, nil, request.id)
       send_to_transport(response, state)
     end)
@@ -1728,6 +1930,7 @@ defmodule ExMCP.ACP.Client do
 
     Enum.each(to_cancel, fn {_ref, request} ->
       cancel_timer(request.timer_ref)
+      stop_handler_worker(request)
 
       response =
         case request.kind do
@@ -1752,6 +1955,7 @@ defmodule ExMCP.ACP.Client do
 
     Enum.each(to_cancel, fn {_ref, request} ->
       cancel_timer(request.timer_ref)
+      stop_handler_worker(request)
       response = Protocol.encode_request_cancelled_error(request.id)
       send_to_transport(response, state)
     end)
@@ -1761,6 +1965,12 @@ defmodule ExMCP.ACP.Client do
 
   defp handle_cancel_request_notification(_params, state), do: state
 
+  defp stop_handler_worker(request) do
+    if gate = Map.get(request, :handler_gate), do: :atomics.put(gate, 1, 0)
+    if is_pid(Map.get(request, :worker)), do: Process.exit(request.worker, :kill)
+    :ok
+  end
+
   defp safe_error_class({kind, reason, _stack}) when kind in [:error, :exit, :throw],
     do: "#{kind}:#{inspect(error_module(reason))}"
 
@@ -1768,30 +1978,6 @@ defmodule ExMCP.ACP.Client do
 
   defp error_module(%{__struct__: module}) when is_atom(module), do: module
   defp error_module(_reason), do: :error
-
-  defp update_mailbox_below_limits?(pid, count_limit, byte_limit, incoming_bytes, kind) do
-    with {:message_queue_len, length} when length < count_limit <-
-           Process.info(pid, :message_queue_len),
-         {:messages, messages} when length(messages) < count_limit <-
-           Process.info(pid, :messages) do
-      queued_bytes = queued_update_bytes(messages, kind, byte_limit)
-      incoming_bytes <= byte_limit - queued_bytes
-    else
-      _full_or_closed -> false
-    end
-  end
-
-  defp queued_update_bytes(messages, kind, limit) do
-    Enum.reduce_while(messages, 0, fn message, total ->
-      total = total + queued_update_size(message, kind)
-      if total >= limit, do: {:halt, total}, else: {:cont, total}
-    end)
-  end
-
-  defp queued_update_size({:acp_session_update, _session_id, update}, :listener),
-    do: :erlang.external_size(update)
-
-  defp queued_update_size(_message, _kind), do: 0
 
   defp cancel_pending_timer({_from, _tag, _monitor_ref, timer_ref}), do: cancel_timer(timer_ref)
   defp cancel_pending_timer(_pending), do: :ok

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ACP request handlers can return `{:async, work, state}` so long operations do not block cancellation or other callbacks. Workers follow the owning request deadline and stop on cancellation or disconnect.
+- ACP session-update drops emit per-destination telemetry. Listeners can opt into bounded, coalesced drop notices with `notify_update_drops: true`; handlers can implement `handle_session_updates_dropped/3`.
 - Under `:prefer_modern`, a stdio server that exits without answering the
   `server/discover` probe, as Python `mcp` 1.6 and 1.8 stdio servers do, or
   that does not answer it within its bound is now reached with a legacy

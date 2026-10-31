@@ -1,7 +1,12 @@
 defmodule ExMCP.ACP.PendingRequests do
   @moduledoc false
 
-  @type id :: String.t() | integer() | reference() | nil
+  @type id ::
+          String.t()
+          | integer()
+          | reference()
+          | {:acp_handler_request, reference(), :atomics.atomics_ref()}
+          | nil
   @type pending :: %{optional(id()) => term()}
 
   @spec put(pending(), id(), term()) :: pending()
