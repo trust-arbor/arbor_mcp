@@ -53,7 +53,14 @@ The earlier October 9 target does not establish a completed release gate.
 
 ## Deferred work
 
-Spark DSL evaluation, public middleware, a general dialect framework, additional
+The delivered forwarding hooks now have a repo-only embedded HTTP example in
+`examples/forwarding_gateway`, with its controlled qualification and remaining
+gaps recorded in `docs/GATEWAY_STAGE0.md`. The wider design in
+`docs/GATEWAY_DESIGN.md` remains a proposal; a separate deployment is optional.
+This does not complete the stable-release scope above.
+
+Public request middleware is implemented; see `Arbor.MCP.Server.Middleware`.
+Spark DSL evaluation, a general dialect framework, additional
 durable/clustered store adapters and further performance experiments are follow-up
 work. Runtime durable session backends remain unqualified; standalone DETS stays
 supported within its documented contract. Windows native subprocess support is

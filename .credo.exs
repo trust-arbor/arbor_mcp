@@ -13,6 +13,7 @@
           "lib/",
           "dev/",
           "test/",
+          "examples/forwarding_gateway/",
           "priv/",
           "mix.exs"
         ],

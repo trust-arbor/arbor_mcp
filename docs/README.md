@@ -2,6 +2,7 @@
 
 | Task | Start here |
 | --- | --- |
+| Explore features beyond protocol coverage | [Library features](FEATURES.md) |
 | Install ArborMCP and make a first call | [Quickstart](getting-started/QUICKSTART.md), [user guide](guides/USER_GUIDE.md) |
 | Move from ExMCP 1.x | [Migration guide](guides/MIGRATING_V1_TO_V2.md), [maintenance policy](MAINTENANCE_POLICY.md) |
 | Review supported API entrypoints | [Public API reference](API_REFERENCE.md), [server DSL](DSL_GUIDE.md) |

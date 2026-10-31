@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A repo-only embedded forwarding example and HTTP integration tests covering
+  namespaced tools, identity-scoped clients, interactive MRTR, progress,
+  cancellation and tool-change notifications. It uses existing public APIs;
+  its fixed credentials, routes and legacy capability profile are test fixtures.
+- A library Features guide and README highlights for implementation features
+  beyond MCP protocol coverage, with public entrypoints and limits.
+
+### Fixed
+
+- Documentation now identifies public middleware and response caching as
+  implemented, and describes dynamic-registration notifications to open legacy
+  HTTP session streams.
+
 ## [2.0.0-rc.7] — 2026-10-31
 
 ### Added

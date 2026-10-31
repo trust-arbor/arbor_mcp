@@ -6,7 +6,7 @@ published candidate or a local source checkout.
 
 ArborMCP provides Elixir clients and servers for the [Model Context Protocol](https://modelcontextprotocol.io/), with stdio, Streamable HTTP and BEAM-local transports. Its Hex package is `arbor_mcp`; its Elixir module namespace is `Arbor.MCP.*`.
 
-**Version 2 release candidate.** ArborMCP `2.0.0-rc.7` is the candidate prepared for Hex
+**Version 2 release candidate.** ArborMCP `2.0.0-rc.7` is published on Hex
 for downstream integration testing, with ArborRPC on its independent 1.x line.
 Stable `arbor_mcp` 2.0 has not been released. The runtime/scheduler redesign and
 accepted API cleanup are implemented; the [roadmap](docs/ROADMAP.md) and
@@ -17,6 +17,34 @@ ExMCP 1.x remains maintained on [`codex/maintenance-1.x`](https://github.com/tru
 ACP clients, agents and the optional vendor adapter bundle are developed in [ArborACP](https://github.com/trust-arbor/arbor_acp). MCP and ACP depend on the small shared [ArborRPC](https://github.com/trust-arbor/arbor_rpc) package and can be installed independently. ArborRPC has its own repository, with the `arbor_rpc` Mix project at the repository root.
 
 Upgrading from `ex_mcp` 1.x? Start with the [v1-to-v2 migration guide](docs/guides/MIGRATING_V1_TO_V2.md). It covers package selection, namespace and configuration changes, supervision, HTTP mounting, removed APIs and the RC testing checklist. The [RC notes](docs/guides/V2_RELEASE_CANDIDATE.md) describe the candidate's qualification status and known limits.
+
+## Library features
+
+Alongside MCP protocol support, ArborMCP provides:
+
+- **Forwarding and embedded proxies:** manual MRTR, per-request capabilities,
+  per-call progress targets and caller-exit cancellation for application-owned
+  forwarding handlers.
+- **Supervised, bounded execution:** one Runtime per server, concurrent callbacks
+  by default, optional serialized state, deadlines and owned shutdown.
+- **Compile-checked, composable DSL:** declare schemas and handlers together,
+  compose components and register additional definitions at runtime.
+- **Existing-app integration:** mount MCP in Plug/Phoenix, use BEAM-local
+  transports, or choose an optional owned HTTP listener.
+- **Client conveniences:** complete results, explicit extraction, bounded
+  pagination, owned connection scopes, reconnect/health checks and caching.
+- **Middleware and operational controls:** wrap requests, configure resilience,
+  inspect supported status/stats and consume telemetry.
+- **Trust and validation boundaries:** outbound origin/credential policy,
+  bounded schema work, and encrypted MRTR state with optional replay protection.
+- **Downstream development helpers:** published builders/assertions/mock
+  transports and packaged coding-agent usage rules.
+
+See the [library features guide](docs/FEATURES.md) for APIs, examples and limits.
+The [MCP feature matrix](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md)
+tracks protocol coverage separately. Forwarding hooks are implemented; the
+[embedded gateway example](https://github.com/trust-arbor/arbor_mcp/tree/master/examples/forwarding_gateway)
+qualifies a controlled integration rather than providing a turnkey gateway.
 
 ## Installation
 
