@@ -200,6 +200,7 @@ defmodule Arbor.MCP.MixProject do
           LICENSE
           CHANGELOG.md
           docs/ARCHITECTURE.md
+          docs/FEATURES.md
           docs/CONFIGURATION.md
           docs/HTTP_LISTENERS.md
           docs/DEVELOPMENT.md
@@ -252,6 +253,7 @@ defmodule Arbor.MCP.MixProject do
       skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
       extras: [
         "README.md",
+        "docs/FEATURES.md",
         {"usage-rules.md", title: "Agent usage rules"},
         "docs/guides/MIGRATING_V1_TO_V2.md",
         "docs/guides/V2_RELEASE_CANDIDATE.md",
@@ -284,7 +286,7 @@ defmodule Arbor.MCP.MixProject do
       groups_for_extras: [
         Introduction: ~r/README/,
         Guides:
-          ~r/QUICKSTART|RUNTIME_GUIDE|MIGRATING_V1_TO_V2|V2_RELEASE_CANDIDATE|USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|SCHEMAS|STORAGE|DIAGNOSTICS|API_REFERENCE|TRANSPORT_GUIDE|HTTP_LISTENERS|PROTOCOL_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|TROUBLESHOOTING/,
+          ~r/FEATURES|QUICKSTART|RUNTIME_GUIDE|MIGRATING_V1_TO_V2|V2_RELEASE_CANDIDATE|USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|SCHEMAS|STORAGE|DIAGNOSTICS|API_REFERENCE|TRANSPORT_GUIDE|HTTP_LISTENERS|PROTOCOL_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|TROUBLESHOOTING/,
         Maintainers: ~r/DEVELOPMENT|RELEASING|ROADMAP|MAINTENANCE_POLICY/,
         Changelog: ~r/CHANGELOG/
       ],

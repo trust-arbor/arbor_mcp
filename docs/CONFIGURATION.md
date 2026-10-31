@@ -1973,8 +1973,9 @@ The MCP 2026-07-28 migration emits bounded operational events for era
 selection, fallback and downgrade observations; unsupported-version retries;
 MRTR rounds, failures and replay rejection; subscription reconnect and queue
 pressure; and ambiguous HTTP reissue. See `Arbor.MCP.Telemetry` for the event list
-and exact metadata shapes. Client response-cache hit/miss events are absent in
-1.0 because response storage/reuse is deliberately deferred.
+and exact metadata shapes. Client response caching is implemented; cache hits
+emit `[:arbor_mcp, :client, :cache, :hit]`. See `Arbor.MCP.Client`'s Response cache
+documentation for TTL, invalidation, limits and bypass options.
 
 Build deployment alerts from counts and rates, not raw payload dimensions:
 

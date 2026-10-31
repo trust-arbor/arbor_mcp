@@ -465,8 +465,9 @@ entries follow the DSL's in lists and take precedence over a DSL entry with
 the same name. A server whose only tools are registered at runtime should
 declare `capabilities: [tools: [listChanged: true]]` so clients that connect
 first know to ask for them. Over HTTP, a change made outside a request
-reaches clients listening with `subscriptions/listen`; legacy HTTP sessions
-see it the next time they list.
+reaches matching `subscriptions/listen` streams and legacy HTTP sessions with
+an open GET stream. A session without a GET stream sees changes on its next
+list. Publication acceptance does not establish that the client received bytes.
 
 ## Metadata
 

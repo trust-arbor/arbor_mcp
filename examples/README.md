@@ -75,6 +75,10 @@ may still print to stdout, so use an assembled release for production startup.
 
 ## Client Example
 
+- [`forwarding_gateway/`](forwarding_gateway/README.md) — an embedded MCP proxy
+  using public client/server APIs, with two controlled HTTP upstreams, manual
+  MRTR, progress, cancellation and identity-scoped tool-change notifications.
+  Run `mix run examples/forwarding_gateway/demo.exs` from the repository root.
 - `basic_client.exs` - starts a BEAM-local server in-process, connects a client, lists tools/resources, and calls a tool
 
 ```bash
