@@ -1,0 +1,31 @@
+{
+  "inventory_date": "2026-10-31",
+  "notes": "Initial observed source revisions only. Pending entries do not claim that ArborMCP implements or has reviewed these revisions. Experimental repositories are discovered and reported separately until explicitly inventoried.",
+  "sources": {
+    "modelcontextprotocol/ext-apps": {
+      "review_status": "pending",
+      "revision": "cf599cc462406accc90ec3ca7879e3a22a9fc2a8"
+    },
+    "modelcontextprotocol/ext-auth": {
+      "review_status": "pending",
+      "revision": "15ca394e00a66434520b9ade26294999295a43ae"
+    },
+    "modelcontextprotocol/ext-server-card": {
+      "review_status": "pending",
+      "revision": "526201bbc80231daa40ffcdecfc9da4e54e5dc93"
+    },
+    "modelcontextprotocol/ext-skills": {
+      "review_status": "pending",
+      "revision": "649f7aee87d631ac4d1fdd3b12eef0c6264fdb3a"
+    },
+    "modelcontextprotocol/ext-tasks": {
+      "review_status": "pending",
+      "revision": "b3d28aceaa6d49f5f92258e3d06b61ad6f111e84"
+    },
+    "modelcontextprotocol/modelcontextprotocol": {
+      "review_status": "pending",
+      "revision": "d0e246ea3c69eafaa2806bc4cd28025703ba2c2b"
+    }
+  },
+  "version": 1
+}

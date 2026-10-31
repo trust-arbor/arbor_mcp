@@ -11,6 +11,7 @@
 | Understand protocol and validation | [Protocol guide](PROTOCOL_GUIDE.md), [transports](TRANSPORT_GUIDE.md), [schemas](SCHEMAS.md) |
 | Diagnose a problem | [Troubleshooting](TROUBLESHOOTING.md), [diagnostics](DIAGNOSTICS.md), [security](SECURITY.md) |
 | Contribute or qualify a release | [Development](DEVELOPMENT.md), [roadmap](ROADMAP.md), [releasing](RELEASING.md), [protocol coverage](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md) |
+| Check upstream extension changes | [Extension source tracking](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/EXTENSION_SYNC.md) |
 
 This source prepares ArborMCP `2.0.0-rc.7` for downstream testing. The
 [RC testing notes](guides/V2_RELEASE_CANDIDATE.md) describe its known limits and

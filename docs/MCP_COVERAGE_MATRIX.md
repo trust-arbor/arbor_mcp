@@ -45,6 +45,13 @@ Manual runs may select an exact package version. Review any failure against the
 upstream release diff, add a local regression test for newly exposed behavior,
 and advance the pinned gate only after the new harness passes.
 
+The separate weekly **MCP extensions upstream** workflow discovers official
+extension repositories and compares specification/schema sources with recorded
+baselines. It reports new sources, file drift and pending reviews without
+changing implementation or conformance pins. See
+[extension source tracking](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/EXTENSION_SYNC.md)
+for local commands, comparison scope and the baseline review process.
+
 ## Official SDK Interoperability
 
 `test/interop/package.json` and its committed lockfile pin the official MCP

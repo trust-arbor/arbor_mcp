@@ -88,6 +88,9 @@ iex -S mix            # Start interactive shell with project loaded
 # Emulate the scheduled upstream check with a specific newly published harness.
 CONFORMANCE_ALPHA_VERSION=0.2.0-alpha.12 ./scripts/conformance.sh modern
 
+# Advisory official MCP extension source drift (separate from conformance).
+python3 -B scripts/check_mcp_extensions.py
+
 # Broader legacy/draft report; this aggregate command is intentionally non-gating.
 ./scripts/conformance.sh all-versions
 
