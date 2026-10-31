@@ -284,14 +284,13 @@ is never asked:
 %{"message" => "Continue?", "requestedSchema" => %{"type" => "object", "properties" => %{}}}
 ```
 
-### Owned Bandit listeners need Bandit 1.14.1
+### Owned Bandit listeners need Bandit 1.14.0
 
-Bandit 1.14.1 fixes HTTP/2 request-body memory amplification and includes
-1.14.0's eleven HTTP/1, HTTP/2 and WebSocket fixes. ArborMCP now requires
-Bandit `~> 1.14 and >= 1.14.1`. An owned Bandit
-listener qualifies exact Bandit `1.14.1` with Thousand Island `1.6.0`; with
+Bandit 1.14.0 fixes eleven HTTP/1, HTTP/2 and WebSocket advisories that are open
+against 1.13.1, so ArborMCP now requires Bandit `~> 1.14`. An owned Bandit
+listener qualifies exact Bandit `1.14.0` with Thousand Island `1.6.0`; with
 the `1.13.1` pin, startup returns `:unsupported_owned_bandit_constructor`.
-Change the pin to `{:bandit, "== 1.14.1"}`. Bandit 1.14.1 also limits each
+Change the pin to `{:bandit, "== 1.14.0"}`. Bandit 1.14.0 also limits each
 HTTP/2 connection to 500 concurrent streams and 262,144 bytes of headers by
 default.
 
