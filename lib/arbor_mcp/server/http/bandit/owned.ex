@@ -17,7 +17,7 @@ defmodule Arbor.MCP.Server.HTTP.Bandit.Owned do
     Application.load(:bandit)
     Application.load(:thousand_island)
 
-    Application.spec(:bandit, :vsn) == ~c"1.14.0" and
+    Application.spec(:bandit, :vsn) == ~c"1.14.1" and
       Application.spec(:thousand_island, :vsn) == ~c"1.6.0" and
       Enum.all?(
         @supervisors ++ @workers,

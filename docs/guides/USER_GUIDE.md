@@ -1,7 +1,7 @@
 # ArborMCP User Guide
 
 A practical guide to building MCP clients and servers with published ArborMCP
-`2.0.0-rc.6`. Start with the [Quickstart](../getting-started/QUICKSTART.md)
+`2.0.0-rc.7`. Start with the [Quickstart](../getting-started/QUICKSTART.md)
 or [v1-to-v2 migration](MIGRATING_V1_TO_V2.md); the
 [RC notes](V2_RELEASE_CANDIDATE.md) describe qualification and known limits.
 
@@ -20,7 +20,7 @@ or [v1-to-v2 migration](MIGRATING_V1_TO_V2.md); the
 
 ## Installation
 
-Add `{:arbor_mcp, "== 2.0.0-rc.6"}` and run `mix deps.get`. RPC resolves
+Add `{:arbor_mcp, "== 2.0.0-rc.7"}` and run `mix deps.get`. RPC resolves
 transitively from Hex. For source development, clone MCP's default `master`
 branch; `ARBOR_RPC_PATH` optionally selects a local RPC checkout.
 The [quickstart](../getting-started/QUICKSTART.md) covers requirements and setup.

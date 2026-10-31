@@ -51,7 +51,8 @@ defmodule Arbor.MCP.Server.Runtime.Config do
     with :ok <- validate_options(opts),
          opts = http_service_defaults(opts),
          keys = Map.keys(Map.from_struct(%__MODULE__{})),
-         config = opts |> Keyword.take(keys) |> then(&struct(__MODULE__, &1)) |> put_concurrency(),
+         config =
+           opts |> Keyword.take(keys) |> then(&struct(__MODULE__, &1)) |> put_concurrency(),
          {:ok, http} <- http_config(opts),
          {:ok, config} <- put_mrtr(config, opts),
          :ok <- validate_name(Keyword.get(opts, :name)),

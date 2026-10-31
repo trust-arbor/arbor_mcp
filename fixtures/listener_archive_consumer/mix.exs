@@ -23,7 +23,7 @@ defmodule ListenerArchiveConsumer.MixProject do
       case {System.fetch_env!("LISTENER_ARCHIVE_ADAPTER"),
             System.get_env("LISTENER_ARCHIVE_OWNERSHIP", "owned")} do
         {"cowboy", "owned"} -> [{:plug_cowboy, "~> 2.7"}, {:ranch, "== 1.8.1"}]
-        {"bandit", "owned"} -> [{:bandit, "== 1.14.0"}, {:thousand_island, "== 1.6.0"}]
+        {"bandit", "owned"} -> [{:bandit, "== 1.14.1"}, {:thousand_island, "== 1.6.0"}]
         {"cowboy", "host"} -> [{:plug_cowboy, "~> 2.7"}, {:ranch, "== 2.2.0"}]
       end
 

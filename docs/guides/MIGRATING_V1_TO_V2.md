@@ -22,8 +22,8 @@ process death alone does not certify physical IO cleanup.
 
 ExMCP 1.x splits into **ArborMCP** for MCP and **ArborACP** for ACP, with
 independently installable ArborRPC and optional ArborACP adapter packages.
-This guide covers the published ArborMCP `2.0.0-rc.6`, ArborACP and adapter
-`1.0.0-rc.4`, and ArborRPC `1.0.0-rc.3` combination. Library versions are independent; ACP
+This guide targets ArborMCP `2.0.0-rc.7`, ArborACP and adapter
+`1.0.0-rc.5`, and ArborRPC `1.0.0-rc.4` combination. Library versions are independent; ACP
 protocol versions are a separate upstream concern.
 
 | Library name | Hex package / OTP application | Elixir module namespace |
@@ -37,8 +37,8 @@ Library names in prose use ArborMCP, ArborACP and ArborRPC. Code uses the dotted
 namespaces above; dependency and application configuration uses the lowercase
 package names.
 
-**RC status:** ArborMCP `2.0.0-rc.6` and the other three packages' `1.0.0`
-release candidates are published and verified through ordinary Hex installation. The
+**RC status:** ArborMCP `2.0.0-rc.7` and the other three packages' `1.0.0`
+release candidates are prepared for publication and ordinary Hex installation. The
 original four `2.0.0-rc.1` versions are retired, with archives and tags preserved.
 Continuous 48-hour qualification remains incomplete: the latest harness attempt
 reached the documented request-ID capacity of a persistent test/BEAM peer.
@@ -104,7 +104,7 @@ pin so downstream test results are reproducible:
 ```elixir
 defp deps do
   [
-    {:arbor_mcp, "== 2.0.0-rc.6"}
+    {:arbor_mcp, "== 2.0.0-rc.7"}
   ]
 end
 ```
@@ -113,16 +113,17 @@ Choose additional packages by ownership:
 
 | What your application uses | Direct dependency |
 | --- | --- |
-| MCP clients, handlers, tools, resources or prompts | `{:arbor_mcp, "== 2.0.0-rc.6"}` |
-| Native ACP agents/controllers or the generic adapter contract | `{:arbor_acp, "== 1.0.0-rc.4"}` |
-| Built-in Claude, Codex, Pi or ZCode adapters | `{:arbor_acp_adapters, "== 1.0.0-rc.4"}` |
-| Shared JSON-RPC/framing/subprocess APIs called directly | `{:arbor_rpc, "== 1.0.0-rc.3"}` |
+| MCP clients, handlers, tools, resources or prompts | `{:arbor_mcp, "== 2.0.0-rc.7"}` |
+| Native ACP agents/controllers or the generic adapter contract | `{:arbor_acp, "== 1.0.0-rc.5"}` |
+| Built-in Claude, Codex, Pi or ZCode adapters | `{:arbor_acp_adapters, "== 1.0.0-rc.5"}` |
+| Shared JSON-RPC/framing/subprocess APIs called directly | `{:arbor_rpc, "== 1.0.0-rc.4"}` |
 
 MCP and ACP each bring in `arbor_rpc`; neither brings in the other protocol.
 The adapter bundle brings in ACP and RPC. Native ACP users do not need the
 bundle, and vendor CLI executables remain separate prerequisites. Add a direct
 RPC dependency only when your code uses its API. A compatible prerelease range
-is `~> 2.0.0-rc.6` for MCP or `~> 1.0.0-rc.3` for the new packages;
+is `~> 2.0.0-rc.7` for MCP, `~> 1.0.0-rc.5` for ACP/adapters, or
+`~> 1.0.0-rc.4` for RPC;
 an ordinary stable-only constraint does not select these RCs.
 
 For a normal Hex consumer, unset development overrides such as
@@ -131,12 +132,14 @@ settings into the application. Then resolve dependencies, review the lockfile
 changes and compile your application normally.
 
 ArborMCP requires Elixir 1.17 and Erlang/OTP 27 or newer; protocol output uses
-OTP's JSON encoder. On qualified macOS/Darwin and Linux platforms, source
-installation requires a **C17 compiler**, including HTTP-only or BEAM-only
-applications, because the transitive RPC package builds its helper. `CC`
-selects one compiler executable. Source archives contain C source, not a
-prebuilt helper. An assembled OTP release includes the built helper and needs
-no compiler at runtime. Windows native subprocess operations are unsupported.
+OTP's JSON encoder. On qualified macOS/Darwin and Linux platforms, the transitive
+RPC package builds its helper when a **C17 compiler** is available. Without one,
+installation warns and continues; HTTP-only and BEAM-only applications still work,
+while native subprocess operations return `:native_helper_unavailable`.
+`ARBOR_RPC_NATIVE=required` requires a build; `skip` omits it. `CC` selects one
+compiler executable. Source archives contain C source rather than a prebuilt
+helper. Releases using native subprocesses must include the built helper and need
+no runtime compiler. Windows native subprocess operations are unsupported.
 
 ## 2. Move code and configuration to its owner
 
@@ -192,7 +195,7 @@ For an agent that speaks ACP natively, replace the old MCP-owned ACP facade:
 Arbor.ACP.Client.disconnect(client)
 ```
 
-ArborMCP version `2.0.0-rc.6` and the MCP wire revision are separate identifiers.
+ArborMCP version `2.0.0-rc.7` and the MCP wire revision are separate identifiers.
 The latest stable wire revision in this source is `2026-07-28`.
 `:prefer_modern` permits evidence-based legacy fallback; `:modern_only` and
 `:legacy_only` select an era explicitly. Over stdio, `:prefer_modern` also
@@ -354,7 +357,7 @@ dependencies `{:plug_cowboy, "~> 2.7"}` and `{:ranch, "== 1.8.1"}`, then use:
 ```
 
 Cowboy and Bandit are optional host dependencies; MCP clients, stdio and BEAM
-use need neither. Owned Bandit currently requires exact Bandit `1.14.0` and
+use need neither. Owned Bandit currently requires exact Bandit `1.14.1` and
 Thousand Island `1.6.0`. Follow the [HTTP listener guide](../HTTP_LISTENERS.md)
 for constraints and owned/borrowed shutdown rules rather than broadening the
 backend versions during migration.
@@ -441,7 +444,8 @@ continues to receive applicable fixes and compatible minor releases; see the
 
 - Select only the protocol packages and optional adapters you use; pin the
   published candidates in the [RC testing notes](V2_RELEASE_CANDIDATE.md).
-- Provide C17 at source-install time and verify the helper is in the release.
+- For native subprocess use, provide C17 at source-install time and verify the
+  helper is in the release.
 - Update module/application references while preserving wire/storage identities.
 - Supervise one Runtime per server and give every HTTP mount its Runtime.
 - Migrate removed helpers by result/schema/lifecycle semantics.

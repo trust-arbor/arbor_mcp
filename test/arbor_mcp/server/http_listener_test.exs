@@ -23,9 +23,10 @@ defmodule Arbor.MCP.Server.HTTPListenerTest do
     end
 
     requirement = dependencies |> List.keyfind(:bandit, 0) |> elem(1)
-    assert Version.match?("1.14.0", requirement)
+    assert Version.match?("1.14.1", requirement)
+    refute Version.match?("1.14.0", requirement)
     refute Version.match?("1.13.1", requirement)
-    assert Version.compare(Mix.Dep.Lock.read()[:bandit] |> elem(2), "1.14.0") in [:eq, :gt]
+    assert Version.compare(Mix.Dep.Lock.read()[:bandit] |> elem(2), "1.14.1") in [:eq, :gt]
   end
 
   test "published requirements allow host graphs beyond the owned constructor versions" do

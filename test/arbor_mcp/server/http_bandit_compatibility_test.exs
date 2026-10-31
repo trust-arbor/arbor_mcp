@@ -52,7 +52,8 @@ defmodule Arbor.MCP.Server.HTTPBanditCompatibilityTest do
 
     for {bandit, island} <- [
           {"1.12.5", "1.5.0"}, {"1.13.1", "1.6.0"},
-          {"1.14.1", "1.6.0"}, {"1.14.0", "1.5.0"}, {"1.14.0", "1.6.1"}
+          {"1.14.0", "1.6.0"}, {"1.14.2", "1.6.0"},
+          {"1.14.1", "1.5.0"}, {"1.14.1", "1.6.1"}
         ] do
       for {app, version} <- [bandit: bandit, thousand_island: island] do
         :ok = Application.unload(app)
@@ -141,9 +142,9 @@ defmodule Arbor.MCP.Server.HTTPBanditCompatibilityTest do
     {conn, ref, websocket} = websocket(port)
     assert_receive {:websocket_connection, connection}, 1_000
 
-    {conn, websocket} = send_frame(conn, ref, websocket, {:text, "bandit 1.14.0"})
+    {conn, websocket} = send_frame(conn, ref, websocket, {:text, "bandit 1.14.1"})
     {conn, websocket, frames} = frames(conn, ref, websocket)
-    assert {:text, "bandit 1.14.0"} in frames
+    assert {:text, "bandit 1.14.1"} in frames
     {conn, websocket} = send_frame(conn, ref, websocket, {:binary, <<0, 1, 255>>})
     {conn, websocket, frames} = frames(conn, ref, websocket)
     assert {:binary, <<0, 1, 255>>} in frames

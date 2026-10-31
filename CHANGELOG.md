@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0-rc.7] — 2026-10-31
+
 ### Added
 
 - `cancel_on_caller_exit:` on every request function (`call_tool/4`,
@@ -149,6 +151,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/CONFIGURATION.md`.
 
 ### Changed
+
+- **BREAKING:** Bandit users require `~> 1.14 and >= 1.14.1`. Owned listeners qualify exact Bandit `1.14.1` with Thousand Island `1.6.0`; hosts pinned to `1.14.0` must update. The upstream constructor/options/handler modules used by owned listeners are unchanged between those Bandit versions.
+
+- Require the coordinated ArborRPC `~> 1.0.0-rc.4` candidate.
 
 - **BREAKING:** `Arbor.MCP.Authorization.JWT.validate_claims/2` and
   `verify_and_validate/3` require an expected `:aud`; omitting it returns

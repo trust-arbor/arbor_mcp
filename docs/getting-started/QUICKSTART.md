@@ -1,6 +1,6 @@
 # ArborMCP Quick Start Guide
 
-This guide shows a minimal MCP server and client in the `2.0.0-rc.6` checkout.
+This guide shows a minimal MCP server and client in the `2.0.0-rc.7` checkout.
 The RC is published; see the [RC notes](../guides/V2_RELEASE_CANDIDATE.md)
 for qualification and known limits, and the
 [v1-to-v2 guide](../guides/MIGRATING_V1_TO_V2.md) when upgrading ExMCP.
@@ -10,12 +10,14 @@ for qualification and known limits, and the
 Use Elixir 1.17 or newer with OTP 27 or newer. Add the published package:
 
 ```elixir
-{:arbor_mcp, "== 2.0.0-rc.6"}
+{:arbor_mcp, "== 2.0.0-rc.7"}
 ```
 
-Run `mix deps.get`. Source installation on macOS/Darwin and Linux requires a C17
-compiler for the transitive RPC helper; assembled releases include that helper
-and need no compiler at runtime. Windows native subprocess operations are
+Run `mix deps.get`. Source installation on macOS/Darwin and Linux builds the RPC
+helper when a C17 compiler is available; without one it warns and continues.
+HTTP/BEAM use still works, while native subprocess operations return
+`:native_helper_unavailable`. Releases using subprocesses must include the built
+helper and need no runtime compiler. Windows native subprocess operations are
 unsupported. For source development, clone the repository's default `master`
 branch and optionally select RPC source with `ARBOR_RPC_PATH`.
 

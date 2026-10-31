@@ -2,14 +2,15 @@
 
 `arbor_mcp` keeps its HTTP client and `Arbor.MCP.HttpPlug` in core. Cowboy and
 Bandit remain optional host dependencies. Mounting the Plug in Phoenix does not
-create, adopt or stop the host listener. Unix source installation still builds
-the transitive ArborRPC native helper and requires a C17 compiler; an installed
-release does not require a compiler at runtime.
+create, adopt or stop the host listener. Unix source installation builds the
+transitive ArborRPC native helper when a C17 compiler is available. Without one,
+installation warns and continues; HTTP use remains available. Releases using
+native subprocesses must include the built helper and need no runtime compiler.
 
 The published dependency ranges allow compatible host-managed listener graphs:
-Bandit `~> 1.14`, Thousand Island `~> 1.6`, and Ranch
+Bandit `~> 1.14 and >= 1.14.1`, Thousand Island `~> 1.6`, and Ranch
 `>= 1.8.1 and < 3.0.0`. The selected backend's own requirements still apply;
-for example, Bandit 1.14.0 requires Thousand Island `~> 1.6`. The Bandit and
+for example, Bandit 1.14.1 requires Thousand Island `~> 1.6`. The Bandit and
 Cowlib security floors remain in force. These package ranges do not extend
 ArborMCP's qualified standalone constructor versions below.
 
@@ -74,7 +75,7 @@ acknowledgments. The owned listener's initial call identifies
 Arbor.MCP.Server.HTTP.Cowboy.Owned, rather than `:ranch_listener_sup`. Future
 Ranch versions need constructor qualification before owned startup accepts them;
 an unsupported version returns `:unsupported_owned_ranch_constructor`.
-Owned Bandit setup qualifies **Bandit 1.14.0** and **Thousand Island 1.6.0** only,
+Owned Bandit setup qualifies **Bandit 1.14.1** and **Thousand Island 1.6.0** only,
 with pre-effect version/export checks. Pin those exact versions in the host
 dependencies when using an owned Bandit listener. Broader host-managed package
 ranges do not bypass these checks; an unsupported pair returns
@@ -92,9 +93,9 @@ options. Borrowed Bandit listeners retain the stock constructor and logs.
 Future backend versions require constructor qualification before owned startup
 accepts them.
 
-Bandit 1.14.0 fixes the HTTP/1, HTTP/2 and WebSocket advisories published with
-it, including HTTP/2 flow control, stream and header-list limits, and chunked
-request bodies. It keeps 1.13.0's HTTP/1 authority validation and HTTP/2
+Bandit 1.14.1 fixes HTTP/2 tiny-DATA request-body memory amplification and
+includes 1.14.0's HTTP/1, HTTP/2 and WebSocket fixes, including flow control,
+stream and header-list limits, and chunked request bodies. It keeps 1.13.0's HTTP/1 authority validation and HTTP/2
 blocked-send fixes and 1.13.1's Phoenix error-response fix. It also limits each
 HTTP/2 connection to 500 concurrent streams and 262,144 bytes of headers by
 default, where 1.13.1 advertised no limit; `http_2_options[:default_local_settings]`
@@ -103,7 +104,7 @@ The adapted options include `http_options[:compress_chunked]` (upstream default
 `false`). Owned listeners support HTTP/1 and cleartext HTTP/2 through the fixed
 MCP Plug. That Plug does not expose a WebSocket endpoint; host-managed Bandit
 listeners can mount their own WebSocket Plug alongside it. TLS remains
-host-managed, and Bandit 1.14.0 does not support WebSocket upgrades over HTTP/2.
+host-managed, and Bandit 1.14.1 does not support WebSocket upgrades over HTTP/2.
 
 Owned Bandit admits **1..128 acceptors** (upstream default **100**) and at most
 **1,024** pending/active connection constructions across the runtime, including
@@ -144,7 +145,7 @@ under a healthy root may create a new listener after the previous registered
 roles and metadata settle, using that replacement's original startup cutoff.
 Unexpected listener failure retires the whole root instead.
 
-For Bandit, add `{:bandit, "== 1.14.0"}` and
+For Bandit, add `{:bandit, "== 1.14.1"}` and
 `{:thousand_island, "== 1.6.0"}` to the host dependencies and select it explicitly:
 
 ```elixir

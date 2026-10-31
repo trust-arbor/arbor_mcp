@@ -1,8 +1,12 @@
 # ArborMCP
 
+Versioned installation examples and source links apply after the matching Hex
+release and Git tag are published. During release preparation, use the current
+published candidate or a local source checkout.
+
 ArborMCP provides Elixir clients and servers for the [Model Context Protocol](https://modelcontextprotocol.io/), with stdio, Streamable HTTP and BEAM-local transports. Its Hex package is `arbor_mcp`; its Elixir module namespace is `Arbor.MCP.*`.
 
-**Version 2 release candidate.** ArborMCP `2.0.0-rc.6` is published on Hex
+**Version 2 release candidate.** ArborMCP `2.0.0-rc.7` is the candidate prepared for Hex
 for downstream integration testing, with ArborRPC on its independent 1.x line.
 Stable `arbor_mcp` 2.0 has not been released. The runtime/scheduler redesign and
 accepted API cleanup are implemented; the [roadmap](docs/ROADMAP.md) and
@@ -20,7 +24,7 @@ For reproducible downstream RC testing:
 
 ```elixir
 defp deps do
-  [{:arbor_mcp, "== 2.0.0-rc.6"}]
+  [{:arbor_mcp, "== 2.0.0-rc.7"}]
 end
 ```
 
@@ -44,11 +48,13 @@ mix test
 
 The supported minimum is Elixir 1.17 with Erlang/OTP 27. Protocol output uses OTP's JSON encoder. The CI matrix checks multiple Elixir/OTP versions; passing CI and the release gates are required before publishing 2.0.
 
-On macOS/Darwin and Linux, installing the transitive `arbor_rpc` source package
-requires a C17 compiler (`cc`, or the executable selected by `CC`), including for
-HTTP-only and BEAM-only applications. Source archives contain reviewed C source,
-not prebuilt helpers. An installed release includes the built helper and needs
-no runtime compiler. Windows native subprocess operations are unsupported;
+On macOS/Darwin and Linux, the transitive `arbor_rpc` source package builds its
+native helper when a C17 compiler is available (`cc`, or the executable selected
+by `CC`). Without a compiler, installation warns and continues; HTTP-only and
+BEAM-only use remain available, while native subprocess operations return
+`:native_helper_unavailable`. Source archives contain C source rather than
+prebuilt helpers. Releases using native subprocesses must include the built
+helper and need no runtime compiler. Windows native subprocess operations are unsupported;
 framing is separate. Only the qualified platform/architecture matrix is supported.
 
 ## Client example
@@ -108,7 +114,7 @@ HTTP applications mount `Arbor.MCP.HttpPlug` with an explicit Runtime inside an 
 Published 1.x API documentation is available at [hexdocs.pm/ex_mcp](https://hexdocs.pm/ex_mcp). It describes the previous package and namespace. The v2 migration guide is available in this checkout and is included in the package and ExDoc documentation.
 
 For v2 API documentation from the checkout, run `mix docs --warnings-as-errors`
-after fetching development dependencies. The original RC API docs are at [hexdocs.pm/arbor_mcp/2.0.0-rc.1](https://hexdocs.pm/arbor_mcp/2.0.0-rc.1/). The current RC API docs are at [hexdocs.pm/arbor_mcp/2.0.0-rc.6](https://hexdocs.pm/arbor_mcp/2.0.0-rc.6/). The [documentation index](docs/README.md) separates guides, contributor checks and release policy.
+after fetching development dependencies. The original RC API docs are at [hexdocs.pm/arbor_mcp/2.0.0-rc.1](https://hexdocs.pm/arbor_mcp/2.0.0-rc.1/). The current RC API docs are at [hexdocs.pm/arbor_mcp/2.0.0-rc.7](https://hexdocs.pm/arbor_mcp/2.0.0-rc.7/). The [documentation index](docs/README.md) separates guides, contributor checks and release policy.
 
 ## AI agent guidance
 

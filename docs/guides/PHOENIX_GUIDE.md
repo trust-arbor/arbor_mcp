@@ -5,7 +5,7 @@ runtime separately from the host endpoint. The runtime initializes its handler
 once and owns scheduled callbacks, bounded output and configured services. The
 Phoenix request process owns its `Plug.Conn` and the host listener.
 
-ArborMCP `2.0.0-rc.6` is published. This guide describes the Runtime mounting
+This source prepares ArborMCP `2.0.0-rc.7`. This guide describes the Runtime mounting
 contract; see the [RC notes](V2_RELEASE_CANDIDATE.md) for current consumer scope
 and open stable-release gates.
 
@@ -13,12 +13,13 @@ and open stable-release gates.
 
 ```elixir
 # mix.exs, alongside your existing Phoenix dependencies
-{:arbor_mcp, "== 2.0.0-rc.6"}
+{:arbor_mcp, "== 2.0.0-rc.7"}
 ```
 
 Resolve normally from Hex. Local path dependencies and `ARBOR_RPC_PATH` are
-optional developer overrides. Source installation requires C17 for the shared
-RPC helper even when Phoenix owns the listener.
+optional developer overrides. Source installation builds the shared RPC helper
+when a C17 compiler is available; without one it warns and continues. Phoenix
+HTTP use does not require that native subprocess helper.
 
 Use your host application's HTTP adapter. A mounted plug does not require an
 ArborMCP-owned Cowboy or Bandit listener. The consumer qualification fixture pins
