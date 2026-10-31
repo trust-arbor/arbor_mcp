@@ -18,7 +18,7 @@ The repository has moved to [trust-arbor/arbor_mcp](https://github.com/trust-arb
 The supported 1.x package remains `ex_mcp`. This is the `codex/maintenance-1.x`
 branch: fixes and compatible minor releases continue here, so migration is
 optional. See the [maintenance policy](https://github.com/trust-arbor/arbor_mcp/blob/codex/maintenance-1.x/docs/MAINTENANCE_POLICY.md).
-This source prepares ExMCP `1.8.0`, with asynchronous ACP handler work,
+This source prepares ExMCP `1.8.1`, with asynchronous ACP handler work,
 session-update drop notices and MCP transport fixes. See the
 [1.8 release notes](docs/MAINTENANCE_1_8_RELEASE.md) for upgrade guidance;
 versioned Hex installation applies after publication.

@@ -1,10 +1,14 @@
 # ExMCP 1.8 maintenance release
 
-ExMCP 1.8.0 adds asynchronous ACP handler work and session-update drop notices,
+ExMCP 1.8.1 includes asynchronous ACP handler work and session-update drop notices,
 along with the merged MCP transport and interoperability fixes since 1.7.3.
 These compatible additions make this a minor release. The package remains
 `ex_mcp`, the OTP application remains `:ex_mcp`, and public modules remain under
 `ExMCP.*`, including the bundled ACP adapters.
+
+The `v1.8.0` tag records an unpublished preparation. Version 1.8.1 includes
+those changes and the remaining backports from tracker #113; the earlier tag
+is preserved.
 
 After publication, applications can select the new minor series with:
 
@@ -12,7 +16,7 @@ After publication, applications can select the new minor series with:
 {:ex_mcp, "~> 1.8"}
 ```
 
-An existing `~> 1.0` requirement also permits 1.8.0. Review and commit the updated
+An existing `~> 1.0` requirement also permits 1.8.1. Review and commit the updated
 lockfile. Elixir 1.17 / OTP 27 remain the minimum. Installation requires no native
 C compiler. The [maintenance policy](MAINTENANCE_POLICY.md) continues to apply;
 no 1.x end-of-support date has been set.
@@ -34,6 +38,32 @@ recover without requiring another update. Session close/delete and disconnect
 retire their counts. See the [event listener contract](ACP_GUIDE.md#event-listener).
 
 ## MCP transport changes to review
+
+- Circuit-breaker stdio reads retain their port owner. Discovery skips preceding
+  notifications within its original deadline, including a continuous stream of
+  notifications. Unsupported-version HTTP errors advertise the mount's enabled
+  revisions in preference order.
+- Provider token errors refuse new POSTs and request-owned streams before
+  sending; nil tokens clear earlier Authorization, and a provider owns that
+  header. Callback failures and non-atom error details are contained and
+  redacted. A stream connection that never opens returns a transport error with
+  its connection failure as the reason. `ExMCP.Client.delivery_outcome/1`
+  classifies that error as `:not_sent`; the error itself is not the atom
+  `:not_sent`. It is not retried as an ambiguous stream break.
+- Optional handler defaults now answer `-32601` for unserved methods. Modern
+  HTTP uses status 404 for that protocol error, including a stream's first
+  response; the client reads a matching JSON-RPC error from it. Advertised
+  capabilities retain empty-list/completion or named-not-found semantics.
+  SSE responses omit HTTP/2-forbidden connection headers.
+- Legacy session expiry fails pending work and reconnects without replaying
+  application requests. The reason is `{:session_expired, ...}` inside the
+  existing 1.x error envelope; code matching the earlier raw HTTP 404 reason
+  should handle this classification. A rejected configured session id is
+  retried once without it, within the establishment deadline. Delayed failures
+  from a replaced session cannot end its replacement. An expired GET for the
+  replaced session leaves the current session available through POST.
+- The HTTP `request_timeout` cap retains its 30-second default. Longer operations
+  need both a larger transport cap and caller timeout; the earlier budget wins.
 
 - Legacy HTTP POST streams dispatch notifications and server requests while
   waiting for their response. Concurrent authentication challenges share one
@@ -60,11 +90,26 @@ retire their counts. See the [event listener contract](ACP_GUIDE.md#event-listen
   parameters. Nested capabilities and omitted JSON-RPC `params` are handled
   consistently across the applicable transports.
 
-The release also requires patched JOSE `>= 1.11.13`. The
-[changelog](../CHANGELOG.md#180---2026-10-31) records exact return shapes,
-deadlines, accepted behavior changes and backport provenance.
+Session expiry keeps the operation's existing 1.x error envelope. The normal
+client return shapes are:
+
+| Operation path / format | Return shape |
+| --- | --- |
+| Synchronous HTTP, default struct format | `{:error, %ExMCP.Error.TransportError{reason: {:session_expired, detail}}}` |
+| Synchronous HTTP, `format: :map` | `{:error, %{type: :transport_error, reason: {:session_expired, detail}}}` |
+| Triggering legacy SSE async POST, either format | `{:error, {:transport_error, {:session_expired, detail}}}` |
+
+For a POST, `detail` is `{:http_error, 404, body}`. For pending work failed by
+the current session's GET expiry, it is `{:sse_error, {:http_error, 404}}`.
+Handle the nested reason appropriate to the operation path; a bare
+`{:error, {:session_expired, detail}}` is not the normal client return.
+With `reconnect: false`, the client stays disconnected after expiry.
+
+The release also requires patched JOSE `>= 1.11.13`. The changelog records
+[the remaining tracker fixes](../CHANGELOG.md#181---2026-10-31) and
+[the earlier 1.8 preparation changes](../CHANGELOG.md#180---2026-10-31),
+including return shapes, deadlines, behavior changes and backport provenance.
 
 The [1.x backport tracker](https://github.com/trust-arbor/arbor_mcp/issues/113)
-records remaining maintenance work. This release includes the changes already
-merged into the maintenance branch; individual pending backports retain their
-own review and regression requirements.
+records the completed maintenance backports included in this release. The
+transport guide describes the exact error and timeout contracts.
