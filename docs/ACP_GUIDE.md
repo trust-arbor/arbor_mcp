@@ -179,6 +179,8 @@ The adapter launches `zcode app-server`. Set `adapter_opts[:cli_path]` or the
 | `:pending_request_timeout` | `30_000` | Server-side lifetime for outbound requests and pending prompts |
 | `:handler_request_timeout` | `30_000` | Maximum lifetime for inbound handler callbacks |
 | `:max_update_queue` | `32` | Mailbox cutoff for handler and event-listener session updates; excess updates are dropped |
+| `:max_update_queue_bytes` | `8_388_608` | Aggregate encoded byte cutoff for queued handler/listener updates and drop notices |
+| `:notify_update_drops` | `false` | Opt into coalesced event-listener drop notices |
 | `:max_outbox_bytes` | `4_194_304` | Aggregate byte limit for an adapter bridge's undelivered messages |
 | `:native_events` | `:off` | Adapter-bridged agents only: opt-in `_meta.ex_mcp.native` provenance on derived messages (`:summary` for adapter name and sequence, `:raw` to also embed the decoded native event) |
 | `:name` | `nil` | GenServer name registration |
@@ -448,6 +450,26 @@ outside those roots, including escapes through existing symlinks. Nonexistent
 children below a trusted root are permitted so write/create handlers can work;
 custom handlers remain responsible for rechecking policy at the point of use.
 
+### Asynchronous request work
+
+Permission, file, terminal and elicitation callbacks can return
+`{:async, work, state}`. The runner commits `state` before the next callback,
+then runs the zero-arity function in a linked, monitored worker. The work returns
+`{:ok, value}` or `{:error, reason}`; file-write work returns `:ok` or
+`{:error, reason}`. Work does not return handler state.
+
+```elixir
+def handle_file_read(_session_id, path, _opts, state) do
+  {:async, fn -> File.read(path) end, state}
+end
+```
+
+The client owns the wire response, cancellation and handler deadline. It stops
+workers on cancellation, timeout, disconnect or runner shutdown, and skips
+cancelled callbacks still queued in the runner. Keep the callback itself short;
+synchronous returns retain their existing ordering. Use this form for long waits
+so operations such as `terminal/kill` can still run while a terminal wait is pending.
+
 ### ACP message context
 
 Handlers can also implement `handle_session_update/4` and
@@ -496,6 +518,30 @@ receive do
     IO.puts("#{type}: #{inspect(update)}")
 end
 ```
+
+
+Delivery to handlers and listeners obeys `:max_update_queue` and
+`:max_update_queue_bytes`. Each dropped update emits
+`[:ex_mcp, :acp, :session, :update_dropped]` telemetry with count/bytes
+measurements and session id, target, limit and configured bounds in metadata.
+Set `notify_update_drops: true` to receive coalesced
+`{:acp_session_updates_dropped, session_id, count}` messages. Handlers can
+implement `handle_session_updates_dropped/3` for the corresponding notice.
+Notices obey the same queue bounds, retain no update payload, and retry after
+recovery even without another update. A notice larger than the byte limit is
+telemetry-only.
+
+Counts belong to the session, including concurrent pending load/resume calls.
+A failed, expired or abandoned open retires counts only when no session authority
+remains. Successful close/delete, local `end_session/2` fallback and disconnect
+end that notice lifetime and clear counts immediately, including when an open
+for the same id is pending. Subsequent updates belong to a new notice lifetime.
+
+The public `GenServer.call/3` wait timeout alone does not retire an underlying
+request if its caller catches the timeout exit and stays alive. Its notices
+remain valid until the client retires that request or session. The separate
+`:pending_request_timeout` is a server-owned lifetime: when it expires the
+client sends cancellation and retires the request. Caller death also retires it.
 
 ## Session Update Types
 
