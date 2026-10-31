@@ -121,7 +121,8 @@ Supported client options include:
 - `:protocol_version` - requested legacy revision, or a modern probe revision
   when the selected mode enables it.
 - `:timeout` - connect timeout.
-- `:request_timeout` - single request timeout.
+- `:request_timeout` - HTTP POST response budget, defaults to `30_000` ms.
+  It remains a separate cap when the caller supplies a larger timeout.
 - `:stream_handshake_timeout` - wait for SSE stream startup.
 - `:stream_idle_timeout` - allowed SSE idle time.
 - `:dns_timeout_ms` - DNS-resolution deadline, defaults to one second.
@@ -136,6 +137,45 @@ Supported client options include:
   waiting for a frame delimiter.
 - `:security` - client-side security validation configuration.
 - `:auth` / `:auth_provider` - OAuth/auth provider integration.
+
+For a long operation, raise both the transport budget and the operation's
+caller timeout. The earlier deadline wins; increasing only the caller timeout
+keeps the default 30-second HTTP cap. A smaller caller timeout still cuts off
+the POST and frees the client process promptly:
+
+```elixir
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :http,
+  url: "https://api.example.com/mcp",
+  request_timeout: 120_000
+)
+
+ExMCP.Client.call_tool(client, "long_operation", %{}, timeout: 120_000)
+```
+
+An SSE stream also has its own handshake and idle limits. Those limits do not
+extend the caller's operation deadline.
+
+When an auth provider is configured, it owns the Authorization header. Every new
+POST or request-owned stream uses the current `get_token/1` result. An error
+refuses the request before sending it; `{:ok, nil, state}` removes the earlier
+token and sends without Authorization. Configured Authorization headers are
+ignored for that connection. Callback exceptions and non-atom error details
+are contained and redacted.
+
+A modern HTTP 404 that carries a matching JSON-RPC error is the operation's
+protocol error, including on request-owned streams. Other modern 404 responses
+remain transport errors. A legacy 404 for a request carrying `Mcp-Session-Id`
+means the session expired: pending work fails, and automatic reconnection starts
+a new session with a session-free `initialize`. The triggering operation is
+never replayed, including by configured operation retry policies. With `reconnect: false`, the client stays disconnected. An
+expired configured `:session_id` is discarded after the server rejects it;
+a startup initialize is retried once without it, within the establishment
+deadline. These rules apply to synchronous POSTs, asynchronous POSTs, and the
+legacy session's GET stream. A delayed failure from a replaced session cannot
+end the current session. If the replaced session's GET expires, the current
+session continues through POST. HTTP/2 SSE responses omit connection-specific
+headers, including the retained deprecated example server.
 
 HTTP requests use finite absolute deadlines, identity encoding, redirect-free
 clients, and incremental response limits. A delimiter-free SSE slow drip cannot

@@ -107,6 +107,18 @@ defmodule ExMCP.Client.HTTPStreamRetryTest do
     assert length(GenServer.call(client, :calls)) == 2
   end
 
+  test "a retry that was never sent cannot erase the first ambiguous delivery" do
+    second =
+      {:error, %{type: :transport_error, reason: %Mint.TransportError{reason: :econnrefused}}}
+
+    {:ok, client} = FakeClient.start_link([broken(:closed), second])
+
+    assert {:error, %Error.TransportError{reason: :outcome_unknown, details: %{attempts: 2}}} =
+             request(client, "tools/call", http_stream_retry_delay: 0)
+
+    assert length(GenServer.call(client, :calls)) == 2
+  end
+
   test "retry backoff cannot exceed the original deadline" do
     {:ok, client} = FakeClient.start_link([{:sleep, 15, broken(:closed)}, {:ok, %{}}])
 

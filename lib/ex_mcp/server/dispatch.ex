@@ -33,6 +33,8 @@ defmodule ExMCP.Server.Dispatch do
   alias ExMCP.Protocol.{ErrorCodes, Initialize, Methods}
   alias ExMCP.Server.{Cancellation, Context, Discover, MRTR, RequestContext, ResultNormalizer}
 
+  @method_not_found ErrorCodes.method_not_found()
+
   @type handler_state :: term()
   @type result ::
           {:response, map(), handler_state()} | {:notification, handler_state()}
@@ -100,6 +102,7 @@ defmodule ExMCP.Server.Dispatch do
           Cancellation.track(scope, cancellable_id(request_context), fn ->
             method
             |> do_dispatch(ctx, state)
+            |> unless_served(ctx)
             |> normalize_protocol_result(request_context, handler_module)
           end)
         else
@@ -405,6 +408,25 @@ defmodule ExMCP.Server.Dispatch do
       {:response, method_not_found(ctx.id, ctx.method), state}
     end
   end
+
+  # An advertised capability has empty-list/completion or named-not-found
+  # semantics even when the handler leaves one of its callbacks at default.
+  defp unless_served(
+         {:response, %{"error" => %{"code" => @method_not_found}}, state} = result,
+         ctx
+       ) do
+    case ResultNormalizer.served_capability_answer(
+           ctx.method,
+           ctx.params,
+           handler_capabilities(ctx.module)
+         ) do
+      {:ok, answer} -> {:response, JSONRPC.response(ctx.id, answer), state}
+      {:error, error} -> {:response, JSONRPC.error(ctx.id, Error.to_json_rpc(error)), state}
+      nil -> result
+    end
+  end
+
+  defp unless_served(result, _ctx), do: result
 
   defp cursor(ctx), do: Map.get(ctx.params, "cursor")
 

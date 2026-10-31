@@ -47,7 +47,7 @@ defmodule ExMCP.HttpPlug.RequestStream do
         )
 
       {:ex_mcp_request_stream_result, ^worker, result} ->
-        write_final(conn, conn_module, final_response(result, request_id))
+        write_result(conn, conn_module, result, request_id)
 
       {:DOWN, ^worker_ref, :process, ^worker, reason} ->
         write_final(conn, conn_module, worker_error(request_id, reason))
@@ -66,6 +66,8 @@ defmodule ExMCP.HttpPlug.RequestStream do
        ) do
     case validate_notification(notification) do
       :ok ->
+        conn = ensure_chunked(conn)
+
         case conn_module.chunk(conn, encode_message(notification)) do
           {:ok, conn} ->
             send(sender, {:ex_mcp_request_notification_ack, ref, :ok})
@@ -116,7 +118,31 @@ defmodule ExMCP.HttpPlug.RequestStream do
     )
   end
 
+  # Before the first SSE write, an unsupported modern method can still
+  # return its required HTTP status and JSON-RPC body.
+  defp write_result(
+         %Plug.Conn{state: state} = conn,
+         _conn_module,
+         {:http_error, status, response},
+         _id
+       )
+       when state != :chunked do
+    conn
+    |> Plug.Conn.put_resp_content_type("application/json")
+    |> Plug.Conn.send_resp(status, Jason.encode!(response))
+  end
+
+  defp write_result(conn, conn_module, result, request_id),
+    do: write_final(conn, conn_module, final_response(result, request_id))
+
+  defp ensure_chunked(%Plug.Conn{state: state} = conn) when state != :chunked,
+    do: Plug.Conn.send_chunked(conn, 200)
+
+  defp ensure_chunked(conn), do: conn
+
   defp write_final(conn, conn_module, response) do
+    conn = ensure_chunked(conn)
+
     case conn_module.chunk(conn, encode_message(response)) do
       {:ok, conn} ->
         conn

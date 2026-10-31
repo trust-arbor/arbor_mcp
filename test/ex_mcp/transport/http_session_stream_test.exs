@@ -80,6 +80,14 @@ defmodule ExMCP.Transport.HTTPSessionStreamTest do
       assert_receive {:opener, {:sse_event_ack, _reader}}
     end
 
+    test "a 404 ends an established legacy session", %{state: state, sse: sse} do
+      state = %{state | session_id: "expired-session"}
+      send(self(), {:sse_error, sse, {:http_error, 404}})
+
+      assert {:error, {:session_expired, {:sse_error, {:http_error, 404}}}} =
+               HTTP.receive_message(state)
+    end
+
     test "still ends on a stream error", %{state: state, sse: sse} do
       send(self(), {:sse_error, sse, {:http_error, 404}})
       assert {:error, {:sse_error, {:http_error, 404}}} = HTTP.receive_message(state)

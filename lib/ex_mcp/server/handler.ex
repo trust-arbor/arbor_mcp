@@ -279,6 +279,21 @@ defmodule ExMCP.Server.Handler do
 
   The `use` macro provides default implementations for optional callbacks.
   You only need to implement the callbacks for features your server supports.
+
+  A default answers its method with the JSON-RPC error `-32601` (Method not
+  found), as the MCP specification asks for a method behind a capability the
+  server did not advertise. Over modern Streamable HTTP that error is sent
+  with HTTP status `404`. The defaults for `logging/setLevel` and
+  `notifications/elicitation/complete` succeed instead, and with
+  `tasks: :store` the task defaults serve the task store.
+
+  A server that does serve the method's capability answers the part a
+  handler leaves out as the TypeScript SDK does, not with `-32601`:
+  `resources/list`, `resources/templates/list` and `prompts/list` with an
+  empty list, `completion/complete` with no values, and `resources/read`
+  or `prompts/get` for an unknown name as not found. The server serves a
+  capability when it advertises it in `server/discover`, through the DSL
+  or the handler's own `__server_capabilities__/0`.
   """
 
   @type state :: any()
@@ -616,60 +631,48 @@ defmodule ExMCP.Server.Handler do
       def init(_args), do: {:ok, %{}}
 
       # Defaults for optional callbacks — user inline overrides work
-      # via defoverridable.
+      # via defoverridable. A default answers its method with -32601 (Method
+      # not found), which every server transport passes through, so clients
+      # can tell a method the handler doesn't serve from a failure.
       @impl ExMCP.Server.Handler
-      def handle_list_resources(_cursor, state) do
-        {:error, "Resources not implemented", state}
-      end
+      def handle_list_resources(_cursor, state),
+        do: {:error, HandlerBridge.method_not_found("resources/list"), state}
 
       @impl ExMCP.Server.Handler
-      def handle_read_resource(uri, state) do
-        {:error,
-         ExMCP.Error.protocol_error(
-           ExMCP.Protocol.ErrorCodes.resource_not_found(:modern),
-           "Resource not found: #{uri}"
-         ), state}
-      end
+      def handle_read_resource(_uri, state),
+        do: {:error, HandlerBridge.method_not_found("resources/read"), state}
 
       @impl ExMCP.Server.Handler
-      def handle_list_prompts(_cursor, state) do
-        {:error, "Prompts not implemented", state}
-      end
+      def handle_list_prompts(_cursor, state),
+        do: {:error, HandlerBridge.method_not_found("prompts/list"), state}
 
       @impl ExMCP.Server.Handler
-      def handle_get_prompt(name, _arguments, state) do
-        {:error, ExMCP.Error.protocol_error(-32602, "Prompt not found: #{name}"), state}
-      end
+      def handle_get_prompt(_name, _arguments, state),
+        do: {:error, HandlerBridge.method_not_found("prompts/get"), state}
 
       @impl ExMCP.Server.Handler
-      def handle_complete(_ref, _params, state) do
-        {:error, "Completion not implemented", state}
-      end
+      def handle_complete(_ref, _params, state),
+        do: {:error, HandlerBridge.method_not_found("completion/complete"), state}
 
       @impl ExMCP.Server.Handler
-      def handle_create_message(_params, state) do
-        {:error, "Sampling not implemented", state}
-      end
+      def handle_create_message(_params, state),
+        do: {:error, HandlerBridge.method_not_found("sampling/createMessage"), state}
 
       @impl ExMCP.Server.Handler
-      def handle_list_roots(state) do
-        {:error, "Roots not implemented", state}
-      end
+      def handle_list_roots(state),
+        do: {:error, HandlerBridge.method_not_found("roots/list"), state}
 
       @impl ExMCP.Server.Handler
-      def handle_subscribe_resource(_uri, state) do
-        {:error, "Resource subscriptions not implemented", state}
-      end
+      def handle_subscribe_resource(_uri, state),
+        do: {:error, HandlerBridge.method_not_found("resources/subscribe"), state}
 
       @impl ExMCP.Server.Handler
-      def handle_unsubscribe_resource(_uri, state) do
-        {:error, "Resource subscriptions not implemented", state}
-      end
+      def handle_unsubscribe_resource(_uri, state),
+        do: {:error, HandlerBridge.method_not_found("resources/unsubscribe"), state}
 
       @impl ExMCP.Server.Handler
-      def handle_list_resource_templates(_cursor, state) do
-        {:error, "Resource templates not implemented", state}
-      end
+      def handle_list_resource_templates(_cursor, state),
+        do: {:error, HandlerBridge.method_not_found("resources/templates/list"), state}
 
       @impl ExMCP.Server.Handler
       def handle_set_log_level(level, state) do
@@ -683,26 +686,24 @@ defmodule ExMCP.Server.Handler do
         if @ex_mcp_task_store_opts do
           TaskServer.get(task_id, state, @ex_mcp_task_store_opts)
         else
-          {:error, "Tasks not implemented", state}
+          {:error, HandlerBridge.method_not_found("tasks/get"), state}
         end
       end
 
       @impl ExMCP.Server.Handler
-      def handle_task_result(_task_id, state) do
-        {:error, "Tasks not implemented", state}
-      end
+      def handle_task_result(_task_id, state),
+        do: {:error, HandlerBridge.method_not_found("tasks/result"), state}
 
       @impl ExMCP.Server.Handler
-      def handle_task_list(_cursor, state) do
-        {:error, "Tasks not implemented", state}
-      end
+      def handle_task_list(_cursor, state),
+        do: {:error, HandlerBridge.method_not_found("tasks/list"), state}
 
       @impl ExMCP.Server.Handler
       def handle_task_cancel(task_id, state) do
         if @ex_mcp_task_store_opts do
           TaskServer.cancel(task_id, state, @ex_mcp_task_store_opts)
         else
-          {:error, "Tasks not implemented", state}
+          {:error, HandlerBridge.method_not_found("tasks/cancel"), state}
         end
       end
 
@@ -711,7 +712,7 @@ defmodule ExMCP.Server.Handler do
         if @ex_mcp_task_store_opts do
           TaskServer.update(task_id, input_responses, state, @ex_mcp_task_store_opts)
         else
-          {:error, "Tasks not implemented", state}
+          {:error, HandlerBridge.method_not_found("tasks/update"), state}
         end
       end
 

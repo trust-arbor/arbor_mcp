@@ -1101,6 +1101,7 @@ defmodule ExMCP.Client do
   defp send_outcome({:validation_error, _reason}), do: :not_sent
   defp send_outcome({:transport_error, {:send_failed, _reason}}), do: :not_sent
   defp send_outcome({:transport_error, reason}), do: send_outcome(reason)
+  defp send_outcome({:auth_provider_token_failed, _provider, _reason}), do: :not_sent
   defp send_outcome(_reason), do: :unknown
 
   # GenServer callbacks
@@ -2062,6 +2063,28 @@ defmodule ExMCP.Client do
     end
   end
 
+  # A GET reports the session its socket used; the receiver may still belong
+  # to this connection after a POST rotated it to a newer session.
+  def handle_info(
+        {:http_session_expired, receiver, session_key, reason},
+        %{receiver_task: %Task{pid: receiver, ref: ref}} = state
+      ) do
+    if session_key == ConnectionManager.http_session_key(state.transport_state) do
+      {:noreply, expire_session(reason, state)}
+    else
+      Process.demonitor(ref, [:flush])
+      transport = withdraw_session_stream(state.transport_state)
+      {:noreply, %{state | receiver_task: nil, transport_state: transport}}
+    end
+  end
+
+  def handle_info({:http_session_expired, _retired_receiver, _session_id, _reason}, state),
+    do: {:noreply, state}
+
+  # A queued synchronous expiry also belongs to the session the POST used.
+  def handle_info({:http_session_expired, {:session_key, session_key}, reason}, state),
+    do: {:noreply, expire_matching_session(reason, session_key, state)}
+
   def handle_info({:transport_closed, reason}, state) do
     Logger.error("Transport closed: #{inspect(reason)}")
     {:noreply, handle_transport_down(reason, state)}
@@ -2106,6 +2129,13 @@ defmodule ExMCP.Client do
          not (is_integer(deadline) and Deadline.expired?(deadline)),
        do: resend_authenticated(message, meta, state),
        else: {:noreply, state}
+  end
+
+  defp handle_async_post_result({:error, {:session_expired, _detail} = reason}, meta, state) do
+    state =
+      fail_async_post_request(state, Map.get(meta, :request_id), reason, Map.get(meta, :deadline))
+
+    {:noreply, expire_matching_session(reason, Map.get(meta, :sent_session_key), state)}
   end
 
   # The caller receives the failure, as from a synchronous send, so it is not
@@ -2495,6 +2525,29 @@ defmodule ExMCP.Client do
 
   # Transport teardown and reconnection
 
+  defp expire_matching_session(reason, session_key, state) when is_binary(session_key) do
+    if session_key == ConnectionManager.http_session_key(state.transport_state),
+      do: expire_session(reason, state),
+      else: state
+  end
+
+  defp expire_matching_session(_reason, _session_id, state), do: state
+
+  defp withdraw_session_stream(%HTTP{} = transport), do: HTTP.withdraw_session_stream(transport)
+
+  defp withdraw_session_stream(%ExMCP.Transport.ReliabilityWrapper{} = wrapper),
+    do: %{wrapper | wrapped_state: withdraw_session_stream(wrapper.wrapped_state)}
+
+  # Recovery establishes a fresh session; it never replays the failed operation.
+  defp expire_session(reason, %{connection_status: :ready} = state) do
+    Logger.warning("The server ended the MCP session (HTTP 404)")
+    state = %{state | transport_opts: ConnectionManager.forget_session_id(state.transport_opts)}
+    state = abandon_transport(state)
+    handle_transport_down(reason, state)
+  end
+
+  defp expire_session(_reason, state), do: state
+
   # Already reconnecting with an attempt scheduled — nothing left to tear down.
   defp handle_transport_down(
          _reason,
@@ -2569,7 +2622,7 @@ defmodule ExMCP.Client do
 
   # Reply to all pending requests with connection error or cancelled error
   defp reply_pending_with_close_error(reason, state) do
-    connection_error = Error.connection_error("Transport closed: #{inspect(reason)}")
+    connection_error = close_error(reason, state)
 
     Enum.each(state.pending_requests, fn
       {id, {from, :single, _method}} ->
@@ -2603,6 +2656,12 @@ defmodule ExMCP.Client do
         :ok
     end)
   end
+
+  defp close_error({:session_expired, _detail} = reason, state),
+    do: RequestHandler.send_failure(reason, state)
+
+  defp close_error(reason, _state),
+    do: Error.connection_error("Transport closed: #{inspect(reason)}")
 
   defp close_error_for(id, state, connection_error) do
     if MapSet.member?(state.cancelled_requests, id) do
@@ -3474,9 +3533,26 @@ defmodule ExMCP.Client do
         operation.()
 
       policy when is_list(policy) ->
-        Retry.with_retry(operation, Retry.mcp_defaults(policy))
+        Retry.with_retry(operation, request_retry_options(policy))
     end
   end
+
+  # Session replacement must not replay application work. Keep the public
+  # 1.x envelope, but prevent generic transport/custom retry predicates from
+  # treating an async POST's session-expired tuple as retryable.
+  defp request_retry_options(policy) do
+    options = Retry.mcp_defaults(policy)
+    should_retry? = Keyword.fetch!(options, :should_retry?)
+
+    Keyword.put(options, :should_retry?, fn reason ->
+      not session_expired_error?(reason) and should_retry?.(reason)
+    end)
+  end
+
+  defp session_expired_error?({:transport_error, {:session_expired, _detail}}), do: true
+  defp session_expired_error?(%{reason: {:session_expired, _detail}}), do: true
+  defp session_expired_error?({:session_expired, _detail}), do: true
+  defp session_expired_error?(_reason), do: false
 
   defp execute_with_stream_retry(
          operation,
@@ -3522,6 +3598,11 @@ defmodule ExMCP.Client do
           case retry_operation.() do
             {:error, %Error.TransportError{reason: :response_stream_broken} = second_error} ->
               outcome_unknown(method, stream_retry_mode, 2, second_error)
+
+            {:error, reason} = retry_error ->
+              if delivery_outcome(reason) == :not_sent,
+                do: outcome_unknown(method, stream_retry_mode, 2, error),
+                else: retry_error
 
             result ->
               result
@@ -3635,7 +3716,7 @@ defmodule ExMCP.Client do
         original_error
 
       policy ->
-        retry_opts = Retry.mcp_defaults(policy)
+        retry_opts = request_retry_options(policy)
         should_retry? = Keyword.fetch!(retry_opts, :should_retry?)
         max_attempts = Keyword.get(retry_opts, :max_attempts, 0)
 

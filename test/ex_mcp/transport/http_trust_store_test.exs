@@ -78,7 +78,7 @@ defmodule ExMCP.Transport.HTTPTrustStoreTest do
                  )
 
         assert_receive {:bounded_http, ^worker,
-                        {:error, {:trust_store_unavailable, :no_certificates}}},
+                        {:error, {:connect_failed, {:trust_store_unavailable, :no_certificates}}}},
                        1_000
       end)
 

@@ -167,6 +167,14 @@ defmodule ExMCP.Transport.ReliabilityWrapper do
 
   @impl true
   def send_message(message, %__MODULE__{} = state) do
+    case send_keeping_state(message, state) do
+      {:error, reason, _state} -> {:error, reason}
+      result -> result
+    end
+  end
+
+  @doc false
+  def send_keeping_state(message, %__MODULE__{} = state) do
     if state.config.circuit_breaker_enabled do
       CircuitBreaker.call(state.circuit_breaker_pid, fn ->
         execute_wrapped_operation(:send_message, [message, state.wrapped_state], state)
@@ -179,9 +187,13 @@ defmodule ExMCP.Transport.ReliabilityWrapper do
   @impl true
   def receive_message(%__MODULE__{} = state) do
     if state.config.circuit_breaker_enabled do
-      CircuitBreaker.call(state.circuit_breaker_pid, fn ->
-        execute_wrapped_operation(:receive_message, [state.wrapped_state], state)
-      end)
+      if stdio_receive?(state) do
+        receive_in_owner(state, :infinity)
+      else
+        CircuitBreaker.call(state.circuit_breaker_pid, fn ->
+          execute_wrapped_operation(:receive_message, [state.wrapped_state], state)
+        end)
+      end
     else
       execute_wrapped_operation(:receive_message, [state.wrapped_state], state)
     end
@@ -189,9 +201,13 @@ defmodule ExMCP.Transport.ReliabilityWrapper do
 
   def receive_message(%__MODULE__{} = state, timeout) do
     if state.config.circuit_breaker_enabled do
-      CircuitBreaker.call(state.circuit_breaker_pid, fn ->
-        execute_wrapped_operation(:receive_message, [state.wrapped_state, timeout], state)
-      end)
+      if stdio_receive?(state) do
+        receive_in_owner(state, timeout)
+      else
+        CircuitBreaker.call(state.circuit_breaker_pid, fn ->
+          execute_wrapped_operation(:receive_message, [state.wrapped_state, timeout], state)
+        end)
+      end
     else
       execute_wrapped_operation(:receive_message, [state.wrapped_state, timeout], state)
     end
@@ -312,6 +328,23 @@ defmodule ExMCP.Transport.ReliabilityWrapper do
 
   # Private functions
 
+  # Stdio transfers its port to the reader. A throwaway breaker worker would
+  # close that port when it exits. Keep both the native receive and its caller
+  # alive, retaining the breaker's configured/default cap and the requested cap.
+  defp receive_in_owner(state, timeout) do
+    CircuitBreaker.call_in_owner(state.circuit_breaker_pid, fn budget ->
+      bounded = if timeout == :infinity, do: budget, else: min(timeout, budget)
+      execute_wrapped_operation(:receive_message, [state.wrapped_state, bounded], state)
+    end)
+  end
+
+  defp stdio_receive?(%{wrapped_module: ExMCP.Transport.Stdio}), do: true
+
+  defp stdio_receive?(%{wrapped_module: __MODULE__, wrapped_state: nested}),
+    do: stdio_receive?(nested)
+
+  defp stdio_receive?(_state), do: false
+
   # Stopping a component is best effort and bounded: one that is already gone
   # needs nothing, and one that does not stop in time is killed. It is
   # unlinked first so the kill does not reach the process that wrapped it.
@@ -340,12 +373,24 @@ defmodule ExMCP.Transport.ReliabilityWrapper do
   end
 
   defp execute_wrapped_operation(function, args, state) do
-    case apply(state.wrapped_module, function, args) do
+    wrapped_function =
+      if function == :send_message and
+           function_exported?(state.wrapped_module, :send_keeping_state, 2),
+         do: :send_keeping_state,
+         else: function
+
+    case apply(state.wrapped_module, wrapped_function, args) do
       {:ok, new_wrapped_state} ->
         {:ok, %{state | wrapped_state: new_wrapped_state}}
 
+      {:ok, new_wrapped_state, response} when function == :send_message ->
+        {:ok, %{state | wrapped_state: new_wrapped_state}, response}
+
       {:ok, result, new_wrapped_state} ->
         {:ok, result, %{state | wrapped_state: new_wrapped_state}}
+
+      {:error, reason, new_wrapped_state} ->
+        {:error, reason, %{state | wrapped_state: new_wrapped_state}}
 
       {:error, reason} = error ->
         Logger.debug("Transport operation failed",

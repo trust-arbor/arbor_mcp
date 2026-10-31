@@ -34,15 +34,21 @@ defmodule ExMCP.Client.StdioProbeStartupTest do
 
   describe "a modern server that is slow to start" do
     test "connects in every mode that enables the modern era", %{tmp_dir: tmp_dir} do
-      # Inside the reliability wrapper too. (Not with its circuit breaker:
-      # that runs each receive in a process of its own, which takes over the
-      # stdio port and closes it when it exits.)
+      # Inside the reliability wrapper too, with and without its circuit
+      # breaker (a breaker-enabled receive runs in the owning process, so
+      # the stdio port stays with it; see StdioReliabilityBreakerTest).
       wrapped = {:wrapped_modern_only, :modern_only, reliability: [circuit_breaker: false]}
 
-      results =
-        connect_concurrently(tmp_dir, :modern, [wrapped | @modes], start_delay_s: @start_delay_s)
+      breaker =
+        {:breaker_modern_only, :modern_only,
+         reliability: [circuit_breaker: [failure_threshold: 5]]}
 
-      for mode <- [:modern_only, :prefer_modern, :wrapped_modern_only] do
+      results =
+        connect_concurrently(tmp_dir, :modern, [wrapped, breaker | @modes],
+          start_delay_s: @start_delay_s
+        )
+
+      for mode <- [:modern_only, :prefer_modern, :wrapped_modern_only, :breaker_modern_only] do
         %{result: result, methods: methods} = results[mode]
         assert {:ok, client} = result, "#{mode}: #{inspect(result)}"
         assert {:ok, "2026-07-28"} = Client.negotiated_version(client)
@@ -59,6 +65,33 @@ defmodule ExMCP.Client.StdioProbeStartupTest do
       assert methods == ["initialize", "server/discover"]
 
       # Strict legacy never probes, so it fails on the server's own answer.
+      %{result: result, methods: methods} = results[:legacy_only]
+      assert {:error, {:initialize_error, %{"code" => -32022}}} = result
+      assert methods == ["initialize"]
+    end
+  end
+
+  describe "a modern server that notifies before answering" do
+    # A notification, such as a log message, is not the probe's answer; the
+    # probe skips it and waits for one, whatever the mode.
+    test "connects in every mode that enables the modern era", %{tmp_dir: tmp_dir} do
+      results = connect_concurrently(tmp_dir, :chatty, @modes, start_delay_s: @start_delay_s)
+
+      for mode <- [:modern_only, :prefer_modern] do
+        %{result: result, methods: methods} = results[mode]
+        assert {:ok, client} = result, "#{mode}: #{inspect(result)}"
+        assert {:ok, "2026-07-28"} = Client.negotiated_version(client)
+        assert {:ok, %{"name" => "scripted-chatty"}} = Client.server_info(client)
+        assert methods == ["server/discover"], "#{mode}: #{inspect(methods)}"
+      end
+
+      # prefer_legacy opens with initialize, moves forward on the server's
+      # rejection, and its probe skips the notification the same way.
+      %{result: result, methods: methods} = results[:prefer_legacy]
+      assert {:ok, client} = result, "prefer_legacy: #{inspect(result)}"
+      assert {:ok, "2026-07-28"} = Client.negotiated_version(client)
+      assert methods == ["initialize", "server/discover"]
+
       %{result: result, methods: methods} = results[:legacy_only]
       assert {:error, {:initialize_error, %{"code" => -32022}}} = result
       assert methods == ["initialize"]
