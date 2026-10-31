@@ -11,7 +11,7 @@
 | Diagnose a problem | [Troubleshooting](TROUBLESHOOTING.md), [diagnostics](DIAGNOSTICS.md), [security](SECURITY.md) |
 | Contribute or qualify a release | [Development](DEVELOPMENT.md), [roadmap](ROADMAP.md), [releasing](RELEASING.md), [protocol coverage](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md) |
 
-ArborMCP `2.0.0-rc.6` is available for downstream testing. The
+This source prepares ArborMCP `2.0.0-rc.7` for downstream testing. The
 [RC testing notes](guides/V2_RELEASE_CANDIDATE.md) describe its known limits and
 the remaining stable-release gates. ArborACP and its optional adapters have
 their own [guides](https://github.com/trust-arbor/arbor_acp).

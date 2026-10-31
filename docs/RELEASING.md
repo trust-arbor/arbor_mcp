@@ -1,18 +1,18 @@
 # Releasing the Arbor packages
 
-The published RC train is ArborMCP `2.0.0-rc.6`, ArborRPC `1.0.0-rc.3`, and
-ArborACP and Adapters `1.0.0-rc.4`. The original four `2.0.0-rc.1` candidates
+The RC train prepared in this source is ArborMCP `2.0.0-rc.7`, ArborRPC `1.0.0-rc.4`, and
+ArborACP and Adapters `1.0.0-rc.5`. The original four `2.0.0-rc.1` candidates
 are retired; their tags and archives remain available. ExMCP `1.7.3` is
 independently maintained. Stable promotion follows the gates below.
 
 ## Versions, dependencies and tags
 
-| Package | Published candidate | First stable | Dependencies |
+| Package | Prepared candidate | First stable | Dependencies |
 | --- | --- | --- | --- |
-| ArborMCP | `2.0.0-rc.6` | `2.0.0` | RPC `~> 1.0.0-rc.3` |
-| ArborRPC | `1.0.0-rc.3` | `1.0.0` | None of the other Arbor packages |
-| ArborACP | `1.0.0-rc.4` | `1.0.0` | RPC `~> 1.0.0-rc.3` |
-| ArborACP adapters | `1.0.0-rc.4` | `1.0.0` | ACP `~> 1.0.0-rc.4` and RPC `~> 1.0.0-rc.3` |
+| ArborMCP | `2.0.0-rc.7` | `2.0.0` | RPC `~> 1.0.0-rc.4` |
+| ArborRPC | `1.0.0-rc.4` | `1.0.0` | None of the other Arbor packages |
+| ArborACP | `1.0.0-rc.5` | `1.0.0` | RPC `~> 1.0.0-rc.4` |
+| ArborACP adapters | `1.0.0-rc.5` | `1.0.0` | ACP `~> 1.0.0-rc.5` and RPC `~> 1.0.0-rc.4` |
 
 A package's own version does not determine its dependency requirements. RC
 requirements explicitly include the tested dependency prerelease; stable
@@ -36,10 +36,10 @@ python3 scripts/prepare_release.py \
   --mcp-source /path/to/arbor_mcp \
   --acp-source /path/to/arbor_acp \
   --rpc-source /path/to/arbor_rpc \
-  --mcp-version 2.0.0-rc.6 \
-  --rpc-version 1.0.0-rc.3 \
-  --acp-version 1.0.0-rc.4 \
-  --adapters-version 1.0.0-rc.4 \
+  --mcp-version 2.0.0-rc.7 \
+  --rpc-version 1.0.0-rc.4 \
+  --acp-version 1.0.0-rc.5 \
+  --adapters-version 1.0.0-rc.5 \
   --output /path/to/new-release-preparation
 ```
 
@@ -73,10 +73,13 @@ requirements. ExDoc is excluded from consumer runtime dependencies.
 
 ArborRPC ships reviewed `c_src/subprocess_helper.c` and its Mix compiler. It
 excludes host-generated `priv/native` binaries; no prebuilt helper is promised.
-Source installation on macOS/Darwin and Linux requires a C17 compiler, including
-transitive installation through MCP or ACP for HTTP-only or BEAM-only use. `CC`
-selects one compiler executable, with fixed compiler arguments and no shell
-command. Assembled releases must include the helper built for their target;
+On macOS/Darwin and Linux the default native policy builds the helper when a
+C17 compiler is available; without one installation warns and continues, while
+native subprocess operations return `:native_helper_unavailable`. JSON-RPC,
+framing, HTTP-only and BEAM-only use remain available. Set `ARBOR_RPC_NATIVE=required`
+to require a native build, or `skip` to omit it. `CC` selects one compiler
+executable, with fixed compiler arguments and no shell command. Assembled releases
+that use native subprocesses must include the helper built for their target;
 runtime lookup uses installed `:code.priv_dir(:arbor_rpc)` and invokes no compiler.
 Windows native subprocess operations are explicitly unsupported. Other
 unsupported platforms also fail explicitly for subprocess opening; framing use
@@ -89,10 +92,10 @@ Run the four-package consumer against one archive per package:
 
 ```sh
 python3 scripts/check_archive_consumer.py /path/to/four-archives \
-  --expected-package-version arbor_mcp=2.0.0-rc.6 \
-  --expected-package-version arbor_rpc=1.0.0-rc.3 \
-  --expected-package-version arbor_acp=1.0.0-rc.4 \
-  --expected-package-version arbor_acp_adapters=1.0.0-rc.4 --report /path/to/qualification.json
+  --expected-package-version arbor_mcp=2.0.0-rc.7 \
+  --expected-package-version arbor_rpc=1.0.0-rc.4 \
+  --expected-package-version arbor_acp=1.0.0-rc.5 \
+  --expected-package-version arbor_acp_adapters=1.0.0-rc.5 --report /path/to/qualification.json
 ```
 
 It verifies Hex checksums, exact shipped source hashes, metadata/literal version
@@ -114,7 +117,7 @@ MCP and RPC commits. To associate those two archives with their exact sources:
 python3 scripts/check_archive_source_selection.py \
   --archives /path/to/mcp-and-rpc-archives \
   --mcp-source /path/to/arbor_mcp --rpc-source /path/to/arbor_rpc \
-  --version 2.0.0-rc.6 --rpc-version 1.0.0-rc.3 --output /path/to/source-selection.json
+  --version 2.0.0-rc.7 --rpc-version 1.0.0-rc.4 --output /path/to/source-selection.json
 ```
 
 RC publication enables downstream migration testing before stable qualification

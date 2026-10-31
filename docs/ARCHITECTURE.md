@@ -5,7 +5,7 @@ HTTP Plug integration, authorization, and internal protocol helpers. Public
 APIs stay small; cross-cutting work is kept at transport or Plug boundaries.
 
 Version 2 implements per-server runtime ownership and bounded callback
-scheduling across HTTP, stdio, BEAM and test transports. The source is available in the published `2.0.0-rc.6` candidate. Start with the [runtime guide](RUNTIME_GUIDE.md)
+scheduling across HTTP, stdio, BEAM and test transports. This source targets the `2.0.0-rc.7` candidate. Start with the [runtime guide](RUNTIME_GUIDE.md)
 for supervision, limits and shutdown, and the
 [migration guide](guides/MIGRATING_V1_TO_V2.md) for changes from ExMCP 1.x.
 

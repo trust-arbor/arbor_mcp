@@ -1,18 +1,18 @@
 # Testing the ArborMCP and ArborACP release candidates
 
-The current candidate train is published on Hex and uses independent version
-lines. The original four `2.0.0-rc.1` packages are retired; their archives and
+The current candidate train uses independent version lines. Versioned install
+examples and source links apply after matching Hex releases and tags are published. The original four `2.0.0-rc.1` packages are retired; their archives and
 tags remain available:
 
 | Package | Replacement candidate | First stable target |
 | --- | --- | --- |
-| ArborMCP (`arbor_mcp`) | `2.0.0-rc.6` | `2.0.0` |
-| ArborRPC (`arbor_rpc`) | `1.0.0-rc.3` | `1.0.0` |
-| ArborACP (`arbor_acp`) | `1.0.0-rc.4` | `1.0.0` |
-| ArborACP adapters (`arbor_acp_adapters`) | `1.0.0-rc.4` | `1.0.0` |
+| ArborMCP (`arbor_mcp`) | `2.0.0-rc.7` | `2.0.0` |
+| ArborRPC (`arbor_rpc`) | `1.0.0-rc.4` | `1.0.0` |
+| ArborACP (`arbor_acp`) | `1.0.0-rc.5` | `1.0.0` |
+| ArborACP adapters (`arbor_acp_adapters`) | `1.0.0-rc.5` | `1.0.0` |
 
-The versions below have been published and verified through ordinary Hex
-installation and assembled-release probes. Start with the
+The versions below are prepared for coordinated publication and verification
+through ordinary Hex installation and assembled-release probes. Start with the
 [v1-to-v2 migration guide](MIGRATING_V1_TO_V2.md). Stable qualification and the
 final continuous 48-hour soak remain incomplete.
 
@@ -24,16 +24,19 @@ needed for protocol output encoding and is independent of the Elixir version.
 For an MCP application, replace `ex_mcp` with:
 
 ```elixir
-{:arbor_mcp, "== 2.0.0-rc.6"}
+{:arbor_mcp, "== 2.0.0-rc.7"}
 ```
 
-ACP applications use `{:arbor_acp, "== 1.0.0-rc.4"}`. Add
-`{:arbor_acp_adapters, "== 1.0.0-rc.4"}` when using the bundled vendor adapters.
+ACP applications use `{:arbor_acp, "== 1.0.0-rc.5"}`. Add
+`{:arbor_acp_adapters, "== 1.0.0-rc.5"}` when using the bundled vendor adapters.
 `arbor_rpc` is transitive; declare it directly if your code calls `Arbor.RPC.*`.
 Exact versions make a downstream RC report reproducible. Commit the resulting
 lockfile, and use normal Hex resolution without the local package path overrides.
 
 ## Candidate scope and validation
+
+Use the owning tag’s CI, source-archive and publication receipts for the current
+payload. Earlier dated checkpoints below do not qualify later source changes.
 
 The package split, `Arbor.MCP.*` / `Arbor.ACP.*` namespaces, optional adapter
 bundle and full server runtime/scheduler redesign are included. Client/Server are
@@ -107,6 +110,21 @@ client's `logging/setLevel` no longer changes the host's global Logger level.
 Seven changes can break existing code; the "Upgrading from 2.0.0-rc.5" section
 below explains each.
 
+ArborMCP `2.0.0-rc.7` requires patched Bandit `>= 1.14.1` and replaces
+`2.0.0-rc.6` with request forwarding and
+manual MRTR controls, progress delivery, provider-owned authorization,
+validated runtime options, typed startup errors and corrected HTTP request
+retirement and tool-list cache ordering. Host/schema/JWT validation and
+pre-registered OAuth credential binding are hardened. It requires ArborRPC
+`~> 1.0.0-rc.4`.
+
+ArborACP and adapters `1.0.0-rc.5` include the ACP SDK 1.9 protocol-1
+MCP-over-ACP extension, asynchronous handler work and bounded drop notices.
+Claude uses managed session processes and private connection homes by default;
+Codex uses a private connection home and keeps canonical workspace bindings.
+Pi uses private child homes. Caller-owned homes are retained. See the owning
+package changelogs for compatibility options and the exact workspace rules.
+
 Earlier credential-free CLI lifecycle checks do not qualify live model turns.
 No completed continuous 48-hour final-candidate soak is claimed.
 
@@ -115,6 +133,26 @@ harness exceeded the documented request-ID capacity of one persistent MCP peer
 and expected a successful response. All three native child cleanup receipts
 were confirmed, but the MCP BEAM lane did not confirm its public cleanup path.
 The stable 48-hour qualification remains open.
+
+## Upgrading from 2.0.0-rc.6
+
+- Bandit users need `~> 1.14 and >= 1.14.1`; owned listeners qualify exact
+  Bandit `1.14.1` with Thousand Island `1.6.0`. Update explicit 1.14.0 pins.
+
+- Direct callers of `Authorization.JWT.validate_claims/2` and
+  `verify_and_validate/3` must provide the expected `:aud`; omission returns
+  `{:error, :missing_expected_audience}`. Signature-only verification is unchanged.
+- Pre-registered OAuth credentials require an exact `credential_issuer` binding.
+  Authentication providers own the Authorization header when configured.
+- Client startup errors retain structured reasons in their established error
+  envelopes. Update callers that previously matched their string representation.
+- Runtime constructors reject unknown option names. Configure `mrtr` and
+  `request_state` on the runtime so startup validates them consistently.
+- Tool arguments preserve a caller-provided string `"_meta"` entry on every
+  transport; request metadata is injected only when that entry is absent.
+
+The [changelog](../../CHANGELOG.md) records all changes and the transport-specific
+contracts. The next section retains the earlier rc.5-to-rc.6 migration guidance.
 
 ## Upgrading from 2.0.0-rc.5
 
@@ -246,13 +284,14 @@ is never asked:
 %{"message" => "Continue?", "requestedSchema" => %{"type" => "object", "properties" => %{}}}
 ```
 
-### Owned Bandit listeners need Bandit 1.14.0
+### Owned Bandit listeners need Bandit 1.14.1
 
-Bandit 1.14.0 fixes eleven HTTP/1, HTTP/2 and WebSocket advisories that are open
-against 1.13.1, so ArborMCP now requires Bandit `~> 1.14`. An owned Bandit
-listener qualifies exact Bandit `1.14.0` with Thousand Island `1.6.0`; with
+Bandit 1.14.1 fixes HTTP/2 request-body memory amplification and includes
+1.14.0's eleven HTTP/1, HTTP/2 and WebSocket fixes. ArborMCP now requires
+Bandit `~> 1.14 and >= 1.14.1`. An owned Bandit
+listener qualifies exact Bandit `1.14.1` with Thousand Island `1.6.0`; with
 the `1.13.1` pin, startup returns `:unsupported_owned_bandit_constructor`.
-Change the pin to `{:bandit, "== 1.14.0"}`. Bandit 1.14.0 also limits each
+Change the pin to `{:bandit, "== 1.14.1"}`. Bandit 1.14.1 also limits each
 HTTP/2 connection to 500 concurrent streams and 262,144 bytes of headers by
 default.
 
@@ -284,9 +323,11 @@ default.
   together, preserve the same output limits and do not establish v1 parity or
   real-application performance. BEAM delivery still uses native Erlang terms;
   JSON preparation validates protocol replies and frame size before state commit.
-- **Native installation:** macOS/Linux source installation requires a C17
-  compiler, including when `arbor_rpc` is only a transitive dependency. Assembled
-  releases include the built helper and need no runtime compiler. Native
+- **Native installation:** macOS/Linux source installation builds the RPC helper
+  when a C17 compiler is available. Without one, installation warns and continues;
+  HTTP/BEAM use remains available, while native subprocess operations return
+  `:native_helper_unavailable`. Releases using subprocesses must include the built
+  helper and need no runtime compiler. Native
   subprocess operations on Windows are unsupported.
 - **Adapters:** vendor executables and their credentials are host-managed.
   Fixture and transcript tests do not replace testing the actual vendor version

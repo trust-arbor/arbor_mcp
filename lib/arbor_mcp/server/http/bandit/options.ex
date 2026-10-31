@@ -20,7 +20,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-# HTTP option transformation adapted from Bandit 1.14.0, lib/bandit.ex.
+# HTTP option transformation adapted from Bandit 1.14.1, lib/bandit.ex.
 # TLS remains host-managed; the owned constructor fixes scheme: :http.
 defmodule Arbor.MCP.Server.HTTP.Bandit.Options do
   @moduledoc false

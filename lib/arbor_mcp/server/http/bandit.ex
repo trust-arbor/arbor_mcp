@@ -2,14 +2,14 @@ defmodule Arbor.MCP.Server.HTTP.Bandit do
   @moduledoc """
   Optional Bandit listener adapter.
 
-  Install `{:bandit, "~> 1.14"}` in the host application.
+  Install `{:bandit, "~> 1.14 and >= 1.14.1"}` in the host application.
   Listener options are passed to `Bandit.start_link/1`. The returned supervisor
   is linked to the caller and is stopped by PID. Ranch references apply only
   to Cowboy.
 
   This borrowed adapter uses Bandit's public constructor. A runtime that owns
   its listener (`transport: :http`) separately requires the qualified exact
-  Bandit 1.14.0 / Thousand Island 1.6.0 pair. Broader package dependency ranges
+  Bandit 1.14.1 / Thousand Island 1.6.0 pair. Broader package dependency ranges
   do not widen that owned constructor's support.
   """
 

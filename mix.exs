@@ -1,8 +1,8 @@
 defmodule Arbor.MCP.MixProject do
   use Mix.Project
 
-  @version "2.0.0-rc.6"
-  @rpc_requirement "~> 1.0.0-rc.3"
+  @version "2.0.0-rc.7"
+  @rpc_requirement "~> 1.0.0-rc.4"
   @github_url "https://github.com/trust-arbor/arbor_mcp"
 
   def project do
@@ -111,10 +111,11 @@ defmodule Arbor.MCP.MixProject do
       external_dep(:plug_cowboy, "~> 2.7", optional: true),
       # Host-managed listeners may resolve compatible backend releases. Owned
       # startup separately checks its qualified Bandit/Thousand Island ABI.
-      # 1.14.0 fixes the HTTP/1, HTTP/2 and WebSocket advisories published
-      # with it (EEF-CVE-2026-108525 and ten others), on top of 1.13.1's
+      # 1.14.1 also fixes the HTTP/2 tiny-DATA body memory advisory; it
+      # includes the HTTP/1, HTTP/2 and WebSocket fixes published
+      # in 1.14.0 (EEF-CVE-2026-108525 and ten others), on top of 1.13.1's
       # HTTP/1 authority, HTTP/2 blocked-send and Phoenix error-response fixes.
-      external_dep(:bandit, "~> 1.14", optional: true),
+      external_dep(:bandit, "~> 1.14 and >= 1.14.1", optional: true),
       external_dep(:thousand_island, "~> 1.6", optional: true),
       # Not used directly; declared so consumers resolve a cowlib that fixes
       # EEF-CVE-2026-43971 (Link header directive smuggling in cow_link),

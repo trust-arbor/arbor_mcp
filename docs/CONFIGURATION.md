@@ -1,7 +1,8 @@
 # ArborMCP Configuration Guide
 
 This guide covers MCP configuration in the v2 source candidate. The Runtime
-redesign is implemented and the RC is published; stable qualification remains open.
+redesign is implemented; stable qualification remains open. Versioned installation
+examples apply after the matching candidate is published.
 See the [runtime guide](RUNTIME_GUIDE.md) for supervision, scheduling and limits.
 
 ## Dependency
@@ -11,21 +12,24 @@ Install the published RC through Hex:
 ```elixir
 def deps do
   [
-    {:arbor_mcp, "== 2.0.0-rc.6"}
+    {:arbor_mcp, "== 2.0.0-rc.7"}
   ]
 end
 ```
 
-On macOS/Darwin and Linux, the transitive `arbor_rpc` source package requires a
-C17 compiler even for HTTP-only or BEAM-only use. `CC` selects one compiler
-executable. It ships C source rather than a prebuilt helper; assembled releases
-must include the built helper and do not invoke a runtime compiler. Windows
+On macOS/Darwin and Linux, the transitive `arbor_rpc` source package builds its
+helper when a C17 compiler is available. Without one, installation warns and
+continues; HTTP-only and BEAM-only use remain available, while native subprocess
+operations return `:native_helper_unavailable`. `ARBOR_RPC_NATIVE=required`
+requires the build; `skip` omits it. `CC` selects one compiler executable.
+Releases using native subprocesses must include the built helper and do not
+invoke a runtime compiler. Windows
 native subprocess operations are unsupported, while framing is separate. See
 the [source-install policy](RELEASING.md).
 
 For a standalone Cowboy HTTP server, add `{:plug_cowboy, "~> 2.7"}` and
 `{:ranch, "== 1.8.1"}` to the host dependencies. For an owned Bandit listener, pin
-`{:bandit, "== 1.14.0"}` and `{:thousand_island, "== 1.6.0"}`. Select Bandit
+`{:bandit, "== 1.14.1"}` and `{:thousand_island, "== 1.6.0"}`. Select Bandit
 with `http_adapter: :bandit`; Cowboy remains the default. HTTP clients and
 mounting `Arbor.MCP.HttpPlug` in an existing host need no additional listener.
 See the [HTTP listener guide](HTTP_LISTENERS.md).
