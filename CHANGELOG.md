@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A weekly and manually runnable advisory check for official MCP extension
+  source changes, with immutable baselines, repository discovery and review
+  reports. Initial observed revisions remain explicitly pending assessment.
+
 - A repo-only embedded forwarding example and HTTP integration tests covering
   namespaced tools, identity-scoped clients, interactive MRTR, progress,
   cancellation and tool-change notifications. It uses existing public APIs;

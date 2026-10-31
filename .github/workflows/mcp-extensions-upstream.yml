@@ -1,0 +1,49 @@
+name: MCP extensions upstream
+
+on:
+  schedule:
+    - cron: '13 14 * * 3'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/mcp-extensions-upstream.yml'
+      - 'scripts/check_mcp_extensions.py'
+      - 'scripts/mcp_extensions_baseline.json'
+      - 'scripts/tests/test_mcp_extensions.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-extensions-upstream-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  extensions:
+    name: Official MCP extension source drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Test the source checker without network access
+        run: python3 -B -m unittest discover -s scripts/tests -p test_mcp_extensions.py -v
+      - name: Compare official sources with recorded baselines
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/check_mcp_extensions.py
+      - name: Publish the report in the job summary
+        if: always()
+        run: |
+          if [ -f tmp/mcp-extensions/report.md ]; then
+            cat tmp/mcp-extensions/report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Preserve the extension source report
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: mcp-extension-source-report
+          path: tmp/mcp-extensions/
+          if-no-files-found: error
+          retention-days: 90
