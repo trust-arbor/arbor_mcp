@@ -78,7 +78,7 @@
           "requirements": [
             "TASKS.LIFECYCLE"
           ],
-          "disposition": "context; no additional wire method or required reservation"
+          "disposition": "Context and implementation guidance; no additional required wire method."
         },
         "Error Handling": {
           "requirements": [
@@ -91,9 +91,9 @@
         },
         "Reservations": {
           "requirements": [
-            "TASKS.LIFECYCLE"
+            "TASKS.NEGOTIATION"
           ],
-          "disposition": "context; no additional wire method or required reservation"
+          "disposition": "Reserved task method/notification namespaces, task result discriminator and extension identifier are used by the negotiated extension surface."
         },
         "Security Considerations": {
           "requirements": [
@@ -106,7 +106,7 @@
           "requirements": [
             "TASKS.LIFECYCLE"
           ],
-          "disposition": "context; no additional wire method or required reservation"
+          "disposition": "Context and implementation guidance; no additional required wire method."
         }
       },
       "local": "docs/mcp-specs/2026-07-28/extensions/tasks.md"
