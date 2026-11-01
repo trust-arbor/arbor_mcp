@@ -1,0 +1,19 @@
+{
+  "reviews": {
+    "e0e54ee67855f17398a19bd7c901f6c2c2ba6a65f7ac63db67626a99d40f5cba": {
+      "change": {
+        "kind": "newer_published",
+        "package": "@modelcontextprotocol/server-everything",
+        "pin": "2.0.1",
+        "published_at": "2026-10-28T21:07:22.285Z",
+        "version": "2.1.0"
+      },
+      "decision": "Review and qualify the 2.1.0 Everything test peer separately. Current core interop remains pinned to qualified 2.0.1; no dependency pin is advanced by monitoring. This is a test-peer update, not evidence of a required Arbor protocol change.",
+      "id": "UPSTREAM-2026-11-01-001",
+      "requirement_ids": [],
+      "source_url": "https://www.npmjs.com/package/@modelcontextprotocol/server-everything/v/2.1.0",
+      "status": "open"
+    }
+  },
+  "version": 1
+}

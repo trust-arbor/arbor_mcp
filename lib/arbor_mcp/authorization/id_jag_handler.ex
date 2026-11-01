@@ -27,6 +27,8 @@ defmodule Arbor.MCP.Authorization.IdJagHandler do
       Each IdP config should have `:jwks_uri` or `:jwks` (list of JWKs)
     - `:jwks_cache` - Optional cache (map of issuer -> JWKs) for performance
     - `:max_lifetime` - Maximum ID-JAG lifetime (default: 600)
+    - `:resource_policy` - `:required` (default) or `:if_present`. The host must
+      still enforce resource-restricted issuance if the claim is absent.
   """
   @spec handle_grant(keyword()) :: {:ok, map()} | {:error, term()}
   def handle_grant(opts) do
@@ -46,7 +48,8 @@ defmodule Arbor.MCP.Authorization.IdJagHandler do
              idp_keys: idp_keys,
              expected_audience: expected_audience,
              expected_resource: expected_resource,
-             max_lifetime: max_lifetime
+             max_lifetime: max_lifetime,
+             resource_policy: Keyword.get(opts, :resource_policy, :required)
            ) do
       {:ok,
        %{

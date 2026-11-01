@@ -124,6 +124,7 @@ defmodule Arbor.MCP.Authorization.AuthorizationServerMetadata do
       :scopes_supported,
       :response_types_supported,
       :grant_types_supported,
+      :authorization_grant_profiles_supported,
       :code_challenge_methods_supported,
       :introspection_endpoint,
       :revocation_endpoint,

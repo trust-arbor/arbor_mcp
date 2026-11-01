@@ -1,0 +1,107 @@
+# MCP implementation assurance
+
+ArborMCP uses requirement contracts, pinned official conformance and independent
+interop together. A successful harness run alone does not establish complete
+implementation of a specification. The [feature matrix](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md)
+describes supported behavior; the generated [requirement evidence](MCP_REQUIREMENTS.md)
+records the narrower claims and named tests behind it.
+
+Run the commands below from a repository checkout. The assurance tooling and
+test peers are intentionally excluded from Hex packages.
+
+## Requirement review
+
+`scripts/mcp_requirements.json` records immutable sources, sections, roles,
+profiles, implementation locations, evidence cases and limitations. Review
+normative prose, schemas and incorporated references together. Requirements can
+be expressed without uppercase MUST/SHOULD words, so keyword extraction is not a
+complete inventory. Optional features acquire obligations when adopted.
+
+Keep client, MCP server, IdP, authorization-server and host responsibilities
+separate. Initial SSO, enterprise policy, tenant mappings, replay storage and
+access-token issuance are not supplied by a JWT validation helper. Record an
+unimplemented or host-owned obligation explicitly rather than counting a nearby
+passing test as its implementation.
+
+The initial register covers Auth and named Tasks regressions. Core and inherited
+OAuth/RFC clause inventories remain explicitly pending or partial. This prevents
+a full-specification claim while those inventories are expanded and reviewed.
+
+## Executable evidence
+
+Each registered case names an assertion and its file. ExUnit tests carry matching
+`:assurance` labels. The formatter records actual test completion; the checker
+rejects missing labels, unknown or duplicate cases, skipped/failed tests,
+unexpected files and reports collected from different implementation inputs.
+An implemented row requires code and executable evidence definitions. Definitions
+alone are not passing results: CI retains the execution artifact separately.
+
+```sh
+python3 -B -m unittest discover -s scripts/tests -p 'test_mcp_*.py' -v
+python3 -B scripts/check_mcp_assurance.py --run
+```
+
+After a reviewed register change, regenerate its public report:
+
+```sh
+python3 -B scripts/check_mcp_assurance.py --write-docs
+```
+
+Tests should exercise positive behavior and forbidden alternatives: an invalid
+issuer must not receive credentials; a malformed exchange result must not reach
+the next token endpoint; rejected input must not advance stored state. When
+fixing a defect, first demonstrate that the regression fails on the old behavior.
+Tags and assertions still need human review: a label cannot establish that its
+test faithfully implements the normative requirement.
+
+## Independent interoperability
+
+Install the locked peers with Node.js 24 or newer, then execute their evidence:
+
+```sh
+npm ci --prefix test/interop --ignore-scripts --no-audit --no-fund
+python3 -B scripts/check_mcp_assurance.py --run --kind independent_fixture --kind interop --output tmp/mcp-assurance/interop.json
+```
+
+The independent Node OAuth fixture uses locked `jose` cryptography to verify
+client assertions, issuer/audience/client bindings, expiry and assertion IDs.
+It issues and verifies ID-JAGs and resource access tokens. Both orchestrators
+exercise OIDC, refresh-token and SAML-transition inputs against it. Its SAML
+subject is an opaque test token; it does not validate XML, run a SAML SSO service
+or qualify a vendor IdP. It is labelled `independent_fixture` accordingly.
+
+The pinned TypeScript SDK 2.4.0 lane uses its Basic/JWT client-credentials
+providers and OIDC enterprise helpers against Elixir HTTP peers. Arbor validates
+SDK assertions and grants and issues the ID-JAG consumed by the SDK helper.
+HTTPS identities map explicitly to a loopback fixture transport. These are Auth
+helper interoperability tests, separate from the existing core MCP transport
+lanes. SDK SAML, refresh-subject and confidential IdP JWT qualification is not
+claimed by this lane. Qualify a peer's actual capabilities before adding a claim.
+
+## Official conformance and drift
+
+The official harness and SDK versions remain pinned in PR/release CI. Run the
+extension gate independently of core conformance:
+
+```sh
+./scripts/conformance.sh extensions
+```
+
+`scripts/mcp_extension_checks.json` records the reviewed check inventory. The
+execution checker rejects missing/new checks, failures, warnings and unreviewed
+skips, even if the harness exits successfully. Its one permitted upstream Tasks
+notification stub is visible and does not count as notification qualification.
+Informational wire traces never count as assertion passes.
+
+The harness's `--requirements` mode is a release-frozen scenario set, not an
+exhaustive normative inventory. Extension scenarios are unscored there. Keep our
+strict extension gate and local contracts even when running that mode.
+
+The [upstream monitors](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/EXTENSION_SYNC.md) compare core prose/schemas, extension
+sources, SDK/harness releases and the complete available scenario inventory.
+Collection errors fail; source drift produces reviewable reports with stable
+deduplication keys. Review each change as editorial, inapplicable or behaviorally
+relevant, update affected requirements/tests, then advance pins in a reviewed
+PR. The read-only workflows never acknowledge a change or upgrade a dependency
+automatically. Artifact retention is finite; committed pins, requirement records
+and `scripts/mcp_upstream_reviews.json` provide the durable review history.

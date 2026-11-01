@@ -101,7 +101,28 @@ class ExtensionCheckTest(unittest.TestCase):
         for path in ["src/index.ts", "package-lock.json", "examples/demo/schema.ts", ".github/test.yml"]:
             self.assertFalse(CHECK.watched(TASKS, path), path)
         self.assertTrue(CHECK.watched(CATALOG, "docs/extensions/new-extension/overview.mdx"))
-        self.assertFalse(CHECK.watched(CATALOG, "docs/specification/draft/server/tools.mdx"))
+        for path in ["docs/specification/draft/server/tools.mdx",
+                     "docs/specification/2026-07-28/basic/authorization.mdx",
+                     "schema/2026-07-28/schema.ts", "schema/2027-01-01/schema.json"]:
+            self.assertTrue(CHECK.watched(CATALOG, path), path)
+
+    def test_review_keys_deduplicate_repeated_observations(self):
+        client = FakeGitHub([CATALOG], {(CATALOG, OLD): {}, (CATALOG, NEW): {"schema/new.json": NEW}})
+        first = CHECK.compare(client, {CATALOG: entry()})["sources"][0]["review_key"]
+        repeated = CHECK.compare(client, {CATALOG: entry()})["sources"][0]["review_key"]
+        self.assertEqual(first, repeated)
+        client.contents[CATALOG, NEW]["schema/another.json"] = NEW
+        self.assertNotEqual(first, CHECK.compare(client, {CATALOG: entry()})["sources"][0]["review_key"])
+
+    def test_review_key_tracks_source_content_not_unrelated_commit_movement(self):
+        client = FakeGitHub([CATALOG], {(CATALOG, OLD): {}, (CATALOG, NEW): {"schema/new.json": NEW}})
+        first = CHECK.compare(client, {CATALOG: entry()})["sources"][0]["review_key"]
+        later = "c" * 40
+        client.contents[CATALOG, later] = dict(client.contents[CATALOG, NEW])
+        client.head = lambda _repo, _branch: later
+        self.assertEqual(first, CHECK.compare(client, {CATALOG: entry()})["sources"][0]["review_key"])
+        client.contents[CATALOG, later]["schema/new.json"] = later
+        self.assertNotEqual(first, CHECK.compare(client, {CATALOG: entry()})["sources"][0]["review_key"])
 
     def test_archiving_a_repository_is_reported_even_without_file_changes(self):
         client = FakeGitHub([CATALOG], {(CATALOG, OLD): {}, (CATALOG, NEW): {}})

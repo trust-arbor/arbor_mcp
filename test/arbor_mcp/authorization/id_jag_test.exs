@@ -76,6 +76,7 @@ defmodule Arbor.MCP.Authorization.IdJagTest do
   end
 
   describe "validate/2" do
+    @tag assurance: ["idjag.valid"]
     test "validates a valid ID-JAG", %{idp_key: idp_key, idp_public: idp_public} do
       assert {:ok, token} =
                IdJag.create(
@@ -97,6 +98,7 @@ defmodule Arbor.MCP.Authorization.IdJagTest do
       assert claims["sub"] == "user123"
     end
 
+    @tag assurance: ["idjag.audience"]
     test "rejects ID-JAG with wrong audience", %{idp_key: idp_key, idp_public: idp_public} do
       assert {:ok, token} =
                IdJag.create(
@@ -116,6 +118,7 @@ defmodule Arbor.MCP.Authorization.IdJagTest do
                )
     end
 
+    @tag assurance: ["idjag.resource"]
     test "rejects ID-JAG with wrong resource", %{idp_key: idp_key, idp_public: idp_public} do
       assert {:ok, token} =
                IdJag.create(
@@ -135,6 +138,7 @@ defmodule Arbor.MCP.Authorization.IdJagTest do
                )
     end
 
+    @tag assurance: ["idjag.signature"]
     test "rejects ID-JAG with wrong signing key", %{idp_key: idp_key} do
       other_key = JWT.generate_rsa_key(size: 2048)
       other_public = JWT.to_public_key(other_key)
@@ -157,6 +161,7 @@ defmodule Arbor.MCP.Authorization.IdJagTest do
                )
     end
 
+    @tag assurance: ["idjag.expiry"]
     test "rejects expired ID-JAG", %{idp_key: idp_key, idp_public: idp_public} do
       # Create ID-JAG with 0 lifetime (already expired)
       now = System.system_time(:second)

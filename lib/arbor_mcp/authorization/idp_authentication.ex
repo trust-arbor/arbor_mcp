@@ -25,14 +25,15 @@ defmodule Arbor.MCP.Authorization.IdPAuthentication do
          endpoint = metadata["token_endpoint"],
          :ok <- match_legacy(config, :idp_token_endpoint, endpoint),
          :ok <- validate_method(metadata, auth.auth_method),
-         {:ok, credentials} <- credentials(auth, metadata, endpoint),
+         {:ok, credentials} <-
+           credentials(auth, metadata, config[:client_assertion_audience] || endpoint),
          {:ok, options} <- request_options(config, auth.auth_method) do
       body = Enum.reject(body, fn {key, _value} -> key in @credential_keys end)
       HTTPClient.make_token_request(endpoint, body ++ credentials, options)
     end
   end
 
-  defp validate_config(auth) when is_map(auth) do
+  def validate_config(auth) when is_map(auth) do
     cond do
       Map.keys(auth) -- @config_keys != [] -> invalid(:unknown_option)
       not nonempty_string?(auth[:issuer]) -> invalid(:issuer)
@@ -41,7 +42,7 @@ defmodule Arbor.MCP.Authorization.IdPAuthentication do
     end
   end
 
-  defp validate_config(_auth), do: invalid(:config)
+  def validate_config(_auth), do: invalid(:config)
 
   defp validate_credentials(%{auth_method: method} = auth)
        when method in [:client_secret_basic, :client_secret_post] do

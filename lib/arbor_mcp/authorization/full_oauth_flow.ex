@@ -45,6 +45,14 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
   apply to `Arbor.MCP.Authorization.EnterpriseFlow`, which accepts `:id_token`
   instead of `:idp_id_token` and keeps its existing public-client AS grant.
 
+  Both enterprise flows also accept optional `:as_auth`, using the same map
+  fields for a separate issuer-bound resource-AS registration. The default
+  AS behavior is retained when absent. `:idp_subject` can supply
+  `%{type: :id_token | :refresh_token | :saml2, token: token}` instead of the
+  legacy ID-token input. SAML exchanges require `:idp_auth` and first obtain
+  a refresh token. Initial SSO and IdP validation remain host responsibilities.
+  See the configuration guide and requirement evidence for profile limits.
+
   ## Usage
 
       {:ok, token} = FullOAuthFlow.execute(%{
@@ -67,16 +75,19 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
 
   alias Arbor.MCP.Authorization.{
     ClientAssertion,
+    ClientCredentialsPolicy,
     ClientRegistration,
     CredentialStore,
+    EnterpriseMetadata,
+    EnterpriseSubject,
     HTTPClient,
-    IdPAuthentication,
     Issuer,
     MetadataFetcher,
     OAuthFlow,
     OAuthTransactionStore,
     OIDCDiscovery,
     RegistrationPolicy,
+    ResourceASAuthentication,
     SecureHTTP
   }
 
@@ -112,6 +123,11 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
           optional(:idp_token_endpoint) => String.t(),
           optional(:idp_client_id) => String.t(),
           optional(:idp_auth) => idp_auth() | nil,
+          optional(:as_auth) => idp_auth() | nil,
+          optional(:idp_subject) => %{
+            type: :id_token | :refresh_token | :saml2,
+            token: String.t()
+          },
           optional(:scopes) => [String.t()],
           optional(:resource) => String.t() | [String.t()],
           optional(:http_client) => module() | function(),
@@ -180,6 +196,7 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
       with {:ok, prm} <- discover_resource_metadata(config),
            :ok <- validate_prm_resource(prm, config),
            {:ok, as_metadata} <- discover_as_metadata(prm, config),
+           :ok <- validate_grant_selection(as_metadata, config),
            {:ok, client_info} <- ensure_client_registered(as_metadata, config) do
         config = apply_discovered_prm(config, prm)
         run_and_persist_token(as_metadata, client_info, config)
@@ -230,16 +247,18 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
     grant_types = as_metadata["grant_types_supported"] || []
     supports_auth_code = "authorization_code" in grant_types or grant_types == []
     supports_client_creds = "client_credentials" in grant_types
-    supports_jwt_bearer = @jwt_bearer_grant in grant_types
 
-    has_preexisting_creds =
-      client_info[:registration_method] == :pre_registered and
-        is_binary(client_info[:client_secret])
+    supports_jwt_bearer = supports_id_jag?(as_metadata)
+    enterprise_subject? = enterprise_subject?(config)
+    has_preexisting_creds = pre_registered_credentials?(client_info, config)
 
     cond do
-      supports_jwt_bearer and config[:idp_id_token] ->
+      supports_jwt_bearer and enterprise_subject? ->
         # Cross-app access: exchange IdP token for ID-JAG, then JWT bearer grant
         run_cross_app_flow(as_metadata, client_info, config)
+
+      enterprise_subject? ->
+        {:error, :id_jag_profile_not_supported}
 
       supports_client_creds and not supports_auth_code ->
         # Server only supports client_credentials — must use it
@@ -254,6 +273,29 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
         run_auth_code_flow(as_metadata, client_info, config)
     end
   end
+
+  defp supports_id_jag?(metadata) do
+    supports_jwt_grant?(metadata) and EnterpriseMetadata.validate(metadata) == :ok
+  end
+
+  defp supports_jwt_grant?(metadata) do
+    grants = metadata["grant_types_supported"]
+    is_list(grants) and @jwt_bearer_grant in grants
+  end
+
+  defp validate_grant_selection(metadata, config) do
+    if enterprise_subject?(config) and not supports_id_jag?(metadata),
+      do: {:error, :id_jag_profile_not_supported},
+      else: :ok
+  end
+
+  defp enterprise_subject?(config),
+    do: not is_nil(config[:idp_id_token]) or not is_nil(config[:idp_subject])
+
+  defp pre_registered_credentials?(info, config),
+    do:
+      info[:registration_method] == :pre_registered and
+        (usable_secret?(info[:client_secret]) or not is_nil(config[:private_key]))
 
   defp discover_resource_metadata(config) do
     fetch_opts = metadata_fetch_options(config)
@@ -552,16 +594,34 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
   end
 
   # Step 3: Select pre-registration, configured CIMD, or deprecated DCR.
+  defp ensure_client_registered(as_metadata, %{as_auth: auth} = config) when not is_nil(auth),
+    do: ResourceASAuthentication.client_info(as_metadata, config)
+
   defp ensure_client_registered(as_metadata, config) do
-    case RegistrationPolicy.select(as_metadata, config) do
-      {:ok, {:pre_registered, client_info}} ->
+    with {:ok, selection} <- RegistrationPolicy.select(as_metadata, config),
+         :ok <- validate_grant_registration(selection, as_metadata, config) do
+      register_selection(selection, as_metadata, config)
+    end
+  end
+
+  defp validate_grant_registration({:pre_registered, _info}, _metadata, _config), do: :ok
+
+  defp validate_grant_registration(_selection, metadata, config) do
+    if ClientCredentialsPolicy.only_grant?(metadata) and not enterprise_subject?(config),
+      do: {:error, :client_credentials_requires_pre_registered_client},
+      else: :ok
+  end
+
+  defp register_selection(selection, as_metadata, config) do
+    case selection do
+      {:pre_registered, client_info} ->
         {:ok, client_info}
 
-      {:ok, {:cimd, client_info}} ->
+      {:cimd, client_info} ->
         Logger.info("Using configured Client ID Metadata Document")
         {:ok, client_info}
 
-      {:ok, {:dynamic, selection}} ->
+      {:dynamic, selection} ->
         case load_persisted_registration(as_metadata, config) do
           {:ok, registration} ->
             Logger.info("Using persisted issuer-bound OAuth client registration")
@@ -573,9 +633,6 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
           {:error, _reason} = error ->
             error
         end
-
-      {:error, _reason} = error ->
-        error
     end
   end
 
@@ -808,7 +865,7 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
       {:error, :missing_token_endpoint}
     else
       supported_methods =
-        as_metadata["token_endpoint_auth_methods_supported"] || ["client_secret_post"]
+        as_metadata["token_endpoint_auth_methods_supported"] || ["client_secret_basic"]
 
       # Pass token_endpoint and issuer into config for JWT audience.
       # Per MCP ext-auth, the JWT aud claim should be the issuer URL.
@@ -819,6 +876,12 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
       result =
         with {:ok, token_auth_method} <-
                select_token_auth_method(supported_methods, client_info, config),
+             :ok <-
+               ClientCredentialsPolicy.validate_auth(
+                 token_auth_method,
+                 as_metadata,
+                 config[:signing_algorithm] || "ES256"
+               ),
              :ok <- log_token_auth_method("client_credentials", token_auth_method),
              {:ok, body} <-
                build_client_credentials_body(client_info, config, token_auth_method) do
@@ -848,31 +911,16 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
   # 2. Present the ID-JAG to the AS via JWT bearer grant
   defp run_cross_app_flow(as_metadata, client_info, config) do
     token_endpoint = as_metadata["token_endpoint"]
-    idp_token_endpoint = config[:idp_token_endpoint]
-    id_token = config[:idp_id_token]
     resource = config[:resource] || config[:resource_url]
 
     Logger.info("Running cross-app access flow (token exchange → JWT bearer)")
 
-    # Step 1: Exchange ID token for ID-JAG at IdP
-    exchange_body = [
-      {"grant_type", "urn:ietf:params:oauth:grant-type:token-exchange"},
-      {"subject_token", id_token},
-      {"subject_token_type", "urn:ietf:params:oauth:token-type:id_token"},
-      {"requested_token_type", "urn:ietf:params:oauth:token-type:id-jag"},
-      {"audience", as_metadata["issuer"] || token_endpoint},
-      {"resource", resource}
-    ]
-
-    # Keep the legacy public-client ID; authenticated exchanges supply their own ID.
-    exchange_body =
-      if config[:idp_client_id] do
-        exchange_body ++ [{"client_id", config[:idp_client_id]}]
-      else
-        exchange_body
-      end
-
-    case exchange_at_idp(idp_token_endpoint, exchange_body, config) do
+    case EnterpriseSubject.exchange(
+           config,
+           :idp_id_token,
+           as_metadata["issuer"],
+           config[:idp_client_id]
+         ) do
       {:ok, exchange_result} ->
         id_jag = exchange_result[:access_token] || exchange_result["access_token"]
 
@@ -891,7 +939,13 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
         auth_method =
           if client_info[:client_secret], do: :client_secret_basic, else: :none
 
-        case HTTPClient.make_token_request(token_endpoint, bearer_body, auth_method: auth_method) do
+        result =
+          if config[:as_auth],
+            do: ResourceASAuthentication.exchange(bearer_body, as_metadata, config),
+            else:
+              HTTPClient.make_token_request(token_endpoint, bearer_body, auth_method: auth_method)
+
+        case result do
           {:ok, token_data} ->
             :telemetry.execute(
               [:arbor_mcp, :auth, :token, :obtained],
@@ -910,12 +964,6 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
     end
   end
 
-  defp exchange_at_idp(_endpoint, body, %{idp_auth: auth} = config) when not is_nil(auth),
-    do: IdPAuthentication.exchange(body, config)
-
-  defp exchange_at_idp(endpoint, body, _config),
-    do: HTTPClient.make_token_request(endpoint, body, auth_method: :none)
-
   defp build_client_credentials_body(client_info, config, :private_key_jwt) do
     # JWT-based client authentication for client_credentials grant
     token_endpoint = config[:token_endpoint] || ""
@@ -926,13 +974,18 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
            client_id: client_info.client_id,
            token_endpoint: token_endpoint,
            private_key: private_key,
-           alg: alg
+           alg: alg,
+           kid: config[:key_id] || client_info[:key_id]
          ) do
       {:ok, assertion_params} ->
         resource = config[:resource] || config[:resource_url] || ""
 
         body =
-          [{"grant_type", "client_credentials"}, {"resource", resource}]
+          [
+            {"grant_type", "client_credentials"},
+            {"resource", resource},
+            {"scope", client_credentials_scope(config)}
+          ]
           |> Enum.concat(assertion_params)
           |> Enum.reject(fn {_, v} -> is_nil(v) or v == "" end)
 
@@ -949,12 +1002,15 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
         grant_type: "client_credentials",
         client_id: client_info.client_id,
         client_secret: Map.get(client_info, :client_secret),
-        resource: config[:resource] || config[:resource_url]
+        resource: config[:resource] || config[:resource_url],
+        scope: client_credentials_scope(config)
       ]
-      |> Enum.reject(fn {_, v} -> is_nil(v) end)
+      |> Enum.reject(fn {_, v} -> is_nil(v) or v == "" end)
 
     {:ok, body}
   end
+
+  defp client_credentials_scope(config), do: Enum.join(config[:scopes] || [], " ")
 
   # Step 4b: Run authorization code flow with PKCE
   defp run_auth_code_flow(as_metadata, client_info, config) do
@@ -1149,10 +1205,10 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
       "private_key_jwt" in supported and not is_nil(private_key) ->
         {:ok, :private_key_jwt}
 
-      "client_secret_basic" in supported and is_binary(client_secret) ->
+      "client_secret_basic" in supported and usable_secret?(client_secret) ->
         {:ok, :client_secret_basic}
 
-      "client_secret_post" in supported and is_binary(client_secret) ->
+      "client_secret_post" in supported and usable_secret?(client_secret) ->
         {:ok, :client_secret_post}
 
       "none" in supported ->
@@ -1165,6 +1221,8 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
 
   defp select_token_auth_method(_supported, _client_info, _config),
     do: {:error, :invalid_token_auth_methods}
+
+  defp usable_secret?(secret), do: is_binary(secret) and byte_size(secret) > 0
 
   defp log_token_auth_method(flow, token_auth_method) do
     Logger.info("Using #{flow} flow with #{token_auth_method} auth")

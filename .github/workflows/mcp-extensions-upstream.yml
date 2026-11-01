@@ -10,6 +10,10 @@ on:
       - 'scripts/check_mcp_extensions.py'
       - 'scripts/mcp_extensions_baseline.json'
       - 'scripts/tests/test_mcp_extensions.py'
+      - 'scripts/check_mcp_tooling.py'
+      - 'scripts/mcp_tooling_baseline.json'
+      - 'scripts/mcp_upstream_reviews.json'
+      - 'scripts/tests/test_mcp_tooling.py'
 
 permissions:
   contents: read
@@ -20,7 +24,7 @@ concurrency:
 
 jobs:
   extensions:
-    name: Official MCP extension source drift
+    name: Official MCP core and extension source drift
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -28,7 +32,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Test the source checker without network access
-        run: python3 -B -m unittest discover -s scripts/tests -p test_mcp_extensions.py -v
+        run: |
+          python3 -B -m unittest discover -s scripts/tests -p test_mcp_extensions.py -v
+          python3 -B -m unittest discover -s scripts/tests -p test_mcp_tooling.py -v
       - name: Compare official sources with recorded baselines
         env:
           GITHUB_TOKEN: ${{ github.token }}

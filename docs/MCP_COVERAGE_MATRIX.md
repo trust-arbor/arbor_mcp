@@ -143,12 +143,15 @@ in the [features guide](FEATURES.md).
 The pinned upstream revisions and implementation-scope assessment are in the
 [baseline review](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md).
 An acknowledged source baseline does not imply that its protocol is implemented.
+The [assurance process](MCP_ASSURANCE.md) and generated
+[requirement evidence](MCP_REQUIREMENTS.md) separate source inventory, scoped
+implementation, executable contracts and independently qualified peer behavior.
 
 | Extension | Published target / maturity | ArborMCP support | Coverage |
 |---|---|---|---|
 | Tasks (`io.modelcontextprotocol/tasks`) | `2026-07-28`, Beta | ✅ Opt-in client/server methods, bounded node-local store, input rounds, cooperative cancellation and notifications. Peer TTLs may be null; the bundled store retains a finite TTL policy. | `tasks/`, `client/modern_result_validation_test.exs`, `transport/http_request_headers_test.exs`, `client/modern_http_subscription_test.exs`; official Tasks server scenarios below. |
-| OAuth Client Credentials | `2026-07-28`, Stable | ✅ Client flows for Basic, body credentials and JWT assertions, including issuer-bound discovery. | `authorization/discovery_flow_auth_methods_test.exs`, `authorization/client_assertion_test.exs`, `authorization/oauth_flow_test.exs`; official Basic/JWT client scenarios below. |
-| Enterprise-Managed Authorization | `2026-07-28`, Stable | ⚠️ ID-JAG exchange supports public clients or separate issuer-bound IdP Basic/POST/JWT credentials via `:idp_auth`. Hosts acquire the initial ID token. Resource AS grants retain their documented scope: public clients in `EnterpriseFlow`, public or Basic in `FullOAuthFlow`. | `authorization/enterprise_idp_auth_test.exs`, `authorization/enterprise_flow_test.exs`, `authorization/token_exchange_test.exs`, `authorization/id_jag_test.exs`, `authorization/id_jag_handler_test.exs`; official enterprise client scenario below. |
+| OAuth Client Credentials | `2026-07-28`, Stable | ⚠️ Implemented client profiles: pre-registered Basic/body credentials and JWT, issuer binding, advertised JWT algorithms, no DCR or anonymous fallback. Complete inherited requirement inventory remains pending. | Named contract cases, verifying Node OAuth peer, pinned SDK Auth helpers and official Basic/JWT scenarios; see [requirement evidence](MCP_REQUIREMENTS.md). |
+| Enterprise-Managed Authorization | `2026-07-28`, Stable | ⚠️ OIDC, refresh-token and SAML-to-refresh-token client inputs; separate optional issuer-bound IdP and resource-AS Basic/POST/JWT credentials. Opt-in resource omission retains strict defaults. Initial SSO, IdP policy and AS issuance/replay/tenant policy remain host-owned. | Contract tests, both orchestrators against a verifying independent peer, SDK OIDC helper interop and official public-IdP scenario; [requirement evidence](MCP_REQUIREMENTS.md) separates implemented, tested, interop and host scope. |
 | Apps | `2026-01-26`, Stable | — No built-in or qualified Apps integration. | Generic tools/resources/metadata are building blocks, not an Apps qualification. |
 | Skills | Beta | — Skills methods, manifests and host loading semantics are not implemented. | No extension conformance claim. |
 | Server Cards | Beta | — Card publication and card-based discovery are not implemented. | No extension conformance claim. |
@@ -191,7 +194,9 @@ official-harness scenarios or vendor certifications. See
 [IdP configuration](CONFIGURATION.md#enterprise-idp-client-authentication).
 
 The TypeScript SDK v2 interop lanes above currently exercise core MCP. They do
-not provide a separate SDK-extension qualification for Tasks or Auth. The explicit
+not provide a separate SDK-extension qualification for Tasks. Auth helpers have
+the additional scoped interop described in the requirement evidence; this is not
+a certification of a complete OAuth authorization server. The explicit
 extension harness run supplies independent wire peers for the roles shown here;
 local suites cover additional library paths and documented limits.
 

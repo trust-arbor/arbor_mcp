@@ -315,9 +315,68 @@ must agree; otherwise `:idp_token_endpoint` is discovered and can be omitted.
 The existing metadata policy below applies to IdP discovery as well. Hardened
 IdP token requests use `:oauth_http` options and reject redirects. The caller
 remains responsible for acquiring the ID token using the same IdP registration.
+
+### Enterprise resource-AS authentication and subject tokens
+
+Both orchestrators accept optional `:as_auth` with the same map fields and
+methods as `:idp_auth`. It describes a separate registration at the resource
+authorization server. Its issuer, client ID and any configured AS endpoint must
+match discovery and existing identifiers. The chosen method and signing
+algorithm must agree with AS metadata. A JWT client assertion targets the AS
+issuer; it is distinct from the ID-JAG carried in the grant's `assertion` field.
+Neither leg borrows credentials from the other. Existing AS behavior is retained
+when `:as_auth` is absent. Conflicting registration strategies fail; a configured
+CIMD strategy can use JWT authentication with the same metadata-document ID.
+
+```elixir
+Arbor.MCP.Authorization.EnterpriseFlow.execute(%{
+  as_issuer: "https://resource-as.example",
+  resource_url: "https://mcp.example/mcp",
+  idp_subject: %{type: :refresh_token, token: idp_refresh_token},
+  idp_auth: idp_auth,
+  as_auth: %{
+    issuer: "https://resource-as.example",
+    client_id: "app-at-resource-as",
+    auth_method: :private_key_jwt,
+    private_key: resource_as_key,
+    signing_algorithm: "ES256"
+  }
+})
+```
+
+`:idp_subject` selects `:id_token`, `:refresh_token` or `:saml2` with a nonempty
+`:token`. Existing `:id_token` (`EnterpriseFlow`) and `:idp_id_token`
+(`FullOAuthFlow`) remain accepted; conflicting subject inputs fail. SAML input
+requires `:idp_auth`: the orchestrator requests a refresh token using
+`openid offline_access`, then exchanges that refresh token for an ID-JAG.
+The host supplies the SAML assertion in its RFC 8693 representation; the IdP
+validates its signature, audience-to-client mapping and enterprise policy.
+The library does not provide an initial SAML login or XML validation service.
+
+`FullOAuthFlow` recognizes `authorization_grant_profiles_supported` with
+`urn:ietf:params:oauth:grant-profile:id-jag`. An explicit profile list that
+excludes ID-JAG is rejected before registration or token exchange. For existing
+host-configured enterprise flows, older metadata without the field retains the
+JWT-bearer compatibility path. `EnterpriseFlow` is explicitly host-selected.
+AS metadata publication can include the profile field, but advertising it does
+not implement the host's token endpoint or issuance policy.
+
+### ID-JAG resource policy
+
+`IdJag.create/1`, `IdJag.validate/2` and `IdJagHandler.handle_grant/1` default to
+requiring `resource`. Explicit `resource_policy: :if_present` permits omission,
+as the enterprise profile allows. Validation still requires a trusted
+`:expected_resource`; any present claim must equal it, and `null` is rejected.
+Audience, signature and other claim checks remain in force.
+
+The host authorization server must restrict issued access tokens to the
+authorized MCP resource, including when it accepts an ID-JAG without the claim.
+These helpers do not supply replay storage, tenant policy or a complete OAuth
+authorization server. See the [requirement evidence](MCP_REQUIREMENTS.md) for
+qualified profiles and remaining obligations.
 `EnterpriseFlow` takes `:id_token` instead of `:idp_id_token`, an `:as_issuer`,
-and its existing AS endpoint/scope/resource options. This addition leaves its
-public-client AS grant intact; `FullOAuthFlow` retains its existing public or
+and its AS endpoint/scope/resource options. Without `:as_auth`, it retains its
+public-client AS grant; `FullOAuthFlow` retains its existing public or
 Basic-authenticated cross-app AS grant.
 
 ### OAuth metadata network policy

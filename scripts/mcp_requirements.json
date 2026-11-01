@@ -1,0 +1,957 @@
+{
+  "version": 1,
+  "sources": {
+    "CC": {
+      "url": "https://github.com/modelcontextprotocol/ext-auth/blob/15ca394e00a66434520b9ade26294999295a43ae/specification/stable/oauth-client-credentials/2026-07-28/oauth-client-credentials.mdx",
+      "revision": "15ca394e00a66434520b9ade26294999295a43ae",
+      "inventory": "partial",
+      "scope": "Direct extension clauses inventoried; incorporated OAuth and core authorization requirements are tracked dependencies, pending exhaustive clause review."
+    },
+    "EMA": {
+      "url": "https://github.com/modelcontextprotocol/ext-auth/blob/15ca394e00a66434520b9ade26294999295a43ae/specification/stable/enterprise-managed-authorization/2026-07-28/enterprise-managed-authorization.mdx",
+      "revision": "15ca394e00a66434520b9ade26294999295a43ae",
+      "inventory": "partial",
+      "scope": "Direct extension clauses inventoried; incorporated OAuth and core authorization requirements are tracked dependencies, pending exhaustive clause review."
+    },
+    "IDJAG": {
+      "url": "https://www.ietf.org/archive/id/draft-ietf-oauth-identity-assertion-authz-grant-04.txt",
+      "revision": "a59c1dffc0b5e59d1bd541276c6948eb9191f3b83685be5810a32e63effb4653",
+      "inventory": "pending",
+      "scope": "Pinned draft-04 text SHA-256; incorporated clause inventory pending. Client exchange and helper profiles only; IdP/AS policy remains host-owned."
+    },
+    "TASKS": {
+      "url": "https://github.com/modelcontextprotocol/ext-tasks/blob/b3d28aceaa6d49f5f92258e3d06b61ad6f111e84/specification/2026-07-28/tasks.md",
+      "revision": "b3d28aceaa6d49f5f92258e3d06b61ad6f111e84",
+      "inventory": "partial",
+      "scope": "Initial named regression requirements; official server checks are gated separately. Complete clause/schema mapping and client interop inventory remain pending."
+    },
+    "CORE": {
+      "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/tree/d0e246ea3c69eafaa2806bc4cd28025703ba2c2b/docs/specification",
+      "revision": "d0e246ea3c69eafaa2806bc4cd28025703ba2c2b",
+      "inventory": "pending",
+      "scope": "Core prose and schema trees are monitored, including new revisions. Existing core conformance remains separate; comprehensive clause-level register expansion is pending."
+    }
+  },
+  "cases": {
+    "cc.no_anonymous": {
+      "file": "test/arbor_mcp/authorization/client_credentials_contract_test.exs",
+      "kind": "contract",
+      "asserts": "A CC token request is never sent without client authentication, even if none is advertised."
+    },
+    "cc.no_dcr": {
+      "file": "test/arbor_mcp/authorization/client_credentials_contract_test.exs",
+      "kind": "contract",
+      "asserts": "A CC-only flow with no pre-registration sends neither registration nor token request."
+    },
+    "cc.jwt_algorithm": {
+      "file": "test/arbor_mcp/authorization/client_credentials_contract_test.exs",
+      "kind": "contract",
+      "asserts": "Full flow rejects ES256 when only RS256 is advertised, before sending an assertion."
+    },
+    "cc.discovery_algorithm": {
+      "file": "test/arbor_mcp/authorization/client_credentials_contract_test.exs",
+      "kind": "contract",
+      "asserts": "Dedicated discovery rejects a JWT signing algorithm the AS did not advertise."
+    },
+    "cc.basic": {
+      "file": "test/arbor_mcp/authorization/client_credentials_contract_test.exs",
+      "kind": "contract",
+      "asserts": "Pre-registered Basic credentials are sent only in Authorization; resource and configured scope are included."
+    },
+    "idjag.valid": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "A signed ID-JAG with correct audience and resource validates."
+    },
+    "idjag.audience": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "A signed ID-JAG addressed to a different AS is rejected."
+    },
+    "idjag.resource": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "A signed ID-JAG for a different MCP resource is rejected."
+    },
+    "idjag.signature": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "An ID-JAG signed by an untrusted key is rejected."
+    },
+    "idjag.expiry": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "An expired ID-JAG is rejected."
+    },
+    "assertion.valid": {
+      "file": "test/arbor_mcp/authorization/client_assertion_test.exs",
+      "kind": "contract",
+      "asserts": "Builder signs a JWT; signature verifies and decoded iss/sub/aud and exp/iat/jti shapes are inspected. This case alone does not test verifier rejection."
+    },
+    "ema.as.explicit.client_secret_basic": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "explicit enterprise orchestrator authenticates the AS leg using client_secret_basic, with separate IdP credentials and resource binding."
+    },
+    "ema.as.explicit.client_secret_post": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "explicit enterprise orchestrator authenticates the AS leg using client_secret_post, with separate IdP credentials and resource binding."
+    },
+    "ema.as.explicit.private_key_jwt": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "explicit enterprise orchestrator authenticates the AS leg using private_key_jwt, with separate IdP credentials and resource binding."
+    },
+    "ema.subject.explicit.refresh": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "explicit orchestrator checks the refresh subject-token profile or input conflict before token exchange."
+    },
+    "ema.subject.explicit.saml": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "explicit orchestrator checks the saml subject-token profile or input conflict before token exchange."
+    },
+    "ema.subject.explicit.conflict": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "explicit orchestrator checks the conflict subject-token profile or input conflict before token exchange."
+    },
+    "ema.as.explicit.mismatch": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "A mismatched AS client identifier fails before either token leg."
+    },
+    "ema.as.discovery.client_secret_basic": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "discovery enterprise orchestrator authenticates the AS leg using client_secret_basic, with separate IdP credentials and resource binding."
+    },
+    "ema.as.discovery.client_secret_post": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "discovery enterprise orchestrator authenticates the AS leg using client_secret_post, with separate IdP credentials and resource binding."
+    },
+    "ema.as.discovery.private_key_jwt": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "discovery enterprise orchestrator authenticates the AS leg using private_key_jwt, with separate IdP credentials and resource binding."
+    },
+    "ema.subject.discovery.refresh": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "discovery orchestrator checks the refresh subject-token profile or input conflict before token exchange."
+    },
+    "ema.subject.discovery.saml": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "discovery orchestrator checks the saml subject-token profile or input conflict before token exchange."
+    },
+    "ema.subject.discovery.conflict": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "discovery orchestrator checks the conflict subject-token profile or input conflict before token exchange."
+    },
+    "ema.as.discovery.mismatch": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "A mismatched AS client identifier fails before either token leg."
+    },
+    "ema.discovery.profile": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "An explicit profile list excluding ID-JAG fails before registration or either token leg."
+    },
+    "ema.subject.saml_response": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "Wrong issued_token_type on SAML transition is rejected before AS grant."
+    },
+    "idjag.resource.default": {
+      "file": "test/arbor_mcp/authorization/id_jag_resource_policy_test.exs",
+      "kind": "contract",
+      "asserts": "Missing resource rejected by default."
+    },
+    "idjag.resource.optional": {
+      "file": "test/arbor_mcp/authorization/id_jag_resource_policy_test.exs",
+      "kind": "contract",
+      "asserts": "Explicit if_present accepts absence, without null claim."
+    },
+    "idjag.resource.optional_wrong": {
+      "file": "test/arbor_mcp/authorization/id_jag_resource_policy_test.exs",
+      "kind": "contract",
+      "asserts": "A present wrong resource remains rejected."
+    },
+    "idjag.resource.null": {
+      "file": "test/arbor_mcp/authorization/id_jag_resource_policy_test.exs",
+      "kind": "contract",
+      "asserts": "Explicit null resource remains rejected."
+    },
+    "idjag.resource.handler": {
+      "file": "test/arbor_mcp/authorization/id_jag_resource_policy_test.exs",
+      "kind": "contract",
+      "asserts": "Handler propagates explicit resource policy and preserves absence."
+    },
+    "idjag.resource.config": {
+      "file": "test/arbor_mcp/authorization/id_jag_resource_policy_test.exs",
+      "kind": "contract",
+      "asserts": "Trusted expected resource and a known policy remain necessary."
+    },
+    "peer.cc.full.jwt": {
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "kind": "independent_fixture",
+      "asserts": "Node jose verifies client assertion signature, client identity, known AS audience, expiry and unique jti before issuing a resource-bound token; resource peer validates that token."
+    },
+    "peer.cc.dedicated.jwt": {
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "kind": "independent_fixture",
+      "asserts": "Node jose verifies client assertion signature, client identity, known AS audience, expiry and unique jti before issuing a resource-bound token; resource peer validates that token."
+    },
+    "peer.ema.explicit.id_token": {
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "kind": "independent_fixture",
+      "asserts": "Verifying Node IdP and AS complete the selected subject-token sequence, independently validate JWTs and enforce issuer/client/resource binding before resource access. SAML assertion itself is an opaque test token, not XML validation."
+    },
+    "peer.ema.explicit.refresh_token": {
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "kind": "independent_fixture",
+      "asserts": "Verifying Node IdP and AS complete the selected subject-token sequence, independently validate JWTs and enforce issuer/client/resource binding before resource access. SAML assertion itself is an opaque test token, not XML validation."
+    },
+    "peer.ema.explicit.saml2": {
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "kind": "independent_fixture",
+      "asserts": "Verifying Node IdP and AS complete the selected subject-token sequence, independently validate JWTs and enforce issuer/client/resource binding before resource access. SAML assertion itself is an opaque test token, not XML validation."
+    },
+    "peer.ema.discovery.id_token": {
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "kind": "independent_fixture",
+      "asserts": "Verifying Node IdP and AS complete the selected subject-token sequence, independently validate JWTs and enforce issuer/client/resource binding before resource access. SAML assertion itself is an opaque test token, not XML validation."
+    },
+    "peer.ema.discovery.refresh_token": {
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "kind": "independent_fixture",
+      "asserts": "Verifying Node IdP and AS complete the selected subject-token sequence, independently validate JWTs and enforce issuer/client/resource binding before resource access. SAML assertion itself is an opaque test token, not XML validation."
+    },
+    "peer.ema.discovery.saml2": {
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "kind": "independent_fixture",
+      "asserts": "Verifying Node IdP and AS complete the selected subject-token sequence, independently validate JWTs and enforce issuer/client/resource binding before resource access. SAML assertion itself is an opaque test token, not XML validation."
+    },
+    "sdk.auth.jwt": {
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "kind": "interop",
+      "asserts": "Pinned TypeScript SDK 2.4.0 Auth helpers call Elixir HTTP peers; Arbor validates SDK credentials/claims and issues ID-JAG for the enterprise helper. Loopback fetch mapping, not vendor AS certification or full SDK transport qualification."
+    },
+    "sdk.auth.basic": {
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "kind": "interop",
+      "asserts": "Pinned TypeScript SDK 2.4.0 Auth helpers call Elixir HTTP peers; Arbor validates SDK credentials/claims and issues ID-JAG for the enterprise helper. Loopback fetch mapping, not vendor AS certification or full SDK transport qualification."
+    },
+    "sdk.auth.enterprise": {
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "kind": "interop",
+      "asserts": "Pinned TypeScript SDK 2.4.0 Auth helpers call Elixir HTTP peers; Arbor validates SDK credentials/claims and issues ID-JAG for the enterprise helper. Loopback fetch mapping, not vendor AS certification or full SDK transport qualification."
+    },
+    "ema.discovery.publisher": {
+      "file": "test/arbor_mcp/authorization/authorization_server_metadata_test.exs",
+      "kind": "contract",
+      "asserts": "Configured ID-JAG profile is emitted by AS metadata helper."
+    },
+    "ema.exchange.token_type": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "An IdP access token is rejected before forwarding to resource AS."
+    },
+    "ema.exchange.missing_type": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "An ID-JAG response without issued_token_type is rejected."
+    },
+    "ema.exchange.bearer_type": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "An ID-JAG response with Bearer token_type is rejected."
+    },
+    "ema.exchange.missing_token_type": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "An ID-JAG response omitting token_type is rejected before the AS grant."
+    },
+    "ema.discovery.grants": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "An explicit grant list excluding JWT bearer cannot be overridden by a profile indicator."
+    },
+    "cc.resource_mismatch": {
+      "file": "test/arbor_mcp/authorization/client_credentials_contract_test.exs",
+      "kind": "contract",
+      "asserts": "Dedicated discovery rejects a caller resource that disagrees with discovered PRM, before token request."
+    },
+    "assertion.verify.valid": {
+      "file": "test/arbor_mcp/authorization/client_assertion_test.exs",
+      "kind": "contract",
+      "asserts": "Verifier accepts a valid client assertion."
+    },
+    "assertion.verify.client": {
+      "file": "test/arbor_mcp/authorization/client_assertion_test.exs",
+      "kind": "contract",
+      "asserts": "Verifier rejects wrong client identity."
+    },
+    "assertion.verify.audience": {
+      "file": "test/arbor_mcp/authorization/client_assertion_test.exs",
+      "kind": "contract",
+      "asserts": "Verifier rejects a different AS audience."
+    },
+    "assertion.verify.key": {
+      "file": "test/arbor_mcp/authorization/client_assertion_test.exs",
+      "kind": "contract",
+      "asserts": "Verifier rejects a wrong signing key."
+    },
+    "ema.cimd.supported": {
+      "file": "test/arbor_mcp/authorization/resource_as_authentication_test.exs",
+      "kind": "contract",
+      "asserts": "A valid CIMD URL with AS support retains CIMD registration classification."
+    },
+    "ema.cimd.unsupported": {
+      "file": "test/arbor_mcp/authorization/resource_as_authentication_test.exs",
+      "kind": "contract",
+      "asserts": "CIMD registration cannot bypass missing AS support."
+    },
+    "ema.cimd.invalid_url": {
+      "file": "test/arbor_mcp/authorization/resource_as_authentication_test.exs",
+      "kind": "contract",
+      "asserts": "CIMD registration cannot use a non-URL client identifier."
+    },
+    "tasks.ttl.null": {
+      "file": "test/arbor_mcp/tasks/extension_contract_test.exs",
+      "kind": "contract",
+      "asserts": "Client validator accepts required nullable ttlMs."
+    },
+    "tasks.http.name": {
+      "file": "test/arbor_mcp/tasks/extension_contract_test.exs",
+      "kind": "contract",
+      "asserts": "All three task HTTP methods emit taskId in Mcp-Name."
+    },
+    "tasks.errors.dispatch": {
+      "file": "test/arbor_mcp/tasks/extension_contract_test.exs",
+      "kind": "contract",
+      "asserts": "Unknown task IDs yield invalid-params through dispatch."
+    },
+    "tasks.errors.http": {
+      "file": "test/arbor_mcp/tasks/extension_contract_test.exs",
+      "kind": "contract",
+      "asserts": "Unknown task IDs yield invalid-params through HTTP processing."
+    },
+    "tasks.input.unique": {
+      "file": "test/arbor_mcp/tasks/extension_contract_test.exs",
+      "kind": "contract",
+      "asserts": "Input request keys cannot be reused for another logical request in the task lifetime."
+    },
+    "tasks.failure.pending_input": {
+      "file": "test/arbor_mcp/tasks/extension_contract_test.exs",
+      "kind": "contract",
+      "asserts": "A task awaiting input can record a protocol failure and become failed."
+    },
+    "cc.discovery.secret.empty": {
+      "file": "test/arbor_mcp/authorization/client_credentials_contract_test.exs",
+      "kind": "contract",
+      "asserts": "Dedicated client credentials discovery rejects a empty secret before any token POST."
+    },
+    "cc.discovery.secret.nil": {
+      "file": "test/arbor_mcp/authorization/client_credentials_contract_test.exs",
+      "kind": "contract",
+      "asserts": "Dedicated client credentials discovery rejects a nil secret before any token POST."
+    },
+    "ema.explicit.grants": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "Explicit enterprise flow rejects contradictory discovered grants before either token leg."
+    },
+    "ema.explicit.profile": {
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "kind": "contract",
+      "asserts": "Explicit enterprise flow rejects contradictory discovered profile before either token leg."
+    },
+    "peer.ema.key_separation": {
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "kind": "independent_fixture",
+      "asserts": "Independent IdP and AS have distinct registration keys; using the IdP key at the AS cannot issue or access a resource token."
+    },
+    "peer.cc.bad_key": {
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "kind": "independent_fixture",
+      "asserts": "Independent AS rejects a client-credentials assertion signed by an unrelated key before issuing a token."
+    }
+  },
+  "requirements": [
+    {
+      "id": "CC.ADOPTION",
+      "source": "CC",
+      "section": "Extension Requirements",
+      "role": "client",
+      "profiles": [
+        "HTTP"
+      ],
+      "level": "MUST",
+      "requirement": "An adopted extension inherits the extension and core authorization requirements.",
+      "status": "partial",
+      "implementation": [],
+      "cases": [],
+      "notes": "Core and incorporated-reference inventories are not yet exhaustive; no full-compliance claim."
+    },
+    {
+      "id": "CC.PREREG",
+      "source": "CC",
+      "section": "Client Credentials Flow / Overview",
+      "role": "client",
+      "profiles": [
+        "Basic",
+        "JWT"
+      ],
+      "level": "profile",
+      "requirement": "Client credentials are pre-registered; DCR is not used.",
+      "status": "implemented",
+      "implementation": [
+        "lib/arbor_mcp/authorization/full_oauth_flow.ex",
+        "lib/arbor_mcp/authorization/registration_policy.ex"
+      ],
+      "cases": [
+        "cc.no_dcr"
+      ],
+      "notes": "Authorization-code DCR remains separate."
+    },
+    {
+      "id": "CC.AUTH",
+      "source": "CC",
+      "section": "Client Authentication Methods",
+      "role": "client",
+      "profiles": [
+        "Basic",
+        "JWT"
+      ],
+      "level": "MUST",
+      "requirement": "Client credentials requests authenticate using a client secret or JWT.",
+      "status": "implemented",
+      "implementation": [
+        "lib/arbor_mcp/authorization/full_oauth_flow.ex",
+        "lib/arbor_mcp/authorization/client_credentials_policy.ex"
+      ],
+      "cases": [
+        "cc.no_anonymous",
+        "cc.basic",
+        "sdk.auth.basic",
+        "cc.discovery.secret.empty",
+        "cc.discovery.secret.nil"
+      ],
+      "notes": "POST is supported as a configured secret method; AS metadata has separate obligations."
+    },
+    {
+      "id": "CC.JWT",
+      "source": "CC",
+      "section": "Client Authentication Methods / RFC7523 \u00a72.2",
+      "role": "client",
+      "profiles": [
+        "JWT"
+      ],
+      "level": "inherited",
+      "requirement": "JWT authentication uses the client-assertion type and signed assertion profile.",
+      "status": "partial",
+      "implementation": [
+        "lib/arbor_mcp/authorization/client_assertion.ex"
+      ],
+      "cases": [
+        "assertion.valid",
+        "sdk.auth.jwt",
+        "peer.cc.full.jwt",
+        "peer.cc.dedicated.jwt",
+        "assertion.verify.valid",
+        "assertion.verify.client",
+        "assertion.verify.audience",
+        "assertion.verify.key",
+        "peer.cc.bad_key"
+      ],
+      "notes": "Builder and verifier contracts plus configured Node/jose and SDK interop cases are separate. Execution artifacts prove passes; complete inherited RFC clause inventory remains pending."
+    },
+    {
+      "id": "CC.ALG",
+      "source": "CC",
+      "section": "Server Metadata Requirements / RFC8414",
+      "role": "client",
+      "profiles": [
+        "JWT"
+      ],
+      "level": "policy",
+      "requirement": "Select an interoperable advertised signing algorithm before sending an assertion.",
+      "status": "implemented",
+      "implementation": [
+        "lib/arbor_mcp/authorization/client_credentials_policy.ex",
+        "lib/arbor_mcp/authorization/discovery_flow.ex",
+        "lib/arbor_mcp/authorization/full_oauth_flow.ex"
+      ],
+      "cases": [
+        "cc.jwt_algorithm",
+        "cc.discovery_algorithm"
+      ],
+      "notes": "Client negotiation check; the explicit metadata MUST belongs to the AS."
+    },
+    {
+      "id": "CC.AS-METHODS",
+      "source": "CC",
+      "section": "Server Metadata Requirements",
+      "role": "authorization server",
+      "profiles": [
+        "Basic",
+        "JWT"
+      ],
+      "level": "MUST",
+      "requirement": "Supporting AS metadata advertises private_key_jwt or client_secret_basic.",
+      "status": "host",
+      "implementation": [
+        "lib/arbor_mcp/authorization/authorization_server_metadata.ex"
+      ],
+      "cases": [],
+      "notes": "Metadata helper is configurable; it does not implement a complete token-issuing AS."
+    },
+    {
+      "id": "CC.AS-ALGS",
+      "source": "CC",
+      "section": "Server Metadata Requirements",
+      "role": "authorization server",
+      "profiles": [
+        "JWT"
+      ],
+      "level": "profile",
+      "requirement": "An AS supporting JWT authentication publishes signing algorithms.",
+      "status": "host",
+      "implementation": [
+        "lib/arbor_mcp/authorization/authorization_server_metadata.ex"
+      ],
+      "cases": [],
+      "notes": "Host must configure and enforce its advertised methods and algorithms."
+    },
+    {
+      "id": "CC.DISCOVERY",
+      "source": "CC",
+      "section": "Flow Steps",
+      "role": "client",
+      "profiles": [
+        "HTTP"
+      ],
+      "level": "inherited",
+      "requirement": "Discover the resource AS and obtain a resource-bound token before authenticated MCP use.",
+      "status": "partial",
+      "implementation": [
+        "lib/arbor_mcp/authorization/full_oauth_flow.ex",
+        "lib/arbor_mcp/authorization/discovery_flow.ex"
+      ],
+      "cases": [
+        "cc.basic",
+        "cc.resource_mismatch"
+      ],
+      "notes": "Local token-flow coverage is not complete transport-level interop."
+    },
+    {
+      "id": "CC.SECURITY",
+      "source": "CC",
+      "section": "Security Considerations / OAuth2.1 \u00a77 / RFC7523 \u00a75",
+      "role": "client and host",
+      "profiles": [
+        "all"
+      ],
+      "level": "MUST",
+      "requirement": "Protect credentials, tokens, storage and communications.",
+      "status": "partial",
+      "implementation": [
+        "lib/arbor_mcp/authorization/http_client.ex",
+        "lib/arbor_mcp/authorization/credential_store.ex"
+      ],
+      "cases": [],
+      "notes": "Cross-cutting dependencies need separate requirement expansion and deployment policy."
+    },
+    {
+      "id": "EMA.SSO",
+      "source": "EMA",
+      "section": "3. User Authentication",
+      "role": "host",
+      "profiles": [
+        "OIDC",
+        "SAML"
+      ],
+      "level": "profile",
+      "requirement": "Obtain the initial identity assertion from the configured enterprise IdP.",
+      "status": "host",
+      "implementation": [
+        "lib/arbor_mcp/authorization/enterprise_flow.ex"
+      ],
+      "cases": [],
+      "notes": "Host owns initial login, SAML validation, registration and administrator policy."
+    },
+    {
+      "id": "EMA.EXCHANGE",
+      "source": "EMA",
+      "section": "4. Token Exchange Request",
+      "role": "client",
+      "profiles": [
+        "OIDC"
+      ],
+      "level": "MUST",
+      "requirement": "Exchange the identity assertion for an ID-JAG with audience equal to the resource-AS issuer.",
+      "status": "partial",
+      "implementation": [
+        "lib/arbor_mcp/authorization/enterprise_flow.ex",
+        "lib/arbor_mcp/authorization/full_oauth_flow.ex",
+        "lib/arbor_mcp/authorization/token_exchange.ex"
+      ],
+      "cases": [
+        "peer.ema.explicit.id_token",
+        "peer.ema.explicit.refresh_token",
+        "peer.ema.explicit.saml2",
+        "peer.ema.discovery.id_token",
+        "peer.ema.discovery.refresh_token",
+        "peer.ema.discovery.saml2",
+        "sdk.auth.enterprise"
+      ],
+      "notes": "Named positive and negative exchange cases are being added."
+    },
+    {
+      "id": "EMA.IDP-AUTH",
+      "source": "EMA",
+      "section": "4. Token Exchange Request",
+      "role": "client",
+      "profiles": [
+        "confidential IdP"
+      ],
+      "level": "profile",
+      "requirement": "Authenticate the exchange when the IdP registration requires authentication.",
+      "status": "partial",
+      "implementation": [
+        "lib/arbor_mcp/authorization/idp_authentication.ex"
+      ],
+      "cases": [],
+      "notes": "Optional issuer-bound Basic/POST/JWT exists; register its executable evidence and independent peer."
+    },
+    {
+      "id": "EMA.SUBJECTS",
+      "source": "EMA",
+      "section": "4. Token Exchange Request / draft-04 \u00a74.5",
+      "role": "client",
+      "profiles": [
+        "refresh token",
+        "SAML"
+      ],
+      "level": "MAY",
+      "requirement": "Support the selected subject-token profile, including the SAML-to-refresh-token transition.",
+      "status": "implemented",
+      "implementation": [
+        "lib/arbor_mcp/authorization/enterprise_subject.ex"
+      ],
+      "cases": [
+        "ema.subject.explicit.refresh",
+        "ema.subject.explicit.saml",
+        "ema.subject.explicit.conflict",
+        "ema.subject.discovery.refresh",
+        "ema.subject.discovery.saml",
+        "ema.subject.discovery.conflict",
+        "ema.subject.saml_response"
+      ],
+      "notes": "Initial SAML SSO, XML signature validation and IdP mapping policy remain host-owned."
+    },
+    {
+      "id": "EMA.RESOURCE",
+      "source": "EMA",
+      "section": "4. Token Exchange Request / 4.3 ID-JAG",
+      "role": "client and validator",
+      "profiles": [
+        "resource present"
+      ],
+      "level": "MUST",
+      "requirement": "A present resource identifies the MCP server.",
+      "status": "implemented",
+      "implementation": [
+        "lib/arbor_mcp/authorization/id_jag.ex"
+      ],
+      "cases": [
+        "idjag.valid",
+        "idjag.resource"
+      ],
+      "notes": "Resource absent is a separate explicitly configured profile."
+    },
+    {
+      "id": "EMA.OPTIONAL-RESOURCE",
+      "source": "EMA",
+      "section": "4.3 ID-JAG",
+      "role": "validator",
+      "profiles": [
+        "resource absent"
+      ],
+      "level": "MAY",
+      "requirement": "The profile permits an ID-JAG resource claim to be absent.",
+      "status": "implemented",
+      "implementation": [
+        "lib/arbor_mcp/authorization/id_jag.ex"
+      ],
+      "cases": [
+        "idjag.resource.default",
+        "idjag.resource.optional",
+        "idjag.resource.optional_wrong",
+        "idjag.resource.null",
+        "idjag.resource.handler",
+        "idjag.resource.config"
+      ],
+      "notes": "Default remains strict. Host still enforces resource-restricted token issuance."
+    },
+    {
+      "id": "EMA.CLAIMS",
+      "source": "EMA",
+      "section": "4.3 ID-JAG / draft-04 \u00a73.1",
+      "role": "validator",
+      "profiles": [
+        "ID-JAG"
+      ],
+      "level": "inherited",
+      "requirement": "Validate signature, audience, expiry, typed header and required ID-JAG claims.",
+      "status": "partial",
+      "implementation": [
+        "lib/arbor_mcp/authorization/id_jag.ex",
+        "lib/arbor_mcp/authorization/jwt.ex"
+      ],
+      "cases": [
+        "idjag.audience",
+        "idjag.signature",
+        "idjag.expiry"
+      ],
+      "notes": "Full incorporated claim inventory, tenant policy and replay handling must be classified separately."
+    },
+    {
+      "id": "EMA.GRANT",
+      "source": "EMA",
+      "section": "5. Access Token Request",
+      "role": "client",
+      "profiles": [
+        "JWT bearer"
+      ],
+      "level": "profile",
+      "requirement": "Present the ID-JAG as a JWT bearer grant and authenticate with the resource-AS registration.",
+      "status": "implemented",
+      "implementation": [
+        "lib/arbor_mcp/authorization/resource_as_authentication.ex",
+        "lib/arbor_mcp/authorization/enterprise_flow.ex",
+        "lib/arbor_mcp/authorization/full_oauth_flow.ex"
+      ],
+      "cases": [
+        "ema.as.explicit.client_secret_basic",
+        "ema.as.explicit.client_secret_post",
+        "ema.as.explicit.private_key_jwt",
+        "ema.as.explicit.mismatch",
+        "ema.as.discovery.client_secret_basic",
+        "ema.as.discovery.client_secret_post",
+        "ema.as.discovery.private_key_jwt",
+        "ema.as.discovery.mismatch",
+        "peer.ema.key_separation"
+      ],
+      "notes": "Optional as_auth Basic/POST/JWT has explicit issuer/client/endpoint bindings; legacy behavior retained when absent."
+    },
+    {
+      "id": "EMA.CIMD",
+      "source": "EMA",
+      "section": "5. Access Token Request",
+      "role": "client",
+      "profiles": [
+        "CIMD"
+      ],
+      "level": "MAY",
+      "requirement": "A non-preregistered client can use a configured metadata document identifier.",
+      "status": "partial",
+      "implementation": [
+        "lib/arbor_mcp/authorization/registration_policy.ex",
+        "lib/arbor_mcp/authorization/client_id_metadata.ex"
+      ],
+      "cases": [
+        "ema.cimd.supported",
+        "ema.cimd.unsupported",
+        "ema.cimd.invalid_url"
+      ],
+      "notes": "Explicit as_auth CIMD retains AS-support and URL checks. A complete independent CIMD document-fetch/registration qualification is still pending."
+    },
+    {
+      "id": "EMA.ISSUANCE",
+      "source": "EMA",
+      "section": "4.1 / 5.1 Processing Rules",
+      "role": "IdP and authorization server",
+      "profiles": [
+        "all"
+      ],
+      "level": "MUST",
+      "requirement": "Apply enterprise trust policy and issue a token restricted to the authorized MCP resource.",
+      "status": "host",
+      "implementation": [
+        "lib/arbor_mcp/authorization/id_jag_handler.ex"
+      ],
+      "cases": [],
+      "notes": "The grant helper does not provide token issuance, SAML policy or a complete OAuth AS."
+    },
+    {
+      "id": "EMA.DISCOVERY",
+      "source": "EMA",
+      "section": "6. Discovery",
+      "role": "client and metadata publisher",
+      "profiles": [
+        "ID-JAG"
+      ],
+      "level": "MAY",
+      "requirement": "Recognize the ID-JAG authorization_grant_profiles_supported indicator.",
+      "status": "implemented",
+      "implementation": [
+        "lib/arbor_mcp/authorization/full_oauth_flow.ex",
+        "lib/arbor_mcp/authorization/authorization_server_metadata.ex",
+        "lib/arbor_mcp/authorization/enterprise_metadata.ex"
+      ],
+      "cases": [
+        "ema.discovery.profile",
+        "ema.discovery.publisher",
+        "ema.discovery.grants",
+        "ema.explicit.grants",
+        "ema.explicit.profile"
+      ],
+      "notes": "Discovered profile and grant contradictions fail before either token leg. Explicit host-selected endpoints have no metadata to contradict; older metadata may omit the optional profile indicator."
+    },
+    {
+      "id": "EMA.TENANTS",
+      "source": "EMA",
+      "section": "4.3 / 7.1 / draft-04 \u00a7\u00a75\u20136",
+      "role": "IdP and authorization server",
+      "profiles": [
+        "multi-tenant"
+      ],
+      "level": "inherited",
+      "requirement": "Bind issuer, subject, client and tenant to the appropriate trusted registration.",
+      "status": "host",
+      "implementation": [
+        "lib/arbor_mcp/authorization/id_jag_handler.ex"
+      ],
+      "cases": [],
+      "notes": "Host registration/policy responsibility; helpers alone do not qualify a multi-tenant AS."
+    },
+    {
+      "id": "EMA.ERRORS",
+      "source": "EMA",
+      "section": "4.2 / 5.2 Responses",
+      "role": "client",
+      "profiles": [
+        "OIDC",
+        "SAML"
+      ],
+      "level": "inherited",
+      "requirement": "Process token responses and OAuth errors without substituting another issuer or credential.",
+      "status": "partial",
+      "implementation": [
+        "lib/arbor_mcp/authorization/http_client.ex",
+        "lib/arbor_mcp/authorization/enterprise_flow.ex"
+      ],
+      "cases": [
+        "ema.exchange.token_type",
+        "ema.exchange.missing_type",
+        "ema.exchange.bearer_type",
+        "ema.exchange.missing_token_type"
+      ],
+      "notes": "Wrong or missing issued token type and wrong/null token_type are rejected before forwarding. Broader OAuth error and issuer/credential-separation cases remain under inventory expansion."
+    },
+    {
+      "id": "TASKS.TTL",
+      "source": "TASKS",
+      "section": "Tasks",
+      "role": "client",
+      "profiles": [
+        "2026-07-28"
+      ],
+      "level": "profile",
+      "requirement": "Accept nullable ttlMs while preserving its required wire field.",
+      "status": "implemented",
+      "implementation": [
+        "lib/arbor_mcp/tasks/extension.ex"
+      ],
+      "cases": [
+        "tasks.ttl.null"
+      ],
+      "notes": "Initial scoped requirement evidence; not a complete Tasks specification qualification."
+    },
+    {
+      "id": "TASKS.HEADERS",
+      "source": "TASKS",
+      "section": "Streamable HTTP: Routing Headers",
+      "role": "HTTP client",
+      "profiles": [
+        "2026-07-28"
+      ],
+      "level": "MUST",
+      "requirement": "Mirror taskId in the required request routing header.",
+      "status": "implemented",
+      "implementation": [
+        "lib/arbor_mcp/transport/http/request_headers.ex"
+      ],
+      "cases": [
+        "tasks.http.name"
+      ],
+      "notes": "Initial scoped requirement evidence; not a complete Tasks specification qualification."
+    },
+    {
+      "id": "TASKS.UNKNOWN",
+      "source": "TASKS",
+      "section": "Error Handling / Protocol Errors",
+      "role": "server",
+      "profiles": [
+        "2026-07-28"
+      ],
+      "level": "MUST/SHOULD",
+      "requirement": "Return invalid-params for unknown task identifiers without disclosing ownership.",
+      "status": "implemented",
+      "implementation": [
+        "lib/arbor_mcp/tasks/server.ex"
+      ],
+      "cases": [
+        "tasks.errors.dispatch",
+        "tasks.errors.http"
+      ],
+      "notes": "Initial scoped requirement evidence; not a complete Tasks specification qualification."
+    },
+    {
+      "id": "TASKS.INPUT-KEY",
+      "source": "TASKS",
+      "section": "Task Update Requests",
+      "role": "store",
+      "profiles": [
+        "2026-07-28"
+      ],
+      "level": "profile",
+      "requirement": "Keep input request keys unique throughout the task lifetime.",
+      "status": "implemented",
+      "implementation": [
+        "lib/arbor_mcp/tasks/store/ets.ex"
+      ],
+      "cases": [
+        "tasks.input.unique"
+      ],
+      "notes": "Initial scoped requirement evidence; not a complete Tasks specification qualification."
+    },
+    {
+      "id": "TASKS.FAILURE",
+      "source": "TASKS",
+      "section": "Error Handling / Task Execution Errors",
+      "role": "store",
+      "profiles": [
+        "2026-07-28"
+      ],
+      "level": "MUST",
+      "requirement": "Represent execution errors as a failed task, including while input is outstanding.",
+      "status": "implemented",
+      "implementation": [
+        "lib/arbor_mcp/tasks/store/ets.ex"
+      ],
+      "cases": [
+        "tasks.failure.pending_input"
+      ],
+      "notes": "Initial scoped requirement evidence; not a complete Tasks specification qualification."
+    }
+  ]
+}

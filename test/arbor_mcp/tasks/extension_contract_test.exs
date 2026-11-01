@@ -35,6 +35,7 @@ defmodule Arbor.MCP.Tasks.ExtensionContractTest do
     {:ok, opts: [store: ETS, server: store, owner: @owner, notify: false]}
   end
 
+  @tag assurance: ["tasks.ttl.null"]
   test "published nullable ttlMs is accepted in a valid task result" do
     task = %{
       "taskId" => "remote-unlimited",
@@ -47,6 +48,7 @@ defmodule Arbor.MCP.Tasks.ExtensionContractTest do
     assert :ok = Extension.validate_task_result(task)
   end
 
+  @tag assurance: ["tasks.http.name"]
   test "all three task HTTP methods mirror taskId in Mcp-Name" do
     state = %HTTP{protocol_version: "2026-07-28", headers: []}
 
@@ -62,6 +64,7 @@ defmodule Arbor.MCP.Tasks.ExtensionContractTest do
              for(method <- ~w(tasks/get tasks/update tasks/cancel), do: {method, "task-audit"})
   end
 
+  @tag assurance: ["tasks.errors.dispatch"]
   test "unknown task IDs produce invalid-params through dispatch" do
     codes =
       for method <- ~w(tasks/get tasks/update tasks/cancel) do
@@ -83,6 +86,7 @@ defmodule Arbor.MCP.Tasks.ExtensionContractTest do
     assert codes == for(method <- ~w(tasks/get tasks/update tasks/cancel), do: {method, -32602})
   end
 
+  @tag assurance: ["tasks.errors.http"]
   test "unknown task IDs produce invalid-params through the HTTP processor" do
     codes =
       for method <- ~w(tasks/get tasks/update tasks/cancel) do
@@ -225,6 +229,7 @@ defmodule Arbor.MCP.Tasks.ExtensionContractTest do
     assert_received :task_update_callback_called
   end
 
+  @tag assurance: ["tasks.input.unique"]
   test "a task input key cannot be reused for a later logical request", %{opts: opts} do
     {:ok, created} = Tasks.create("background", %{}, opts)
     id = created["taskId"]
@@ -241,6 +246,7 @@ defmodule Arbor.MCP.Tasks.ExtensionContractTest do
     assert {:error, _reason} = Tasks.require_input(id, input("Different question"), opts)
   end
 
+  @tag assurance: ["tasks.failure.pending_input"]
   test "a task can record a protocol failure while awaiting input", %{opts: opts} do
     {:ok, created} = Tasks.create("background", %{}, opts)
     id = created["taskId"]

@@ -1,0 +1,311 @@
+{
+  "notes": "Scenario availability baseline only. Does not certify scenario execution or score optional extensions.",
+  "packages": {
+    "@modelcontextprotocol/client": "2.4.0",
+    "@modelcontextprotocol/conformance": "0.2.0-alpha.12",
+    "@modelcontextprotocol/node": "2.1.2",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@modelcontextprotocol/server": "2.4.0",
+    "@modelcontextprotocol/server-everything": "2.0.1"
+  },
+  "protocol": "2026-07-28",
+  "scenarios": {
+    "authorization": {
+      "authorization-code-grant": [
+        "2025-03-26",
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "authorization-server-metadata-endpoint": [
+        "2025-03-26",
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ]
+    },
+    "client": {
+      "auth/authorization-server-migration": [
+        "2026-07-28"
+      ],
+      "auth/basic-cimd": [
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "auth/iss-normalized": [
+        "2026-07-28"
+      ],
+      "auth/iss-not-advertised": [
+        "2026-07-28"
+      ],
+      "auth/iss-supported": [
+        "2026-07-28"
+      ],
+      "auth/iss-supported-missing": [
+        "2026-07-28"
+      ],
+      "auth/iss-unexpected": [
+        "2026-07-28"
+      ],
+      "auth/iss-wrong-issuer": [
+        "2026-07-28"
+      ],
+      "auth/metadata-default": [
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "auth/metadata-issuer-mismatch": [
+        "2026-07-28"
+      ],
+      "auth/metadata-var1": [
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "auth/metadata-var2": [
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "auth/metadata-var3": [
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "auth/offline-access-not-supported": [
+        "2026-07-28"
+      ],
+      "auth/offline-access-scope": [
+        "2026-07-28"
+      ],
+      "auth/pre-registration": [
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "auth/resource-mismatch": [
+        "2026-07-28"
+      ],
+      "auth/scope-from-scopes-supported": [
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "auth/scope-from-www-authenticate": [
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "auth/scope-omitted-when-undefined": [
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "auth/scope-retry-limit": [
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "auth/scope-step-up": [
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "auth/token-endpoint-auth-basic": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "auth/token-endpoint-auth-none": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "auth/token-endpoint-auth-post": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "http-custom-headers": [
+        "2026-07-28"
+      ],
+      "http-invalid-tool-headers": [
+        "2026-07-28"
+      ],
+      "http-standard-headers": [
+        "2026-07-28"
+      ],
+      "json-schema-2020-12-preservation": [
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "json-schema-ref-no-deref": [
+        "2026-07-28"
+      ],
+      "request-metadata": [
+        "2026-07-28"
+      ],
+      "sep-2322-client-request-state": [
+        "2026-07-28"
+      ],
+      "tools_call": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ]
+    },
+    "server": {
+      "caching": [
+        "2026-07-28"
+      ],
+      "completion-complete": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "dns-rebinding-protection": [
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "http-custom-header-server-validation": [
+        "2026-07-28"
+      ],
+      "http-header-validation": [
+        "2026-07-28"
+      ],
+      "input-required-result-basic-elicitation": [
+        "2026-07-28"
+      ],
+      "input-required-result-basic-list-roots": [
+        "2026-07-28"
+      ],
+      "input-required-result-basic-sampling": [
+        "2026-07-28"
+      ],
+      "input-required-result-capability-check": [
+        "2026-07-28"
+      ],
+      "input-required-result-ignore-extra-params": [
+        "2026-07-28"
+      ],
+      "input-required-result-missing-input-response": [
+        "2026-07-28"
+      ],
+      "input-required-result-multi-round": [
+        "2026-07-28"
+      ],
+      "input-required-result-multiple-input-requests": [
+        "2026-07-28"
+      ],
+      "input-required-result-non-tool-request": [
+        "2026-07-28"
+      ],
+      "input-required-result-request-state": [
+        "2026-07-28"
+      ],
+      "input-required-result-result-type": [
+        "2026-07-28"
+      ],
+      "input-required-result-tampered-state": [
+        "2026-07-28"
+      ],
+      "input-required-result-unsupported-methods": [
+        "2026-07-28"
+      ],
+      "input-required-result-validate-input": [
+        "2026-07-28"
+      ],
+      "json-schema-2020-12": [
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "prompts-get-embedded-resource": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "prompts-get-simple": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "prompts-get-with-args": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "prompts-get-with-image": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "prompts-list": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "resources-list": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "resources-read-binary": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "resources-read-text": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "resources-templates-read": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "sep-2164-resource-not-found": [
+        "2026-07-28"
+      ],
+      "server-sse-multiple-streams": [
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "server-stateless": [
+        "2026-07-28"
+      ],
+      "tools-call-audio": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "tools-call-embedded-resource": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "tools-call-error": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "tools-call-image": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "tools-call-mixed-content": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "tools-call-simple-text": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "tools-call-with-progress": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ],
+      "tools-list": [
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28"
+      ]
+    }
+  },
+  "version": 1
+}
