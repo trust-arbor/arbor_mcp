@@ -43,7 +43,9 @@ defmodule Arbor.MCP.Authorization.DiscoveryFlow do
     - `:resource_url` (required) - The MCP server resource URL
     - `:client_id` (required) - OAuth client identifier
     - `:auth_method` (required) - `:client_secret` or `:private_key_jwt`
-    - `:client_secret` - Required when auth_method is `:client_secret`
+    - `:client_secret` - Required when auth_method is `:client_secret`. Server
+      metadata selects Basic authentication before body credentials; omitted
+      method metadata defaults to Basic per RFC 8414.
     - `:credential_issuer` - Exact authorization-server issuer the secret is
       bound to. Compared byte-for-byte with the discovered issuer before the
       secret is sent; trailing slashes and case are not normalized.
@@ -119,9 +121,21 @@ defmodule Arbor.MCP.Authorization.DiscoveryFlow do
     end
   end
 
-  defp select_auth_method(%{auth_method: :client_secret} = config, _as_metadata) do
+  defp select_auth_method(%{auth_method: :client_secret} = config, as_metadata) do
     if Map.has_key?(config, :client_secret) do
-      {:ok, :client_secret}
+      supported =
+        Map.get(as_metadata, "token_endpoint_auth_methods_supported", ["client_secret_basic"])
+
+      cond do
+        is_list(supported) and "client_secret_basic" in supported ->
+          {:ok, :client_secret_basic}
+
+        is_list(supported) and "client_secret_post" in supported ->
+          {:ok, :client_secret_post}
+
+        true ->
+          {:error, {:auth_method_not_supported, :client_secret, supported}}
+      end
     else
       {:error, :missing_client_secret}
     end
@@ -132,7 +146,8 @@ defmodule Arbor.MCP.Authorization.DiscoveryFlow do
   end
 
   # Step 4: Obtain token using selected method
-  defp obtain_token(:client_secret, as_metadata, config) do
+  defp obtain_token(auth_method, as_metadata, config)
+       when auth_method in [:client_secret_basic, :client_secret_post] do
     token_endpoint = Map.fetch!(as_metadata, "token_endpoint")
 
     params = %{
@@ -142,7 +157,7 @@ defmodule Arbor.MCP.Authorization.DiscoveryFlow do
     }
 
     params = maybe_add_optional(params, config, [:scopes, :resource])
-    OAuthFlow.client_credentials_flow(params)
+    OAuthFlow.client_credentials_flow(params, auth_method)
   end
 
   defp obtain_token(:private_key_jwt, as_metadata, config) do

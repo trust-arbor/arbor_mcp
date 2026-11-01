@@ -10,6 +10,7 @@
 #   ./scripts/conformance.sh client <scenario>  # Single client scenario
 #   ./scripts/conformance.sh all-versions       # Test ALL protocol versions
 #   ./scripts/conformance.sh modern             # Gating MCP 2026-07-28 run
+#   ./scripts/conformance.sh extensions         # Tasks + supported Auth profiles
 #   ./scripts/conformance.sh draft-alpha        # Non-gating future-draft exploration
 #
 # Environment variables:
@@ -110,6 +111,7 @@ run_server_tests() {
   local scenario="${1:-}"
   local version="${2:-$SPEC_VERSION}"
   local suite="${3:-active}"
+  local force="${4:-false}"
   echo "=== Server Conformance Tests${version:+ (spec $version)} ==="
   echo ""
 
@@ -123,6 +125,9 @@ run_server_tests() {
   fi
   if [ -n "$version" ]; then
     args="$args --spec-version $version"
+  fi
+  if [ "$force" = true ]; then
+    args="$args --force"
   fi
   if [ -f "$BASELINE_FILE" ]; then
     args="$args --expected-failures $BASELINE_FILE"
@@ -141,6 +146,7 @@ run_client_tests() {
   local scenario="${1:-}"
   local version="${2:-$SPEC_VERSION}"
   local suite="${3:-core}"
+  local force="${4:-false}"
   local target="suite $suite"
   if [ -n "$scenario" ]; then
     target="scenario $scenario"
@@ -165,6 +171,9 @@ run_client_tests() {
   fi
   if [ -n "$version" ]; then
     args+=(--spec-version "$version")
+  fi
+  if [ "$force" = true ]; then
+    args+=(--force)
   fi
   if [ -f "$BASELINE_FILE" ]; then
     args+=(--expected-failures "$BASELINE_FILE")
@@ -274,6 +283,41 @@ run_modern() {
   return "$exit_code"
 }
 
+run_extensions() {
+  export MIX_ENV="${CONFORMANCE_MIX_ENV:-dev}"
+  CONFORMANCE_PACKAGE_VERSION="${CONFORMANCE_ALPHA_VERSION:-0.2.0-alpha.12}"
+  CONFORMANCE="npx @modelcontextprotocol/conformance@$CONFORMANCE_PACKAGE_VERSION"
+  SERVER_SCRIPT="$PROJECT_DIR/test/conformance/extensions_server.exs"
+  SPEC_VERSION="2026-07-28"
+  export MCP_CONFORMANCE_PROTOCOL_VERSION="2026-07-28"
+  local exit_code=0
+
+  require_modern_node || return 1
+
+  # Explicit selectors keep unsupported optional extensions out of this gate.
+  # Date-based modern runs exclude these extension-tagged scenarios.
+  local server_scenarios=(
+    tasks-lifecycle tasks-capability-negotiation tasks-wire-fields
+    tasks-request-state-removal tasks-mrtr-input tasks-request-headers
+    tasks-dispatch-and-envelope tasks-status-notifications
+    tasks-required-task-error tasks-mrtr-composition
+  )
+  local client_scenarios=(
+    auth/client-credentials-jwt auth/client-credentials-basic
+    auth/enterprise-managed-authorization
+  )
+  local scenario
+
+  for scenario in "${server_scenarios[@]}"; do
+    run_server_tests "$scenario" "$SPEC_VERSION" active true || exit_code=1
+  done
+  for scenario in "${client_scenarios[@]}"; do
+    run_client_tests "$scenario" "$SPEC_VERSION" core true || exit_code=1
+  done
+
+  return "$exit_code"
+}
+
 # Clear output file
 > "$OUTPUT_FILE"
 echo "MCP Conformance Test Run — $(date)" >> "$OUTPUT_FILE"
@@ -306,8 +350,11 @@ case "$MODE" in
   modern)
     run_modern || EXIT_CODE=$?
     ;;
+  extensions)
+    run_extensions || EXIT_CODE=$?
+    ;;
   *)
-    echo "Usage: $0 [server|client|all|all-versions|draft-alpha|modern] [scenario]"
+    echo "Usage: $0 [server|client|all|all-versions|draft-alpha|modern|extensions] [scenario]"
     echo ""
     echo "Modes:"
     echo "  server        Run server conformance tests"
@@ -316,6 +363,7 @@ case "$MODE" in
     echo "  all-versions  Test conformance-supported versions through 2025-11-25"
     echo "  draft-alpha   Non-gating draft run using the alpha conformance package"
     echo "  modern        Gating server+client run for MCP 2026-07-28"
+    echo "  extensions    Explicit Tasks server + client-credentials/enterprise client scenarios"
     echo ""
     echo "Environment:"
     echo "  CONFORMANCE_SPEC_VERSION=2025-06-18  Test a specific version"

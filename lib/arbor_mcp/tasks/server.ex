@@ -82,9 +82,18 @@ defmodule Arbor.MCP.Tasks.Server do
     end
   end
 
-  defp error_message(:not_found_or_unauthorized), do: "Task not found or not authorized"
-  defp error_message(:invalid_input_responses), do: "Invalid task input responses"
+  defp error_message(:not_found_or_unauthorized),
+    do: invalid_params("Task not found or not authorized")
+
+  defp error_message(:invalid_input_responses), do: invalid_params("Invalid task input responses")
   defp error_message(:invalid_transition), do: "Invalid task state transition"
   defp error_message(:task_store_unavailable), do: "Task store unavailable"
   defp error_message(_reason), do: "Task operation failed"
+
+  defp invalid_params(message) do
+    %Arbor.MCP.Error.ProtocolError{
+      code: Arbor.MCP.Protocol.ErrorCodes.invalid_params(),
+      message: message
+    }
+  end
 end

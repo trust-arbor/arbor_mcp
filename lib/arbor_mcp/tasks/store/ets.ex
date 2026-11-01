@@ -10,6 +10,10 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
   process or node restart. Configure another `Arbor.MCP.Tasks.Store` implementation
   when stronger durability is needed; Runtime adapters must also satisfy the
   bounded service startup and operation contract.
+
+  Issued input keys are retained until the task expires and count toward the
+  entry and total byte quotas. Reusing a key is an invalid transition; a new
+  input round that exceeds a quota returns `:store_full` without changing the task.
   """
 
   use GenServer
@@ -36,6 +40,7 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
       :owner,
       :expires_at_ms,
       :cancel_requested_at_ms,
+      issued_input_keys: MapSet.new(),
       input_responses: %{},
       bytes: 0,
       version: 0
@@ -167,7 +172,8 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
       entry = %Entry{
         task: task,
         owner: owner,
-        expires_at_ms: now + task.ttl
+        expires_at_ms: now + task.ttl,
+        issued_input_keys: input_keys(task)
       }
 
       {:reply, {:ok, task}, put_entry(state, entry)}
@@ -215,9 +221,17 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
 
   defp handle_request({:transition, task_id, operation, owner}, state, now) do
     with {:ok, entry} <- authorized_entry(state, task_id, owner),
+         :ok <- validate_input_keys(entry, operation),
          {:ok, task} <- apply_transition(entry.task, operation, now),
          :ok <- valid_detailed_task(task) do
-      entry = %{entry | task: task, version: entry.version + 1}
+      entry = %{
+        entry
+        | task: task,
+          version: entry.version + 1,
+          issued_input_keys: MapSet.union(entry.issued_input_keys, input_keys(task)),
+          input_responses: if(Task.terminal?(task), do: %{}, else: entry.input_responses)
+      }
+
       {:reply, {:ok, task}, put_entry(state, entry)}
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
@@ -245,8 +259,29 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
 
   defp accept_input_responses(%Entry{task: %{state: :input_required}} = entry, responses, now) do
     outstanding = entry.task.input_requests || %{}
-    accepted = Map.take(responses, Map.keys(outstanding))
+    by_wire_key = Map.new(responses, fn {key, value} -> {wire_key(key), value} end)
 
+    if map_size(by_wire_key) == map_size(responses) do
+      accepted =
+        Enum.reduce(outstanding, %{}, fn {key, _request}, acc ->
+          case Map.fetch(by_wire_key, wire_key(key)) do
+            {:ok, response} -> Map.put(acc, key, response)
+            :error -> acc
+          end
+        end)
+
+      accept_outstanding_responses(entry, outstanding, accepted, now)
+    else
+      {:error, :invalid_input_responses}
+    end
+  rescue
+    _error in [Protocol.UndefinedError, UnicodeConversionError, ArgumentError] ->
+      {:error, :invalid_input_responses}
+  end
+
+  defp accept_input_responses(entry, _responses, _now), do: {:ok, entry}
+
+  defp accept_outstanding_responses(entry, outstanding, accepted, now) do
     if map_size(accepted) == 0 do
       {:ok, entry}
     else
@@ -270,7 +305,40 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
     end
   end
 
-  defp accept_input_responses(entry, _responses, _now), do: {:ok, entry}
+  @spec input_keys(Task.t()) :: MapSet.t(String.t())
+  defp input_keys(%Task{state: :input_required, input_requests: requests}) when is_map(requests),
+    do: request_keys(requests)
+
+  defp input_keys(_task), do: MapSet.new()
+
+  # Match Jason's object-key encoding, so atom/string/numeric aliases cannot
+  # issue the same wire identifier twice.
+  @spec request_keys(map()) :: MapSet.t(String.t())
+  defp request_keys(requests), do: requests |> Map.keys() |> Enum.map(&wire_key/1) |> MapSet.new()
+
+  @spec wire_key(term()) :: String.t()
+  defp wire_key(key) when is_atom(key), do: Atom.to_string(key)
+
+  defp wire_key(key) do
+    value = to_string(key)
+
+    if String.valid?(value),
+      do: value,
+      else: raise(ArgumentError, "Input IDs must encode to valid UTF-8 strings")
+  end
+
+  defp validate_input_keys(entry, {:require_input, requests}) when is_map(requests) do
+    keys = request_keys(requests)
+
+    if MapSet.size(keys) == map_size(requests) and MapSet.disjoint?(entry.issued_input_keys, keys),
+      do: :ok,
+      else: {:error, :invalid_transition}
+  rescue
+    _error in [Protocol.UndefinedError, UnicodeConversionError, ArgumentError] ->
+      {:error, :invalid_transition}
+  end
+
+  defp validate_input_keys(_entry, _operation), do: :ok
 
   defp apply_transition(task, {:complete, result}, _now) when is_map(result),
     do: normalize_transition(Task.complete(task, result))
@@ -309,11 +377,21 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
   defp valid_new_task(%Task{}, _max_ttl_ms), do: {:error, :invalid_task}
 
   defp valid_detailed_task(task) do
-    case Extension.validate_task_result(Task.to_map(task, :modern), :detailed) do
-      :ok -> :ok
-      {:error, _reason} -> {:error, :invalid_task}
+    with :ok <- Extension.validate_task_result(Task.to_map(task, :modern), :detailed),
+         true <- unique_wire_keys?(task) do
+      :ok
+    else
+      _invalid -> {:error, :invalid_task}
     end
+  rescue
+    _error in [Protocol.UndefinedError, UnicodeConversionError, ArgumentError] ->
+      {:error, :invalid_task}
   end
+
+  defp unique_wire_keys?(%Task{state: :input_required, input_requests: requests}),
+    do: MapSet.size(request_keys(requests)) == map_size(requests)
+
+  defp unique_wire_keys?(_task), do: true
 
   defp valid_owner(%{principal_id: principal, tenant_id: tenant, audience: audience}) do
     if Enum.all?([principal, tenant, audience], &(is_nil(&1) or valid_owner_value?(&1))),

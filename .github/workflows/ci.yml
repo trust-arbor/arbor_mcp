@@ -565,6 +565,16 @@ jobs:
         mkdir -p tmp/conformance-modern
         cp tmp/conformance_output.txt tmp/conformance_server.log tmp/conformance-modern/
 
+    - name: Run supported MCP extension conformance
+      if: always()
+      run: ./scripts/conformance.sh extensions
+
+    - name: Keep the extension conformance output
+      if: always()
+      run: |
+        mkdir -p tmp/conformance-extensions
+        cp tmp/conformance_output.txt tmp/conformance_server.log tmp/conformance-extensions/
+
     # The published stable package's server and client suites cover the
     # legacy (initialize) era, which the modern suites don't.
     - name: Run published legacy core conformance suites
@@ -578,6 +588,7 @@ jobs:
         name: mcp-conformance
         path: |
           tmp/conformance-modern/
+          tmp/conformance-extensions/
           tmp/conformance_output.txt
           tmp/conformance_server.log
         if-no-files-found: error

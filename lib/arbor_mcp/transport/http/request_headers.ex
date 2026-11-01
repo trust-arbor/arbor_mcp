@@ -14,7 +14,10 @@ defmodule Arbor.MCP.Transport.HTTP.RequestHeaders do
   @name_sources %{
     "tools/call" => "name",
     "resources/read" => "uri",
-    "prompts/get" => "name"
+    "prompts/get" => "name",
+    "tasks/get" => "taskId",
+    "tasks/update" => "taskId",
+    "tasks/cancel" => "taskId"
   }
 
   @spec build(binary(), map()) :: [{String.t(), String.t()}]

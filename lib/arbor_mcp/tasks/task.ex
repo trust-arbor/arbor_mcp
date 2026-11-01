@@ -13,7 +13,7 @@ defmodule Arbor.MCP.Tasks.Task do
 
   Valid transitions:
   - `:working` -> `:input_required` | `:completed` | `:failed` | `:cancelled`
-  - `:input_required` -> `:working` | `:cancelled`
+  - `:input_required` -> `:working` | `:completed` | `:failed` | `:cancelled`
   - `:completed` -> (terminal state)
   - `:failed` -> (terminal state)
   - `:cancelled` -> (terminal state)
@@ -65,7 +65,7 @@ defmodule Arbor.MCP.Tasks.Task do
 
   @valid_transitions %{
     working: [:input_required, :completed, :failed, :cancelled],
-    input_required: [:working, :cancelled]
+    input_required: [:working, :completed, :failed, :cancelled]
   }
 
   @doc """
@@ -212,11 +212,11 @@ defmodule Arbor.MCP.Tasks.Task do
       when era_or_version in [:modern, "2026-07-28"] do
     %{
       "taskId" => task.id,
-      "status" => Atom.to_string(task.state)
+      "status" => Atom.to_string(task.state),
+      "ttlMs" => task.ttl
     }
     |> MapBuilder.put_if_present("createdAt", task.created_at)
     |> MapBuilder.put_if_present("lastUpdatedAt", task.last_updated_at)
-    |> MapBuilder.put_if_present("ttlMs", task.ttl)
     |> MapBuilder.put_if_present("pollIntervalMs", task.poll_interval)
     |> MapBuilder.put_if_present("statusMessage", task.status_message)
     |> MapBuilder.put_if_present("inputRequests", modern_input_requests(task))

@@ -21,7 +21,7 @@ defmodule Arbor.MCP.Protocol.RequestProcessor do
   """
 
   alias Arbor.MCP.Error
-  alias Arbor.MCP.Internal.VersionRegistry
+  alias Arbor.MCP.Internal.{MessageValidator, VersionRegistry}
   alias Arbor.MCP.Protocol.{Initialize, Methods, ResponseBuilder}
   alias Arbor.MCP.Server.{Context, Discover, MRTR, RequestContext, ResultNormalizer}
 
@@ -55,6 +55,7 @@ defmodule Arbor.MCP.Protocol.RequestProcessor do
          :ok <-
            RequestContext.validate_protocol_mode(request_context, Map.get(state, :protocol_mode)),
          :ok <- RequestContext.validate_method(request_context),
+         :ok <- validate_task_update_params(request_context, params),
          {:ok, request_context} <- MRTR.prepare_context(request_context, params, mrtr_opts) do
       request_id = Map.get(request, "id", "notification_#{System.unique_integer([:positive])}")
       server = Map.get(state, :__module__, :unknown)
@@ -542,6 +543,18 @@ defmodule Arbor.MCP.Protocol.RequestProcessor do
     end
   end
 
+  defp validate_task_update_params(%{era: :modern, method: "tasks/update"}, params) do
+    case MessageValidator.validate_method_params("tasks/update", params) do
+      :ok ->
+        :ok
+
+      {:error, error} ->
+        {:error, Error.protocol_error(error.code, error.message, Map.get(error, :data))}
+    end
+  end
+
+  defp validate_task_update_params(_context, _params), do: :ok
+
   defp state_mrtr_opts(state) do
     [
       request_state: Map.get(state, :request_state),
@@ -571,7 +584,7 @@ defmodule Arbor.MCP.Protocol.RequestProcessor do
           {:response, response, new_state}
 
         {:error, reason, new_state} ->
-          error = Error.protocol_error(-32000, to_string(reason))
+          error = task_protocol_error(reason)
           error_response = ResponseBuilder.build_error_response(error, id)
           {:response, error_response, new_state}
       end
@@ -599,7 +612,7 @@ defmodule Arbor.MCP.Protocol.RequestProcessor do
           {:response, response, new_state}
 
         {:error, reason, new_state} ->
-          error = Error.protocol_error(-32000, to_string(reason))
+          error = task_protocol_error(reason)
           error_response = ResponseBuilder.build_error_response(error, id)
           {:response, error_response, new_state}
       end
@@ -625,7 +638,7 @@ defmodule Arbor.MCP.Protocol.RequestProcessor do
           {:response, response, new_state}
 
         {:error, reason, new_state} ->
-          error = Error.protocol_error(-32000, to_string(reason))
+          error = task_protocol_error(reason)
           error_response = ResponseBuilder.build_error_response(error, id)
           {:response, error_response, new_state}
       end
@@ -651,7 +664,7 @@ defmodule Arbor.MCP.Protocol.RequestProcessor do
           {:response, response, new_state}
 
         {:error, reason, new_state} ->
-          error = Error.protocol_error(-32000, to_string(reason))
+          error = task_protocol_error(reason)
           error_response = ResponseBuilder.build_error_response(error, id)
           {:response, error_response, new_state}
       end
@@ -678,7 +691,7 @@ defmodule Arbor.MCP.Protocol.RequestProcessor do
           {:response, response, new_state}
 
         {:error, reason, new_state} ->
-          error = Error.protocol_error(-32000, to_string(reason))
+          error = task_protocol_error(reason)
           error_response = ResponseBuilder.build_error_response(error, id)
           {:response, error_response, new_state}
       end
@@ -688,6 +701,10 @@ defmodule Arbor.MCP.Protocol.RequestProcessor do
       {:response, error_response, state}
     end
   end
+
+  defp task_protocol_error(%Error.ProtocolError{} = error), do: error
+
+  defp task_protocol_error(reason), do: Error.protocol_error(-32000, to_string(reason))
 
   # Unknown method
   defp process_unknown_method(%{"method" => method, "id" => id}, state) do

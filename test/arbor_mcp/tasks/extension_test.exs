@@ -78,4 +78,21 @@ defmodule Arbor.MCP.Tasks.ExtensionTest do
     assert {:error, {:invalid_task_field, "ttlMs"}} =
              Extension.validate_task_result(%{base | "ttlMs" => -1})
   end
+
+  test "preserves a required nullable TTL on modern wire results" do
+    task = Task.new("unlimited-peer-task")
+    result = Task.to_map(task, :modern)
+
+    assert Map.has_key?(result, "ttlMs")
+    assert result["ttlMs"] == nil
+    assert :ok = Extension.validate_task_result(result)
+    assert :ok = Extension.validate_task_result(result, :detailed)
+    assert :ok = Extension.validate_task_result(Map.put(Map.delete(result, "ttlMs"), :ttlMs, nil))
+
+    assert {:error, {:invalid_task_field, "ttlMs"}} =
+             Extension.validate_task_result(Map.delete(result, "ttlMs"))
+
+    refute Map.has_key?(Task.to_map(task, :legacy), "ttl")
+    refute Map.has_key?(Task.to_map(task, :legacy), "ttlMs")
+  end
 end

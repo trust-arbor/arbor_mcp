@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A separate MCP extensions coverage matrix and an explicit official conformance
+  run for the supported Tasks and Auth profiles, preserved independently from
+  core conformance in CI.
+
 - An assessment of twelve MCP extension source baselines, distinguishing current
   implementation scope from compatibility. Tasks and auth remain pending
   concrete fixes; nine unimplemented optional sources and the framework/index
@@ -26,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   beyond MCP protocol coverage, with public entrypoints and limits.
 
 ### Fixed
+
+- Published Tasks compatibility: nullable peer TTLs retain their required key,
+  task HTTP methods mirror `taskId` in routing headers, and unknown or unauthorized
+  IDs return JSON-RPC invalid-params errors. Input keys cannot be reused across
+  rounds, retained history respects quotas, and waiting tasks can enter terminal
+  states while discarding obsolete input data.
+- `DiscoveryFlow` now selects Basic or body client-secret authentication from
+  server metadata and rejects incompatible methods before sending credentials.
 
 - Documentation now identifies public middleware and response caching as
   implemented, and describes dynamic-registration notifications to open legacy

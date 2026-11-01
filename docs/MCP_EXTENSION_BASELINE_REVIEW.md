@@ -5,24 +5,50 @@ Upstream revisions are the immutable commits recorded in the initial inventory,
 not moving default branches. This is an assessment of implementation scope and
 compatibility gaps, not certification of every role in each extension.
 
-## Outcome
+## Current resolution status
 
-Twelve source baselines were assessed. Ten can be acknowledged as reviewed:
+The compatibility follow-up corrects T1–T5 and A1 below. Tasks now has
+regressions for nullable peer TTLs, routing-header validation, lookup error
+codes, lifetime input-key uniqueness, quota rollback and terminal input cleanup.
+The client accepts unlimited peer tasks while the bundled store keeps finite
+retention. `DiscoveryFlow` selects Basic before body credentials from server
+metadata and rejects incompatible metadata before sending a secret.
+
+The explicit official extension run records 44 Tasks server checks, 16
+client-credentials client checks and 9 enterprise client checks passing. The
+upstream task-notification scenario is a skipped stub; actual task notification
+HTTP delivery is covered locally. See the separate
+[extension coverage matrix](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md#mcp-extensions)
+for roles, evidence and remaining limits.
+
+Tasks can be acknowledged at its pinned revision after these corrections.
+Auth's A1 is corrected, but the source baseline remains pending the enterprise
+profile boundary: the high-level APIs currently cover the public-IdP flow and
+lack separate confidential-IdP credential configuration. No new IdP API or
+optional extension is enabled by these fixes.
+
+## Initial outcome
+
+Twelve source baselines were assessed. Ten were acknowledged in the initial assessment:
 the extension framework/index and nine optional extension repositories whose
 protocols ArborMCP does not currently implement as supported integrations.
-Tasks and authorization remain pending because supported paths have concrete
-compatibility gaps. No runtime API, default or behavior changes are made by
-this assessment.
+Tasks and authorization were left pending because supported paths had concrete
+compatibility gaps. The original assessment changed no runtime behavior; the
+current resolution status above records the subsequent corrections.
 
 `reviewed` acknowledges the recorded disposition. For an unimplemented
 extension it does not mean compatible, enabled, or permanently excluded from
 the roadmap. The watcher will still report subsequent source changes.
 
+The table records current dispositions at those source pins. The findings
+below describe the initial `5ea3884` implementation; the resolution status
+above records their subsequent corrections.
+
 | Source | Reviewed revision | Disposition |
 | --- | --- | --- |
 | Framework and extension index | [`d0e246e`](https://github.com/modelcontextprotocol/modelcontextprotocol/tree/d0e246ea3c69eafaa2806bc4cd28025703ba2c2b/docs/extensions) | Reviewed: optional adoption, explicit opt-in, maturity and revision rules. |
-| Authorization | [`15ca394`](https://github.com/modelcontextprotocol/ext-auth/tree/15ca394e00a66434520b9ade26294999295a43ae) | Pending: implemented helpers have A1 below; enterprise profile boundaries also need clarification. |
-| Tasks | [`b3d28ac`](https://github.com/modelcontextprotocol/ext-tasks/tree/b3d28aceaa6d49f5f92258e3d06b61ad6f111e84) | Pending: T1–T5 below. |
+| Authorization | [`15ca394`](https://github.com/modelcontextprotocol/ext-auth/tree/15ca394e00a66434520b9ade26294999295a43ae) | A1 corrected; pending enterprise profile qualification. |
+| Tasks | [`b3d28ac`](https://github.com/modelcontextprotocol/ext-tasks/tree/b3d28aceaa6d49f5f92258e3d06b61ad6f111e84) | Reviewed after T1–T5 corrections; documented finite store and node-lifetime limits. |
 | Apps | [`cf599cc`](https://github.com/modelcontextprotocol/ext-apps/tree/cf599cc462406accc90ec3ca7879e3a22a9fc2a8) | Reviewed: no built-in or qualified Apps integration. |
 | Skills | [`649f7ae`](https://github.com/modelcontextprotocol/ext-skills/tree/649f7aee87d631ac4d1fdd3b12eef0c6264fdb3a) | Reviewed: Skills transport methods and host loading semantics are not implemented. |
 | Server Cards | [`526201b`](https://github.com/modelcontextprotocol/ext-server-card/tree/526201bbc80231daa40ffcdecfc9da4e54e5dc93) | Reviewed: card publication and discovery are not implemented. |
@@ -33,7 +59,7 @@ the roadmap. The watcher will still report subsequent source changes.
 | Experimental triggers/events | [`d5316be`](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/tree/d5316be214be2e76e51462069c1d67e00a5a7619) | Reviewed: proposed event delivery methods are not implemented. |
 | Experimental variants | [`cfc05d6`](https://github.com/modelcontextprotocol/experimental-ext-variants/tree/cfc05d6f5eb8829f9896d44a6d47360bd15c3b5c) | Reviewed: no maintained Variants protocol integration. |
 
-## Tasks: required compatibility work
+## Tasks: findings and corrections
 
 The [published 2026-07-28 task contract][tasks-spec] and its
 [extension schema][tasks-schema] are the targets. The empty extension settings
@@ -43,8 +69,8 @@ capability revision setting.
 
 Existing tests cover explicit opt-in, per-request declarations, flat task
 results, synchronous store insertion, owner isolation, partial input responses,
-cooperative cancellation, expiry and complete notification payloads. They do
-not close the following gaps.
+cooperative cancellation, expiry and complete notification payloads. The initial suite did
+not expose the following gaps; regression tests now cover their corrections.
 
 | ID | Published requirement and observed behavior | Required follow-up |
 | --- | --- | --- |
@@ -167,10 +193,10 @@ outside the normal repository test suite. They are not passing conformance tests
 The auth probe uses fake credentials and a loopback token endpoint; no real
 account or vendor service is used.
 
-Tasks and auth stay `pending` in the watcher until corrections and profile
-decisions are reviewed. Required follow-up must include proper regressions
-before either baseline is cleared. This review changes no library behavior and
-does not authorize a new public API or optional extension implementation.
+The original probes are historical evidence of the six findings. The follow-up
+adds passing regressions and explicit extension conformance gates. Tasks is
+acknowledged after its corrections; Auth remains pending enterprise profile
+qualification. No new optional protocol or confidential-IdP API is implied.
 
 [tasks-spec]: https://github.com/modelcontextprotocol/ext-tasks/blob/b3d28aceaa6d49f5f92258e3d06b61ad6f111e84/specification/2026-07-28/tasks.md
 [tasks-schema]: https://github.com/modelcontextprotocol/ext-tasks/blob/b3d28aceaa6d49f5f92258e3d06b61ad6f111e84/schema/2026-07-28/schema.ts

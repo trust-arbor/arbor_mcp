@@ -156,16 +156,20 @@ defmodule Arbor.MCP.Tasks.TaskTest do
       assert {:error, _msg} = Task.transition(task, :input_required)
     end
 
-    test "input_required -> completed is invalid" do
+    test "input_required -> completed is valid" do
       task = Task.new("my-tool")
       {:ok, task} = Task.transition(task, :input_required)
-      assert {:error, _msg} = Task.transition(task, :completed)
+      assert {:ok, updated} = Task.transition(task, :completed)
+      assert updated.state == :completed
+      assert updated.input_requests == nil
     end
 
-    test "input_required -> failed is invalid" do
+    test "input_required -> failed is valid" do
       task = Task.new("my-tool")
       {:ok, task} = Task.transition(task, :input_required)
-      assert {:error, _msg} = Task.transition(task, :failed)
+      assert {:ok, updated} = Task.transition(task, :failed)
+      assert updated.state == :failed
+      assert updated.input_requests == nil
     end
 
     test "preserves other task fields on transition" do
@@ -226,11 +230,14 @@ defmodule Arbor.MCP.Tasks.TaskTest do
       assert completed.result == result
     end
 
-    test "returns error when task is not in working state" do
+    test "completes a task while awaiting input" do
       task = Task.new("my-tool")
-      {:ok, task} = Task.transition(task, :input_required)
+      {:ok, task} = Task.require_input(task, %{"question" => %{}})
 
-      assert {:error, _msg} = Task.complete(task, %{"output" => "done"})
+      assert {:ok, completed} = Task.complete(task, %{"output" => "done"})
+      assert completed.state == :completed
+      assert completed.result == %{"output" => "done"}
+      assert completed.input_requests == nil
     end
 
     test "returns error when task is already completed" do
@@ -265,11 +272,15 @@ defmodule Arbor.MCP.Tasks.TaskTest do
       assert failed.result == error
     end
 
-    test "returns error when task is not in working state" do
+    test "fails a task while awaiting input" do
       task = Task.new("my-tool")
-      {:ok, task} = Task.transition(task, :input_required)
+      {:ok, task} = Task.require_input(task, %{"question" => %{}})
 
-      assert {:error, _msg} = Task.fail(task, %{"code" => "ERR"})
+      error = %{"code" => -32603, "message" => "Worker failed"}
+      assert {:ok, failed} = Task.fail(task, error)
+      assert failed.state == :failed
+      assert failed.error == error
+      assert failed.input_requests == nil
     end
 
     test "returns error when task is already completed" do
@@ -305,6 +316,8 @@ defmodule Arbor.MCP.Tasks.TaskTest do
     test "returns true for all valid transitions from input_required" do
       assert Task.valid_transition?(:input_required, :working)
       assert Task.valid_transition?(:input_required, :cancelled)
+      assert Task.valid_transition?(:input_required, :completed)
+      assert Task.valid_transition?(:input_required, :failed)
     end
 
     test "returns false for invalid transitions from working" do
@@ -313,8 +326,6 @@ defmodule Arbor.MCP.Tasks.TaskTest do
 
     test "returns false for invalid transitions from input_required" do
       refute Task.valid_transition?(:input_required, :input_required)
-      refute Task.valid_transition?(:input_required, :completed)
-      refute Task.valid_transition?(:input_required, :failed)
     end
 
     test "returns false for all transitions from completed" do

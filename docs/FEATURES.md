@@ -5,6 +5,9 @@ Elixir APIs and operational behavior applications can build on. These are
 features of the implementation, not new MCP protocol capabilities or claims
 that no other SDK provides them. For wire-level coverage, see the
 [MCP feature matrix](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md).
+Its [extensions section](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md#mcp-extensions)
+lists Tasks and the two Auth profiles separately from core MCP, including their
+supported roles, tests and remaining limits.
 
 The library is on the v2 release-candidate line. Supported APIs are listed in
 the [API reference](API_REFERENCE.md); the [RC notes](guides/V2_RELEASE_CANDIDATE.md)
