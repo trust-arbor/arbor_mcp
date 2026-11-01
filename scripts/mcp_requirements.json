@@ -882,6 +882,61 @@
       "kind": "contract",
       "file": "test/arbor_mcp/authorization/id_jag_test.exs",
       "asserts": "A correctly signed, typed grant lacking required resource is rejected; existing positive grant case supplies the acceptance control."
+    },
+    "access.client_credentials.reject.mac": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic client_credentials token adoption rejects mac token responses before persistence/Bearer use; generic token exchange helpers are unchanged."
+    },
+    "access.client_credentials.reject.null": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic client_credentials token adoption rejects null token responses before persistence/Bearer use; generic token exchange helpers are unchanged."
+    },
+    "access.client_credentials.reject.number": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic client_credentials token adoption rejects number token responses before persistence/Bearer use; generic token exchange helpers are unchanged."
+    },
+    "access.client_credentials.empty": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic client_credentials token adoption rejects empty token responses before persistence/Bearer use; generic token exchange helpers are unchanged."
+    },
+    "access.client_credentials.case_insensitive": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic client_credentials token adoption accepts case-insensitive Bearer types."
+    },
+    "access.enterprise.reject.mac": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic enterprise token adoption rejects mac token responses before persistence/Bearer use; generic token exchange helpers are unchanged."
+    },
+    "access.enterprise.reject.null": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic enterprise token adoption rejects null token responses before persistence/Bearer use; generic token exchange helpers are unchanged."
+    },
+    "access.enterprise.reject.number": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic enterprise token adoption rejects number token responses before persistence/Bearer use; generic token exchange helpers are unchanged."
+    },
+    "access.enterprise.empty": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic enterprise token adoption rejects empty token responses before persistence/Bearer use; generic token exchange helpers are unchanged."
+    },
+    "access.enterprise.case_insensitive": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic enterprise token adoption accepts case-insensitive Bearer types."
+    },
+    "access.refresh.reject.mac": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/provider_oauth_refresh_test.exs",
+      "asserts": "Refreshing with an unsupported token_type cannot replace provider Bearer credentials or advance provider acquisitions; existing error fallback retains the previous state."
     }
   },
   "requirements": [
@@ -952,7 +1007,12 @@
         "keycloak.cc.jwt.mcp",
         "keycloak.cc.full.jwt",
         "keycloak.cc.dedicated.jwt",
-        "keycloak.cc.bad_secret"
+        "keycloak.cc.bad_secret",
+        "access.client_credentials.reject.mac",
+        "access.client_credentials.reject.null",
+        "access.client_credentials.reject.number",
+        "access.client_credentials.empty",
+        "access.client_credentials.case_insensitive"
       ],
       "notes": "POST is supported as a configured secret method; AS metadata has separate obligations."
     },
@@ -1439,7 +1499,12 @@
         "ema.as.explicit.oauth_error",
         "ema.as.explicit.invalid_response",
         "ema.as.discovery.oauth_error",
-        "ema.as.discovery.invalid_response"
+        "ema.as.discovery.invalid_response",
+        "access.enterprise.reject.mac",
+        "access.enterprise.reject.null",
+        "access.enterprise.reject.number",
+        "access.enterprise.empty",
+        "access.enterprise.case_insensitive"
       ],
       "notes": "Named cases reject wrong/missing exchanged token types and missing AS access_token, preserve AS OAuth denial, and reject failed IdP authentication without cross-authority credential retries. Broader mixed client/issuer and AS response/issuance duties remain separately scoped under RFC6749.RESPONSES, RFC8693.RESPONSE and CORE.AUTH_ISSUER."
     },
@@ -2499,7 +2564,18 @@
         "lib/arbor_mcp/authorization/server_guard.ex"
       ],
       "cases": [
-        "keycloak.mcp.unauthorized"
+        "keycloak.mcp.unauthorized",
+        "access.client_credentials.reject.mac",
+        "access.client_credentials.reject.null",
+        "access.client_credentials.reject.number",
+        "access.client_credentials.empty",
+        "access.client_credentials.case_insensitive",
+        "access.enterprise.reject.mac",
+        "access.enterprise.reject.null",
+        "access.enterprise.reject.number",
+        "access.enterprise.empty",
+        "access.enterprise.case_insensitive",
+        "access.refresh.reject.mac"
       ],
       "conformance": [],
       "notes": "Existing authorization/provider/transport tests remain authoritative. The client Auth conformance scenarios do not certify arbitrary resource-server policy or upstream token separation."
@@ -2519,7 +2595,9 @@
         "lib/arbor_mcp/authorization/full_oauth_flow.ex",
         "lib/arbor_mcp/authorization/credential_store.ex"
       ],
-      "cases": [],
+      "cases": [
+        "access.refresh.reject.mac"
+      ],
       "conformance": [
         "official.client.auth-offline-access-scope",
         "official.client.auth-offline-access-not-supported"
@@ -2737,7 +2815,18 @@
         "ema.as.explicit.oauth_error",
         "ema.as.explicit.invalid_response",
         "ema.as.discovery.oauth_error",
-        "ema.as.discovery.invalid_response"
+        "ema.as.discovery.invalid_response",
+        "access.client_credentials.reject.mac",
+        "access.client_credentials.reject.null",
+        "access.client_credentials.reject.number",
+        "access.client_credentials.empty",
+        "access.client_credentials.case_insensitive",
+        "access.enterprise.reject.mac",
+        "access.enterprise.reject.null",
+        "access.enterprise.reject.number",
+        "access.enterprise.empty",
+        "access.enterprise.case_insensitive",
+        "access.refresh.reject.mac"
       ],
       "conformance": [],
       "notes": "The named exchange regressions test typed enterprise responses. General OAuth error/status/cache-control issuance is an AS duty and not certified by them."

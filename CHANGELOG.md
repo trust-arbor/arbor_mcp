@@ -58,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Automatic MCP authorization and refresh reject unsupported access-token types
+  and empty tokens before persistence or Bearer use, while retaining generic
+  exchange-helper behavior and case-insensitive Bearer matching.
+
 - `EnterpriseFlow` retains discovered CIMD support through resource-AS client
   authentication instead of rejecting a supported metadata-document registration.
 

@@ -83,6 +83,12 @@ lanes. SDK SAML, refresh-subject and confidential IdP JWT qualification is not
 claimed by this lane. Qualify a peer's actual capabilities before adding a claim.
 
 
+Automatic resource authorization and refresh reject unsupported/null/non-string
+access-token types and empty tokens before persistence or Bearer use. Bearer
+matching is case-insensitive. Generic token-exchange helpers retain their token
+representations, including ID-JAG's `N_A`; the access-token check runs only after
+the final resource grant or refresh.
+
 ## Real authorization-server interoperability
 
 The separately pinned Keycloak 26.8.1 lane is `real_provider` evidence, distinct

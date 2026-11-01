@@ -165,6 +165,19 @@ defmodule Arbor.MCP.Authorization.ProviderOAuthRefreshTest do
     assert {:ok, "old-token", ^fresh} = OAuth.get_token(fresh)
   end
 
+  @tag :bearer_profile
+  @tag assurance: ["access.refresh.reject.mac"]
+  test "a refresh cannot replace a Bearer token with an unsupported token type",
+       %{bypass: bypass} = ctx do
+    expect_refresh(
+      bypass,
+      {200, %{"access_token" => "mac-token", "token_type" => "MAC", "expires_in" => 3600}}
+    )
+
+    expiring = state(ctx.token_endpoint, expires_at: System.system_time(:second) - 1)
+    assert {:ok, "old-token", ^expiring} = OAuth.get_token(expiring)
+  end
+
   test "a rejected token is refreshed instead of rerunning the flow",
        %{bypass: bypass} = context do
     # A server that doesn't rotate refresh tokens: the old one stays.
