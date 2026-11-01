@@ -9,6 +9,7 @@ defmodule Arbor.MCP.Authorization.EnterpriseFlow do
   """
 
   alias Arbor.MCP.Authorization.{
+    IdPAuthentication,
     JWTBearerAssertion,
     OIDCDiscovery,
     TokenExchange
@@ -16,14 +17,16 @@ defmodule Arbor.MCP.Authorization.EnterpriseFlow do
 
   @type config :: %{
           required(:id_token) => String.t(),
-          required(:idp_token_endpoint) => String.t(),
+          optional(:idp_token_endpoint) => String.t(),
+          optional(:idp_auth) => Arbor.MCP.Authorization.FullOAuthFlow.idp_auth() | nil,
           required(:as_issuer) => String.t(),
           optional(:as_token_endpoint) => String.t(),
           optional(:resource_url) => String.t(),
           optional(:client_id) => String.t(),
           optional(:scope) => String.t(),
           optional(:http_client) => module() | function(),
-          optional(:metadata_fetch) => keyword()
+          optional(:metadata_fetch) => keyword(),
+          optional(:oauth_http) => keyword()
         }
 
   @doc """
@@ -36,7 +39,10 @@ defmodule Arbor.MCP.Authorization.EnterpriseFlow do
 
   ## Config
     - `:id_token` (required) - OIDC ID token from prior authentication
-    - `:idp_token_endpoint` (required) - IdP's token endpoint for token exchange
+    - `:idp_token_endpoint` - Required without `:idp_auth`; otherwise discovered
+      from the configured IdP issuer. An explicit endpoint must match discovery.
+    - `:idp_auth` - Optional issuer-bound IdP client authentication; see
+      `Arbor.MCP.Authorization.FullOAuthFlow` for the shared configuration and methods.
     - `:as_issuer` (required) - Authorization server's issuer URI
     - `:as_token_endpoint` - AS token endpoint (discovered if not provided)
     - `:resource_url` - MCP server resource URL
@@ -44,6 +50,7 @@ defmodule Arbor.MCP.Authorization.EnterpriseFlow do
     - `:scope` - Requested scope
     - `:http_client` - Custom pinned-address HTTP client for discovery
     - `:metadata_fetch` - Metadata timeout, size, DNS and redirect-policy options
+    - `:oauth_http` - Hardened token-request options for the authenticated IdP exchange
   """
   @spec execute(config()) :: {:ok, map()} | {:error, term()}
   def execute(config) do
@@ -131,6 +138,22 @@ defmodule Arbor.MCP.Authorization.EnterpriseFlow do
   end
 
   # Step 2: Exchange ID token for ID-JAG at IdP
+  defp exchange_for_id_jag(%{idp_auth: auth} = config) when not is_nil(auth) do
+    body =
+      [
+        {"grant_type", TokenExchange.grant_type()},
+        {"subject_token", config.id_token},
+        {"subject_token_type", TokenExchange.token_type_id()},
+        {"requested_token_type", TokenExchange.token_type_id_jag()},
+        {"audience", config.as_issuer},
+        {"resource", config[:resource_url]},
+        {"scope", config[:scope]}
+      ]
+      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+
+    IdPAuthentication.exchange(body, config)
+  end
+
   defp exchange_for_id_jag(config) do
     exchange_opts = [
       token_endpoint: config.idp_token_endpoint,

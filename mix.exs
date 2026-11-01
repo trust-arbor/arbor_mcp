@@ -134,7 +134,7 @@ defmodule Arbor.MCP.MixProject do
       # 3.1.2 requires Elixir ~> 1.12 and remains compatible with the OTP
       # 27.0 / Elixir 1.17.3 CI matrix entry.
       external_dep(:decimal, "~> 3.1 and >= 3.1.2"),
-      external_dep(:jsv, "~> 0.25.0"),
+      external_dep(:jsv, "~> 0.26.2"),
       external_dep(:html_entities, "~> 0.5", only: [:dev, :test]),
       external_dep(:propcheck, "~> 1.4", only: :test),
       external_dep(:benchee, "~> 1.0", only: [:dev, :test]),

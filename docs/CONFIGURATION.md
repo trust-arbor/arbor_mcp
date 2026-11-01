@@ -262,6 +262,64 @@ DCR requires an explicit `application_type: :native | :web` and stable local
 error response so redirect-policy failures are actionable. ArborMCP does not
 silently change the application type or redirect URI.
 
+### Enterprise IdP client authentication
+
+`Arbor.MCP.Authorization.FullOAuthFlow.execute/1` and
+`Arbor.MCP.Authorization.EnterpriseFlow.execute/1` accept optional `:idp_auth`
+for the ID-token-to-ID-JAG exchange. Omitting it (or passing `nil`) retains the
+existing public-client exchange. It configures the application's registration
+at the IdP, independently of its registration at the resource authorization
+server; it does not select or allowlist IdP vendors.
+
+```elixir
+idp_auth = %{
+  issuer: "https://idp.example",
+  client_id: "app-at-idp",
+  auth_method: :client_secret_basic,
+  client_secret: System.fetch_env!("IDP_CLIENT_SECRET")
+}
+
+Arbor.MCP.Authorization.FullOAuthFlow.execute(%{
+  resource_url: "https://mcp.example/mcp",
+  idp_id_token: id_token,
+  idp_auth: idp_auth,
+  client_id: "app-at-resource-as",
+  client_secret: System.fetch_env!("RESOURCE_AS_CLIENT_SECRET"),
+  credential_issuer: "https://resource-as.example"
+})
+```
+
+| `idp_auth` field | Meaning |
+| --- | --- |
+| `:issuer` | Required exact IdP issuer identifier; discovery must match it. |
+| `:client_id` | Required client ID registered at that IdP. |
+| `:auth_method` | Required `:client_secret_basic`, `:client_secret_post`, or `:private_key_jwt`. |
+| `:client_secret` | Required nonempty secret for Basic or POST authentication. |
+| `:private_key` | Required signing key for JWT authentication, as a JOSE JWK, JWK map, or PEM string. |
+| `:signing_algorithm` | JWT asymmetric signing algorithm; defaults to `"RS256"`. It must agree with advertised signing metadata when present. |
+| `:key_id` | Optional JWT header key identifier. |
+
+For JWT authentication, use `:private_key` and optionally `:signing_algorithm`
+and `:key_id` instead of `:client_secret`. The assertion's issuer and subject
+are the IdP client ID; its audience is the discovered IdP token endpoint,
+following [OIDC client authentication](https://openid.net/specs/openid-connect-core-1_0.html#ClientAuthentication).
+The token exchange's separate `audience` parameter remains the resource AS issuer.
+
+The configured method must be advertised; absent method metadata defaults to
+Basic. Malformed config, issuer/endpoint mismatches, unsupported methods,
+incompatible signing metadata and signing failures return errors before the
+IdP token POST. There is no retry using another method or the AS credentials.
+Existing `:idp_issuer`, `:idp_client_id`, and `:idp_token_endpoint`, if supplied,
+must agree; otherwise `:idp_token_endpoint` is discovered and can be omitted.
+
+The existing metadata policy below applies to IdP discovery as well. Hardened
+IdP token requests use `:oauth_http` options and reject redirects. The caller
+remains responsible for acquiring the ID token using the same IdP registration.
+`EnterpriseFlow` takes `:id_token` instead of `:idp_id_token`, an `:as_issuer`,
+and its existing AS endpoint/scope/resource options. This addition leaves its
+public-client AS grant intact; `FullOAuthFlow` retains its existing public or
+Basic-authenticated cross-app AS grant.
+
 ### OAuth metadata network policy
 
 CIMD, Protected Resource Metadata, OIDC/RFC 8414 authorization-server

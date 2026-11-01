@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Optional issuer-bound `:idp_auth` in both enterprise OAuth orchestrators, with
+  separate IdP Basic, POST, or JWT client authentication and unchanged defaults.
+  Discovery and advertised methods are checked before credentials are sent.
+
 - A separate MCP extensions coverage matrix and an explicit official conformance
   run for the supported Tasks and Auth profiles, preserved independently from
   core conformance in CI.
@@ -30,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   beyond MCP protocol coverage, with public entrypoints and limits.
 
 ### Fixed
+
+- Require JSV 0.26.2: indeterminate regex checks remain validation errors and
+  modern string lengths count Unicode code points. Diagnostics remain bounded
+  and omit backend context data.
 
 - Published Tasks compatibility: nullable peer TTLs retain their required key,
   task HTTP methods mirror `taskId` in routing headers, and unknown or unauthorized
