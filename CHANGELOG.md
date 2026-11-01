@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An assessment of twelve MCP extension source baselines, distinguishing current
+  implementation scope from compatibility. Tasks and auth remain pending
+  concrete fixes; nine unimplemented optional sources and the framework/index
+  are acknowledged without enabling new features.
+
 - A weekly and manually runnable advisory check for official MCP extension
   source changes, with immutable baselines, repository discovery and review
   reports. Initial observed revisions remain explicitly pending assessment.

@@ -211,7 +211,8 @@ def markdown(report):
                                      safe_text(report["error"]), ""])
     lines += [f"Checked: {report['checked_at']}", "",
               "This is source drift detection, not an implementation compatibility verdict.",
-              "A pending baseline is an initial inventory, not a reviewed implementation pin.", "",
+              "A pending baseline has not been cleared: assessment or compatibility work remains.",
+              "See the [baseline assessment](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md) for current scope and findings.", "",
               "| Source | Change | Review | Added / modified / removed |",
               "| --- | --- | --- | --- |"]
     for source in report["sources"]:
@@ -236,7 +237,7 @@ def markdown(report):
         else:
             lines += [f"New official extension repository at `{current}`.", ""]
         if source["review_status"] == "pending":
-            lines += ["Implementation applicability/compatibility assessment is still pending.", ""]
+            lines += ["Applicability assessment or recorded compatibility work is still pending.", ""]
         if source["archived"] or source["archive_state_changed"]:
             lines += [f"Repository archived: {source['archived']}. Archive state changed: "
                       f"{source['archive_state_changed']}.", ""]

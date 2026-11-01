@@ -552,6 +552,12 @@ credentials, authorization tokens, personal data, or other secrets as baggage.
 
 ## Tasks Extension
 
+The published-extension baseline review records outstanding compatibility work
+for nullable TTLs, HTTP task routing headers, missing-task error codes and task
+input/state lifecycles. See the
+[assessment and follow-up list](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md#tasks-required-compatibility-work)
+before qualifying a deployment that relies on those cases.
+
 Modern Tasks is an explicit extension, not the experimental `tasks` capability
 from MCP 2025-11-25. A modern client opts in on every request by adding
 `io.modelcontextprotocol/tasks` to its configured capabilities:

@@ -1,29 +1,100 @@
 {
   "inventory_date": "2026-10-31",
-  "notes": "Initial observed source revisions only. Pending entries do not claim that ArborMCP implements or has reviewed these revisions. Experimental repositories are discovered and reported separately until explicitly inventoried.",
+  "notes": "Source/current-scope assessment is recorded in docs/MCP_EXTENSION_BASELINE_REVIEW.md. Reviewed is not a universal compatibility claim. Tasks and auth remain pending confirmed compatibility work; optional protocols are not enabled by this inventory.",
+  "reviewed_at": "2026-11-01T01:22:11.235865+00:00",
   "sources": {
+    "modelcontextprotocol/experimental-ext-file-uploads": {
+      "assessment": "not_implemented",
+      "notes": "Incubation placeholder; no protocol implementation adopted.",
+      "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
+      "review_status": "reviewed",
+      "revision": "e4b12c99aa01ef16a53c3c99a620c7da38b292fd"
+    },
+    "modelcontextprotocol/experimental-ext-filesystems": {
+      "assessment": "not_implemented",
+      "notes": "Problem statements reviewed; no filesystem extension implementation.",
+      "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
+      "review_status": "reviewed",
+      "revision": "6a61117ab2a2e21e90546c3a28cc081b9761dc64"
+    },
+    "modelcontextprotocol/experimental-ext-interceptors": {
+      "assessment": "not_implemented",
+      "notes": "Remote interceptor protocol is not implemented; local middleware is a separate feature.",
+      "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
+      "review_status": "reviewed",
+      "revision": "07c89a24879eb2231e2afb72942643ebc8dfe485"
+    },
+    "modelcontextprotocol/experimental-ext-tool-annotations": {
+      "assessment": "not_implemented",
+      "notes": "Draft trust-annotations and action-metadata are not implemented; standard hints are separate.",
+      "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
+      "review_status": "reviewed",
+      "revision": "fecace78a9552f70ba735d750fc3c4b190e20429"
+    },
+    "modelcontextprotocol/experimental-ext-triggers-events": {
+      "assessment": "not_implemented",
+      "notes": "Event polling/stream/webhook proposal is not implemented; core subscriptions are separate.",
+      "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
+      "review_status": "reviewed",
+      "revision": "d5316be214be2e76e51462069c1d67e00a5a7619"
+    },
+    "modelcontextprotocol/experimental-ext-variants": {
+      "assessment": "not_implemented",
+      "notes": "No maintained Variants integration; linked proposal/discussion edits outside watched repository files are not monitored.",
+      "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
+      "review_status": "reviewed",
+      "revision": "cfc05d6f5eb8829f9896d44a6d47360bd15c3b5c"
+    },
     "modelcontextprotocol/ext-apps": {
-      "review_status": "pending",
+      "assessment": "not_implemented",
+      "notes": "No built-in or qualified Apps integration; generic tool/resource metadata is only a building block.",
+      "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
+      "review_status": "reviewed",
       "revision": "cf599cc462406accc90ec3ca7879e3a22a9fc2a8"
     },
     "modelcontextprotocol/ext-auth": {
+      "assessment": "compatibility_gaps",
+      "findings": [
+        "A1"
+      ],
+      "notes": "Basic-only metadata fails in DiscoveryFlow; confidential-IdP orchestration also requires explicit profile/API qualification.",
+      "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
       "review_status": "pending",
       "revision": "15ca394e00a66434520b9ade26294999295a43ae"
     },
     "modelcontextprotocol/ext-server-card": {
-      "review_status": "pending",
+      "assessment": "not_implemented",
+      "notes": "No card publication/discovery; final lifecycle policy classifies Beta despite a stale experimental README banner.",
+      "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
+      "review_status": "reviewed",
       "revision": "526201bbc80231daa40ffcdecfc9da4e54e5dc93"
     },
     "modelcontextprotocol/ext-skills": {
-      "review_status": "pending",
+      "assessment": "not_implemented",
+      "notes": "Skills transport methods, manifests and host loading semantics are not implemented.",
+      "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
+      "review_status": "reviewed",
       "revision": "649f7aee87d631ac4d1fdd3b12eef0c6264fdb3a"
     },
     "modelcontextprotocol/ext-tasks": {
+      "assessment": "compatibility_gaps",
+      "findings": [
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5"
+      ],
+      "notes": "Published Tasks contract reviewed; confirmed gaps require fixes before baseline clearance.",
+      "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
       "review_status": "pending",
       "revision": "b3d28aceaa6d49f5f92258e3d06b61ad6f111e84"
     },
     "modelcontextprotocol/modelcontextprotocol": {
-      "review_status": "pending",
+      "assessment": "framework_policy_reviewed",
+      "notes": "Optional adoption and explicit opt-in preserved; lifecycle stages do not force implementation.",
+      "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
+      "review_status": "reviewed",
       "revision": "d0e246ea3c69eafaa2806bc4cd28025703ba2c2b"
     }
   },
