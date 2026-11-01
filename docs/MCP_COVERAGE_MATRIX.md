@@ -77,13 +77,19 @@ rejection. Their assertions live in
 tested so SDK v2 coverage cannot mask a regression in an older protocol era.
 
 The official everything reference server,
-`@modelcontextprotocol/server-everything@2.0.1`, serves both eras from one
+`@modelcontextprotocol/server-everything@2.1.0`, serves both eras from one
 Streamable HTTP endpoint. ArborMCP's HTTP client runs the same tools,
 progress, resources, templates, prompts and ping checks against it in each era:
 `interop_everything_legacy` negotiates `2025-11-25` (and also covers the
 session's GET stream) and `interop_everything_modern` negotiates
 `2026-07-28`. The assertions live in
 `integration/everything_http_interop_test.exs`.
+
+The core requirement register reuses these official conformance scenarios. Its
+strict raw-result gate checks 73 scenarios and 570 passing assertions, with two
+explicit legacy-only skips in the modern header scenario. See
+[MCP assurance](MCP_ASSURANCE.md) and the [source review](MCP_SOURCE_REVIEW.md)
+for scoped inventory and host responsibilities; this is not full-spec certification.
 
 The totals above are dated maintainer-recorded snapshots, not live badges.
 The rc.8 CI workflow preserves the complete modern conformance output as a
@@ -150,7 +156,7 @@ implementation, executable contracts and independently qualified peer behavior.
 | Extension | Published target / maturity | ArborMCP support | Coverage |
 |---|---|---|---|
 | Tasks (`io.modelcontextprotocol/tasks`) | `2026-07-28`, Beta | ✅ Opt-in client/server methods, bounded node-local store, input rounds, cooperative cancellation and notifications. Peer TTLs may be null; the bundled store retains a finite TTL policy. | `tasks/`, `client/modern_result_validation_test.exs`, `transport/http_request_headers_test.exs`, `client/modern_http_subscription_test.exs`; official Tasks server scenarios below. |
-| OAuth Client Credentials | `2026-07-28`, Stable | ⚠️ Implemented client profiles: pre-registered Basic/body credentials and JWT, issuer binding, advertised JWT algorithms, no DCR or anonymous fallback. Complete inherited requirement inventory remains pending. | Named contract cases, verifying Node OAuth peer, pinned SDK Auth helpers and official Basic/JWT scenarios; see [requirement evidence](MCP_REQUIREMENTS.md). |
+| OAuth Client Credentials | `2026-07-28`, Stable | ⚠️ Implemented client profiles: pre-registered Basic/body credentials and JWT, issuer binding, advertised JWT algorithms, no DCR or anonymous fallback. Scoped core and inherited requirements are mapped separately from executable qualification. | Named contract cases, verifying Node OAuth peer, pinned SDK Auth helpers and official Basic/JWT scenarios; see [requirement evidence](MCP_REQUIREMENTS.md). |
 | Enterprise-Managed Authorization | `2026-07-28`, Stable | ⚠️ OIDC, refresh-token and SAML-to-refresh-token client inputs; separate optional issuer-bound IdP and resource-AS Basic/POST/JWT credentials. Opt-in resource omission retains strict defaults. Initial SSO, IdP policy and AS issuance/replay/tenant policy remain host-owned. | Contract tests, both orchestrators against a verifying independent peer, SDK OIDC helper interop and official public-IdP scenario; [requirement evidence](MCP_REQUIREMENTS.md) separates implemented, tested, interop and host scope. |
 | Apps | `2026-01-26`, Stable | — No built-in or qualified Apps integration. | Generic tools/resources/metadata are building blocks, not an Apps qualification. |
 | Skills | Beta | — Skills methods, manifests and host loading semantics are not implemented. | No extension conformance claim. |

@@ -35,6 +35,8 @@ defmodule Arbor.MCP.Server.RequestContextTest do
     assert context.meta["legacy key"]
   end
 
+  @tag assurance: ["core.meta.required"]
+
   test "requires both modern metadata fields" do
     request =
       put_in(modern_request(), ["params", "_meta"], %{
@@ -96,6 +98,8 @@ defmodule Arbor.MCP.Server.RequestContextTest do
     assert modern_only["error"]["data"]["supported"] == ["2026-07-28"]
     assert RequestContext.http_status({:invalid_meta, :not_an_object}) == 400
   end
+
+  @tag assurance: ["core.meta.capabilities"]
 
   test "checks nested required client capabilities" do
     assert {:ok, context} = RequestContext.from_message(modern_request())

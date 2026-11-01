@@ -7,7 +7,7 @@
     "@modelcontextprotocol/node": "2.1.2",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@modelcontextprotocol/server": "2.4.0",
-    "@modelcontextprotocol/server-everything": "2.0.1",
+    "@modelcontextprotocol/server-everything": "2.1.0",
     "express": "^5.3.0",
     "hono": "4.13.14",
     "zod": "4.6.7"

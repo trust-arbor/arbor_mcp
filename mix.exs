@@ -222,6 +222,7 @@ defmodule Arbor.MCP.MixProject do
           docs/MAINTENANCE_POLICY.md
           docs/MCP_REQUIREMENTS.md
           docs/MCP_ASSURANCE.md
+          docs/MCP_SOURCE_REVIEW.md
         )
     ]
   end
@@ -258,6 +259,7 @@ defmodule Arbor.MCP.MixProject do
         "docs/FEATURES.md",
         "docs/MCP_REQUIREMENTS.md",
         "docs/MCP_ASSURANCE.md",
+        "docs/MCP_SOURCE_REVIEW.md",
         {"usage-rules.md", title: "Agent usage rules"},
         "docs/guides/MIGRATING_V1_TO_V2.md",
         "docs/guides/V2_RELEASE_CANDIDATE.md",

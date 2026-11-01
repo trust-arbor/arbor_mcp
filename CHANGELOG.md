@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Scoped core and inherited OAuth/ID-JAG requirement mappings that reuse the
+  existing official core conformance scenarios and local assertions. CI now
+  preserves and checks raw core assertion outcomes, including explicit skips.
+
 - Requirement-level Auth evidence with immutable source references, generated
   coverage documentation and CI checks that reject missing, skipped or stale
   test results. Independent verifying OAuth peers and pinned TypeScript SDK
@@ -44,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   beyond MCP protocol coverage, with public entrypoints and limits.
 
 ### Fixed
+
+- Automatic OAuth code authorization now requires discovered S256 PKCE support
+  before starting authorization, returning `:pkce_s256_not_supported` when the
+  advertised methods are absent, malformed or do not include S256.
 
 - Client-credentials-only flows reject DCR and unauthenticated token requests;
   both discovery orchestrators check JWT signing-algorithm metadata. Dedicated

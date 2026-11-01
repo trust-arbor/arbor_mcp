@@ -37,6 +37,7 @@ SERVER_SCRIPT="$PROJECT_DIR/test/conformance/server.exs"
 CLIENT_SCRIPT="$PROJECT_DIR/test/conformance/client.exs"
 OUTPUT_FILE="$PROJECT_DIR/tmp/conformance_output.txt"
 BASELINE_FILE="$PROJECT_DIR/test/conformance/expected-failures.yml"
+RESULTS_DIR=""
 TIMEOUT="${CONFORMANCE_TIMEOUT:-120000}"
 START_TIMEOUT_SECONDS="${CONFORMANCE_START_TIMEOUT_SECONDS:-120}"
 SPEC_VERSION="${CONFORMANCE_SPEC_VERSION:-}"
@@ -118,6 +119,9 @@ run_server_tests() {
   start_server || return 1
 
   local args="server --url http://localhost:$SERVER_PORT/mcp --verbose"
+  if [ -n "$RESULTS_DIR" ]; then
+    args="$args --output-dir $RESULTS_DIR/server"
+  fi
   if [ -n "$scenario" ]; then
     args="$args --scenario $scenario"
   else
@@ -164,6 +168,9 @@ run_client_tests() {
   local default_client_command="ERL_LIBS='$PROJECT_DIR/_build/$conformance_mix_env/lib' elixir '$CLIENT_SCRIPT'"
   local client_command="${CONFORMANCE_CLIENT_COMMAND:-$default_client_command}"
   local args=(client --command "$client_command" --timeout "$TIMEOUT" --verbose)
+  if [ -n "$RESULTS_DIR" ]; then
+    args+=(--output-dir "$RESULTS_DIR/client")
+  fi
   if [ -n "$scenario" ]; then
     args+=(--scenario "$scenario")
   else
@@ -277,8 +284,34 @@ run_modern() {
 
   require_modern_node || return 1
 
+  # Each invocation owns a fresh directory: a previous passing scenario must
+  # never fill a hole in a later incomplete run. Keep the harness's actual
+  # per-scenario JSON, including checks omitted by its suite summary.
+  RESULTS_DIR="$(mktemp -d "$PROJECT_DIR/tmp/conformance-core.XXXXXXXX")"
+  rm -f "$PROJECT_DIR/tmp/mcp-core-evidence/results.json"
+  python3 -B "$PROJECT_DIR/scripts/check_mcp_core_evidence.py" "$RESULTS_DIR" \
+    --harness "$CONFORMANCE_PACKAGE_VERSION" --begin || return 1
+  python3 -B "$PROJECT_DIR/scripts/check_mcp_tooling.py" \
+    --core-inventory "$CONFORMANCE_PACKAGE_VERSION" > "$RESULTS_DIR/inventory.json" || return 1
   run_server_tests "" "$SPEC_VERSION" "all" || exit_code=1
-  run_client_tests "" "$SPEC_VERSION" "all" || exit_code=1
+  # Isolate the harness's OAuth/client fixtures. Parallel execution has produced
+  # cross-fixture responses locally (404 discovery or an unrelated legacy
+  # endpoint). These are the same official assertions, not local copies.
+  local scenarios
+  scenarios="$(python3 -B - "$RESULTS_DIR/inventory.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+for name, versions in data["scenarios"]["client"].items():
+    if "2026-07-28" in versions:
+        print(name)
+PY
+)" || return 1
+  local scenario
+  while IFS= read -r scenario; do
+    run_client_tests "$scenario" "$SPEC_VERSION" || exit_code=1
+  done <<< "$scenarios"
+  python3 -B "$PROJECT_DIR/scripts/check_mcp_core_evidence.py" "$RESULTS_DIR" \
+    --harness "$CONFORMANCE_PACKAGE_VERSION" || exit_code=1
 
   return "$exit_code"
 }

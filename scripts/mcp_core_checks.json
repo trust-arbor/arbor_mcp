@@ -1,0 +1,3238 @@
+{
+  "allowed_skips": [
+    {
+      "check": [
+        "client:http-standard-headers",
+        "sep-2243-client-includes-standard-headers",
+        "ClientMcpMethodHeader_initialize"
+      ],
+      "reason": "Legacy initialization is absent in the modern per-request protocol; the separate legacy core gate exercises these methods."
+    },
+    {
+      "check": [
+        "client:http-standard-headers",
+        "sep-2243-client-includes-standard-headers",
+        "ClientMcpMethodHeader_notifications_initialized"
+      ],
+      "reason": "Legacy initialization is absent in the modern per-request protocol; the separate legacy core gate exercises these methods."
+    }
+  ],
+  "harness": "@modelcontextprotocol/conformance@0.2.0-alpha.12",
+  "notes": "Existing official assertions, including check names/counts. INFO wire traces are excluded; exact legacy-only skips remain visible and do not qualify modern behavior. Core requirement mappings are bounded to these checks.",
+  "protocol": "2026-07-28",
+  "scenarios": {
+    "client:auth/authorization-server-migration": [
+      {
+        "count": 2,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2352-no-cross-as-credential-reuse",
+        "name": "Client does not assume credentials are portable across authorization servers",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2352-no-reuse-on-as-change",
+        "name": "Client does not reuse the previous AS client credentials",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2352-reregister-on-as-change",
+        "name": "Client re-registers with the new authorization server",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 4,
+        "id": "valid-bearer-token",
+        "name": "ValidBearerToken",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/basic-cimd": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "cimd-client-id-used",
+        "name": "Client ID Metadata Document Usage",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 3,
+        "id": "valid-bearer-token",
+        "name": "ValidBearerToken",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/iss-normalized": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2468-client-no-normalization",
+        "name": "Client compares iss without URL normalization",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/iss-not-advertised": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2468-client-proceed-no-iss",
+        "name": "Client proceeds when iss absent and not advertised",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 3,
+        "id": "valid-bearer-token",
+        "name": "ValidBearerToken",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/iss-supported": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2468-client-compare-iss-supported",
+        "name": "Client accepts matching iss when advertised",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 3,
+        "id": "valid-bearer-token",
+        "name": "ValidBearerToken",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/iss-supported-missing": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2468-client-reject-missing-iss",
+        "name": "Client rejects missing iss when required",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/iss-unexpected": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2468-client-compare-iss-unadvertised",
+        "name": "Client compares unadvertised iss and rejects mismatch",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/iss-wrong-issuer": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2468-client-compare-iss-supported",
+        "name": "Client rejects mismatched iss",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/metadata-default": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-consistency",
+        "name": "Resource parameter consistency",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-in-authorization",
+        "name": "Resource parameter in authorization request",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-in-token",
+        "name": "Resource parameter in token request",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-matches-prm",
+        "name": "Resource parameter matches protected resource metadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-valid-uri",
+        "name": "Resource parameter is valid canonical URI",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 3,
+        "id": "valid-bearer-token",
+        "name": "ValidBearerToken",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/metadata-issuer-mismatch": [
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2468-client-validate-metadata-issuer",
+        "name": "Client validates metadata issuer against well-known URL",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/metadata-var1": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-consistency",
+        "name": "Resource parameter consistency",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-in-authorization",
+        "name": "Resource parameter in authorization request",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-in-token",
+        "name": "Resource parameter in token request",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-matches-prm",
+        "name": "Resource parameter matches protected resource metadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-valid-uri",
+        "name": "Resource parameter is valid canonical URI",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 3,
+        "id": "valid-bearer-token",
+        "name": "ValidBearerToken",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/metadata-var2": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-consistency",
+        "name": "Resource parameter consistency",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-in-authorization",
+        "name": "Resource parameter in authorization request",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-in-token",
+        "name": "Resource parameter in token request",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-matches-prm",
+        "name": "Resource parameter matches protected resource metadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-valid-uri",
+        "name": "Resource parameter is valid canonical URI",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 3,
+        "id": "valid-bearer-token",
+        "name": "ValidBearerToken",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/metadata-var3": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-consistency",
+        "name": "Resource parameter consistency",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-in-authorization",
+        "name": "Resource parameter in authorization request",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-in-token",
+        "name": "Resource parameter in token request",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-matches-prm",
+        "name": "Resource parameter matches protected resource metadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-valid-uri",
+        "name": "Resource parameter is valid canonical URI",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 3,
+        "id": "valid-bearer-token",
+        "name": "ValidBearerToken",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/offline-access-not-supported": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2207-offline-access-not-requested",
+        "name": "Client does not request unsupported offline_access",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 3,
+        "id": "valid-bearer-token",
+        "name": "ValidBearerToken",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/offline-access-scope": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2207-client-metadata-grant-types",
+        "name": "Client metadata includes refresh_token grant type (DCR)",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 3,
+        "id": "valid-bearer-token",
+        "name": "ValidBearerToken",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/pre-registration": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pre-registration-auth",
+        "name": "Pre-registration authentication",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 3,
+        "id": "valid-bearer-token",
+        "name": "ValidBearerToken",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/resource-mismatch": [
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-mismatch-rejected",
+        "name": "Client rejects mismatched resource",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/scope-from-scopes-supported": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "scope-from-scopes-supported",
+        "name": "Client scope selection from scopes_supported",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 3,
+        "id": "valid-bearer-token",
+        "name": "ValidBearerToken",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/scope-from-www-authenticate": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "scope-from-www-authenticate",
+        "name": "Client scope selection from WWW-Authenticate header",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 3,
+        "id": "valid-bearer-token",
+        "name": "ValidBearerToken",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/scope-omitted-when-undefined": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "scope-omitted-when-undefined",
+        "name": "Client scope omission when scopes_supported undefined",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 3,
+        "id": "valid-bearer-token",
+        "name": "ValidBearerToken",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/scope-retry-limit": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "scope-retry-limit",
+        "name": "Client retry limit for scope escalation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/scope-step-up": [
+      {
+        "count": 2,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "scope-step-up-escalation",
+        "name": "Client scope escalation for step-up auth",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "scope-step-up-initial",
+        "name": "Client initial scope selection for step-up auth",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2350-scope-union-on-reauth",
+        "name": "Client accumulates previously-granted scopes on re-authorization",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 2,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 4,
+        "id": "valid-bearer-token",
+        "name": "ValidBearerToken",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/token-endpoint-auth-basic": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-consistency",
+        "name": "Resource parameter consistency",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-in-authorization",
+        "name": "Resource parameter in authorization request",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-in-token",
+        "name": "Resource parameter in token request",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-matches-prm",
+        "name": "Resource parameter matches protected resource metadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-valid-uri",
+        "name": "Resource parameter is valid canonical URI",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-endpoint-auth-method",
+        "name": "Token endpoint authentication method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 3,
+        "id": "valid-bearer-token",
+        "name": "ValidBearerToken",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/token-endpoint-auth-none": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-consistency",
+        "name": "Resource parameter consistency",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-in-authorization",
+        "name": "Resource parameter in authorization request",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-in-token",
+        "name": "Resource parameter in token request",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-matches-prm",
+        "name": "Resource parameter matches protected resource metadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-valid-uri",
+        "name": "Resource parameter is valid canonical URI",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-endpoint-auth-method",
+        "name": "Token endpoint authentication method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 3,
+        "id": "valid-bearer-token",
+        "name": "ValidBearerToken",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:auth/token-endpoint-auth-post": [
+      {
+        "count": 1,
+        "id": "authorization-request",
+        "name": "AuthorizationRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "authorization-server-metadata",
+        "name": "AuthorizationServerMetadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-registration",
+        "name": "ClientRegistration",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-challenge-sent",
+        "name": "PKCE Code Challenge",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-code-verifier-sent",
+        "name": "PKCE Code Verifier",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-s256-method-used",
+        "name": "PKCE S256 Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "pkce-verifier-matches-challenge",
+        "name": "PKCE Verifier Validation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "prm-pathbased-requested",
+        "name": "PRMPathBasedRequested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-consistency",
+        "name": "Resource parameter consistency",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-in-authorization",
+        "name": "Resource parameter in authorization request",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-in-token",
+        "name": "Resource parameter in token request",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-matches-prm",
+        "name": "Resource parameter matches protected resource metadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "resource-parameter-valid-uri",
+        "name": "Resource parameter is valid canonical URI",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-837-application-type-present",
+        "name": "DCR application_type specified",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-endpoint-auth-method",
+        "name": "Token endpoint authentication method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "token-request",
+        "name": "TokenRequest",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 3,
+        "id": "valid-bearer-token",
+        "name": "ValidBearerToken",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:http-custom-headers": [
+      {
+        "count": 1,
+        "id": "sep-2243-client-base64-unsafe",
+        "name": "ClientCustomHeader_ControlChar",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-base64-unsafe",
+        "name": "ClientCustomHeader_CrLf",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-base64-unsafe",
+        "name": "ClientCustomHeader_LeadingSpace",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-base64-unsafe",
+        "name": "ClientCustomHeader_NonAscii",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-base64-unsafe",
+        "name": "ClientCustomHeader_Tab",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-base64-unsafe",
+        "name": "ClientCustomHeader_TrailingSpace",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-base64-unsafe",
+        "name": "ClientCustomHeader_Whitespace",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-encode-values",
+        "name": "ClientCustomHeader_Debug",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-encode-values",
+        "name": "ClientCustomHeader_Priority",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-encode-values",
+        "name": "ClientCustomHeader_Verbose",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-mirrors-designated-params",
+        "name": "ClientCustomHeaderNoMirrorNumber",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-mirrors-designated-params",
+        "name": "ClientCustomHeaderNoMirrorUnannotated",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-mirrors-designated-params",
+        "name": "ClientCustomHeader_EmptyVal",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-mirrors-designated-params",
+        "name": "ClientCustomHeader_InternalSpace",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-mirrors-designated-params",
+        "name": "ClientCustomHeader_Method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-mirrors-designated-params",
+        "name": "ClientCustomHeader_Region",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-omit-null",
+        "name": "ClientCustomHeaderOmitNull",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-supports-custom-headers",
+        "name": "ClientSupportsCustomHeaders",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:http-invalid-tool-headers": [
+      {
+        "count": 1,
+        "id": "sep-2243-client-reject-invalid-tool",
+        "name": "ClientKeepsValidTool",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-x-mcp-header-charset",
+        "name": "ClientRejectsInvalidTool_invalid_colon_in_name",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-x-mcp-header-charset",
+        "name": "ClientRejectsInvalidTool_invalid_control_char_name",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-x-mcp-header-charset",
+        "name": "ClientRejectsInvalidTool_invalid_non_ascii_name",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-x-mcp-header-charset",
+        "name": "ClientRejectsInvalidTool_invalid_space_in_name",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-x-mcp-header-not-empty",
+        "name": "ClientRejectsInvalidTool_invalid_empty_header",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-x-mcp-header-primitive-only",
+        "name": "ClientRejectsInvalidTool_invalid_array_header",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-x-mcp-header-primitive-only",
+        "name": "ClientRejectsInvalidTool_invalid_null_header",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-x-mcp-header-primitive-only",
+        "name": "ClientRejectsInvalidTool_invalid_number_header",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-x-mcp-header-primitive-only",
+        "name": "ClientRejectsInvalidTool_invalid_object_header",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-x-mcp-header-unique",
+        "name": "ClientRejectsInvalidTool_invalid_duplicate_diff_case",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-x-mcp-header-unique",
+        "name": "ClientRejectsInvalidTool_invalid_duplicate_same_case",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:http-standard-headers": [
+      {
+        "count": 1,
+        "id": "sep-2243-client-includes-standard-headers",
+        "name": "ClientMcpMethodHeader_initialize",
+        "status": "SKIPPED"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-includes-standard-headers",
+        "name": "ClientMcpMethodHeader_notifications_initialized",
+        "status": "SKIPPED"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-includes-standard-headers",
+        "name": "ClientMcpMethodHeader_prompts_get",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-includes-standard-headers",
+        "name": "ClientMcpMethodHeader_prompts_list",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-includes-standard-headers",
+        "name": "ClientMcpMethodHeader_resources_list",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-includes-standard-headers",
+        "name": "ClientMcpMethodHeader_resources_read",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-includes-standard-headers",
+        "name": "ClientMcpMethodHeader_tools_call",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-includes-standard-headers",
+        "name": "ClientMcpMethodHeader_tools_list",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-includes-standard-headers",
+        "name": "ClientMcpNameHeader_prompts_get",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-includes-standard-headers",
+        "name": "ClientMcpNameHeader_resources_read",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-client-includes-standard-headers",
+        "name": "ClientMcpNameHeader_tools_call",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:json-schema-2020-12-preservation": [
+      {
+        "count": 1,
+        "id": "json-schema-2020-12-client-$defs-preserved",
+        "name": "JsonSchema2020_12Client$DefsPreserved",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "json-schema-2020-12-client-$schema-preserved",
+        "name": "JsonSchema2020_12Client$SchemaPreserved",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "json-schema-2020-12-client-additionalProperties-preserved",
+        "name": "JsonSchema2020_12ClientAdditionalPropertiesPreserved",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "json-schema-2020-12-client-echo-completed",
+        "name": "JsonSchema2020_12ClientEchoCompleted",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "json-schema-2020-12-client-tool-found",
+        "name": "JsonSchema2020_12ClientToolFound",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2106-client-anchor-keyword-preserved",
+        "name": "JsonSchema2020_12ClientAnchorKeywordPreserved",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2106-client-composition-keywords-preserved",
+        "name": "JsonSchema2020_12ClientCompositionKeywordsPreserved",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2106-client-conditional-keywords-preserved",
+        "name": "JsonSchema2020_12ClientConditionalKeywordsPreserved",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:json-schema-ref-no-deref": [
+      {
+        "count": 1,
+        "id": "sep-2106-no-network-ref-deref",
+        "name": "NoNetworkRefDereference",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:request-metadata": [
+      {
+        "count": 1,
+        "id": "sep-2575-client-declares-elicitation-capability",
+        "name": "ClientDeclaresElicitationCapability",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-client-declares-roots-capability",
+        "name": "ClientDeclaresRootsCapability",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-client-declares-sampling-capability",
+        "name": "ClientDeclaresSamplingCapability",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-client-populates-meta",
+        "name": "ClientPopulatesMeta",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-client-retry-supported-version",
+        "name": "ClientRetrySupportedVersion",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-client-sends-client-info",
+        "name": "ClientSendsClientInfo",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-http-client-sends-version-header",
+        "name": "ClientSendsVersionHeader",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-http-version-header-matches-meta",
+        "name": "ClientVersionHeaderMatchesMeta",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:sep-2322-client-request-state": [
+      {
+        "count": 1,
+        "id": "sep-2322-client-jsonrpc-id-different",
+        "name": "MRTRClientJsonRpcIdDifferent",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2322-client-no-state-omitted",
+        "name": "MRTRClientNoStateOmitted",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2322-client-parallel-isolation",
+        "name": "MRTRClientParallelIsolation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2322-client-request-state-echoed",
+        "name": "MRTRClientRequestStateEchoed",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2322-default-result-type-complete",
+        "name": "DefaultResultTypeComplete",
+        "status": "SUCCESS"
+      }
+    ],
+    "client:tools_call": [
+      {
+        "count": 1,
+        "id": "tool-add-numbers",
+        "name": "ToolAddNumbers",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:caching": [
+      {
+        "count": 1,
+        "id": "sep-2549-cache-scope-valid",
+        "name": "CacheScopeValid",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2549-prompts-list-caching-hints",
+        "name": "PromptsListCachingHints",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2549-resources-list-caching-hints",
+        "name": "ResourcesListCachingHints",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2549-resources-read-caching-hints",
+        "name": "ResourcesReadCachingHints",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2549-resources-templates-list-caching-hints",
+        "name": "ResourcesTemplatesListCachingHints",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2549-tools-list-caching-hints",
+        "name": "ToolsListCachingHints",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2549-ttl-non-negative",
+        "name": "TtlNonNegative",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:completion-complete": [
+      {
+        "count": 1,
+        "id": "completion-complete",
+        "name": "CompletionComplete",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:dns-rebinding-protection": [
+      {
+        "count": 1,
+        "id": "localhost-host-rebinding-rejected",
+        "name": "DNSRebindingRejected",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "localhost-host-valid-accepted",
+        "name": "LocalhostHostAccepted",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:http-custom-header-server-validation": [
+      {
+        "count": 1,
+        "id": "sep-2243-server-decode-base64",
+        "name": "ServerAcceptsValidBase64",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-reject-invalid-param-chars",
+        "name": "ServerRejectsInvalidBase64Chars",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-reject-invalid-param-chars",
+        "name": "ServerRejectsInvalidBase64Padding",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-reject-param-mismatch",
+        "name": "ServerRejectsInvalidBase64CharsErrorCode",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-reject-param-mismatch",
+        "name": "ServerRejectsInvalidBase64PaddingErrorCode",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-reject-param-mismatch",
+        "name": "ServerRejectsMissingCustomHeaderErrorCode",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-validate-param-match",
+        "name": "ServerLiteralMissingBase64Prefix",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-validate-param-match",
+        "name": "ServerLiteralMissingBase64Suffix",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-validate-param-match",
+        "name": "ServerRejectsMissingCustomHeader",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:http-header-validation": [
+      {
+        "count": 1,
+        "id": "sep-2243-header-name-case-insensitive",
+        "name": "ServerAcceptsLowercaseHeaderName",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-header-name-case-insensitive",
+        "name": "ServerAcceptsUppercaseHeaderName",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-accepts-whitespace-header-value",
+        "name": "ServerAcceptsWhitespaceHeaderValue",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-reject-error-code",
+        "name": "ServerRejectsCaseMismatchValueErrorCode",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-reject-error-code",
+        "name": "ServerRejectsMismatchedMethodHeaderErrorCode",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-reject-error-code",
+        "name": "ServerRejectsMismatchedNameHeaderErrorCode",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-reject-error-code",
+        "name": "ServerRejectsMissingMethodHeaderErrorCode",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-reject-error-code",
+        "name": "ServerRejectsMissingNameHeaderErrorCode",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-reject-invalid-headers",
+        "name": "ServerRejectsCaseMismatchValue",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-reject-invalid-headers",
+        "name": "ServerRejectsMismatchedMethodHeader",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-reject-invalid-headers",
+        "name": "ServerRejectsMismatchedNameHeader",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-reject-invalid-headers",
+        "name": "ServerRejectsMissingMethodHeader",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2243-server-reject-invalid-headers",
+        "name": "ServerRejectsMissingNameHeader",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:input-required-result-basic-elicitation": [
+      {
+        "count": 1,
+        "id": "sep-2322-elicitation-complete",
+        "name": "InputRequiredResultElicitationComplete",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2322-elicitation-incomplete",
+        "name": "InputRequiredResultElicitationIncomplete",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:input-required-result-basic-list-roots": [
+      {
+        "count": 1,
+        "id": "sep-2322-list-roots-complete",
+        "name": "InputRequiredResultListRootsComplete",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2322-list-roots-incomplete",
+        "name": "InputRequiredResultListRootsIncomplete",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:input-required-result-basic-sampling": [
+      {
+        "count": 1,
+        "id": "sep-2322-sampling-complete",
+        "name": "InputRequiredResultSamplingComplete",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2322-sampling-incomplete",
+        "name": "InputRequiredResultSamplingIncomplete",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:input-required-result-capability-check": [
+      {
+        "count": 1,
+        "id": "sep-2322-respect-client-capabilities",
+        "name": "RespectClientCapabilities",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:input-required-result-ignore-extra-params": [
+      {
+        "count": 1,
+        "id": "sep-2322-ignore-unexpected-params",
+        "name": "IgnoreUnexpectedParams",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:input-required-result-missing-input-response": [
+      {
+        "count": 1,
+        "id": "sep-2322-missing-response-rerequests",
+        "name": "InputRequiredResultMissingResponseRerequests",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:input-required-result-multi-round": [
+      {
+        "count": 1,
+        "id": "sep-2322-multi-round-r1",
+        "name": "InputRequiredResultMultiRoundR1",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2322-multi-round-r2",
+        "name": "InputRequiredResultMultiRoundR2",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2322-multi-round-r3",
+        "name": "InputRequiredResultMultiRoundR3",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:input-required-result-multiple-input-requests": [
+      {
+        "count": 1,
+        "id": "sep-2322-multiple-inputs-complete",
+        "name": "InputRequiredResultMultipleInputsComplete",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2322-multiple-inputs-incomplete",
+        "name": "InputRequiredResultMultipleInputsIncomplete",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:input-required-result-non-tool-request": [
+      {
+        "count": 1,
+        "id": "sep-2322-non-tool-complete",
+        "name": "InputRequiredResultNonToolComplete",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2322-non-tool-incomplete",
+        "name": "InputRequiredResultNonToolIncomplete",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:input-required-result-request-state": [
+      {
+        "count": 1,
+        "id": "sep-2322-request-state-complete",
+        "name": "InputRequiredResultRequestStateComplete",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2322-request-state-incomplete",
+        "name": "InputRequiredResultRequestStateIncomplete",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:input-required-result-result-type": [
+      {
+        "count": 1,
+        "id": "sep-2322-result-type-included",
+        "name": "ResultTypeIncluded",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:input-required-result-tampered-state": [
+      {
+        "count": 1,
+        "id": "sep-2322-reject-tampered-state",
+        "name": "RejectTamperedState",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:input-required-result-unsupported-methods": [
+      {
+        "count": 1,
+        "id": "sep-2322-not-on-unsupported-requests",
+        "name": "NotOnUnsupportedRequests",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:input-required-result-validate-input": [
+      {
+        "count": 1,
+        "id": "sep-2322-error-on-protocol-error",
+        "name": "ErrorOnProtocolError",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2322-validate-input-responses",
+        "name": "ValidateInputResponses",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:json-schema-2020-12": [
+      {
+        "count": 1,
+        "id": "json-schema-2020-12-$defs",
+        "name": "JsonSchema2020_12$Defs",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "json-schema-2020-12-$schema",
+        "name": "JsonSchema2020_12$Schema",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "json-schema-2020-12-additionalProperties",
+        "name": "JsonSchema2020_12AdditionalProperties",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "json-schema-2020-12-tool-found",
+        "name": "JsonSchema2020_12ToolFound",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2106-anchor-keyword-preserved",
+        "name": "JsonSchema2020_12AnchorKeyword",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2106-composition-keywords-preserved",
+        "name": "JsonSchema2020_12CompositionKeywords",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2106-conditional-keywords-preserved",
+        "name": "JsonSchema2020_12ConditionalKeywords",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:prompts-get-embedded-resource": [
+      {
+        "count": 1,
+        "id": "prompts-get-embedded-resource",
+        "name": "PromptsGetEmbeddedResource",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:prompts-get-simple": [
+      {
+        "count": 1,
+        "id": "prompts-get-simple",
+        "name": "PromptsGetSimple",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:prompts-get-with-args": [
+      {
+        "count": 1,
+        "id": "prompts-get-with-args",
+        "name": "PromptsGetWithArgs",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:prompts-get-with-image": [
+      {
+        "count": 1,
+        "id": "prompts-get-with-image",
+        "name": "PromptsGetWithImage",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:prompts-list": [
+      {
+        "count": 1,
+        "id": "prompts-list",
+        "name": "PromptsList",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:resources-list": [
+      {
+        "count": 1,
+        "id": "resources-list",
+        "name": "ResourcesList",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:resources-read-binary": [
+      {
+        "count": 1,
+        "id": "resources-read-binary",
+        "name": "ResourcesReadBinary",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:resources-read-text": [
+      {
+        "count": 1,
+        "id": "resources-read-text",
+        "name": "ResourcesReadText",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:resources-templates-read": [
+      {
+        "count": 1,
+        "id": "resources-templates-read",
+        "name": "ResourcesTemplateRead",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:sep-2164-resource-not-found": [
+      {
+        "count": 1,
+        "id": "sep-2164-data-uri",
+        "name": "ResourcesNotFoundDataUri",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2164-error-code",
+        "name": "ResourcesNotFoundErrorCode",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2164-no-empty-contents",
+        "name": "ResourcesNotFoundNoEmptyContents",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:server-sse-multiple-streams": [
+      {
+        "count": 1,
+        "id": "server-accepts-multiple-post-streams",
+        "name": "ServerAcceptsMultiplePostStreams",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:server-stateless": [
+      {
+        "count": 1,
+        "id": "sep-2575-discover-capabilities-match-handlers",
+        "name": "DiscoverCapabilitiesMatchHandlers",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-http-server-error-jsonrpc-id",
+        "name": "HttpServerErrorJsonrpcId",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-http-server-header-mismatch-400",
+        "name": "HttpServerHeaderMismatch400",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 3,
+        "id": "sep-2575-http-server-meta-invalid-400",
+        "name": "HttpServerMetaInvalid400",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-http-server-method-not-found-404",
+        "name": "HttpServerMethodNotFound404",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-http-server-method-not-found-404-initialize",
+        "name": "HttpServerMethodNotFound404initialize",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-http-server-method-not-found-404-logging-setlevel",
+        "name": "HttpServerMethodNotFound404loggingsetLevel",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-http-server-method-not-found-404-ping",
+        "name": "HttpServerMethodNotFound404ping",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-http-server-method-not-found-404-resources-subscribe",
+        "name": "HttpServerMethodNotFound404resourcessubscribe",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-http-server-method-not-found-404-resources-unsubscribe",
+        "name": "HttpServerMethodNotFound404resourcesunsubscribe",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-http-server-no-independent-requests-on-stream",
+        "name": "HttpServerNoIndependentRequestsOnStream",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-http-server-unsupported-version-400",
+        "name": "HttpServerUnsupportedVersion400",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-missing-capability-http-400",
+        "name": "MissingCapabilityHttp400",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-request-meta-client-info-optional",
+        "name": "RequestMetaClientInfoOptional",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-request-meta-invalid-missing-client-capabilities",
+        "name": "RequestMetaInvalid",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-request-meta-invalid-missing-meta",
+        "name": "RequestMetaInvalid",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-request-meta-invalid-missing-protocol-version",
+        "name": "RequestMetaInvalid",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-server-declares-prompts-in-discover",
+        "name": "ServerDeclaresPromptsInDiscover",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-server-honors-notification-filter",
+        "name": "ServerHonorsNotificationFilter",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-server-identifies-in-result-meta",
+        "name": "ServerIdentifiesInResultMeta",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-server-implements-discover",
+        "name": "ServerImplementsDiscover",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-server-no-log-without-loglevel",
+        "name": "ServerNoLogWithoutLogLevel",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-server-rejects-undeclared-capability",
+        "name": "ServerRejectsUndeclaredCapability",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-server-sends-prompts-list-changed-on-subscription",
+        "name": "ServerSendsPromptsListChangedOnSubscription",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-server-sends-subscription-ack",
+        "name": "ServerSendsSubscriptionAck",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-server-sends-tools-list-changed-on-subscription",
+        "name": "ServerSendsToolsListChangedOnSubscription",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-server-tags-subscription-id",
+        "name": "ServerTagsSubscriptionId",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2575-server-unsupported-version-error",
+        "name": "ServerUnsupportedVersionError",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:tools-call-audio": [
+      {
+        "count": 1,
+        "id": "tools-call-audio",
+        "name": "ToolsCallAudio",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:tools-call-embedded-resource": [
+      {
+        "count": 1,
+        "id": "tools-call-embedded-resource",
+        "name": "ToolsCallEmbeddedResource",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:tools-call-error": [
+      {
+        "count": 1,
+        "id": "tools-call-error",
+        "name": "ToolsCallError",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:tools-call-image": [
+      {
+        "count": 1,
+        "id": "tools-call-image",
+        "name": "ToolsCallImage",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:tools-call-mixed-content": [
+      {
+        "count": 1,
+        "id": "tools-call-mixed-content",
+        "name": "ToolsCallMixedContent",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:tools-call-simple-text": [
+      {
+        "count": 1,
+        "id": "tools-call-simple-text",
+        "name": "ToolsCallSimpleText",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:tools-call-with-progress": [
+      {
+        "count": 1,
+        "id": "tools-call-with-progress",
+        "name": "ToolsCallWithProgress",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ],
+    "server:tools-list": [
+      {
+        "count": 1,
+        "id": "tools-list",
+        "name": "ToolsList",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tools-list-deterministic-order",
+        "name": "ToolsListDeterministicOrder",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tools-name-format",
+        "name": "ToolsNameFormat",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "wire-schema-valid",
+        "name": "WireSchemaValid",
+        "status": "SUCCESS"
+      }
+    ]
+  },
+  "version": 1
+}

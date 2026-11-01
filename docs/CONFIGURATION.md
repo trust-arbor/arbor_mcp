@@ -262,6 +262,13 @@ DCR requires an explicit `application_type: :native | :web` and stable local
 error response so redirect-policy failures are actionable. ArborMCP does not
 silently change the application type or redirect URI.
 
+Automatic authorization-code flows require the discovered AS metadata to include
+`"S256"` in `code_challenge_methods_supported`. Missing, malformed or unsupported
+advertisements return `{:error, :pkce_s256_not_supported}` before authorization
+or token exchange. Guessed fallback endpoints do not establish PKCE support.
+Hosts using the lower-level `OAuthFlow` helpers directly must verify the AS's
+PKCE support before starting their own flow.
+
 ### Enterprise IdP client authentication
 
 `Arbor.MCP.Authorization.FullOAuthFlow.execute/1` and

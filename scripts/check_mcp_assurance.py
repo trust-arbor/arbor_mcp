@@ -36,6 +36,9 @@ def check_peer_pins(root=ROOT):
     outcomes = json.loads((root / "scripts/mcp_extension_checks.json").read_text())
     if not selectors or set(selectors) != {harness} or outcomes["harness"] != "@modelcontextprotocol/conformance@" + harness:
         raise AssuranceError("Pinned harness and reviewed check inventory disagree")
+    core = root / "scripts/mcp_core_checks.json"
+    if core.is_file() and json.loads(core.read_text()).get("harness") != outcomes["harness"]:
+        raise AssuranceError("Pinned core harness and reviewed evidence disagree")
 
 
 def local_file(root, value):
@@ -65,6 +68,18 @@ def load_register(path=REGISTER, root=ROOT):
         local_file(root, info["file"])
         if not info.get("asserts"):
             raise AssuranceError(f"Evidence needs a stated assertion: {case}")
+    conformance = data.get("conformance_cases", {})
+    core_path = root / "scripts/mcp_core_checks.json"
+    core = json.loads(core_path.read_text())["scenarios"] if conformance else {}
+    for case, info in conformance.items():
+        if (not ID.fullmatch(case) or case in cases or info.get("role") not in {"server", "client"}
+                or not info.get("asserts") or not isinstance(info.get("checks"), list)
+                or not info["checks"] or len(info["checks"]) != len(set(info["checks"]))):
+            raise AssuranceError(f"Invalid official conformance case: {case}")
+        scenario = info["role"] + ":" + info.get("scenario", "")
+        passed = {row["id"] for row in core.get(scenario, []) if row["status"] == "SUCCESS"}
+        if any(check not in passed for check in info["checks"]):
+            raise AssuranceError(f"Unqualified official assertion: {case}")
     seen = set()
     for row in data["requirements"]:
         identifier = row.get("id", "")
@@ -85,17 +100,40 @@ def load_register(path=REGISTER, root=ROOT):
         evidence = row.get("cases", [])
         if len(evidence) != len(set(evidence)) or any(case not in cases for case in evidence):
             raise AssuranceError(f"Unknown or duplicate evidence: {identifier}")
-        if row["status"] == "implemented" and (not evidence or not row.get("implementation")):
+        official = row.get("conformance", [])
+        if len(official) != len(set(official)) or any(case not in conformance for case in official):
+            raise AssuranceError(f"Unknown or duplicate conformance evidence: {identifier}")
+        if row["status"] == "implemented" and (not (evidence or official) or not row.get("implementation")):
             raise AssuranceError(f"Implemented requirement needs code and executable evidence: {identifier}")
     referenced = {case for row in data["requirements"] for case in row.get("cases", [])}
     if referenced != set(cases):
         raise AssuranceError("Orphaned evidence cases must be assigned to a requirement")
+    if {case for row in data["requirements"] for case in row.get("conformance", [])} != set(conformance):
+        raise AssuranceError("Orphaned official cases must be assigned to a requirement")
+    if data.get("source_manifest"):
+        manifest = json.loads(local_file(root, data["source_manifest"]).read_text())
+        if (manifest.get("version") != 1 or manifest.get("core_revision") != data["sources"]["CORE"]["revision"]
+                or not isinstance(manifest.get("files"), dict) or not manifest["files"]):
+            raise AssuranceError("Core source review differs from its immutable pin")
+        core_ids = {row["id"] for row in data["requirements"] if row["source"] == "CORE"}
+        mapped = set()
+        for name, source in manifest["files"].items():
+            if (not name.startswith(("docs/specification/2026-07-28/", "schema/2026-07-28/"))
+                    or not re.fullmatch(r"[0-9a-f]{64}", source.get("sha256", ""))
+                    or not source.get("requirements") or not set(source["requirements"]) <= core_ids):
+                raise AssuranceError("Invalid core source disposition")
+            mapped.update(source["requirements"])
+        if mapped != core_ids:
+            raise AssuranceError("Core requirement is missing its source disposition")
     return data
 
 
 def fingerprint(data, root=ROOT):
     # Include all production and test inputs, including untracked work-in-progress files.
     paths = {"mix.exs", "mix.lock", "scripts/mcp_requirements.json", "scripts/check_mcp_assurance.py"}
+    paths.update(str(path.relative_to(root)) for path in (root / "scripts").glob("conformance.sh"))
+    paths.update(str(path.relative_to(root)) for pattern in ("mcp_*.json", "check_mcp_*.py")
+                 for path in (root / "scripts").glob(pattern))
     for directory in ["lib", "dev", "test", "config"]:
         paths.update(str(path.relative_to(root)) for path in (root / directory).rglob("*")
                      if path.is_file() and "node_modules" not in path.parts)
@@ -141,8 +179,12 @@ def markdown(data):
     lines.extend(["", "## Requirements", "", "| ID / section | Role / profiles | Status | Evidence cases | Limits / responsibility |",
                   "|---|---|---|---|---|"])
     for row in data["requirements"]:
-        cases = ", ".join(f"[{case}](https://github.com/trust-arbor/arbor_mcp/blob/master/{data['cases'][case]['file']}) ({data['cases'][case]['kind']})"
-                          for case in row.get("cases", [])) or "None recorded"
+        evidence = [f"[{case}](https://github.com/trust-arbor/arbor_mcp/blob/master/{data['cases'][case]['file']}) ({data['cases'][case]['kind']})"
+                    for case in row.get("cases", [])]
+        evidence.extend(f"{case} (official {data['conformance_cases'][case]['role']}: "
+                        f"`{data['conformance_cases'][case]['scenario']}`)"
+                        for case in row.get("conformance", []))
+        cases = ", ".join(evidence) or "None recorded"
         lines.append(f"| {row['id']} / {row['section']} ({row['level']}) | {row['role']} / {', '.join(row['profiles'])} | {row['status']} | {cases} | {row['requirement']} {row['notes']} |")
     lines.extend(["", "Host responsibilities and unadopted profiles are not library test passes.",
                   "Independent fixtures are identified separately from third-party implementation interoperability.", ""])

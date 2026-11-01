@@ -1,0 +1,242 @@
+{
+  "version": 1,
+  "core_revision": "d0e246ea3c69eafaa2806bc4cd28025703ba2c2b",
+  "files": {
+    "docs/specification/2026-07-28/architecture/index.mdx": {
+      "sha256": "9037b342a1f23c056a564a48dda15b70e511dda6d09e96ab0e86f6f9086f9cc3",
+      "requirements": [
+        "CORE.SAFETY"
+      ]
+    },
+    "docs/specification/2026-07-28/basic/authorization/authorization-server-discovery.mdx": {
+      "sha256": "2d80118a0187d16f0122e64e6092c49f13d901c650f69712dce1a241a08cfb1d",
+      "requirements": [
+        "CORE.AUTH_DISCOVERY"
+      ]
+    },
+    "docs/specification/2026-07-28/basic/authorization/client-registration.mdx": {
+      "sha256": "912365f0c2b859269d25a3e868580d3f222dd94c80dbc5c3b18024bec1e7daff",
+      "requirements": [
+        "CORE.AUTH_REGISTRATION"
+      ]
+    },
+    "docs/specification/2026-07-28/basic/authorization/index.mdx": {
+      "sha256": "99e7eeaecad5381649e6dca98cb5b47f314bdda9f1d8cd989299e5fe143a913e",
+      "requirements": [
+        "CORE.AUTH_DISCOVERY",
+        "CORE.AUTH_REGISTRATION",
+        "CORE.AUTH_SCOPE",
+        "CORE.AUTH_ISSUER",
+        "CORE.AUTH_RESOURCE",
+        "CORE.AUTH_TOKEN",
+        "CORE.AUTH_REFRESH",
+        "CORE.AUTH_SECURITY"
+      ]
+    },
+    "docs/specification/2026-07-28/basic/authorization/security-considerations.mdx": {
+      "sha256": "9b62204a9ff17eb1de8c270975759f0d0c191a3534b8d1ba3939e5948ed08f3f",
+      "requirements": [
+        "CORE.AUTH_SECURITY"
+      ]
+    },
+    "docs/specification/2026-07-28/basic/index.mdx": {
+      "sha256": "03586b10e3214c55478293f1199fffb0bbf95bbef5df3d6a8378e860697bd63f",
+      "requirements": [
+        "CORE.JSONRPC",
+        "CORE.RESULT",
+        "CORE.ERRORS",
+        "CORE.STATELESS",
+        "CORE.SCHEMA",
+        "CORE.REFS",
+        "CORE.METADATA",
+        "CORE.META_NAMES",
+        "CORE.ICONS"
+      ]
+    },
+    "docs/specification/2026-07-28/basic/patterns/cancellation.mdx": {
+      "sha256": "396030784a4af9b734a1c8d4faed13b31077e4a3a1f03c9c1f2048ec52794ba4",
+      "requirements": [
+        "CORE.CANCELLATION"
+      ]
+    },
+    "docs/specification/2026-07-28/basic/patterns/index.mdx": {
+      "sha256": "9e08dd8b295cacc59bd4e233e9e1d6bfcc149695c265d95a18e2fddc9ad3968d",
+      "requirements": [
+        "CORE.JSONRPC",
+        "CORE.MRTR_SERVER",
+        "CORE.MRTR_CLIENT",
+        "CORE.SUBSCRIPTIONS"
+      ]
+    },
+    "docs/specification/2026-07-28/basic/patterns/mrtr.mdx": {
+      "sha256": "a8671eb2a0d292c0dcbae19666ff4fc3d97f294ce8107e9f38259cc5a02a066b",
+      "requirements": [
+        "CORE.MRTR_SERVER",
+        "CORE.MRTR_CLIENT",
+        "CORE.MRTR_STATE"
+      ]
+    },
+    "docs/specification/2026-07-28/basic/patterns/progress.mdx": {
+      "sha256": "9f55aca08920c633f3a2a35e0c77533db08d3fd19ced43918ea7c57aa5f85409",
+      "requirements": [
+        "CORE.PROGRESS"
+      ]
+    },
+    "docs/specification/2026-07-28/basic/patterns/subscriptions.mdx": {
+      "sha256": "8333cbc3280cad293e96b4a20c3200face8e185ebf58f1c4a51c35bb96654abd",
+      "requirements": [
+        "CORE.SUBSCRIPTIONS"
+      ]
+    },
+    "docs/specification/2026-07-28/basic/transports/index.mdx": {
+      "sha256": "59cc01897f5efadc1d412007a47df4f19b30725cdeaf264bbaf25e6b6b0aeb51",
+      "requirements": [
+        "CORE.STDIO",
+        "CORE.HTTP",
+        "CORE.HEADERS",
+        "CORE.CANCELLATION",
+        "CORE.ERA"
+      ]
+    },
+    "docs/specification/2026-07-28/basic/transports/stdio.mdx": {
+      "sha256": "6fd49766c40dc093d1f5993ab584bad0a06cbb496c2d3019c50f8fe3c8171e57",
+      "requirements": [
+        "CORE.STDIO",
+        "CORE.STDIO_LIFECYCLE"
+      ]
+    },
+    "docs/specification/2026-07-28/basic/transports/streamable-http.mdx": {
+      "sha256": "22574bf11e004068493787203ce92be1162107cad717bcb805a15780d4fa69c9",
+      "requirements": [
+        "CORE.HTTP",
+        "CORE.HTTP_SECURITY",
+        "CORE.HEADERS",
+        "CORE.CUSTOM_HEADERS",
+        "CORE.HTTP_CANCEL"
+      ]
+    },
+    "docs/specification/2026-07-28/basic/versioning.mdx": {
+      "sha256": "bc02f271700bdecd88034f2d7801eb09110a71d65876487378d94e48dfeb90dc",
+      "requirements": [
+        "CORE.VERSION",
+        "CORE.ERA"
+      ]
+    },
+    "docs/specification/2026-07-28/changelog.mdx": {
+      "sha256": "b327e576f4c96b34e92f338f8ffefc35e13d0e953ab76bdb3aab342d104c8e53",
+      "requirements": [
+        "CORE.ERA",
+        "CORE.SAMPLING",
+        "CORE.ROOTS",
+        "CORE.LOGGING"
+      ]
+    },
+    "docs/specification/2026-07-28/client/elicitation.mdx": {
+      "sha256": "74351d1081681695536e59a55588a67ed66a76db6057846c263ce2f465fab4c2",
+      "requirements": [
+        "CORE.ELICITATION",
+        "CORE.ELICITATION_POLICY"
+      ]
+    },
+    "docs/specification/2026-07-28/client/roots.mdx": {
+      "sha256": "016aea34d76ccce86a82509dbf2699833bb8547bde5b3f4a8eb086dfd26a9ba2",
+      "requirements": [
+        "CORE.ROOTS"
+      ]
+    },
+    "docs/specification/2026-07-28/client/sampling.mdx": {
+      "sha256": "32fe2bb69f5a7caa85a6b9501f465cb1fb888d0c669cd13b23a071071a029df1",
+      "requirements": [
+        "CORE.SAMPLING"
+      ]
+    },
+    "docs/specification/2026-07-28/deprecated.mdx": {
+      "sha256": "6ec5fc903d1be37e5ab0afda2acd7765aaf2909b90a2dca405e1aaea8936225b",
+      "requirements": [
+        "CORE.ERA",
+        "CORE.SAMPLING",
+        "CORE.ROOTS",
+        "CORE.LOGGING"
+      ]
+    },
+    "docs/specification/2026-07-28/index.mdx": {
+      "sha256": "c8151ab8d7f26ab46785fd34b23f7197db1a98ca8318967faa01e401909667b5",
+      "requirements": [
+        "CORE.SAFETY"
+      ]
+    },
+    "docs/specification/2026-07-28/schema.mdx": {
+      "sha256": "bdfb232898c79aefc8ae29571c1ac99a19d482f4bf35c177bcfe9a89d86e8514",
+      "requirements": [
+        "CORE.SCHEMA_SURFACE"
+      ]
+    },
+    "docs/specification/2026-07-28/server/discover.mdx": {
+      "sha256": "3fe1f5b5f1528014216b1e49cc3363b3c689c36bcb80a6957ddca6a04cea409c",
+      "requirements": [
+        "CORE.VERSION",
+        "CORE.METADATA"
+      ]
+    },
+    "docs/specification/2026-07-28/server/index.mdx": {
+      "sha256": "9c34c72960816e613caa449a2e716233e815196321011742f5cbc9b620539bef",
+      "requirements": [
+        "CORE.TOOLS",
+        "CORE.RESOURCES",
+        "CORE.PROMPTS",
+        "CORE.COMPLETION"
+      ]
+    },
+    "docs/specification/2026-07-28/server/prompts.mdx": {
+      "sha256": "85e550635bbbbaa90dff8738f98808c62987e8cfce1d75305b55ca43f3c546de",
+      "requirements": [
+        "CORE.PROMPTS"
+      ]
+    },
+    "docs/specification/2026-07-28/server/resources.mdx": {
+      "sha256": "10538119019af5f49a2fbc55d5818725175863115dfb273e79ed7f65a18aaf0c",
+      "requirements": [
+        "CORE.RESOURCES",
+        "CORE.RESOURCE_POLICY"
+      ]
+    },
+    "docs/specification/2026-07-28/server/tools.mdx": {
+      "sha256": "65ae4ba35373803023b5dedbe3b7b5726f84acc8391ad6ef64386b4fbec46abf",
+      "requirements": [
+        "CORE.TOOLS",
+        "CORE.TOOL_POLICY"
+      ]
+    },
+    "docs/specification/2026-07-28/server/utilities/caching.mdx": {
+      "sha256": "ca416e94b40c067de638bb101541969f2b956b33e9695761032ddc06245d514d",
+      "requirements": [
+        "CORE.CACHE"
+      ]
+    },
+    "docs/specification/2026-07-28/server/utilities/completion.mdx": {
+      "sha256": "1965c563aadb99e141131444caa81ff1860ed82bab314b286c40a0f0ba839f99",
+      "requirements": [
+        "CORE.COMPLETION"
+      ]
+    },
+    "docs/specification/2026-07-28/server/utilities/logging.mdx": {
+      "sha256": "4e77ec3257e07ad69bfd6ed902771f14d6498b60fe6c9c325b8ff4bfc35647a6",
+      "requirements": [
+        "CORE.LOGGING"
+      ]
+    },
+    "docs/specification/2026-07-28/server/utilities/pagination.mdx": {
+      "sha256": "c4c7b674ae9ce16c012b5da35559d35768f6b7a508ceb5d2d71393a9f46afd2b",
+      "requirements": [
+        "CORE.PAGINATION"
+      ]
+    },
+    "schema/2026-07-28/schema.json": {
+      "sha256": "ef70b61f99b6d2e5e3b46863822eab08dff6a45bedc7a08914e0e5b133f40203",
+      "requirements": [
+        "CORE.SCHEMA_SURFACE"
+      ]
+    }
+  },
+  "notes": "Reviewed whole-page requirement dispositions, not passing test evidence."
+}

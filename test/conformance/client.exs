@@ -75,7 +75,7 @@ defmodule ConformanceClient do
       protocol_mode: protocol_mode(protocol_version),
       protocol_version: protocol_version,
       client_info: %{"name" => "ex_mcp-conformance-client", "version" => "0.9.0"},
-      capabilities: %{"sampling" => %{}, "elicitation" => %{}}
+      capabilities: %{"sampling" => %{}, "elicitation" => %{}, "roots" => %{}}
     ]
 
     case build_auth_for_scenario(server_url, scenario, context) do
@@ -186,6 +186,24 @@ defmodule ConformanceClient do
   defp exercise_api(_client, "initialize", _context) do
     # Initialize already happened during connect — nothing more needed.
     Process.sleep(200)
+  end
+
+  defp exercise_api(client, "http-standard-headers", context) do
+    # Exercise each applicable method in the existing upstream scenario.
+    # Modern connections deliberately have no initialize/initialized exchange.
+    {:ok, resources} = Arbor.MCP.Client.list_resources(client, format: :map)
+
+    for resource <- resources["resources"] || [] do
+      {:ok, _} = Arbor.MCP.Client.read_resource(client, resource["uri"], format: :map)
+    end
+
+    {:ok, prompts} = Arbor.MCP.Client.list_prompts(client, format: :map)
+
+    for prompt <- prompts["prompts"] || [] do
+      {:ok, _} = Arbor.MCP.Client.get_prompt(client, prompt["name"], %{}, format: :map)
+    end
+
+    exercise_api(client, "tools_call", context)
   end
 
   defp exercise_api(client, scenario, context) do

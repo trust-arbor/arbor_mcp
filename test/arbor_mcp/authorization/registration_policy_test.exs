@@ -37,6 +37,8 @@ defmodule Arbor.MCP.Authorization.RegistrationPolicyTest do
              )
   end
 
+  @tag assurance: ["oauth.credentials.issuer"]
+
   test "modern pre-registered credentials require an exact issuer binding" do
     metadata = Map.put(cimd_and_dcr_metadata(), "issuer", "https://auth.example")
     strategy = {:pre_registered, "client-1", nil}
