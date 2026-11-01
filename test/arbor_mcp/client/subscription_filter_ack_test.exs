@@ -49,6 +49,8 @@ defmodule Arbor.MCP.Client.SubscriptionFilterAckTest do
     end
   end
 
+  @tag assurance: ["core.subscription.expansion"]
+
   test "rejects a server acknowledgment that adds an unrequested resource" do
     requested = %{"resourceSubscriptions" => ["review://allowed"]}
 
@@ -127,6 +129,8 @@ defmodule Arbor.MCP.Client.SubscriptionFilterAckTest do
       assert_receive {:subscription_closed, 1}
     end
   end
+
+  @tag assurance: ["core.subscription.filter"]
 
   test "forwards only events inside the acknowledged filter" do
     requested = %{"resourceSubscriptions" => ["review://a", "review://b"]}

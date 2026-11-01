@@ -47,6 +47,58 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlowCredentialStoreTest do
     end
   end
 
+  for {label, advertised} <- [
+        {"absent", nil},
+        {"empty", []},
+        {"plain_only", ["plain"]},
+        {"wrong_type", "S256"}
+      ] do
+    @tag assurance: ["oauth.pkce.#{label}"]
+    test "refuses code authorization when S256 metadata is #{label}" do
+      {:ok, store_agent} =
+        Agent.start_link(fn -> %{index: %{}, registrations: %{}, tokens: %{}} end)
+
+      server = oauth_server("unused-client", nil, pkce_methods: unquote(Macro.escape(advertised)))
+
+      assert {:error, :pkce_s256_not_supported} =
+               server
+               |> flow_config({StoreAdapter, store_agent})
+               |> FullOAuthFlow.execute()
+
+      assert %{authorizations: 0, tokens: 0} = Agent.get(server.counter, & &1)
+    end
+  end
+
+  @tag assurance: ["oauth.pkce.undiscovered"]
+  test "guessed endpoints cannot advertise undiscovered PKCE support" do
+    {:ok, store_agent} =
+      Agent.start_link(fn -> %{index: %{}, registrations: %{}, tokens: %{}} end)
+
+    server = oauth_server("unused-client", nil, no_metadata: true)
+    owner = self()
+
+    config =
+      server
+      |> flow_config({StoreAdapter, store_agent})
+      |> Map.merge(%{
+        client_registration: {:pre_registered, "registered-client", "registered-secret"},
+        client_id: "registered-client",
+        client_secret: "registered-secret",
+        credential_issuer: server.resource_origin <> ":443",
+        oauth_http: [
+          dns_resolver: fn _host, _timeout -> {:ok, [{93, 184, 216, 34}]} end,
+          request_fun: fn method, _request, _http_options, _request_options ->
+            send(owner, {:unexpected_protocol_request, method})
+            {:error, :fixture_stopped}
+          end
+        ]
+      })
+
+    assert {:error, :pkce_s256_not_supported} = FullOAuthFlow.execute(config)
+    refute_received {:unexpected_protocol_request, _method}
+    assert %{authorizations: 0, tokens: 0} = Agent.get(server.counter, & &1)
+  end
+
   test "reuses DCR credentials only for the same issuer and re-registers after an AS change" do
     {:ok, store_agent} =
       Agent.start_link(fn -> %{index: %{}, registrations: %{}, tokens: %{}} end)
@@ -302,7 +354,13 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlowCredentialStoreTest do
 
     {:ok, counter} =
       Agent.start_link(fn ->
-        %{registrations: 0, registration_requests: [], tokens: 0, token_requests: []}
+        %{
+          registrations: 0,
+          registration_requests: [],
+          authorizations: 0,
+          tokens: 0,
+          token_requests: []
+        }
       end)
 
     prm_resource = prm_resource_field(opts[:prm_resource], resource_origin)
@@ -324,10 +382,16 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlowCredentialStoreTest do
               "grant_types_supported" => ["authorization_code", "refresh_token"],
               "token_endpoint_auth_methods_supported" => ["client_secret_post"]
             }
+            |> maybe_put(
+              "code_challenge_methods_supported",
+              Keyword.get(opts, :pkce_methods, ["S256"])
+            )
 
           _other ->
             nil
         end
+
+      body = if opts[:no_metadata], do: nil, else: body
 
       if body,
         do: {:ok, %{status: 200, headers: [], body: Jason.encode!(body)}},
@@ -357,6 +421,7 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlowCredentialStoreTest do
     end)
 
     Bypass.stub(bypass, "GET", "/authorize", fn conn ->
+      Agent.update(counter, &Map.update!(&1, :authorizations, fn count -> count + 1 end))
       params = URI.decode_query(conn.query_string)
       query = URI.encode_query(%{"code" => "fixture-code", "state" => params["state"]})
 

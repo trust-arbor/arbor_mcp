@@ -615,6 +615,8 @@ jobs:
         name: mcp-conformance
         path: |
           tmp/conformance-modern/
+          tmp/conformance-core.*/
+          tmp/mcp-core-evidence/
           tmp/conformance-extensions/
           tmp/conformance_output.txt
           tmp/conformance_server.log

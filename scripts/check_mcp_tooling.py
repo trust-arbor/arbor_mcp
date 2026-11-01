@@ -137,6 +137,7 @@ def main(argv=None):
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--version")
     group.add_argument("--resolve-harness", action="store_true", help="Print the newest harness by publication timestamp")
+    group.add_argument("--core-inventory", help="Print this harness's actual core scenario inventory")
     parser.add_argument("--output", type=Path, default=ROOT / "tmp/mcp-tooling")
     args = parser.parse_args(argv)
     report = None
@@ -144,6 +145,15 @@ def main(argv=None):
     try:
         if args.resolve_harness:
             print(newest_harness())
+            return 0
+        if args.core_inventory:
+            if not VERSION.fullmatch(args.core_inventory):
+                raise ToolingError("Invalid requested harness version")
+            inventory = scenarios(command([
+                "npx", "--yes", f"@modelcontextprotocol/conformance@{args.core_inventory}",
+                "list", "--spec-version", "2026-07-28"]))
+            print(json.dumps({"harness": "@modelcontextprotocol/conformance@" + args.core_inventory,
+                              "protocol": "2026-07-28", "scenarios": inventory}, sort_keys=True))
             return 0
         if not VERSION.fullmatch(args.version):
             raise ToolingError("Invalid requested harness version")
@@ -154,7 +164,7 @@ def main(argv=None):
                                        "list", "--spec-version", "2026-07-28"]))
         report = compare(baseline, releases, inventory, args.version, load_reviews())
     except (ToolingError, OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
-        if args.resolve_harness:
+        if args.resolve_harness or args.core_inventory:
             print(f"Harness version collection incomplete: {error}", file=sys.stderr)
             return 1
         report = {"status": "error", "error": str(error)}

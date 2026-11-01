@@ -26,6 +26,8 @@ defmodule Arbor.MCP.Client.PaginationTest do
     end
   end
 
+  @tag assurance: ["core.pagination.opaque"]
+
   test "all four helpers follow opaque cursors and retain native or wire descriptors" do
     for {helper, method, field} <- [
           {:all_tools, "tools/list", :tools},

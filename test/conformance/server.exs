@@ -42,9 +42,9 @@ defmodule ConformanceHandler do
 
   def __server_capabilities__ do
     %{
-      "tools" => %{},
+      "tools" => %{"listChanged" => true},
       "resources" => %{},
-      "prompts" => %{},
+      "prompts" => %{"listChanged" => true},
       "completions" => %{}
     }
   end
@@ -183,6 +183,36 @@ defmodule ConformanceHandler do
     ]
 
     {:ok, tools, nil, state}
+  end
+
+  # Official stateless scenarios use these hooks to mutate catalogs while a
+  # filtered subscription is open. Use the normal registry/publication path.
+  def handle_call_tool("test_trigger_tool_change", _args, state) do
+    :ok =
+      Server.add_tool(
+        ConformanceRuntime,
+        %{
+          name: "diagnostic_tool_#{System.unique_integer([:positive])}",
+          description: "Catalog mutation for the official subscription scenario"
+        },
+        fn _args -> Arbor.MCP.Server.Result.text("diagnostic tool") end
+      )
+
+    {:ok, %{content: []}, state}
+  end
+
+  def handle_call_tool("test_trigger_prompt_change", _args, state) do
+    :ok =
+      Server.add_prompt(
+        ConformanceRuntime,
+        %{
+          name: "diagnostic_prompt_#{System.unique_integer([:positive])}",
+          description: "Catalog mutation for the official subscription scenario"
+        },
+        fn _args -> "diagnostic prompt" end
+      )
+
+    {:ok, %{content: []}, state}
   end
 
   @impl true

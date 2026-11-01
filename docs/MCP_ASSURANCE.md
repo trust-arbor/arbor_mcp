@@ -23,9 +23,13 @@ access-token issuance are not supplied by a JWT validation helper. Record an
 unimplemented or host-owned obligation explicitly rather than counting a nearby
 passing test as its implementation.
 
-The initial register covers Auth and named Tasks regressions. Core and inherited
-OAuth/RFC clause inventories remain explicitly pending or partial. This prevents
-a full-specification claim while those inventories are expanded and reviewed.
+The register includes scoped core and inherited OAuth/ID-JAG requirement bundles,
+in addition to Auth and named Tasks regressions. Each source declares the exact
+revision and adopted sections; a complete **scoped inventory** means those
+responsibilities have been mapped, not that every clause has executable proof.
+Partial rows, host duties and unadopted profiles remain visible. Legacy revision
+inventories and the complete Tasks clause inventory are outside this expansion.
+The [source review](MCP_SOURCE_REVIEW.md) records the page/section dispositions.
 
 ## Executable evidence
 
@@ -79,6 +83,28 @@ lanes. SDK SAML, refresh-subject and confidential IdP JWT qualification is not
 claimed by this lane. Qualify a peer's actual capabilities before adding a claim.
 
 ## Official conformance and drift
+
+Core evidence reuses the official harness assertions. `conformance.sh modern`
+preserves its actual per-scenario `checks.json` files and validates their exact
+IDs, names, counts and outcomes against `scripts/mcp_core_checks.json`. The
+checkout-bound receipt maps 73 scenarios to the register; INFO wire traces do
+not count as assertions. Two legacy-only initialize/initialized header checks
+remain visibly skipped in the modern profile and are exercised by the separate
+legacy gate. Missing/new assertions, failures, warnings and other skips fail.
+The fixture now exercises resource/prompt headers and real filtered catalog
+changes instead of leaving those official assertions dormant.
+
+The weekly workflow selects scenarios from the running harness's own inventory,
+including newly added client scenarios. A newer, unreviewed harness produces an
+explicit exploratory receipt with no qualified requirement case IDs; it must still
+execute every applicable scenario without failures, warnings or new skips. The
+release gate continues to require the exact reviewed harness/assertion inventory.
+
+Client scenarios run separately to isolate concurrently launched OAuth fixtures.
+Their upstream assertions are unchanged. Existing local tests fill specific
+framing, pagination, schema and subscription gaps without duplicating the core
+harness. The only new Auth contracts cover missing/malformed S256 metadata,
+which the upstream scenarios do not test.
 
 The official harness and SDK versions remain pinned in PR/release CI. Run the
 extension gate independently of core conformance:

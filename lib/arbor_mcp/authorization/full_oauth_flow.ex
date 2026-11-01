@@ -376,8 +376,7 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
             "token_endpoint" => "#{base}/token",
             "registration_endpoint" => "#{base}/register",
             "response_types_supported" => ["code"],
-            "grant_types_supported" => ["authorization_code"],
-            "code_challenge_methods_supported" => ["S256"]
+            "grant_types_supported" => ["authorization_code"]
           }
 
           {:ok,
@@ -1021,7 +1020,8 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
     supported_methods =
       as_metadata["token_endpoint_auth_methods_supported"] || ["client_secret_post"]
 
-    with :ok <- validate_endpoints(authorization_endpoint, token_endpoint),
+    with :ok <- validate_pkce_support(as_metadata),
+         :ok <- validate_endpoints(authorization_endpoint, token_endpoint),
          {:ok, token_auth_method} <-
            select_token_auth_method(supported_methods, client_info, config),
          {:ok, server_pid, redirect_uri} <- setup_redirect_server(config) do
@@ -1070,6 +1070,17 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
   defp validate_endpoints(auth_ep, token_ep) do
     if auth_ep && token_ep, do: :ok, else: {:error, :missing_endpoints}
   end
+
+  # MCP requires discovered S256 support before starting code authorization.
+  # An absent advertisement is not evidence that the AS supports PKCE.
+  defp validate_pkce_support(%{"code_challenge_methods_supported" => methods})
+       when is_list(methods) do
+    if "S256" in methods and Enum.all?(methods, &is_binary/1),
+      do: :ok,
+      else: {:error, :pkce_s256_not_supported}
+  end
+
+  defp validate_pkce_support(_metadata), do: {:error, :pkce_s256_not_supported}
 
   defp setup_redirect_server(config) do
     port = config[:redirect_port] || 0

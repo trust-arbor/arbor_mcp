@@ -34,6 +34,8 @@ defmodule Arbor.MCP.Internal.ProtocolComplianceTest do
       end
     end
 
+    @tag assurance: ["core.rpc.notification"]
+
     test "notifications do not include id field" do
       notifications = [
         Protocol.encode_initialized(),
@@ -51,6 +53,8 @@ defmodule Arbor.MCP.Internal.ProtocolComplianceTest do
       end
     end
 
+    @tag assurance: ["core.rpc.ids"]
+
     test "requests include unique integer id" do
       # Generate multiple requests and verify IDs are unique integers
       ids =
@@ -63,6 +67,8 @@ defmodule Arbor.MCP.Internal.ProtocolComplianceTest do
       assert length(Enum.uniq(ids)) == length(ids),
              "Request IDs must be unique"
     end
+
+    @tag assurance: ["core.rpc.response"]
 
     test "responses include matching id from request" do
       request_id = 12345

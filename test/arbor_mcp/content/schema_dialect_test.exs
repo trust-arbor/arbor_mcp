@@ -167,6 +167,8 @@ defmodule Arbor.MCP.Content.SchemaDialectTest do
     end
   end
 
+  @tag assurance: ["core.schema.unsupported"]
+
   test "unknown dialects and required vocabularies fail explicitly" do
     for uri <- [
           "https://json-schema.org/draft/2019-09/schema",

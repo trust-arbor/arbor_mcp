@@ -135,6 +135,8 @@ jobs:
           tmp/conformance_upstream_version.txt
           tmp/mcp-tooling/
           tmp/conformance-modern/
+          tmp/conformance-core.*/
+          tmp/mcp-core-evidence/
           tmp/conformance-extensions/
           tmp/conformance_output.txt
           tmp/conformance_server.log

@@ -75,6 +75,8 @@ defmodule Arbor.RPC.StdioFramingTest do
     assert StdioFraming.mode(spawn(fn -> :ok end)) == :latin1
   end
 
+  @tag assurance: ["core.stdio.bom"]
+
   test "strips a byte-order mark only from the start of a frame" do
     frame = ~S({"a":1})
     assert StdioFraming.strip_bom(I18nCorpus.bom() <> frame) == frame

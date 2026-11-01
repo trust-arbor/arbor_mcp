@@ -70,6 +70,7 @@ defmodule Arbor.MCP.Compliance.OAuth21ComplianceTest do
   end
 
   describe "PKCE (Proof Key for Code Exchange)" do
+    @tag assurance: ["oauth.pkce.pair"]
     test "generates valid PKCE challenge and verifier" do
       {:ok, verifier, challenge} = Authorization.generate_pkce_challenge()
 

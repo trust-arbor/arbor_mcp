@@ -50,15 +50,20 @@ harness versions and every available harness scenario with
 reported even when our explicit extension selectors do not run them. Unknown
 inventory formats and incomplete collection fail. SDK capability still requires
 an implementation review; publishing a new version does not qualify a profile.
-Neither watcher changes dependency or harness pins.
+Neither watcher changes dependency or harness pins. The newest-harness workflow
+executes that harness's own current core scenario inventory. Its raw core receipt
+is explicitly exploratory until reviewed; a version difference alone is not a
+conformance failure and does not confer pinned requirement qualification.
 Published package timestamps determine release order; older calendar-version
 packages are not mistaken for newer releases of a subsequent SDK generation.
 Each release/scenario change has its own stable key, independent of unrelated
 changes in the same report. `scripts/mcp_upstream_reviews.json` links those keys
 to source-controlled review IDs and explicit decisions. An open record remains
 visible on subsequent runs; recording it does not silently clear the drift or
-advance a pin. The initial open record tracks Everything peer 2.1.0 for separate
-review and qualification while existing interop remains pinned to 2.0.1.
+advance a pin. `UPSTREAM-2026-11-01-001` records the reviewed Everything 2.1.0 update. Both
+existing HTTP era lanes pass its 29 tests; the exact package/lock/tooling pins
+advance together. The retained review record is historical evidence, not an
+automatic dependency update or qualification of every optional peer feature.
 
 ```sh
 python3 -B scripts/check_mcp_tooling.py --version 0.2.0-alpha.12

@@ -13,6 +13,8 @@ defmodule Arbor.MCP.Authorization.EndpointPolicyTest do
     assert :ok = EndpointPolicy.validate_metadata(metadata, "https://issuer.example")
   end
 
+  @tag assurance: ["oauth.endpoint.binding"]
+
   test "rejects cross-origin and insecure discovered endpoints by default" do
     assert {:error, {:invalid_endpoint, "token_endpoint", :cross_origin}} =
              EndpointPolicy.validate_metadata(

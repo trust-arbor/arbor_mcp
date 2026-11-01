@@ -3,6 +3,8 @@ defmodule Arbor.MCP.Authorization.ClientRegistrationTest do
 
   alias Arbor.MCP.Authorization.ClientRegistration
 
+  @tag assurance: ["oauth.dcr.type"]
+
   test "requires and emits an explicit application_type" do
     request = request()
 

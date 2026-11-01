@@ -149,6 +149,8 @@ defmodule Arbor.MCP.Client.ModernHTTPSubscriptionTest do
     assert_eventually(fn -> Subscriptions.entries(runtime: runtime) == [] end)
   end
 
+  @tag assurance: ["core.subscription.reconnect"]
+
   test "reopens and resynchronizes after an abrupt HTTP response-stream close", %{
     runtime: runtime,
     client: client

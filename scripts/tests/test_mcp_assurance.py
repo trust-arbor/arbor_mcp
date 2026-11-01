@@ -137,6 +137,54 @@ class AssuranceTest(unittest.TestCase):
         self.assertIn("partial", rendered)
         self.assertIn("Host responsibilities", rendered)
 
+    def test_implemented_claim_cannot_use_a_skipped_or_unmapped_official_check(self):
+        (self.root / "scripts").mkdir()
+        baseline = self.root / "scripts/mcp_core_checks.json"
+        rows = [{"id": "official-check", "status": "SUCCESS"}]
+        baseline.write_text(json.dumps({"scenarios": {"server:example": rows}}))
+        self.data["cases"] = {}
+        self.data["conformance_cases"] = {"official.case": {
+            "role": "server", "scenario": "example", "checks": ["official-check"],
+            "asserts": "Official wire behavior"}}
+        row = self.data["requirements"][0]
+        row.update(cases=[], conformance=["official.case"])
+        self.load(self.data)
+        rows[0]["status"] = "SKIPPED"
+        baseline.write_text(json.dumps({"scenarios": {"server:example": rows}}))
+        with self.assertRaisesRegex(CHECK.AssuranceError, "Unqualified"):
+            self.load(self.data)
+        self.data["conformance_cases"]["official.case"]["scenario"] = "unexecuted"
+        with self.assertRaises(CHECK.AssuranceError):
+            self.load(self.data)
+
+    def test_source_review_cannot_omit_requirements_or_change_the_source_pin(self):
+        self.data["sources"]["CORE"] = self.data["sources"].pop("spec")
+        self.data["requirements"][0]["source"] = "CORE"
+        self.data["source_manifest"] = "manifest.json"
+        manifest = {"version": 1, "core_revision": "a" * 40, "files": {
+            "docs/specification/2026-07-28/basic/index.mdx": {
+                "sha256": "b" * 64, "requirements": ["SPEC.AUD"]}}}
+        path = self.root / "manifest.json"
+        path.write_text(json.dumps(manifest))
+        self.load(self.data)
+        for value in [dict(manifest, core_revision="c" * 40), dict(manifest, files={})]:
+            path.write_text(json.dumps(value))
+            with self.assertRaises(CHECK.AssuranceError):
+                self.load(self.data)
+
+    def test_registered_schema_outside_standard_directories_binds_execution(self):
+        for name in ["mix.exs", "mix.lock", "scripts/mcp_requirements.json", "scripts/check_mcp_assurance.py"]:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("source")
+        schema = self.root / "docs/pinned-schema.json"
+        schema.parent.mkdir()
+        schema.write_text('{"type":"object"}')
+        self.data["requirements"][0]["implementation"].append("docs/pinned-schema.json")
+        before = CHECK.fingerprint(self.data, self.root)
+        schema.write_text('{"type":"string"}')
+        self.assertNotEqual(before, CHECK.fingerprint(self.data, self.root))
+
 
 if __name__ == "__main__":
     unittest.main()

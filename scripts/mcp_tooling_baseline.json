@@ -6,7 +6,7 @@
     "@modelcontextprotocol/node": "2.1.2",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@modelcontextprotocol/server": "2.4.0",
-    "@modelcontextprotocol/server-everything": "2.0.1"
+    "@modelcontextprotocol/server-everything": "2.1.0"
   },
   "protocol": "2026-07-28",
   "scenarios": {

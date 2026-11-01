@@ -1307,6 +1307,7 @@ defmodule Arbor.MCP.Client.HTTPInlineReauthStreamTest do
         "authorization_endpoint" => origin <> "/authorize",
         "token_endpoint" => origin <> "/token",
         "grant_types_supported" => ["authorization_code"],
+        "code_challenge_methods_supported" => ["S256"],
         "token_endpoint_auth_methods_supported" => ["client_secret_post"]
       })
     end)
