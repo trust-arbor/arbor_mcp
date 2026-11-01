@@ -16,7 +16,7 @@ defmodule Arbor.MCP.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       # Runtime tests define encoders for private/unsafe payload fixtures.
       consolidate_protocols: Mix.env() != :test,
-      test_ignore_filters: [~r"^test/conformance/(client|server)\.exs$"],
+      test_ignore_filters: [~r"^test/conformance/(client|server|extensions_server)\.exs$"],
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       description: description(),

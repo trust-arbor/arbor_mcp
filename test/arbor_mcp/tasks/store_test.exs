@@ -184,5 +184,150 @@ defmodule Arbor.MCP.Tasks.StoreTest do
            }
   end
 
+  test "unencodable input keys cannot stop the store or change pending input", %{server: server} do
+    opts = store_opts(server, @alice) ++ [notify: false]
+
+    for key <- [[0x110000], <<255>>] do
+      assert {:ok, created} = Tasks.create("bad-unicode-key", %{}, opts)
+      id = created["taskId"]
+      assert {:error, :invalid_transition} = Tasks.require_input(id, %{key => %{}}, opts)
+      assert Process.alive?(server)
+      assert {:ok, %{"status" => "working"}} = Tasks.get(id, opts)
+      assert {:ok, _} = Tasks.require_input(id, %{"approval" => %{}}, opts)
+      assert {:error, :invalid_input_responses} = Tasks.update(id, %{key => %{}}, opts)
+      assert {:ok, %{"status" => "input_required"}} = Tasks.get(id, opts)
+      assert {:ok, %{}} = Tasks.take_input_responses(id, opts)
+    end
+  end
+
+  test "input key aliases cannot reuse or duplicate a wire identifier", %{server: server} do
+    opts = store_opts(server, @alice) ++ [notify: false]
+    assert {:ok, created} = Tasks.create("key-aliases", %{}, opts)
+    id = created["taskId"]
+    assert {:ok, _} = Tasks.require_input(id, %{approval: %{}}, opts)
+    assert :ok = Tasks.update(id, %{"approval" => %{"action" => "accept"}}, opts)
+    assert {:ok, %{approval: %{"action" => "accept"}}} = Tasks.take_input_responses(id, opts)
+
+    assert {:error, :invalid_transition} = Tasks.require_input(id, %{"approval" => %{}}, opts)
+
+    for requests <- [
+          %{"new" => %{}, new: %{}},
+          %{1 => %{}, "1" => %{}},
+          %{nil => %{}, "nil" => %{}},
+          %{{:invalid, id} => %{}}
+        ] do
+      assert {:error, :invalid_transition} = Tasks.require_input(id, requests, opts)
+    end
+
+    assert {:ok, %{"status" => "working"}} = Tasks.get(id, opts)
+  end
+
+  test "duplicate response aliases do not advance or consume pending input", %{server: server} do
+    opts = store_opts(server, @alice) ++ [notify: false]
+    assert {:ok, created} = Tasks.create("response-aliases", %{}, opts)
+    id = created["taskId"]
+    assert {:ok, _} = Tasks.require_input(id, %{"approval" => %{}}, opts)
+
+    for responses <- [
+          %{"approval" => %{"a" => 1}, approval: %{"a" => 2}},
+          %{{:invalid, id} => %{}}
+        ] do
+      assert {:error, :invalid_input_responses} = Tasks.update(id, responses, opts)
+      assert {:ok, %{"status" => "input_required"}} = Tasks.get(id, opts)
+      assert {:ok, %{}} = Tasks.take_input_responses(id, opts)
+    end
+
+    assert :ok = Tasks.update(id, %{approval: %{"action" => "accept"}}, opts)
+    assert {:ok, %{"approval" => %{"action" => "accept"}}} = Tasks.take_input_responses(id, opts)
+    assert {:ok, %{"status" => "working"}} = Tasks.get(id, opts)
+  end
+
+  test "stored initial input cannot contain duplicate wire identifiers", %{server: server} do
+    task = Arbor.MCP.Tasks.Task.new("initial-input", %{}, ttl: 60_000)
+    waiting = %{task | state: :input_required, input_requests: %{"answer" => %{}, answer: %{}}}
+
+    assert {:error, :invalid_task} = ETS.create(waiting, @alice, server: server)
+    assert {:error, :not_found_or_unauthorized} = Tasks.get(task.id, store_opts(server, @alice))
+  end
+
+  test "input key history is bounded by retained storage quotas" do
+    server = start_supervised!({ETS, name: nil, max_entry_bytes: 2_000}, id: make_ref())
+    opts = store_opts(server, @alice) ++ [notify: false]
+    assert {:ok, created} = Tasks.create("bounded-history", %{}, opts)
+    id = created["taskId"]
+
+    oversized = %{
+      "method" => "elicitation/create",
+      "params" => %{
+        "mode" => "form",
+        "message" => String.duplicate("large", 1_000),
+        "requestedSchema" => %{"type" => "object", "properties" => %{}}
+      }
+    }
+
+    assert {:error, :store_full} = Tasks.require_input(id, %{"quota-probe" => oversized}, opts)
+    assert {:ok, %{"status" => "working"}} = Tasks.get(id, opts)
+
+    assert {:ok, _waiting} =
+             Tasks.require_input(
+               id,
+               %{"quota-probe" => %{"method" => "elicitation/create"}},
+               opts
+             )
+
+    assert :ok = Tasks.update(id, %{"quota-probe" => %{}}, opts)
+    assert {:ok, _responses} = Tasks.take_input_responses(id, opts)
+
+    result =
+      Enum.reduce_while(1..100, :unbounded, fn round, _acc ->
+        key = String.duplicate("k", 64) <> Integer.to_string(round)
+
+        case Tasks.require_input(id, %{key => %{"method" => "elicitation/create"}}, opts) do
+          {:ok, _waiting} ->
+            assert :ok = Tasks.update(id, %{key => %{"action" => "accept"}}, opts)
+            assert {:ok, _responses} = Tasks.take_input_responses(id, opts)
+            {:cont, :unbounded}
+
+          {:error, :store_full} ->
+            {:halt, round}
+        end
+      end)
+
+    assert is_integer(result) and result > 1
+    assert {:ok, %{"status" => "working"}} = Tasks.get(id, opts)
+    assert {:ok, %{}} = Tasks.take_input_responses(id, opts)
+
+    assert {:error, :invalid_transition} =
+             Tasks.require_input(id, %{(String.duplicate("k", 64) <> "1") => %{}}, opts)
+  end
+
+  test "terminal transitions discard answered and outstanding input", %{server: server} do
+    opts = store_opts(server, @alice) ++ [notify: false]
+
+    for terminal <- [:completed, :failed, :cancelled] do
+      assert {:ok, created} = Tasks.create("finish-waiting", %{}, opts)
+      id = created["taskId"]
+      assert {:ok, _} = Tasks.require_input(id, %{"answered" => %{}, "pending" => %{}}, opts)
+      assert :ok = Tasks.update(id, %{"answered" => %{"action" => "accept"}}, opts)
+
+      case terminal do
+        :completed ->
+          assert {:ok, _} = Tasks.complete(id, %{"done" => true}, opts)
+
+        :failed ->
+          assert {:ok, _} = Tasks.fail(id, %{"code" => -32603, "message" => "failed"}, opts)
+
+        :cancelled ->
+          assert {:ok, _} = Tasks.mark_cancelled(id, opts)
+      end
+
+      assert {:ok, final} = Tasks.get(id, opts)
+      assert final["status"] == Atom.to_string(terminal)
+      refute Map.has_key?(final, "inputRequests")
+      assert {:ok, %{}} = Tasks.take_input_responses(id, opts)
+      assert {:error, :invalid_transition} = Tasks.require_input(id, %{"new" => %{}}, opts)
+    end
+  end
+
   defp store_opts(server, owner), do: [store: ETS, server: server, owner: owner]
 end

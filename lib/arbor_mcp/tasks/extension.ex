@@ -100,7 +100,7 @@ defmodule Arbor.MCP.Tasks.Extension do
          :ok <- valid_status(result),
          :ok <- required_timestamp(result, "createdAt"),
          :ok <- required_timestamp(result, "lastUpdatedAt"),
-         :ok <- required_non_negative_integer(result, "ttlMs"),
+         :ok <- required_nullable_non_negative_integer(result, "ttlMs"),
          :ok <- optional_non_negative_integer(result, "pollIntervalMs"),
          :ok <- optional_binary(result, "statusMessage") do
       validate_detailed_fields(result, mode)
@@ -162,10 +162,16 @@ defmodule Arbor.MCP.Tasks.Extension do
     end
   end
 
-  defp required_non_negative_integer(result, key) do
+  defp required_nullable_non_negative_integer(result, key) do
     case field(result, key) do
-      value when is_integer(value) and value >= 0 -> :ok
-      _other -> invalid(key)
+      nil ->
+        if Enum.any?(Map.keys(result), &(key_string(&1) == key)), do: :ok, else: invalid(key)
+
+      value when is_integer(value) and value >= 0 ->
+        :ok
+
+      _other ->
+        invalid(key)
     end
   end
 

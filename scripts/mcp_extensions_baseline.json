@@ -1,7 +1,7 @@
 {
   "inventory_date": "2026-10-31",
-  "notes": "Source/current-scope assessment is recorded in docs/MCP_EXTENSION_BASELINE_REVIEW.md. Reviewed is not a universal compatibility claim. Tasks and auth remain pending confirmed compatibility work; optional protocols are not enabled by this inventory.",
-  "reviewed_at": "2026-11-01T01:22:11.235865+00:00",
+  "notes": "Source/current-scope assessment and corrections are recorded in docs/MCP_EXTENSION_BASELINE_REVIEW.md. Reviewed is not universal compatibility. Tasks corrections are acknowledged; Auth remains pending enterprise profile qualification. Optional protocols are not enabled by this inventory.",
+  "reviewed_at": "2026-11-01T02:21:59.838435+00:00",
   "sources": {
     "modelcontextprotocol/experimental-ext-file-uploads": {
       "assessment": "not_implemented",
@@ -53,14 +53,14 @@
       "revision": "cf599cc462406accc90ec3ca7879e3a22a9fc2a8"
     },
     "modelcontextprotocol/ext-auth": {
-      "assessment": "compatibility_gaps",
-      "findings": [
-        "A1"
-      ],
-      "notes": "Basic-only metadata fails in DiscoveryFlow; confidential-IdP orchestration also requires explicit profile/API qualification.",
+      "assessment": "enterprise_profile_qualification_pending",
+      "notes": "A1 metadata selection corrected; official Basic/JWT and public-IdP enterprise client scenarios pass. Separate confidential-IdP orchestration remains outside the high-level API pending profile/API qualification.",
       "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
       "review_status": "pending",
-      "revision": "15ca394e00a66434520b9ade26294999295a43ae"
+      "revision": "15ca394e00a66434520b9ade26294999295a43ae",
+      "resolved_findings": [
+        "A1"
+      ]
     },
     "modelcontextprotocol/ext-server-card": {
       "assessment": "not_implemented",
@@ -77,18 +77,18 @@
       "revision": "649f7aee87d631ac4d1fdd3b12eef0c6264fdb3a"
     },
     "modelcontextprotocol/ext-tasks": {
-      "assessment": "compatibility_gaps",
-      "findings": [
+      "assessment": "implemented_with_documented_limits",
+      "notes": "T1–T5 corrected with regressions and official Tasks server conformance. Node-local store retains finite TTL and byte quotas; upstream notification scenario remains a stub, with actual HTTP delivery tested locally.",
+      "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
+      "review_status": "reviewed",
+      "revision": "b3d28aceaa6d49f5f92258e3d06b61ad6f111e84",
+      "resolved_findings": [
         "T1",
         "T2",
         "T3",
         "T4",
         "T5"
-      ],
-      "notes": "Published Tasks contract reviewed; confirmed gaps require fixes before baseline clearance.",
-      "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
-      "review_status": "pending",
-      "revision": "b3d28aceaa6d49f5f92258e3d06b61ad6f111e84"
+      ]
     },
     "modelcontextprotocol/modelcontextprotocol": {
       "assessment": "framework_policy_reviewed",

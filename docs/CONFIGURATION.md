@@ -552,11 +552,15 @@ credentials, authorization tokens, personal data, or other secrets as baggage.
 
 ## Tasks Extension
 
-The published-extension baseline review records outstanding compatibility work
-for nullable TTLs, HTTP task routing headers, missing-task error codes and task
-input/state lifecycles. See the
-[assessment and follow-up list](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md#tasks-required-compatibility-work)
-before qualifying a deployment that relies on those cases.
+See the separate
+[extension support and test matrix](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md#mcp-extensions)
+for published targets, external conformance evidence and implementation limits.
+Modern peer tasks may return a required `ttlMs: null`; the bundled store still
+requires a finite retention TTL. Task input-request keys must be unique for the
+task's lifetime. Reuse returns `{:error, :invalid_transition}`, and retained key
+history counts toward the store's existing entry and total byte limits.
+Use string input IDs; keys that encode to the same JSON string share one ID.
+Completing, failing or cancelling a waiting task discards obsolete input data.
 
 Modern Tasks is an explicit extension, not the experimental `tasks` capability
 from MCP 2025-11-25. A modern client opts in on every request by adding

@@ -108,7 +108,13 @@ defmodule ConformanceClient do
   # Pre-registered credentials are issuer-bound in Arbor.MCP. The harness supplies
   # the credentials but omits their issuer, so discover that missing fixture
   # value before connecting. FullOAuthFlow repeats and validates discovery.
-  defp add_conformance_registration_config(auth, server_url, "auth/pre-registration") do
+  defp add_conformance_registration_config(auth, server_url, scenario)
+       when scenario in [
+              "auth/pre-registration",
+              "auth/client-credentials-basic",
+              "auth/client-credentials-jwt",
+              "auth/enterprise-managed-authorization"
+            ] do
     case Arbor.MCP.Authorization.ProtectedResourceMetadata.discover(
            server_url,
            allow_insecure_loopback: true

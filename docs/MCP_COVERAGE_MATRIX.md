@@ -40,7 +40,8 @@ the 2026-07-28 qualification command.
 The weekly `MCP conformance upstream` workflow selects the highest version in
 the package's published npm version list and runs the same complete modern
 suites. It is an advisory early-warning lane: it uploads the selected version
-and full logs, but it does not mutate the reviewed pin used by release CI.
+and full logs for core and supported-extension runs, but it does not mutate the
+reviewed pin used by release CI.
 Manual runs may select an exact package version. Review any failure against the
 upstream release diff, add a local regression test for newly exposed behavior,
 and advance the pinned gate only after the new harness passes.
@@ -105,10 +106,11 @@ fails when a legacy revision lacks a handler. Modern traffic uses a separate
 wire path and is characterized by era-specific tests rather than being folded
 into legacy `initialize` feature tables.
 
-## MCP 2026-07-28 Coverage
+## MCP 2026-07-28 Core Coverage
 
-Legend: ✅ covered by local tests and exercised by the complete external suite;
-⚠️ intentionally limited or awaiting a release gate.
+Legend: ✅ implemented with test coverage; ⚠️ limited or awaiting qualification;
+— not implemented. External results above cover their selected scenarios;
+they do not certify every feature or optional extension.
 
 Test paths in this table are relative to `test/arbor_mcp/`.
 
@@ -126,10 +128,65 @@ Test paths in this table are relative to `test/arbor_mcp/`.
 | Bidirectional official TypeScript SDK v2 interop over stdio and HTTP | ✅ | `integration/modern_interop_test.exs`, `../interop/modern_ts_*.mjs` |
 | Reverse-proxy header validation | ✅ | `http_reverse_proxy_test.exs` |
 | Modern OAuth, CIMD, registration policy, issuer binding, and metadata SSRF controls | ✅ | `authorization/compatibility_matrix_test.exs`, `authorization/registration_policy_test.exs`, `authorization/client_id_metadata_test.exs`, `authorization/metadata_fetcher_test.exs`, `client/modern_http_stream_auth_test.exs` |
-| `io.modelcontextprotocol/tasks` capability, server store, and wire shape | ⚠️ | Core paths tested in `tasks/extension_test.exs`, `tasks/server_test.exs`, `tasks/store_test.exs`, `tasks/task_test.exs`; [baseline review T1–T5](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md#tasks-required-compatibility-work) records open extension compatibility gaps. |
 | Trace context and telemetry redaction/cardinality | ✅ | `protocol/trace_context_test.exs`, `operational_telemetry_test.exs` |
 | 2026 type surface and synced schema mapping | ✅ | `types/v20260728_test.exs`, `spec_sync/file_mapper_test.exs` |
-| Optional response-cache storage and reuse | ⚠️ | Required `ttlMs`/`cacheScope` validation is covered; ArborMCP 1.0 deliberately does not store or reuse responses |
+| Optional response-cache storage and reuse | ✅ | Client-local bounded storage, invalidation and per-call bypass are tested in `client/response_cache_test.exs`; core cache-hint validation has separate external coverage. |
+
+## MCP Extensions
+
+Extensions are optional protocols layered on core MCP. Auth is one source
+repository containing two separate published extensions, listed individually
+below. Core OAuth discovery, CIMD and registration policy remain in the core
+table. Library features such as forwarding, caching and middleware are described
+in the [features guide](FEATURES.md).
+
+The pinned upstream revisions and implementation-scope assessment are in the
+[baseline review](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md).
+An acknowledged source baseline does not imply that its protocol is implemented.
+
+| Extension | Published target / maturity | ArborMCP support | Coverage |
+|---|---|---|---|
+| Tasks (`io.modelcontextprotocol/tasks`) | `2026-07-28`, Beta | ✅ Opt-in client/server methods, bounded node-local store, input rounds, cooperative cancellation and notifications. Peer TTLs may be null; the bundled store retains a finite TTL policy. | `tasks/`, `client/modern_result_validation_test.exs`, `transport/http_request_headers_test.exs`, `client/modern_http_subscription_test.exs`; official Tasks server scenarios below. |
+| OAuth Client Credentials | `2026-07-28`, Stable | ✅ Client flows for Basic, body credentials and JWT assertions, including issuer-bound discovery. | `authorization/discovery_flow_auth_methods_test.exs`, `authorization/client_assertion_test.exs`, `authorization/oauth_flow_test.exs`; official Basic/JWT client scenarios below. |
+| Enterprise-Managed Authorization | `2026-07-28`, Stable | ⚠️ ID-JAG token exchange and JWT bearer grant. The high-level public-IdP flow is covered; separate confidential-IdP credential configuration is not yet available. | `authorization/enterprise_flow_test.exs`, `authorization/token_exchange_test.exs`, `authorization/id_jag_test.exs`, `authorization/id_jag_handler_test.exs`; official enterprise client scenario below. |
+| Apps | `2026-01-26`, Stable | — No built-in or qualified Apps integration. | Generic tools/resources/metadata are building blocks, not an Apps qualification. |
+| Skills | Beta | — Skills methods, manifests and host loading semantics are not implemented. | No extension conformance claim. |
+| Server Cards | Beta | — Card publication and card-based discovery are not implemented. | No extension conformance claim. |
+| File uploads | Experimental | — No protocol adopted from the incubation placeholder. | No extension conformance claim. |
+| Filesystems | Experimental | — No filesystem extension implementation. | No extension conformance claim. |
+| Interceptors | Experimental | — The remote interceptor protocol is not implemented. | Local middleware is a separate library feature. |
+| Tool annotations | Experimental | — Draft trust annotations and action metadata are not implemented. | Standard core tool hints and `_meta` handling are separate. |
+| Triggers/events | Experimental | — Proposed event polling, streams and webhooks are not implemented. | Core subscriptions are separate. |
+| Variants | Experimental | — No maintained Variants integration. | No extension conformance claim. |
+
+### Extension conformance and interoperability
+
+Run `./scripts/conformance.sh extensions` with the same pinned
+`@modelcontextprotocol/conformance@0.2.0-alpha.12` harness. CI's **MCP external
+conformance** job runs this as a separate step and preserves its combined output
+in the `mcp-conformance` artifact under `conformance-extensions/`. The date-filtered
+core run excludes these extension-tagged scenarios.
+The explicit selectors use `--spec-version 2026-07-28 --force` to include those
+extension-tagged cases at the modern wire revision; the harness otherwise
+defaults its Auth extension peers to legacy MCP traffic.
+
+| ArborMCP role | Independent peer / selected scenarios | Last recorded result |
+|---|---|---|
+| Tasks server over Streamable HTTP | Official harness client: lifecycle, capabilities, wire fields, request-state removal, task input rounds, routing headers, dispatch/envelopes, required capabilities and MRTR-to-task composition | 44 checks passed across nine executed scenarios. |
+| Client-credentials client | Official harness authorization servers: `auth/client-credentials-basic`, `auth/client-credentials-jwt` | 16 checks passed. |
+| Enterprise client | Official harness IdP and authorization server: `auth/enterprise-managed-authorization` | 9 checks passed for the public-IdP profile. |
+
+These are maintainer-recorded results from 2026-10-31 (America/Chicago), not live
+badges. The tenth selected Tasks scenario, `tasks-status-notifications`, is an
+upstream skipped stub awaiting a `subscriptions/listen` rewrite. It is not counted
+as external notification coverage. Actual HTTP task notification delivery and
+malformed-event rejection are tested locally in
+`client/modern_http_subscription_test.exs`.
+
+The TypeScript SDK v2 interop lanes above currently exercise core MCP. They do
+not provide a separate SDK-extension qualification for Tasks or Auth. The explicit
+extension harness run supplies independent wire peers for the roles shown here;
+local suites cover additional library paths and documented limits.
 
 ## Legacy Feature Coverage
 

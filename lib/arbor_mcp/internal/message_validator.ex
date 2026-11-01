@@ -392,9 +392,14 @@ defmodule Arbor.MCP.Internal.MessageValidator do
   def validate_method_params("subscriptions/listen", params) when is_map(params),
     do: require_object(params, "notifications")
 
+  def validate_method_params("tasks/update", params) when is_map(params) do
+    with :ok <- require_nonempty_string(params, "taskId"),
+         do: require_object(params, "inputResponses")
+  end
+
   def validate_method_params(method, params)
       when is_map(params) and
-             method in ["tasks/get", "tasks/result", "tasks/cancel", "tasks/update"],
+             method in ["tasks/get", "tasks/result", "tasks/cancel"],
       do: require_nonempty_string(params, "taskId")
 
   def validate_method_params("logging/setLevel", params) when is_map(params),

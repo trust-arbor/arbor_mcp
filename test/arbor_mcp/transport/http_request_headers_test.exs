@@ -164,6 +164,39 @@ defmodule Arbor.MCP.Transport.HTTP.RequestHeadersTest do
     refute Headers.get(headers, "mcp-param-null")
   end
 
+  test "task routing headers encode IDs and require an exact body match" do
+    task_id = "task-世界"
+
+    for method <- ~w(tasks/get tasks/update tasks/cancel) do
+      body = request(method, %{"taskId" => task_id})
+      headers = RequestHeaders.build(body, state())
+      decoded = Jason.decode!(body)
+
+      assert Headers.get(headers, "mcp-name") == RequestHeaders.encode_value(task_id)
+      assert :ok = RequestHeaders.validate(headers, decoded)
+
+      assert {:error, _message} =
+               RequestHeaders.validate(Headers.delete(headers, "mcp-name"), decoded)
+
+      assert {:error, message} =
+               RequestHeaders.validate(
+                 headers,
+                 put_in(decoded, ["params", "taskId"], "other-task")
+               )
+
+      assert message =~ "does not match"
+
+      assert {:error, _message} =
+               RequestHeaders.validate([{"mcp-name", task_id} | headers], decoded)
+
+      legacy =
+        RequestHeaders.build(request(method, %{"taskId" => task_id}, "2025-11-25"), state())
+
+      refute Headers.get(legacy, "mcp-name")
+      refute Headers.get(legacy, "mcp-method")
+    end
+  end
+
   defp state do
     %{
       headers: [

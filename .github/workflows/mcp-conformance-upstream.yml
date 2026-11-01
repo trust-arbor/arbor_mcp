@@ -116,6 +116,24 @@ jobs:
       env:
         CONFORMANCE_ALPHA_VERSION: ${{ steps.harness.outputs.version }}
 
+    - name: Keep modern upstream evidence
+      if: always()
+      run: |
+        mkdir -p tmp/conformance-modern
+        cp tmp/conformance_output.txt tmp/conformance_server.log tmp/conformance-modern/
+
+    - name: Run supported extension suites with newest harness
+      if: always() && steps.harness.outputs.version != ''
+      run: ./scripts/conformance.sh extensions
+      env:
+        CONFORMANCE_ALPHA_VERSION: ${{ steps.harness.outputs.version }}
+
+    - name: Keep extension upstream evidence
+      if: always()
+      run: |
+        mkdir -p tmp/conformance-extensions
+        cp tmp/conformance_output.txt tmp/conformance_server.log tmp/conformance-extensions/
+
     - name: Preserve upstream conformance evidence
       if: always()
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
@@ -123,6 +141,8 @@ jobs:
         name: mcp-conformance-upstream-${{ steps.harness.outputs.version || 'unresolved' }}
         path: |
           tmp/conformance_upstream_version.txt
+          tmp/conformance-modern/
+          tmp/conformance-extensions/
           tmp/conformance_output.txt
           tmp/conformance_server.log
         if-no-files-found: warn

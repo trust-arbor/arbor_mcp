@@ -227,13 +227,22 @@ defmodule Arbor.MCP.Authorization.OAuthFlow do
   """
   @spec client_credentials_flow(client_credentials_params()) ::
           {:ok, token_response()} | {:error, term()}
+  def client_credentials_flow(params), do: client_credentials_flow(params, :client_secret_post)
+
+  @doc false
+  @spec client_credentials_flow(
+          client_credentials_params(),
+          :client_secret_basic | :client_secret_post
+        ) :: {:ok, token_response()} | {:error, term()}
   def client_credentials_flow(
         %{
           client_id: client_id,
           client_secret: client_secret,
           token_endpoint: token_endpoint
-        } = params
-      ) do
+        } = params,
+        auth_method
+      )
+      when auth_method in [:client_secret_basic, :client_secret_post] do
     with :ok <- Validator.validate_https_endpoint(token_endpoint),
          :ok <- Validator.validate_resource_parameters(params) do
       request_body = %{
@@ -249,7 +258,7 @@ defmodule Arbor.MCP.Authorization.OAuthFlow do
         |> Map.to_list()
         |> maybe_add_resource_params(params)
 
-      HTTPClient.make_token_request(token_endpoint, request_body)
+      HTTPClient.make_token_request(token_endpoint, request_body, auth_method: auth_method)
     end
   end
 

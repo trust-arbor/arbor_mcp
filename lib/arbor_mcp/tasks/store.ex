@@ -5,6 +5,9 @@ defmodule Arbor.MCP.Tasks.Store do
   A store must make `create/3` durable before returning success and must apply
   ownership checks to every operation. Implementations should make lifecycle
   operations atomic across every node that can serve the same task ID.
+  Input-request keys must remain unique for the task's lifetime, including after
+  their responses have been drained. Terminal transitions discard pending input
+  requests and buffered responses. Retained key history must respect store quotas.
 
   ArborMCP ships `Arbor.MCP.Tasks.Store.ETS` as a bounded, node-local reference
   implementation. Deployments that require task survival across server or

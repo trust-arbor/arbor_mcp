@@ -196,6 +196,25 @@ defmodule Arbor.MCP.Client.ModernResultValidationTest do
     assert error.reason == {:unknown_result_type, "task"}
   end
 
+  test "accepts unlimited peer tasks on create and detailed get responses" do
+    capabilities = %{extensions: %{"io.modelcontextprotocol/tasks" => %{}}}
+
+    for {method, params, discriminator} <- [
+          {"tools/call", %{"name" => "background", "arguments" => %{}}, "task"},
+          {"tasks/get", %{"taskId" => "task-1"}, "complete"}
+        ] do
+      result = task_result() |> Map.put("ttlMs", nil) |> Map.put("resultType", discriminator)
+      state = modern_state(result, capabilities: capabilities)
+
+      assert {:reply, {:ok, accepted}, _state} =
+               RequestHandler.handle_request(method, params, {self(), make_ref()}, state)
+
+      assert Map.has_key?(accepted, "ttlMs")
+      assert accepted["ttlMs"] == nil
+      assert_receive {:outbound_request, %{"method" => ^method}}
+    end
+  end
+
   test "rejects malformed task results after extension negotiation" do
     state =
       modern_state(%{"resultType" => "task", "taskId" => "task-1"},
