@@ -18,7 +18,7 @@ qualification is recorded separately below.
 - **Current source line:** ArborMCP 2.0, based on `2.0.0-rc.7` plus the
   [unreleased changes](../CHANGELOG.md#unreleased). Stable ArborMCP 2.0 has not
   been released. `2026-07-28` is available through `:prefer_modern` and
-  `:modern_only`; the default is `:prefer_modern`. Every legacy revision remains
+  `:modern_only`; it defaults to `:prefer_modern`. Every legacy revision remains
   available, and `:legacy_only` preserves the legacy protocol era.
 
 The protocol revision is stable even though its official conformance runner is
