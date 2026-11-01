@@ -172,6 +172,19 @@ class AssuranceTest(unittest.TestCase):
             with self.assertRaises(CHECK.AssuranceError):
                 self.load(self.data)
 
+    def test_registered_schema_outside_standard_directories_binds_execution(self):
+        for name in ["mix.exs", "mix.lock", "scripts/mcp_requirements.json", "scripts/check_mcp_assurance.py"]:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("source")
+        schema = self.root / "docs/pinned-schema.json"
+        schema.parent.mkdir()
+        schema.write_text('{"type":"object"}')
+        self.data["requirements"][0]["implementation"].append("docs/pinned-schema.json")
+        before = CHECK.fingerprint(self.data, self.root)
+        schema.write_text('{"type":"string"}')
+        self.assertNotEqual(before, CHECK.fingerprint(self.data, self.root))
+
 
 if __name__ == "__main__":
     unittest.main()

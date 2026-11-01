@@ -134,6 +134,7 @@ def fingerprint(data, root=ROOT):
     paths.update(str(path.relative_to(root)) for path in (root / "scripts").glob("conformance.sh"))
     paths.update(str(path.relative_to(root)) for pattern in ("mcp_*.json", "check_mcp_*.py")
                  for path in (root / "scripts").glob(pattern))
+    paths.update(path for row in data["requirements"] for path in row.get("implementation", []))
     for directory in ["lib", "dev", "test", "config"]:
         paths.update(str(path.relative_to(root)) for path in (root / directory).rglob("*")
                      if path.is_file() and "node_modules" not in path.parts)
