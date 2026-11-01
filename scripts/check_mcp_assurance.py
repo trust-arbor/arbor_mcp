@@ -52,7 +52,7 @@ def local_file(root, value):
 
 def load_register(path=REGISTER, root=ROOT):
     data = json.loads(path.read_text())
-    if (not isinstance(data, dict) or data.get("version") != 1 or
+    if (not isinstance(data, dict) or data.get("version") != 2 or
             not isinstance(data.get("sources"), dict) or not data["sources"] or
             not isinstance(data.get("requirements"), list) or not data["requirements"]):
         raise AssuranceError("Invalid requirement register")
@@ -93,8 +93,12 @@ def load_register(path=REGISTER, root=ROOT):
                 raise AssuranceError(f"Missing {field}: {identifier}")
         if row.get("level") not in {"MUST", "SHOULD", "MAY", "MUST/SHOULD", "profile", "inherited", "policy"}:
             raise AssuranceError(f"Invalid obligation level: {identifier}")
-        if row.get("status") not in {"implemented", "partial", "gap", "host", "not_adopted"}:
+        if row.get("status") not in {"supported", "aggregate", "gap", "host", "not_adopted"}:
             raise AssuranceError(f"Invalid implementation claim: {identifier}")
+        if row["status"] in {"supported", "gap", "aggregate"} and not row.get("library_scope"):
+            raise AssuranceError(f"Missing library scope: {identifier}")
+        if row["status"] in {"host", "not_adopted"} and not row.get("external_duties"):
+            raise AssuranceError(f"Missing external disposition: {identifier}")
         for implementation in row.get("implementation", []):
             local_file(root, implementation)
         evidence = row.get("cases", [])
@@ -103,8 +107,54 @@ def load_register(path=REGISTER, root=ROOT):
         official = row.get("conformance", [])
         if len(official) != len(set(official)) or any(case not in conformance for case in official):
             raise AssuranceError(f"Unknown or duplicate conformance evidence: {identifier}")
-        if row["status"] == "implemented" and (not (evidence or official) or not row.get("implementation")):
-            raise AssuranceError(f"Implemented requirement needs code and executable evidence: {identifier}")
+        if row["status"] == "supported" and not row.get("implementation"):
+            raise AssuranceError(f"Supported requirement needs code: {identifier}")
+    work = data.get("work_items")
+    if not isinstance(work, list):
+        raise AssuranceError("Missing actionable work inventory")
+    work_ids = set()
+    pending_evidence = set()
+    pending_implementation = set()
+    for item in work:
+        identifier = item.get("id", "")
+        if (not ID.fullmatch(identifier) or identifier in work_ids or
+                item.get("kind") not in {"implementation", "qualification", "inventory"} or
+                item.get("status") not in {"open", "closed"} or
+                not item.get("action") or not item.get("closure") or
+                not item.get("requirements") or not set(item["requirements"]) <= seen):
+            raise AssuranceError(f"Invalid actionable work item: {identifier}")
+        work_ids.add(identifier)
+        evidence = item.get("cases", [])
+        official = item.get("conformance", [])
+        if (any(case not in cases for case in evidence) or
+                any(case not in conformance for case in official)):
+            raise AssuranceError(f"Unknown work closure evidence: {identifier}")
+        if item["status"] == "closed" and not (evidence or official):
+            raise AssuranceError(f"Closed work needs executable closure evidence: {identifier}")
+        if item["status"] == "open":
+            pending_evidence.update(item["requirements"])
+            if item["kind"] == "implementation":
+                pending_implementation.update(item["requirements"])
+    for row in data["requirements"]:
+        identifier = row["id"]
+        if (row["status"] == "supported" and not (row.get("cases") or row.get("conformance"))
+                and identifier not in pending_evidence):
+            raise AssuranceError(f"Supported requirement needs executable evidence: {identifier}")
+        if row["status"] == "gap" and identifier not in pending_implementation:
+            raise AssuranceError(f"Gap needs an open implementation work item: {identifier}")
+        dependencies = row.get("depends_on", [])
+        if row["status"] == "aggregate" and (not dependencies or
+                not set(dependencies) <= seen - {identifier}):
+            raise AssuranceError(f"Invalid aggregate dependencies: {identifier}")
+    # Aggregate cycles could otherwise hide an unfinished obligation indefinitely.
+    rows = {row["id"]: row for row in data["requirements"]}
+    def visit(identifier, trail):
+        if identifier in trail:
+            raise AssuranceError("Cyclic requirement dependencies")
+        for dependency in rows[identifier].get("depends_on", []):
+            visit(dependency, trail | {identifier})
+    for identifier in rows:
+        visit(identifier, set())
     referenced = {case for row in data["requirements"] for case in row.get("cases", [])}
     if referenced != set(cases):
         raise AssuranceError("Orphaned evidence cases must be assigned to a requirement")
@@ -170,24 +220,57 @@ def validate_results(data, report, expected_digest, required_cases=None, expecte
 
 def markdown(data):
     lines = ["# MCP requirement evidence", "", "Generated by `python3 scripts/check_mcp_assurance.py --write-docs`.", "",
-             "This is a reviewed requirement inventory, not a certification. Implementation status",
-             "and executable evidence are separate. Links identify assertions configured in CI;",
+             "Use **Remaining library work** below to find known implementation, qualification and",
+             "inventory work. **Supported** means the stated library scope has an implementation;",
+             "it does not mean every clause in the wider source bundle has an exhaustive test.",
+             "External duties and unadopted profiles are separate from library work.", "",
+             "This is a reviewed requirement inventory, not a certification. Links identify assertions configured in CI;",
              "only the checkout-bound CI artifact records that they actually passed. Source inventories",
              "marked partial or pending prevent a claim of complete specification coverage.", "",
-             "## Sources", "", "| Source | Pin | Inventory | Scope |", "|---|---|---|---|"]
+             "## Remaining library work", ""]
+    opened = [item for item in data["work_items"] if item["status"] == "open"]
+    if not opened:
+        lines.append("No known open library work in this reviewed scope. This is not a claim of exhaustive qualification.")
+    for item in opened:
+        lines.extend([f"- **{item['id']}** ({item['kind']}): {item['action']}",
+                      f"  Closure: {item['closure']} Bundles: {', '.join(item['requirements'])}."])
+    lines.extend(["", "## Closed work", "", "| Work | Kind | Closure |", "|---|---|---|"])
+    for item in data["work_items"]:
+        if item["status"] == "closed":
+            evidence = ", ".join(item.get("cases", []) + item.get("conformance", []))
+            lines.append(f"| {item['id']} | {item['kind']} | {item['closure']} Evidence: {evidence}. |")
+    lines.extend(["", "## Sources", "", "| Source | Pin | Inventory | Scope |", "|---|---|---|---|"])
     for name, source in data["sources"].items():
         lines.append(f"| {name} | [{source['revision'][:12]}]({source['url']}) | {source['inventory']} | {source['scope']} |")
-    lines.extend(["", "## Requirements", "", "| ID / section | Role / profiles | Status | Evidence cases | Limits / responsibility |",
-                  "|---|---|---|---|---|"])
+    lines.extend(["", "## Library scopes and evidence", "",
+                  "These dispositions replace the old blanket `partial` labels. Named assertions bound",
+                  "qualification; a missing implementation is listed as work above. An aggregate inherits",
+                  "its constituent dispositions and is not an additional test pass.", "",
+                  "| ID / section | Role / profiles | Library support | Library scope | Evidence cases | Qualification limits |",
+                  "|---|---|---|---|---|---|"])
     for row in data["requirements"]:
+        if row["status"] in {"host", "not_adopted"}:
+            continue
         evidence = [f"[{case}](https://github.com/trust-arbor/arbor_mcp/blob/master/{data['cases'][case]['file']}) ({data['cases'][case]['kind']})"
                     for case in row.get("cases", [])]
         evidence.extend(f"{case} (official {data['conformance_cases'][case]['role']}: "
                         f"`{data['conformance_cases'][case]['scenario']}`)"
                         for case in row.get("conformance", []))
         cases = ", ".join(evidence) or "None recorded"
-        lines.append(f"| {row['id']} / {row['section']} ({row['level']}) | {row['role']} / {', '.join(row['profiles'])} | {row['status']} | {cases} | {row['requirement']} {row['notes']} |")
-    lines.extend(["", "Host responsibilities and unadopted profiles are not library test passes.",
+        if row["status"] == "aggregate":
+            cases = "Inherits: " + ", ".join(row["depends_on"])
+        lines.append(f"| {row['id']} / {row['section']} ({row['level']}) | {row['role']} / {', '.join(row['profiles'])} | {row['status']} | {row['library_scope']} | {cases} | {row['notes']} |")
+    lines.extend(["", "## External responsibilities", "",
+                  "Host responsibilities and unadopted profiles are not library test passes.", "",
+                  "| Bundle | Owner | Required integration / policy |", "|---|---|---|"])
+    for row in data["requirements"]:
+        if row.get("external_duties") and row["status"] != "not_adopted":
+            lines.append(f"| {row['id']} | {row['role']} | {row['external_duties']} |")
+    lines.extend(["", "## Unadopted profiles", ""])
+    for row in data["requirements"]:
+        if row["status"] == "not_adopted":
+            lines.append(f"- **{row['id']}**: {row['external_duties']}")
+    lines.extend(["", "See [the coverage matrix](MCP_COVERAGE_MATRIX.md#extensions) for unadopted MCP extensions.", "",
                   "Independent fixtures are identified separately from third-party implementation interoperability.", ""])
     return "\n".join(lines)
 
