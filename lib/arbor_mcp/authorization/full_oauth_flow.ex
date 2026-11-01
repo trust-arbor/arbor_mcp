@@ -829,7 +829,7 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
          {:ok, body} <-
            maybe_add_client_assertion(base, client_info, context.token_endpoint, config, method),
          {:ok, token_data} <-
-           HTTPClient.make_token_request(context.token_endpoint, body, auth_method: method),
+           HTTPClient.make_mcp_token_request(context.token_endpoint, body, auth_method: method),
          :ok <- validate_bearer_access_token(token_data),
          # A server that doesn't rotate refresh tokens, or omits the granted
          # scope, leaves the earlier ones in force.
@@ -900,7 +900,7 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
              :ok <- log_token_auth_method("client_credentials", token_auth_method),
              {:ok, body} <-
                build_client_credentials_body(client_info, config, token_auth_method) do
-          HTTPClient.make_token_request(token_endpoint, body, auth_method: token_auth_method)
+          HTTPClient.make_mcp_token_request(token_endpoint, body, auth_method: token_auth_method)
         else
           {:error, _reason} = error -> error
         end
@@ -958,7 +958,9 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
           if config[:as_auth],
             do: ResourceASAuthentication.exchange(bearer_body, as_metadata, config),
             else:
-              HTTPClient.make_token_request(token_endpoint, bearer_body, auth_method: auth_method)
+              HTTPClient.make_mcp_token_request(token_endpoint, bearer_body,
+                auth_method: auth_method
+              )
 
         case result do
           {:ok, token_data} ->
@@ -1164,7 +1166,7 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
              code,
              redirect_uri
            ) do
-      HTTPClient.make_token_request(
+      HTTPClient.make_mcp_token_request(
         token_endpoint,
         body,
         auth_method: token_auth_method

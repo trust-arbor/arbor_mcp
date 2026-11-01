@@ -189,6 +189,7 @@ defmodule Arbor.MCP.CancellationTest do
   end
 
   describe "server cancellation handling" do
+    @tag assurance: ["core.cancel.pending"]
     test "server cancels in-progress requests" do
       {:ok, server} =
         Server.start_link(
@@ -230,6 +231,7 @@ defmodule Arbor.MCP.CancellationTest do
       assert :ok = Runtime.stop(server)
     end
 
+    @tag assurance: ["core.cancel.unknown"]
     test "server ignores cancellation for unknown requests" do
       {:ok, server} =
         Server.start_link(

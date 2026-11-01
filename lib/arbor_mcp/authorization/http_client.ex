@@ -21,6 +21,17 @@ defmodule Arbor.MCP.Authorization.HTTPClient do
   def make_token_request(endpoint, body, opts \\ [])
 
   def make_token_request(endpoint, body, opts) do
+    request_token(endpoint, body, opts, &parse_token_response/1)
+  end
+
+  @doc false
+  # Automatic MCP flows must see the AS's declared type, rather than the
+  # compatibility default used by the generic exchange helper.
+  def make_mcp_token_request(endpoint, body, opts \\ []) do
+    request_token(endpoint, body, opts, &parse_mcp_token_response/1)
+  end
+
+  defp request_token(endpoint, body, opts, parser) do
     auth_method = Keyword.get(opts, :auth_method, :client_secret_post)
 
     {headers, body} = apply_token_auth_method(auth_method, body)
@@ -37,7 +48,7 @@ defmodule Arbor.MCP.Authorization.HTTPClient do
       {:ok, {{_, 200, _}, _response_headers, response_body}} ->
         case Jason.decode(response_body) do
           {:ok, token_data} ->
-            parse_token_response(token_data)
+            parser.(token_data)
 
           {:error, reason} ->
             {:error, {:json_decode_error, redact_decode_error(reason)}}
@@ -191,6 +202,11 @@ defmodule Arbor.MCP.Authorization.HTTPClient do
     do: SecureHTTP.request(method, url, headers, body, opts)
 
   # Response parsing helpers
+
+  defp parse_mcp_token_response(%{"token_type" => _type} = data),
+    do: parse_token_response(data)
+
+  defp parse_mcp_token_response(_data), do: {:error, :invalid_token_response}
 
   defp parse_token_response(%{"access_token" => access_token} = data)
        when is_binary(access_token) do

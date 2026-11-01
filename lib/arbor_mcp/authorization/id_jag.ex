@@ -71,7 +71,8 @@ defmodule Arbor.MCP.Authorization.IdJag do
     sign_opts = if kid, do: Keyword.put(sign_opts, :kid, kid), else: sign_opts
 
     with :ok <- validate_resource_policy(resource_policy),
-         :ok <- validate_resource_value(resource, resource_policy) do
+         :ok <- validate_resource_value(resource, resource_policy),
+         :ok <- validate_identity_claim_types(claims) do
       JWT.sign(claims, private_key, sign_opts)
     end
   end
@@ -106,6 +107,7 @@ defmodule Arbor.MCP.Authorization.IdJag do
              max_age: max_lifetime,
              required: required
            ),
+         :ok <- validate_identity_claim_types(claims),
          :ok <- validate_resource_claim(claims, expected_resource, resource_policy) do
       {:ok, claims}
     end
@@ -126,6 +128,20 @@ defmodule Arbor.MCP.Authorization.IdJag do
   def typ, do: @typ
 
   # Private helpers
+
+  # These are wire types, not issuer/subject/client authorization policy.
+  defp validate_identity_claim_types(claims) do
+    fields =
+      ~w(iss sub aud client_id jti) ++ if(Map.has_key?(claims, "scope"), do: ["scope"], else: [])
+
+    case Enum.find(fields, fn field ->
+           value = claims[field]
+           not (is_binary(value) and String.valid?(value) and byte_size(value) > 0)
+         end) do
+      nil -> :ok
+      field -> {:error, {:invalid_claim_type, field}}
+    end
+  end
 
   defp validate_typ_header(token) do
     case JWT.peek_header(token) do

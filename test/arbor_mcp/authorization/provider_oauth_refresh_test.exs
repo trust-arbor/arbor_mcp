@@ -83,7 +83,14 @@ defmodule Arbor.MCP.Authorization.ProviderOAuthRefreshTest do
 
       conn
       |> Plug.Conn.put_resp_content_type("application/json")
-      |> Plug.Conn.resp(200, Jason.encode!(%{"access_token" => "old-token", "expires_in" => 0}))
+      |> Plug.Conn.resp(
+        200,
+        Jason.encode!(%{
+          "token_type" => "Bearer",
+          "access_token" => "old-token",
+          "expires_in" => 0
+        })
+      )
     end)
 
     Bypass.stub(bypass, "POST", "/mcp", fn conn ->
@@ -137,11 +144,17 @@ defmodule Arbor.MCP.Authorization.ProviderOAuthRefreshTest do
     refute_received :identical_refresh
   end
 
+  @tag assurance: ["oauth.refresh.auth"]
   test "an expiring token is refreshed before a request", %{bypass: bypass} = context do
     expect_refresh(
       bypass,
       {200,
-       %{"access_token" => "new-token", "expires_in" => 3600, "refresh_token" => "refresh-2"}}
+       %{
+         "token_type" => "Bearer",
+         "access_token" => "new-token",
+         "expires_in" => 3600,
+         "refresh_token" => "refresh-2"
+       }}
     )
 
     expiring = state(context.token_endpoint, expires_at: System.system_time(:second) - 1)
@@ -166,6 +179,16 @@ defmodule Arbor.MCP.Authorization.ProviderOAuthRefreshTest do
   end
 
   @tag :bearer_profile
+  @tag assurance: ["access.refresh.missing_type"]
+  test "a refresh cannot persist an access token without its required type",
+       %{bypass: bypass} = ctx do
+    expect_refresh(bypass, {200, %{"access_token" => "untyped-token", "expires_in" => 3600}})
+    expiring = state(ctx.token_endpoint, expires_at: System.system_time(:second) - 1)
+    assert {:ok, "old-token", ^expiring} = OAuth.get_token(expiring)
+    refute_received {:put_token, _key, _token}
+  end
+
+  @tag :bearer_profile
   @tag assurance: ["access.refresh.reject.mac"]
   test "a refresh cannot replace a Bearer token with an unsupported token type",
        %{bypass: bypass} = ctx do
@@ -181,7 +204,10 @@ defmodule Arbor.MCP.Authorization.ProviderOAuthRefreshTest do
   test "a rejected token is refreshed instead of rerunning the flow",
        %{bypass: bypass} = context do
     # A server that doesn't rotate refresh tokens: the old one stays.
-    expect_refresh(bypass, {200, %{"access_token" => "new-token", "expires_in" => 3600}})
+    expect_refresh(
+      bypass,
+      {200, %{"token_type" => "Bearer", "access_token" => "new-token", "expires_in" => 3600}}
+    )
 
     assert {:ok, "new-token", refreshed} =
              OAuth.handle_unauthorized(
@@ -220,7 +246,10 @@ defmodule Arbor.MCP.Authorization.ProviderOAuthRefreshTest do
   test "a refresh replaces the stored token under the first flow's binding",
        %{bypass: bypass} = context do
     # No new refresh token and no scope: the earlier ones stay in force.
-    expect_refresh(bypass, {200, %{"access_token" => "new-token", "expires_in" => 3600}})
+    expect_refresh(
+      bypass,
+      {200, %{"token_type" => "Bearer", "access_token" => "new-token", "expires_in" => 3600}}
+    )
 
     binding = %{
       issuer: "https://auth.example",
@@ -305,7 +334,11 @@ defmodule Arbor.MCP.Authorization.ProviderOAuthRefreshTest do
       |> Plug.Conn.put_resp_content_type("application/json")
       |> Plug.Conn.resp(
         200,
-        Jason.encode!(%{"access_token" => "new-token", "expires_in" => 3600})
+        Jason.encode!(%{
+          "token_type" => "Bearer",
+          "access_token" => "new-token",
+          "expires_in" => 3600
+        })
       )
     end)
 
@@ -321,7 +354,10 @@ defmodule Arbor.MCP.Authorization.ProviderOAuthRefreshTest do
 
   test "a refreshed token rejected again runs the full flow once the issuer has moved",
        %{bypass: bypass} = context do
-    expect_refresh(bypass, {200, %{"access_token" => "new-token", "expires_in" => 3600}})
+    expect_refresh(
+      bypass,
+      {200, %{"token_type" => "Bearer", "access_token" => "new-token", "expires_in" => 3600}}
+    )
 
     rejected = state(context.token_endpoint, auth_config: discovery("https://new-auth.example"))
     assert {:ok, "new-token", refreshed} = OAuth.handle_unauthorized(@challenge, [], rejected)
@@ -347,13 +383,20 @@ defmodule Arbor.MCP.Authorization.ProviderOAuthRefreshTest do
       |> Plug.Conn.put_resp_content_type("application/json")
       |> Plug.Conn.resp(
         200,
-        Jason.encode!(%{"access_token" => "new-token", "expires_in" => 3600})
+        Jason.encode!(%{
+          "token_type" => "Bearer",
+          "access_token" => "new-token",
+          "expires_in" => 3600
+        })
       )
     end)
   end
 
   test "the refreshed token stays out of inspect output", %{bypass: bypass} = context do
-    expect_refresh(bypass, {200, %{"access_token" => "new-token", "expires_in" => 3600}})
+    expect_refresh(
+      bypass,
+      {200, %{"token_type" => "Bearer", "access_token" => "new-token", "expires_in" => 3600}}
+    )
 
     assert {:ok, "new-token", refreshed} =
              OAuth.handle_unauthorized(@challenge, [], state(context.token_endpoint, []))
@@ -405,7 +448,11 @@ defmodule Arbor.MCP.Authorization.ProviderOAuthRefreshTest do
 
   test "a stale metadata URL in the challenge falls back to the well-known metadata",
        %{bypass: bypass} = context do
-    expect_refresh(bypass, {200, %{"access_token" => "new-token", "expires_in" => 3600}})
+    expect_refresh(
+      bypass,
+      {200, %{"token_type" => "Bearer", "access_token" => "new-token", "expires_in" => 3600}}
+    )
+
     config = discovery("https://new-auth.example", :well_known)
 
     assert {:ok, _token, refreshed} =
@@ -459,7 +506,10 @@ defmodule Arbor.MCP.Authorization.ProviderOAuthRefreshTest do
 
   test "a refresh that changes the granted scope files later tokens under it",
        %{bypass: bypass} = context do
-    expect_refresh(bypass, {200, %{"access_token" => "new-token", "scope" => "tools:read"}})
+    expect_refresh(
+      bypass,
+      {200, %{"token_type" => "Bearer", "access_token" => "new-token", "scope" => "tools:read"}}
+    )
 
     binding = %{
       issuer: "https://auth.example",

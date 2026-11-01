@@ -129,6 +129,10 @@ def load_register(path=REGISTER, root=ROOT):
         if (any(case not in cases for case in evidence) or
                 any(case not in conformance for case in official)):
             raise AssuranceError(f"Unknown work closure evidence: {identifier}")
+        related = [row for row in data["requirements"] if row["id"] in item["requirements"]]
+        if (not set(evidence) <= {case for row in related for case in row.get("cases", [])} or
+                not set(official) <= {case for row in related for case in row.get("conformance", [])}):
+            raise AssuranceError(f"Work closure evidence must belong to its bundles: {identifier}")
         if item["status"] == "closed" and not (evidence or official):
             raise AssuranceError(f"Closed work needs executable closure evidence: {identifier}")
         if item["status"] == "open":
@@ -175,6 +179,36 @@ def load_register(path=REGISTER, root=ROOT):
             mapped.update(source["requirements"])
         if mapped != core_ids:
             raise AssuranceError("Core requirement is missing its source disposition")
+    if data["sources"].get("TASKS", {}).get("inventory") == "complete" and not data.get("tasks_source_manifest"):
+        raise AssuranceError("Complete Tasks inventory needs its source manifest")
+    if data.get("tasks_source_manifest"):
+        manifest = json.loads(local_file(root, data["tasks_source_manifest"]).read_text())
+        if (manifest.get("version") != 1 or manifest.get("source") != "TASKS" or
+                manifest.get("revision") != data["sources"]["TASKS"]["revision"]):
+            raise AssuranceError("Tasks source review differs from its immutable pin")
+        expected = {"specification/2026-07-28/tasks.md", "schema/2026-07-28/schema.ts"}
+        if set(manifest.get("files", {})) != expected:
+            raise AssuranceError("Tasks prose and schema both need dispositions")
+        task_ids = {row["id"] for row in data["requirements"] if row["source"] == "TASKS"}
+        mapped = set()
+        for name, info in manifest["files"].items():
+            if not re.fullmatch(r"[0-9a-f]{64}", info.get("sha256", "")):
+                raise AssuranceError("Tasks source needs a content pin")
+            content = local_file(root, info.get("local")).read_bytes()
+            if hashlib.sha256(content).hexdigest() != info["sha256"]:
+                raise AssuranceError("Tasks source snapshot differs from its content pin")
+            entries = info.get("sections" if name.endswith(".md") else "exports", {})
+            pattern = r"^## (.+)$" if name.endswith(".md") else r"^export (?:interface|type) (\w+)"
+            names = re.findall(pattern, content.decode(), re.MULTILINE)
+            if not entries or set(entries) != set(names):
+                raise AssuranceError("Tasks source needs every section/export disposition")
+            for disposition in entries.values():
+                references = disposition.get("requirements", []) if isinstance(disposition, dict) else disposition
+                if not references or not set(references) <= task_ids:
+                    raise AssuranceError("Invalid Tasks source disposition")
+                mapped.update(references)
+        if mapped != task_ids:
+            raise AssuranceError("Tasks requirement is missing its source disposition")
     return data
 
 
@@ -185,6 +219,9 @@ def fingerprint(data, root=ROOT):
     paths.update(str(path.relative_to(root)) for pattern in ("mcp_*.json", "check_mcp_*.py")
                  for path in (root / "scripts").glob(pattern))
     paths.update(path for row in data["requirements"] for path in row.get("implementation", []))
+    if data.get("tasks_source_manifest"):
+        manifest = json.loads(local_file(root, data["tasks_source_manifest"]).read_text())
+        paths.update(info["local"] for info in manifest["files"].values())
     for directory in ["lib", "dev", "test", "config"]:
         paths.update(str(path.relative_to(root)) for path in (root / directory).rglob("*")
                      if path.is_file() and "node_modules" not in path.parts)
@@ -246,7 +283,7 @@ def markdown(data):
                   "These dispositions replace the old blanket `partial` labels. Named assertions bound",
                   "qualification; a missing implementation is listed as work above. An aggregate inherits",
                   "its constituent dispositions and is not an additional test pass.", "",
-                  "| ID / section | Role / profiles | Library support | Library scope | Evidence cases | Qualification limits |",
+                  "| ID / section | Role / profiles | Library support | Source obligation / library scope | Evidence cases | Qualification limits |",
                   "|---|---|---|---|---|---|"])
     for row in data["requirements"]:
         if row["status"] in {"host", "not_adopted"}:
@@ -259,7 +296,7 @@ def markdown(data):
         cases = ", ".join(evidence) or "None recorded"
         if row["status"] == "aggregate":
             cases = "Inherits: " + ", ".join(row["depends_on"])
-        lines.append(f"| {row['id']} / {row['section']} ({row['level']}) | {row['role']} / {', '.join(row['profiles'])} | {row['status']} | {row['library_scope']} | {cases} | {row['notes']} |")
+        lines.append(f"| {row['id']} / {row['section']} ({row['level']}) | {row['role']} / {', '.join(row['profiles'])} | {row['status']} | {row['requirement']}<br>**Library scope:** {row['library_scope']} | {cases} | {row['notes']} |")
     lines.extend(["", "## External responsibilities", "",
                   "Host responsibilities and unadopted profiles are not library test passes.", "",
                   "| Bundle | Owner | Required integration / policy |", "|---|---|---|"])
@@ -270,7 +307,7 @@ def markdown(data):
     for row in data["requirements"]:
         if row["status"] == "not_adopted":
             lines.append(f"- **{row['id']}**: {row['external_duties']}")
-    lines.extend(["", "See [the coverage matrix](MCP_COVERAGE_MATRIX.md#extensions) for unadopted MCP extensions.", "",
+    lines.extend(["", "See [the coverage matrix](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md#mcp-extensions) for unadopted MCP extensions.", "",
                   "Independent fixtures are identified separately from third-party implementation interoperability.", ""])
     return "\n".join(lines)
 
@@ -309,7 +346,9 @@ def main(argv=None):
                 files = sorted({case["file"] for case in selected["cases"].values()})
                 if not files:
                     raise AssuranceError("No executable evidence configured")
-                command = ["mix", "test", *files, "--formatter", "ExUnit.CLIFormatter",
+                # Named library contracts may reuse in-process integration tests.
+                # The file allowlist remains exact; no live/external tags are enabled.
+                command = ["mix", "test", *files, "--include", "integration", "--formatter", "ExUnit.CLIFormatter",
                            "--formatter", "Arbor.MCP.AssuranceFormatter"]
                 if any(info["kind"] != "contract" for info in selected["cases"].values()):
                     command += ["--include", "interop"]

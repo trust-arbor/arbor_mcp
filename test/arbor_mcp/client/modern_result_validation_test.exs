@@ -155,6 +155,7 @@ defmodule Arbor.MCP.Client.ModernResultValidationTest do
     assert_receive {:outbound_request, %{"method" => "server/discover"}}
   end
 
+  @tag assurance: ["tasks.client.negotiation"]
   test "accepts task results only when the modern extension was declared" do
     result = task_result()
 
@@ -215,6 +216,7 @@ defmodule Arbor.MCP.Client.ModernResultValidationTest do
     end
   end
 
+  @tag assurance: ["tasks.client.malformed"]
   test "rejects malformed task results after extension negotiation" do
     state =
       modern_state(%{"resultType" => "task", "taskId" => "task-1"},
@@ -234,6 +236,7 @@ defmodule Arbor.MCP.Client.ModernResultValidationTest do
     assert error.reason == {:invalid_task_field, "status"}
   end
 
+  @tag assurance: ["tasks.client.discriminator"]
   test "accepts complete detailed tasks/get results and rejects the create discriminator" do
     capabilities = %{
       extensions: %{"io.modelcontextprotocol/tasks" => %{}}

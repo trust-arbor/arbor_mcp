@@ -24,11 +24,19 @@ unimplemented or host-owned obligation explicitly rather than counting a nearby
 passing test as its implementation.
 
 The register includes scoped core and inherited OAuth/ID-JAG requirement bundles,
-in addition to Auth and named Tasks regressions. Each source declares the exact
+in addition to Auth and the Tasks prose/schema dispositions. Each source declares the exact
 revision and adopted sections; a complete **scoped inventory** means those
 responsibilities have been mapped, not that every clause has executable proof.
-Partial rows, host duties and unadopted profiles remain visible. Legacy revision
-inventories and the complete Tasks clause inventory are outside this expansion.
+The generated register separates remaining library work, scoped support/evidence,
+external responsibilities and unadopted profiles. A supported scope is an API
+implementation claim backed by named assertions, not exhaustive clause qualification.
+Every open work item has a concrete action and closure condition; closing it requires
+executable evidence. Legacy revision inventories remain outside this scope.
+Tasks maps every prose section and exported schema type in
+`scripts/mcp_tasks_requirement_sources.json`. The client APIs expose task state,
+updates and cancellation; hosts drive polling, persist task IDs and deduplicate
+user/model input across polls and restarts. The bundled ETS store is process-local,
+so restart durability requires host-provided storage.
 The [source review](MCP_SOURCE_REVIEW.md) records the page/section dispositions.
 
 ## Executable evidence
@@ -37,7 +45,8 @@ Each registered case names an assertion and its file. ExUnit tests carry matchin
 `:assurance` labels. The formatter records actual test completion; the checker
 rejects missing labels, unknown or duplicate cases, skipped/failed tests,
 unexpected files and reports collected from different implementation inputs.
-An implemented row requires code and executable evidence definitions. Definitions
+A supported row requires code and executable evidence definitions (or an explicit
+open evidence work item during review). Definitions
 alone are not passing results: CI retains the execution artifact separately.
 
 ```sh
@@ -118,7 +127,7 @@ logical HTTPS-to-loopback transport mapping.
 Existing confidential-IdP, JWT assertion and ID-JAG tests have named register
 cases; host duties are not marked implemented merely because a fixture enforces
 its own policy. Green matrix symbols describe the stated library role. Broad
-mixed-role requirement bundles can remain partial without implying a known
+mixed-role bundles list external duties separately without implying a known
 missing client API; their exact evidence and limits remain in the register.
 
 ## Official conformance and drift

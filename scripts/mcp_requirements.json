@@ -22,14 +22,14 @@
     "TASKS": {
       "url": "https://github.com/modelcontextprotocol/ext-tasks/blob/b3d28aceaa6d49f5f92258e3d06b61ad6f111e84/specification/2026-07-28/tasks.md",
       "revision": "b3d28aceaa6d49f5f92258e3d06b61ad6f111e84",
-      "inventory": "partial",
-      "scope": "Initial named regression requirements; official server checks are gated separately. Complete clause/schema mapping and client interop inventory remain pending."
+      "inventory": "complete",
+      "scope": "All 2026-07-28 Tasks prose sections and exported schema types have reviewed dispositions. Server/store and low-level client API evidence is named; polling persistence, UI deduplication and host trust are external responsibilities. No independent Tasks SDK qualification is claimed."
     },
     "CORE": {
       "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/tree/d0e246ea3c69eafaa2806bc4cd28025703ba2c2b/docs/specification/2026-07-28",
       "revision": "d0e246ea3c69eafaa2806bc4cd28025703ba2c2b",
       "inventory": "complete",
-      "scope": "2026-07-28 core requirement bundles and section dispositions, including the official schema, optional/deprecated retained features and host duties. Legacy revision inventories are outside this source scope. Complete inventory is not complete executable qualification; partial rows identify limits."
+      "scope": "2026-07-28 core requirement bundles and section dispositions, including the official schema, optional/deprecated retained features and host duties. Legacy revision inventories are outside this source scope. Complete inventory is not complete executable qualification; scoped evidence and external duties identify limits."
     },
     "RFC6749": {
       "url": "https://www.rfc-editor.org/rfc/rfc6749.txt",
@@ -937,6 +937,251 @@
       "kind": "contract",
       "file": "test/arbor_mcp/authorization/provider_oauth_refresh_test.exs",
       "asserts": "Refreshing with an unsupported token_type cannot replace provider Bearer credentials or advance provider acquisitions; existing error fallback retains the previous state."
+    },
+    "core.era.pinned": {
+      "file": "test/arbor_mcp/client/era_probe_test.exs",
+      "kind": "contract",
+      "asserts": "A modern observation blocks automatic downgrade until explicitly reset."
+    },
+    "core.stdio.reap": {
+      "file": "test/arbor_mcp/client/stdio_lifecycle_test.exs",
+      "kind": "contract",
+      "asserts": "Hard actor death disconnects the live client and reaps its child."
+    },
+    "core.cancel.pending": {
+      "file": "test/arbor_mcp/cancellation_test.exs",
+      "kind": "contract",
+      "asserts": "Server cancels in-progress requests."
+    },
+    "core.cancel.unknown": {
+      "file": "test/arbor_mcp/cancellation_test.exs",
+      "kind": "contract",
+      "asserts": "Server ignores cancellation for unknown requests."
+    },
+    "core.logging.levels": {
+      "file": "test/arbor_mcp/logging_setlevel_test.exs",
+      "kind": "contract",
+      "asserts": "Accepts all valid log levels."
+    },
+    "oauth.dcr.issuer": {
+      "file": "test/arbor_mcp/authorization/full_oauth_flow_credential_store_test.exs",
+      "kind": "contract",
+      "asserts": "Reuses DCR credentials only for the same issuer and re-registers after an AS change."
+    },
+    "oauth.refresh.auth": {
+      "file": "test/arbor_mcp/authorization/provider_oauth_refresh_test.exs",
+      "kind": "contract",
+      "asserts": "An expiring token is refreshed before a request."
+    },
+    "tasks.shapes": {
+      "file": "test/arbor_mcp/tasks/extension_test.exs",
+      "kind": "contract",
+      "asserts": "Validates task handles and status-specific detailed state."
+    },
+    "tasks.lifecycle": {
+      "file": "test/arbor_mcp/tasks/server_test.exs",
+      "kind": "contract",
+      "asserts": "Opt-in handler persists before create result and serves the modern lifecycle."
+    },
+    "tasks.negotiation.reject": {
+      "file": "test/arbor_mcp/tasks/server_test.exs",
+      "kind": "contract",
+      "asserts": "Does not create tasks for undeclared modern or legacy requests."
+    },
+    "tasks.negotiation.advertise": {
+      "file": "test/arbor_mcp/tasks/server_test.exs",
+      "kind": "contract",
+      "asserts": "Advertises the extension only for an explicitly task-enabled handler."
+    },
+    "tasks.creation.visible": {
+      "file": "test/arbor_mcp/tasks/store_test.exs",
+      "kind": "contract",
+      "asserts": "Persists a task before returning its create result."
+    },
+    "tasks.inputs.once": {
+      "file": "test/arbor_mcp/tasks/store_test.exs",
+      "kind": "contract",
+      "asserts": "Accepts each outstanding input response at most once."
+    },
+    "tasks.cancel.cooperative": {
+      "file": "test/arbor_mcp/tasks/store_test.exs",
+      "kind": "contract",
+      "asserts": "Records cooperative cancellation separately from terminal state."
+    },
+    "tasks.ttl.expires": {
+      "file": "test/arbor_mcp/tasks/store_test.exs",
+      "kind": "contract",
+      "asserts": "Expires entries using their creation TTL."
+    },
+    "tasks.notification.state": {
+      "file": "test/arbor_mcp/tasks/store_test.exs",
+      "kind": "contract",
+      "asserts": "Publishes full task state after a durable transition."
+    },
+    "tasks.client.negotiation": {
+      "file": "test/arbor_mcp/client/modern_result_validation_test.exs",
+      "kind": "contract",
+      "asserts": "Accepts task results only when the modern extension was declared."
+    },
+    "tasks.client.malformed": {
+      "file": "test/arbor_mcp/client/modern_result_validation_test.exs",
+      "kind": "contract",
+      "asserts": "Rejects malformed task results after extension negotiation."
+    },
+    "tasks.client.discriminator": {
+      "file": "test/arbor_mcp/client/modern_result_validation_test.exs",
+      "kind": "contract",
+      "asserts": "Accepts complete detailed tasks/get results and rejects the create discriminator."
+    },
+    "tasks.notification.http": {
+      "file": "test/arbor_mcp/client/modern_http_subscription_test.exs",
+      "kind": "contract",
+      "asserts": "Delivers owner-authorized task transitions and rejects malformed task events."
+    },
+    "tasks.notification.capability": {
+      "file": "test/arbor_mcp/http_plug_test.exs",
+      "kind": "contract",
+      "asserts": "Preserves the missing-capability error for task subscriptions."
+    },
+    "idjag.type.iss.null": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects null iss, rather than treating key presence as type validity."
+    },
+    "idjag.type.iss.number": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects number iss, rather than treating key presence as type validity."
+    },
+    "idjag.type.iss.array": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects array iss, rather than treating key presence as type validity."
+    },
+    "idjag.type.iss.object": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects object iss, rather than treating key presence as type validity."
+    },
+    "idjag.type.sub.null": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects null sub, rather than treating key presence as type validity."
+    },
+    "idjag.type.sub.number": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects number sub, rather than treating key presence as type validity."
+    },
+    "idjag.type.sub.array": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects array sub, rather than treating key presence as type validity."
+    },
+    "idjag.type.sub.object": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects object sub, rather than treating key presence as type validity."
+    },
+    "idjag.type.client_id.null": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects null client_id, rather than treating key presence as type validity."
+    },
+    "idjag.type.client_id.number": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects number client_id, rather than treating key presence as type validity."
+    },
+    "idjag.type.client_id.array": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects array client_id, rather than treating key presence as type validity."
+    },
+    "idjag.type.client_id.object": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects object client_id, rather than treating key presence as type validity."
+    },
+    "idjag.type.jti.null": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects null jti, rather than treating key presence as type validity."
+    },
+    "idjag.type.jti.number": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects number jti, rather than treating key presence as type validity."
+    },
+    "idjag.type.jti.array": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects array jti, rather than treating key presence as type validity."
+    },
+    "idjag.type.jti.object": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects object jti, rather than treating key presence as type validity."
+    },
+    "idjag.type.scope.null": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects null scope, rather than treating key presence as type validity."
+    },
+    "idjag.type.scope.number": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects number scope, rather than treating key presence as type validity."
+    },
+    "idjag.type.scope.array": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects array scope, rather than treating key presence as type validity."
+    },
+    "idjag.type.scope.object": {
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "kind": "contract",
+      "asserts": "Signed ID-JAG rejects object scope, rather than treating key presence as type validity."
+    },
+    "access.client_credentials.missing_type": {
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "kind": "contract",
+      "asserts": "Automatic client_credentials flow rejects a final AS access token with no declared token_type."
+    },
+    "access.enterprise.missing_type": {
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "kind": "contract",
+      "asserts": "Automatic enterprise flow rejects a final AS access token with no declared token_type."
+    },
+    "access.refresh.missing_type": {
+      "file": "test/arbor_mcp/authorization/provider_oauth_refresh_test.exs",
+      "kind": "contract",
+      "asserts": "A missing refresh-response token_type cannot replace/persist provider credentials."
+    },
+    "tasks.client.http_lifecycle": {
+      "file": "test/arbor_mcp/client/modern_http_subscription_test.exs",
+      "kind": "contract",
+      "asserts": "Public task APIs perform a complete input update/get cycle over HTTP, retain tool isError as completed, and acknowledge cooperative cancellation."
+    },
+    "oauth.dcr.response.register": {
+      "file": "test/arbor_mcp/authorization/client_registration_test.exs",
+      "kind": "contract",
+      "asserts": "register returns an error for JSON registration success bodies missing a string client_id instead of raising."
+    },
+    "oauth.dcr.response.get": {
+      "file": "test/arbor_mcp/authorization/client_registration_test.exs",
+      "kind": "contract",
+      "asserts": "get returns an error for JSON registration success bodies missing a string client_id instead of raising."
+    },
+    "oauth.dcr.response.update": {
+      "file": "test/arbor_mcp/authorization/client_registration_test.exs",
+      "kind": "contract",
+      "asserts": "update returns an error for JSON registration success bodies missing a string client_id instead of raising."
+    },
+    "access.generic.compatibility": {
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "kind": "contract",
+      "asserts": "Generic token helper retains its omitted-type compatibility default; automatic MCP parsing is stricter."
     }
   },
   "requirements": [
@@ -1240,7 +1485,11 @@
         "lib/arbor_mcp/authorization/http_client.ex",
         "lib/arbor_mcp/authorization/credential_store.ex"
       ],
-      "cases": [],
+      "cases": [
+        "oauth.endpoint.binding",
+        "oauth.credentials.issuer",
+        "cc.no_anonymous"
+      ],
       "notes": "CORE.AUTH_SECURITY, RFC6750.STORAGE, RFC7523.POLICY and OAUTH.DEPLOYMENT record adopted cross-cutting dispositions; host storage, TLS and deployment policy remain separate duties.",
       "library_scope": "Issuer-bound credentials, confidential-client method selection and restricted token destinations.",
       "external_duties": "Host/AS provision confidential credentials, trust, least privilege and secure deployment."
@@ -1450,7 +1699,27 @@
         "idjag.missing.jti",
         "idjag.missing.exp",
         "idjag.missing.iat",
-        "idjag.missing.resource"
+        "idjag.missing.resource",
+        "idjag.type.iss.null",
+        "idjag.type.iss.number",
+        "idjag.type.iss.array",
+        "idjag.type.iss.object",
+        "idjag.type.sub.null",
+        "idjag.type.sub.number",
+        "idjag.type.sub.array",
+        "idjag.type.sub.object",
+        "idjag.type.client_id.null",
+        "idjag.type.client_id.number",
+        "idjag.type.client_id.array",
+        "idjag.type.client_id.object",
+        "idjag.type.jti.null",
+        "idjag.type.jti.number",
+        "idjag.type.jti.array",
+        "idjag.type.jti.object",
+        "idjag.type.scope.null",
+        "idjag.type.scope.number",
+        "idjag.type.scope.array",
+        "idjag.type.scope.object"
       ],
       "notes": "Named signature/audience/resource/expiry/type, creation/scope/lifetime and each-required-key rejection contracts qualify the helper claim-validation role. Semantic identity/tenant resolution, authenticated-client authorization and replay consumption remain host/IdP/AS duties under the separate IDJAG policy bundles.",
       "library_scope": "Validate signature, audience, expiry, typed header and required ID-JAG claims.",
@@ -1642,7 +1911,12 @@
         "lib/arbor_mcp/tasks/extension.ex"
       ],
       "cases": [
-        "tasks.ttl.null"
+        "tasks.ttl.null",
+        "tasks.shapes",
+        "tasks.creation.visible",
+        "tasks.ttl.expires",
+        "tasks.client.malformed",
+        "tasks.client.discriminator"
       ],
       "notes": "Initial scoped requirement evidence; not a complete Tasks specification qualification.",
       "library_scope": "Accept nullable ttlMs while preserving its required wire field.",
@@ -1685,7 +1959,12 @@
       ],
       "cases": [
         "tasks.errors.dispatch",
-        "tasks.errors.http"
+        "tasks.errors.http",
+        "tasks.lifecycle",
+        "tasks.negotiation.reject",
+        "tasks.negotiation.advertise",
+        "tasks.client.negotiation",
+        "tasks.notification.capability"
       ],
       "notes": "Initial scoped requirement evidence; not a complete Tasks specification qualification.",
       "library_scope": "Return invalid-params for unknown task identifiers without disclosing ownership.",
@@ -1706,7 +1985,8 @@
         "lib/arbor_mcp/tasks/store/ets.ex"
       ],
       "cases": [
-        "tasks.input.unique"
+        "tasks.input.unique",
+        "tasks.inputs.once"
       ],
       "notes": "Initial scoped requirement evidence; not a complete Tasks specification qualification.",
       "library_scope": "Keep input request keys unique throughout the task lifetime.",
@@ -1727,7 +2007,10 @@
         "lib/arbor_mcp/tasks/store/ets.ex"
       ],
       "cases": [
-        "tasks.failure.pending_input"
+        "tasks.failure.pending_input",
+        "tasks.cancel.cooperative",
+        "tasks.notification.state",
+        "tasks.notification.http"
       ],
       "notes": "Initial scoped requirement evidence; not a complete Tasks specification qualification.",
       "library_scope": "Represent execution errors as a failed task, including while input is outstanding.",
@@ -1979,7 +2262,9 @@
         "lib/arbor_mcp/client/era_probe.ex",
         "lib/arbor_mcp/client/era_cache.ex"
       ],
-      "cases": [],
+      "cases": [
+        "core.era.pinned"
+      ],
       "conformance": [],
       "notes": "Existing four-mode/strict-era tests remain authoritative; the official modern harness does not exhaust downgrade and cache-failure paths.",
       "library_scope": "Evidence-based modern/legacy selection, cache pinning and bounded fallback.",
@@ -2023,7 +2308,9 @@
         "lib/arbor_mcp/transport/stdio.ex",
         "lib/arbor_mcp/client/connection_manager.ex"
       ],
-      "cases": [],
+      "cases": [
+        "core.stdio.reap"
+      ],
       "conformance": [],
       "notes": "Process cleanup and restart are covered by existing transport lifecycle/interop suites, not duplicated here or certified by the HTTP conformance artifact.",
       "library_scope": "Owned-child shutdown, reaping and finite cleanup on transport/component failure.",
@@ -2139,7 +2426,9 @@
         "lib/arbor_mcp/http_plug.ex",
         "lib/arbor_mcp/client/request_handler.ex"
       ],
-      "cases": [],
+      "cases": [
+        "core.cancel.pending"
+      ],
       "conformance": [
         "official.server.server-stateless"
       ],
@@ -2263,7 +2552,10 @@
         "lib/arbor_mcp/client/request_handler.ex",
         "lib/arbor_mcp/server/handler_server.ex"
       ],
-      "cases": [],
+      "cases": [
+        "core.cancel.pending",
+        "core.cancel.unknown"
+      ],
       "conformance": [],
       "notes": "Existing cancellation, progress and lifecycle tests remain in CI; official core scenarios do not exhaust these request-ownership/race invariants.",
       "library_scope": "Cancellation of pending work and ignoring unknown request IDs.",
@@ -2497,7 +2789,9 @@
         "lib/arbor_mcp/internal/logging.ex",
         "lib/arbor_mcp/server/context.ex"
       ],
-      "cases": [],
+      "cases": [
+        "core.logging.levels"
+      ],
       "conformance": [],
       "notes": "Existing request-scoped logging and redaction tests remain in CI. The official modern core scenario list has no dedicated logging scenario; application log content still requires host review.",
       "library_scope": "Legacy logging level requests and request-bound log notifications.",
@@ -2677,7 +2971,9 @@
         "lib/arbor_mcp/authorization/client_registration.ex",
         "lib/arbor_mcp/authorization/full_oauth_flow.ex"
       ],
-      "cases": [],
+      "cases": [
+        "oauth.dcr.issuer"
+      ],
       "conformance": [
         "official.client.auth-basic-cimd",
         "official.client.auth-pre-registration",
@@ -2792,7 +3088,10 @@
         "access.enterprise.reject.number",
         "access.enterprise.empty",
         "access.enterprise.case_insensitive",
-        "access.refresh.reject.mac"
+        "access.refresh.reject.mac",
+        "access.client_credentials.missing_type",
+        "access.enterprise.missing_type",
+        "access.refresh.missing_type"
       ],
       "conformance": [],
       "notes": "Existing authorization/provider/transport tests remain authoritative. The client Auth conformance scenarios do not certify arbitrary resource-server policy or upstream token separation.",
@@ -2815,7 +3114,9 @@
         "lib/arbor_mcp/authorization/credential_store.ex"
       ],
       "cases": [
-        "access.refresh.reject.mac"
+        "access.refresh.reject.mac",
+        "oauth.refresh.auth",
+        "access.refresh.missing_type"
       ],
       "conformance": [
         "official.client.auth-offline-access-scope",
@@ -2841,7 +3142,12 @@
         "lib/arbor_mcp/authorization/endpoint_policy.ex",
         "lib/arbor_mcp/authorization/oauth_flow.ex"
       ],
-      "cases": [],
+      "cases": [
+        "oauth.pkce.pair",
+        "oauth.pkce.absent",
+        "oauth.endpoint.binding",
+        "oauth.credentials.issuer"
+      ],
       "conformance": [],
       "notes": "Existing PKCE, callback, endpoint and credential-store tests are reused below. A general OAuth client does not supply deployment trust policy or proxy consent UI.",
       "library_scope": "Endpoint/redirect policy, PKCE/state/issuer validation and issuer-bound credential primitives.",
@@ -2940,7 +3246,9 @@
         "lib/arbor_mcp/authorization/full_oauth_flow.ex",
         "lib/arbor_mcp/authorization/credential_store.ex"
       ],
-      "cases": [],
+      "cases": [
+        "oauth.refresh.auth"
+      ],
       "conformance": [
         "official.client.auth-offline-access-scope"
       ],
@@ -2963,7 +3271,11 @@
         "lib/arbor_mcp/authorization/full_oauth_flow.ex",
         "lib/arbor_mcp/authorization/jwt_verifier.ex"
       ],
-      "cases": [],
+      "cases": [
+        "access.client_credentials.reject.mac",
+        "access.enterprise.reject.mac",
+        "access.refresh.reject.mac"
+      ],
       "conformance": [],
       "notes": "See core Auth token and RFC6750 rows; complete AS/host operations are not asserted by the generic helpers.",
       "library_scope": "Bearer HTTP transport and configurable inbound token verification/authorization hooks.",
@@ -3002,7 +3314,9 @@
         "lib/arbor_mcp/authorization/full_oauth_flow.ex",
         "lib/arbor_mcp/authorization/credential_store.ex"
       ],
-      "cases": [],
+      "cases": [
+        "oauth.refresh.auth"
+      ],
       "conformance": [],
       "notes": "Only the core-referenced draft14 refresh section is adopted; no wholesale upgrade from draft13 is implied.",
       "library_scope": "Confidential refresh transport and issuer-partitioned credential storage primitives.",
@@ -3065,7 +3379,11 @@
         "access.enterprise.reject.number",
         "access.enterprise.empty",
         "access.enterprise.case_insensitive",
-        "access.refresh.reject.mac"
+        "access.refresh.reject.mac",
+        "access.client_credentials.missing_type",
+        "access.enterprise.missing_type",
+        "access.refresh.missing_type",
+        "access.generic.compatibility"
       ],
       "conformance": [],
       "notes": "The named exchange regressions test typed enterprise responses. General OAuth error/status/cache-control issuance is an AS duty and not certified by them.",
@@ -3446,7 +3764,12 @@
         "lib/arbor_mcp/authorization/client_registration.ex",
         "lib/arbor_mcp/authorization/credential_store.ex"
       ],
-      "cases": [],
+      "cases": [
+        "oauth.dcr.issuer",
+        "oauth.dcr.response.register",
+        "oauth.dcr.response.get",
+        "oauth.dcr.response.update"
+      ],
       "conformance": [],
       "notes": "Persisted registrations are partitioned by exact issuer. DCR access policy, initial-access tokens and registry operations are AS responsibilities.",
       "library_scope": "Registration response/error handling and exact-issuer credential reuse.",
@@ -3605,7 +3928,27 @@
         "idjag.missing.jti",
         "idjag.missing.exp",
         "idjag.missing.iat",
-        "idjag.missing.resource"
+        "idjag.missing.resource",
+        "idjag.type.iss.null",
+        "idjag.type.iss.number",
+        "idjag.type.iss.array",
+        "idjag.type.iss.object",
+        "idjag.type.sub.null",
+        "idjag.type.sub.number",
+        "idjag.type.sub.array",
+        "idjag.type.sub.object",
+        "idjag.type.client_id.null",
+        "idjag.type.client_id.number",
+        "idjag.type.client_id.array",
+        "idjag.type.client_id.object",
+        "idjag.type.jti.null",
+        "idjag.type.jti.number",
+        "idjag.type.jti.array",
+        "idjag.type.jti.object",
+        "idjag.type.scope.null",
+        "idjag.type.scope.number",
+        "idjag.type.scope.array",
+        "idjag.type.scope.object"
       ],
       "conformance": [],
       "notes": "Helpers cover signature/required-key/time/audience/resource checks, not semantic validation of every optional claim, subject identity, authenticated-client authorization or replay.",
@@ -3810,6 +4153,149 @@
       "notes": "Arbor does not implement DPoP, actor delegation or RAR policy. A host accepting these claims must validate them before access-token issuance; signature helper success does not authorize them.",
       "library_scope": "",
       "external_duties": "When adopting actor delegation, rich authorization, multiple resources or sender-constrained grants, enforce their profile processing and proof-of-possession requirements; never treat a cnf claim as proof. Arbor does not implement DPoP, actor delegation or RAR policy. A host accepting these claims must validate them before access-token issuance; signature helper success does not authorize them."
+    },
+    {
+      "id": "TASKS.NEGOTIATION",
+      "source": "TASKS",
+      "section": "Capability Negotiation; Supported Methods; Polymorphic Results",
+      "role": "client/server",
+      "profiles": [
+        "tasks"
+      ],
+      "level": "MUST/SHOULD",
+      "requirement": "Per-request Tasks capability, tools/call-only task results, task discriminator and -32021 for missing capability.",
+      "status": "supported",
+      "library_scope": "Per-request Tasks capability, tools/call-only task results, task discriminator and -32021 for missing capability.",
+      "external_duties": "",
+      "implementation": [
+        "lib/arbor_mcp/tasks/extension.ex",
+        "lib/arbor_mcp/tasks/task.ex",
+        "lib/arbor_mcp/tasks/store/ets.ex",
+        "lib/arbor_mcp/tasks/server.ex",
+        "lib/arbor_mcp/client/operations/tasks.ex"
+      ],
+      "cases": [
+        "tasks.negotiation.reject",
+        "tasks.negotiation.advertise",
+        "tasks.client.negotiation",
+        "tasks.client.discriminator"
+      ],
+      "notes": "Named local assertions qualify these library mechanisms. The official task-notification scenario is a stub; real HTTP notification evidence is local."
+    },
+    {
+      "id": "TASKS.LIFECYCLE",
+      "source": "TASKS",
+      "section": "Tasks; Task Creation; Task Polling; Task Cancellation",
+      "role": "client/server/host",
+      "profiles": [
+        "tasks"
+      ],
+      "level": "MUST/SHOULD",
+      "requirement": "Visible insertion before create acknowledgement, detailed task state, terminal result/error separation and cooperative ack-only cancellation.",
+      "status": "supported",
+      "library_scope": "Visible insertion before create acknowledgement, detailed task state, terminal result/error separation and cooperative ack-only cancellation.",
+      "external_duties": "Host persists task IDs and drives polling to completion, honors changing poll intervals, and supplies process-independent storage when restart durability is required; the bundled ETS store is process-local.",
+      "implementation": [
+        "lib/arbor_mcp/tasks/extension.ex",
+        "lib/arbor_mcp/tasks/task.ex",
+        "lib/arbor_mcp/tasks/store/ets.ex",
+        "lib/arbor_mcp/tasks/server.ex",
+        "lib/arbor_mcp/client/operations/tasks.ex"
+      ],
+      "cases": [
+        "tasks.lifecycle",
+        "tasks.creation.visible",
+        "tasks.shapes",
+        "tasks.cancel.cooperative",
+        "tasks.ttl.expires",
+        "tasks.client.http_lifecycle"
+      ],
+      "notes": "Named local assertions qualify these library mechanisms. The official task-notification scenario is a stub; real HTTP notification evidence is local."
+    },
+    {
+      "id": "TASKS.INPUT",
+      "source": "TASKS",
+      "section": "Task Update Requests",
+      "role": "client/server/host",
+      "profiles": [
+        "tasks"
+      ],
+      "level": "MUST/SHOULD",
+      "requirement": "Outstanding input state, partial updates, unique lifetime keys and at-most-once response consumption.",
+      "status": "supported",
+      "library_scope": "Outstanding input state, partial updates, unique lifetime keys and at-most-once response consumption.",
+      "external_duties": "Host dispatches task input requests under the same elicitation/sampling/roots trust and approval policy, and deduplicates UI/model actions across polls/restarts. Task APIs do not run a background input/polling agent.",
+      "implementation": [
+        "lib/arbor_mcp/tasks/extension.ex",
+        "lib/arbor_mcp/tasks/task.ex",
+        "lib/arbor_mcp/tasks/store/ets.ex",
+        "lib/arbor_mcp/tasks/server.ex",
+        "lib/arbor_mcp/client/operations/tasks.ex"
+      ],
+      "cases": [
+        "tasks.inputs.once",
+        "tasks.input.unique",
+        "tasks.lifecycle",
+        "tasks.client.http_lifecycle"
+      ],
+      "notes": "Named local assertions qualify these library mechanisms. The official task-notification scenario is a stub; real HTTP notification evidence is local."
+    },
+    {
+      "id": "TASKS.NOTIFICATIONS",
+      "source": "TASKS",
+      "section": "Task Status Notifications",
+      "role": "client/server",
+      "profiles": [
+        "tasks"
+      ],
+      "level": "MUST/SHOULD",
+      "requirement": "Capability-gated task filters and complete owner-authorized detailed state on modern subscription streams.",
+      "status": "supported",
+      "library_scope": "Capability-gated task filters and complete owner-authorized detailed state on modern subscription streams.",
+      "external_duties": "",
+      "implementation": [
+        "lib/arbor_mcp/tasks/extension.ex",
+        "lib/arbor_mcp/tasks/task.ex",
+        "lib/arbor_mcp/tasks/store/ets.ex",
+        "lib/arbor_mcp/tasks/server.ex",
+        "lib/arbor_mcp/client/operations/tasks.ex"
+      ],
+      "cases": [
+        "tasks.notification.state",
+        "tasks.notification.http",
+        "tasks.notification.capability"
+      ],
+      "notes": "Named local assertions qualify these library mechanisms. The official task-notification scenario is a stub; real HTTP notification evidence is local."
+    },
+    {
+      "id": "TASKS.ERRORS",
+      "source": "TASKS",
+      "section": "Error Handling; Security Considerations",
+      "role": "client/server/host",
+      "profiles": [
+        "tasks"
+      ],
+      "level": "MUST/SHOULD",
+      "requirement": "Unknown/unauthorized IDs are indistinguishable; protocol failures are failed tasks, while tool results including isError remain completed.",
+      "status": "supported",
+      "library_scope": "Unknown/unauthorized IDs are indistinguishable; protocol failures are failed tasks, while tool results including isError remain completed.",
+      "external_duties": "Host authenticates every request and supplies stable principal/tenant/audience ownership; default random task IDs do not substitute for authorization.",
+      "implementation": [
+        "lib/arbor_mcp/tasks/extension.ex",
+        "lib/arbor_mcp/tasks/task.ex",
+        "lib/arbor_mcp/tasks/store/ets.ex",
+        "lib/arbor_mcp/tasks/server.ex",
+        "lib/arbor_mcp/client/operations/tasks.ex"
+      ],
+      "cases": [
+        "tasks.errors.dispatch",
+        "tasks.errors.http",
+        "tasks.failure.pending_input",
+        "tasks.client.malformed",
+        "tasks.lifecycle",
+        "tasks.client.http_lifecycle"
+      ],
+      "notes": "Named local assertions qualify these library mechanisms. The official task-notification scenario is a stub; real HTTP notification evidence is local."
     }
   ],
   "conformance_cases": {
@@ -4797,21 +5283,32 @@
     {
       "id": "WORK.TASKS_INVENTORY",
       "kind": "inventory",
-      "status": "open",
+      "status": "closed",
       "requirements": [
         "TASKS.TTL",
         "TASKS.HEADERS",
         "TASKS.UNKNOWN",
         "TASKS.INPUT-KEY",
-        "TASKS.FAILURE"
+        "TASKS.FAILURE",
+        "TASKS.NEGOTIATION",
+        "TASKS.LIFECYCLE",
+        "TASKS.INPUT",
+        "TASKS.NOTIFICATIONS",
+        "TASKS.ERRORS"
       ],
       "action": "Complete Tasks prose/schema dispositions and register existing lifecycle/client/notification assertions.",
-      "closure": "Every Tasks section/export has a disposition; named server/client lifecycle evidence executes."
+      "closure": "Every Tasks section/export has a disposition; named server/client lifecycle evidence executes.",
+      "cases": [
+        "tasks.lifecycle",
+        "tasks.client.negotiation",
+        "tasks.notification.http",
+        "tasks.client.http_lifecycle"
+      ]
     },
     {
       "id": "WORK.EXISTING_EVIDENCE",
       "kind": "qualification",
-      "status": "open",
+      "status": "closed",
       "requirements": [
         "CC.SECURITY",
         "CORE.ERA",
@@ -4824,29 +5321,80 @@
         "DCR.RESPONSE"
       ],
       "action": "Link existing assertions for bundles with no recorded executable evidence.",
-      "closure": "Every supported bundle has implementation paths and named local or official assertions."
+      "closure": "Every supported bundle has implementation paths and named local or official assertions.",
+      "cases": [
+        "core.era.pinned",
+        "core.stdio.reap",
+        "core.cancel.pending",
+        "core.logging.levels",
+        "oauth.dcr.issuer"
+      ]
     },
     {
       "id": "WORK.TOKEN_TYPE",
       "kind": "implementation",
-      "status": "open",
+      "status": "closed",
       "requirements": [
         "CORE.AUTH_TOKEN",
         "RFC6749.RESPONSES"
       ],
       "action": "Reject a final MCP access-token response whose required token_type is absent.",
-      "closure": "Automatic client-credentials, enterprise and refresh paths reject missing type; generic token-exchange compatibility remains covered."
+      "closure": "Automatic client-credentials, enterprise and refresh paths reject missing type; generic token-exchange compatibility remains covered.",
+      "cases": [
+        "access.client_credentials.missing_type",
+        "access.enterprise.missing_type",
+        "access.refresh.missing_type",
+        "access.generic.compatibility"
+      ]
     },
     {
       "id": "WORK.IDJAG_TYPES",
       "kind": "implementation",
-      "status": "open",
+      "status": "closed",
       "requirements": [
         "EMA.CLAIMS",
         "IDJAG.CLAIMS"
       ],
       "action": "Reject malformed primitive identity claims in signed ID-JAGs.",
-      "closure": "Signed non-string required identity and optional scope claims are rejected; valid signed claims still pass."
+      "closure": "Signed non-string required identity and optional scope claims are rejected; valid signed claims still pass.",
+      "cases": [
+        "idjag.type.iss.null",
+        "idjag.type.iss.number",
+        "idjag.type.iss.array",
+        "idjag.type.iss.object",
+        "idjag.type.sub.null",
+        "idjag.type.sub.number",
+        "idjag.type.sub.array",
+        "idjag.type.sub.object",
+        "idjag.type.client_id.null",
+        "idjag.type.client_id.number",
+        "idjag.type.client_id.array",
+        "idjag.type.client_id.object",
+        "idjag.type.jti.null",
+        "idjag.type.jti.number",
+        "idjag.type.jti.array",
+        "idjag.type.jti.object",
+        "idjag.type.scope.null",
+        "idjag.type.scope.number",
+        "idjag.type.scope.array",
+        "idjag.type.scope.object"
+      ]
+    },
+    {
+      "id": "WORK.DCR_RESPONSE",
+      "kind": "implementation",
+      "status": "closed",
+      "requirements": [
+        "DCR.RESPONSE"
+      ],
+      "action": "Return an error tuple for malformed registration success bodies.",
+      "closure": "Missing/null/non-string client_id and non-object responses are rejected through registration and the shared information parser.",
+      "cases": [
+        "oauth.dcr.response.register",
+        "oauth.dcr.response.get",
+        "oauth.dcr.response.update"
+      ]
     }
-  ]
+  ],
+  "tasks_source_manifest": "scripts/mcp_tasks_requirement_sources.json"
 }

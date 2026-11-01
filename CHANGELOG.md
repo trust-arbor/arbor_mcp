@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Actionable MCP requirement work items, separate library/evidence/host dispositions,
+  and a hash-checked Tasks prose/schema inventory with named existing assertions
+  and a public-client HTTP input/completion/cancellation test.
+
 - A pinned real Keycloak authorization-server integration lane for Basic/JWT
   client credentials, token signature/resource validation, introspection and
   authenticated Arbor client/server requests, with preserved execution evidence.
@@ -57,6 +61,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   beyond MCP protocol coverage, with public entrypoints and limits.
 
 ### Fixed
+
+- Automatic MCP token acquisition/refresh rejects responses missing `token_type`
+  while generic exchange helpers retain their compatibility behavior.
+- ID-JAG creation/validation checks primitive identity/scope claim types.
+- Malformed registration success responses return errors instead of raising on
+  missing or invalid client identifiers.
 
 - Automatic MCP authorization and refresh reject unsupported access-token types
   and empty tokens before persistence or Bearer use, while retaining generic

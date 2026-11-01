@@ -1,0 +1,181 @@
+{
+  "version": 1,
+  "source": "TASKS",
+  "revision": "b3d28aceaa6d49f5f92258e3d06b61ad6f111e84",
+  "files": {
+    "specification/2026-07-28/tasks.md": {
+      "sha256": "9b21677d19c95c01af8d2c59a7650ae1483aed2417d6291aca5fcb2afc2016ff",
+      "sections": {
+        "Extension Identifier": {
+          "requirements": [
+            "TASKS.NEGOTIATION"
+          ],
+          "disposition": "normative"
+        },
+        "Capability Negotiation": {
+          "requirements": [
+            "TASKS.NEGOTIATION"
+          ],
+          "disposition": "normative"
+        },
+        "Supported Methods": {
+          "requirements": [
+            "TASKS.NEGOTIATION"
+          ],
+          "disposition": "normative"
+        },
+        "Polymorphic Results": {
+          "requirements": [
+            "TASKS.NEGOTIATION"
+          ],
+          "disposition": "normative"
+        },
+        "Tasks": {
+          "requirements": [
+            "TASKS.LIFECYCLE",
+            "TASKS.TTL"
+          ],
+          "disposition": "normative"
+        },
+        "Task Creation": {
+          "requirements": [
+            "TASKS.LIFECYCLE"
+          ],
+          "disposition": "normative"
+        },
+        "Task Polling": {
+          "requirements": [
+            "TASKS.LIFECYCLE"
+          ],
+          "disposition": "normative"
+        },
+        "Task Update Requests": {
+          "requirements": [
+            "TASKS.INPUT",
+            "TASKS.INPUT-KEY"
+          ],
+          "disposition": "normative"
+        },
+        "Task Cancellation": {
+          "requirements": [
+            "TASKS.LIFECYCLE"
+          ],
+          "disposition": "normative"
+        },
+        "Task Status Notifications": {
+          "requirements": [
+            "TASKS.NOTIFICATIONS"
+          ],
+          "disposition": "normative"
+        },
+        "Streamable HTTP: Routing Headers": {
+          "requirements": [
+            "TASKS.HEADERS"
+          ],
+          "disposition": "normative"
+        },
+        "Example Message Flow": {
+          "requirements": [
+            "TASKS.LIFECYCLE"
+          ],
+          "disposition": "context; no additional wire method or required reservation"
+        },
+        "Error Handling": {
+          "requirements": [
+            "TASKS.ERRORS",
+            "TASKS.INPUT",
+            "TASKS.FAILURE",
+            "TASKS.UNKNOWN"
+          ],
+          "disposition": "normative"
+        },
+        "Reservations": {
+          "requirements": [
+            "TASKS.LIFECYCLE"
+          ],
+          "disposition": "context; no additional wire method or required reservation"
+        },
+        "Security Considerations": {
+          "requirements": [
+            "TASKS.ERRORS",
+            "TASKS.INPUT"
+          ],
+          "disposition": "normative"
+        },
+        "Implementation Considerations": {
+          "requirements": [
+            "TASKS.LIFECYCLE"
+          ],
+          "disposition": "context; no additional wire method or required reservation"
+        }
+      },
+      "local": "docs/mcp-specs/2026-07-28/extensions/tasks.md"
+    },
+    "schema/2026-07-28/schema.ts": {
+      "sha256": "8cd058dc09ba0d3596d8354d9ad5b9d3c2f09c071612a256eb072f51d3084ebb",
+      "exports": {
+        "TaskStatus": [
+          "TASKS.LIFECYCLE"
+        ],
+        "Task": [
+          "TASKS.LIFECYCLE"
+        ],
+        "WorkingTask": [
+          "TASKS.LIFECYCLE"
+        ],
+        "InputRequiredTask": [
+          "TASKS.LIFECYCLE"
+        ],
+        "CompletedTask": [
+          "TASKS.LIFECYCLE"
+        ],
+        "FailedTask": [
+          "TASKS.LIFECYCLE"
+        ],
+        "CancelledTask": [
+          "TASKS.LIFECYCLE"
+        ],
+        "DetailedTask": [
+          "TASKS.LIFECYCLE"
+        ],
+        "CreateTaskResult": [
+          "TASKS.LIFECYCLE"
+        ],
+        "GetTaskRequest": [
+          "TASKS.LIFECYCLE"
+        ],
+        "GetTaskResult": [
+          "TASKS.LIFECYCLE"
+        ],
+        "UpdateTaskRequest": [
+          "TASKS.INPUT"
+        ],
+        "UpdateTaskResult": [
+          "TASKS.INPUT"
+        ],
+        "CancelTaskRequest": [
+          "TASKS.LIFECYCLE"
+        ],
+        "CancelTaskResult": [
+          "TASKS.LIFECYCLE"
+        ],
+        "TaskStatusNotificationParams": [
+          "TASKS.NOTIFICATIONS"
+        ],
+        "TaskStatusNotification": [
+          "TASKS.NOTIFICATIONS"
+        ],
+        "TaskSubscriptionNotifications": [
+          "TASKS.NOTIFICATIONS"
+        ],
+        "TaskSubscriptionAcknowledgedNotifications": [
+          "TASKS.NOTIFICATIONS"
+        ],
+        "TasksExtensionCapability": [
+          "TASKS.NEGOTIATION"
+        ]
+      },
+      "local": "docs/mcp-specs/2026-07-28/extensions/tasks-schema.ts"
+    }
+  }
+}

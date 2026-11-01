@@ -192,6 +192,46 @@ defmodule Arbor.MCP.Client.ModernHTTPSubscriptionTest do
     assert_eventually(fn -> Subscriptions.entries(runtime: runtime) == [] end)
   end
 
+  @tag assurance: ["tasks.client.http_lifecycle"]
+  test "task client APIs complete an input cycle and request cancellation over HTTP", %{
+    runtime: runtime,
+    client: client
+  } do
+    opts = [
+      runtime: runtime,
+      owner: %{principal_id: nil, tenant_id: nil, audience: "/mcp"},
+      notify: false
+    ]
+
+    assert {:ok, created} = Tasks.create("deploy", %{}, opts)
+    id = created["taskId"]
+
+    assert {:ok, _} =
+             Tasks.require_input(id, %{"approval" => %{"method" => "elicitation/create"}}, opts)
+
+    assert {:ok, %{"status" => "input_required", "inputRequests" => %{"approval" => _}}} =
+             Client.get_task(client, id)
+
+    input = %{"approval" => %{"result" => %{"action" => "accept", "content" => %{}}}}
+    assert {:ok, %{"resultType" => "complete"}} = Client.update_task(client, id, input)
+    assert {:ok, ^input} = Tasks.take_input_responses(id, opts)
+
+    error_result = %{
+      "content" => [%{"type" => "text", "text" => "tool failed"}],
+      "isError" => true
+    }
+
+    assert {:ok, _} = Tasks.complete(id, error_result, opts)
+
+    assert {:ok, %{"status" => "completed", "result" => ^error_result}} =
+             Client.get_task(client, id)
+
+    assert {:ok, next} = Tasks.create("deploy", %{}, opts)
+    assert {:ok, %{"resultType" => "complete"}} = Client.cancel_task(client, next["taskId"])
+    assert {:ok, true} = Tasks.cancellation_requested?(next["taskId"], opts)
+  end
+
+  @tag assurance: ["tasks.notification.http"]
   test "delivers owner-authorized task transitions and rejects malformed task events", %{
     runtime: runtime,
     client: client

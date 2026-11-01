@@ -17,7 +17,9 @@ defmodule Arbor.MCP.Authorization.IdPAuthentication do
   ]
 
   @spec exchange(list(), map()) :: {:ok, map()} | {:error, term()}
-  def exchange(body, config) do
+  def exchange(body, config), do: exchange(body, config, &HTTPClient.make_token_request/3)
+
+  def exchange(body, config, request) do
     with {:ok, auth} <- validate_config(config[:idp_auth]),
          :ok <- match_legacy(config, :idp_issuer, auth.issuer),
          :ok <- match_legacy(config, :idp_client_id, auth.client_id),
@@ -29,7 +31,7 @@ defmodule Arbor.MCP.Authorization.IdPAuthentication do
            credentials(auth, metadata, config[:client_assertion_audience] || endpoint),
          {:ok, options} <- request_options(config, auth.auth_method) do
       body = Enum.reject(body, fn {key, _value} -> key in @credential_keys end)
-      HTTPClient.make_token_request(endpoint, body ++ credentials, options)
+      request.(endpoint, body ++ credentials, options)
     end
   end
 

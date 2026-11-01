@@ -34,6 +34,7 @@ defmodule Arbor.MCP.Tasks.ServerTest do
     :ok
   end
 
+  @tag assurance: ["tasks.lifecycle"]
   test "opt-in handler persists before create result and serves the modern lifecycle" do
     create = modern_request(1, "tools/call", %{"name" => "background", "arguments" => %{}})
 
@@ -92,6 +93,7 @@ defmodule Arbor.MCP.Tasks.ServerTest do
              )
   end
 
+  @tag assurance: ["tasks.negotiation.reject"]
   test "does not create tasks for undeclared modern or legacy requests" do
     undeclared =
       modern_request(1, "tools/call", %{"name" => "background", "arguments" => %{}}, %{})
@@ -114,6 +116,7 @@ defmodule Arbor.MCP.Tasks.ServerTest do
     assert legacy_error["code"] != -32021
   end
 
+  @tag assurance: ["tasks.negotiation.advertise"]
   test "advertises the extension only for an explicitly task-enabled handler" do
     discover = modern_request(1, "server/discover", %{}, %{})
 

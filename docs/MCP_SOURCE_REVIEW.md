@@ -7,7 +7,7 @@ every optional profile, a deployed host or a third-party identity provider.
 A source marked `complete` means its stated **inventory scope** has dispositions:
 supported behavior, partial evidence, host duties and unadopted profiles are mapped.
 It does not mean implementation or executable qualification is complete. The register
-contains 114 requirement bundles, 163 named local/peer/provider cases and mappings to all 73
+contains 119 requirement bundles, 212 named local/peer/provider cases and mappings to all 73
 existing official modern core scenarios.
 
 ## Core revision
@@ -117,3 +117,16 @@ validity. They require no change to Arbor MCP wire semantics. All 29 existing
 legacy/modern HTTP interop tests pass with the new exact pin. This qualifies those
 operations and cleanup paths, not every optional Everything or Auth feature.
 Package-lock and tooling pins advance together; the monitor never repins.
+
+## Tasks source disposition
+
+The pinned Tasks prose and TypeScript schema are preserved in
+`docs/mcp-specs/2026-07-28/extensions/`. The manifest
+`scripts/mcp_tasks_requirement_sources.json` binds their hashes, every top-level
+section and every exported schema type to requirement dispositions. CI rejects
+changed snapshots, missing sections/types and unmapped bundles. These are
+inventory checks, not execution results. Existing negotiation, store, validation
+and HTTP notification tests plus a public-client HTTP input/cancel cycle supply
+named evidence. The official notification scenario remains a stub; independent
+Tasks SDK interop is not qualified. Hosts drive polling and durable task-ID/input
+tracking; ETS alone does not survive a process/node restart.

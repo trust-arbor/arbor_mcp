@@ -14,6 +14,7 @@ defmodule Arbor.MCP.Tasks.StoreTest do
     |> then(&{:ok, server: &1})
   end
 
+  @tag assurance: ["tasks.creation.visible"]
   test "persists a task before returning its create result", %{server: server} do
     opts = store_opts(server, @alice)
 
@@ -45,6 +46,7 @@ defmodule Arbor.MCP.Tasks.StoreTest do
     assert {:error, :not_found_or_unauthorized} = Tasks.cancel(created["taskId"], bob_opts)
   end
 
+  @tag assurance: ["tasks.inputs.once"]
   test "accepts each outstanding input response at most once", %{server: server} do
     opts = store_opts(server, @alice)
     assert {:ok, created} = Tasks.create("deploy", %{}, opts)
@@ -86,6 +88,7 @@ defmodule Arbor.MCP.Tasks.StoreTest do
     assert {:error, :invalid_transition} = Tasks.mark_cancelled(task_id, opts)
   end
 
+  @tag assurance: ["tasks.cancel.cooperative"]
   test "records cooperative cancellation separately from terminal state", %{server: server} do
     opts = store_opts(server, @alice)
     assert {:ok, created} = Tasks.create("deploy", %{}, opts)
@@ -101,6 +104,7 @@ defmodule Arbor.MCP.Tasks.StoreTest do
     assert :ok = Tasks.cancel(task_id, opts)
   end
 
+  @tag assurance: ["tasks.ttl.expires"]
   test "expires entries using their creation TTL" do
     {:ok, clock} = Agent.start_link(fn -> 1_000 end)
 
@@ -134,6 +138,7 @@ defmodule Arbor.MCP.Tasks.StoreTest do
              Tasks.create("deploy", %{}, store: MissingTaskStore, owner: @alice)
   end
 
+  @tag assurance: ["tasks.notification.state"]
   test "publishes full task state after a durable transition", %{server: server} do
     registry =
       start_supervised!(

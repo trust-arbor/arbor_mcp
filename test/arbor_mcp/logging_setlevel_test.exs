@@ -81,6 +81,7 @@ defmodule Arbor.MCP.LoggingSetLevelTest do
       assert {:ok, %{}} = Client.set_log_level(client, "debug")
     end
 
+    @tag assurance: ["core.logging.levels"]
     test "accepts all valid log levels", %{client: client} do
       valid_levels = ["debug", "info", "warning", "error"]
 

@@ -1,5 +1,6 @@
 """Protect against false coverage claims and incomplete execution artifacts."""
 import copy
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -75,6 +76,42 @@ class AssuranceTest(unittest.TestCase):
         self.data["requirements"].append(dict(row, id="SPEC.OTHER", depends_on=["SPEC.AUD"]))
         with self.assertRaisesRegex(CHECK.AssuranceError, "Cyclic"):
             self.load(self.data)
+
+    def test_tasks_inventory_requires_both_pinned_snapshots_and_every_section_and_export(self):
+        self.data["sources"]["TASKS"] = self.data["sources"].pop("spec")
+        self.data["requirements"][0]["source"] = "TASKS"
+        manifest = {"version": 1, "source": "TASKS", "revision": "a" * 40, "files": {}}
+        for remote, name, content, dispositions in [
+            ("specification/2026-07-28/tasks.md", "tasks.md", "## Lifecycle\n",
+             {"sections": {"Lifecycle": {"requirements": ["SPEC.AUD"]}}}),
+            ("schema/2026-07-28/schema.ts", "tasks.ts", "export type Task = unknown;\n",
+             {"exports": {"Task": ["SPEC.AUD"]}})
+        ]:
+            (self.root / name).write_text(content)
+            manifest["files"][remote] = dict(dispositions, local=name,
+                                              sha256=hashlib.sha256(content.encode()).hexdigest())
+        path = self.root / "tasks-manifest.json"
+        path.write_text(json.dumps(manifest))
+        self.data["tasks_source_manifest"] = path.name
+        self.load(self.data)
+        schema = "schema/2026-07-28/schema.ts"
+        for mutation in ["pin", "file", "export", "section", "reference", "content"]:
+            broken = copy.deepcopy(manifest)
+            if mutation == "pin":
+                broken["revision"] = "b" * 40
+            elif mutation == "file":
+                del broken["files"][schema]
+            elif mutation == "export":
+                broken["files"][schema]["exports"] = {}
+            elif mutation == "section":
+                broken["files"]["specification/2026-07-28/tasks.md"]["sections"] = {}
+            elif mutation == "reference":
+                broken["files"][schema]["exports"]["Task"] = ["UNKNOWN"]
+            else:
+                (self.root / "tasks.ts").write_text("changed source")
+            path.write_text(json.dumps(broken))
+            with self.subTest(mutation=mutation), self.assertRaises(CHECK.AssuranceError):
+                self.load(self.data)
 
     def test_missing_or_wrong_commit_identity_cannot_qualify_an_artifact(self):
         for value in [None, "b" * 40]:
