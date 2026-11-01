@@ -32,13 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   core conformance in CI.
 
 - An assessment of twelve MCP extension source baselines, distinguishing current
-  implementation scope from compatibility. Tasks and auth remain pending
-  concrete fixes; nine unimplemented optional sources and the framework/index
-  are acknowledged without enabling new features.
+  implementation scope from compatibility. Tasks and Auth are acknowledged after
+  their compatibility corrections; nine unimplemented optional sources and the
+  framework/index are acknowledged without enabling new features. The baseline
+  review and coverage matrix distinguish current scoped inventories, executable
+  evidence, host duties and remaining Tasks inventory/interop limits.
 
 - A weekly and manually runnable advisory check for official MCP extension
   source changes, with immutable baselines, repository discovery and review
-  reports. Initial observed revisions remain explicitly pending assessment.
+  reports. Observed revisions require explicit assessment before acknowledgement.
 
 - A repo-only embedded forwarding example and HTTP integration tests covering
   namespaced tools, identity-scoped clients, interactive MRTR, progress,

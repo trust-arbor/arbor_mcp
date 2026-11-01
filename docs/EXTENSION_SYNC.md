@@ -100,9 +100,13 @@ API; HTTP redirects are refused and upstream code is never executed.
 marked `pending`. The
 [baseline assessment](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md)
 now covers twelve sources, all acknowledged as reviewed for their recorded
-scope after the Tasks/Auth corrections and approved confidential IdP configuration.
-Enterprise evidence distinguishes local confidential-client tests from the
-official public-client IdP scenario and records existing AS-grant limits.
+scope after the Tasks/Auth corrections and approved enterprise configuration.
+The [source review](MCP_SOURCE_REVIEW.md) and [requirement register](MCP_REQUIREMENTS.md)
+map the adopted core and inherited Auth sections. Inventory completeness is
+separate from executable qualification: enterprise evidence distinguishes named
+contracts, an independent verifying peer, scoped SDK helpers and the official
+public-client IdP scenario. Host/IdP/AS policy and full Tasks clause/client interop
+inventories remain explicit limits.
 A reviewed source whose
 `assessment` is `not_implemented` is an acknowledgement of current scope, not a
 compatibility claim or a decision against future adoption. Newly discovered

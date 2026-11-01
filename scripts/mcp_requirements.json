@@ -588,7 +588,7 @@
       "status": "partial",
       "implementation": [],
       "cases": [],
-      "notes": "Core and incorporated-reference inventories are not yet exhaustive; no full-compliance claim."
+      "notes": "Adopted core and incorporated-reference sections have scoped requirement dispositions below; partial executable evidence, host duties and unadopted profiles preclude a full-compliance claim."
     },
     {
       "id": "CC.PREREG",
@@ -661,7 +661,7 @@
         "assertion.verify.key",
         "peer.cc.bad_key"
       ],
-      "notes": "Builder and verifier contracts plus configured Node/jose and SDK interop cases are separate. Execution artifacts prove passes; complete inherited RFC clause inventory remains pending."
+      "notes": "Builder and verifier contracts plus configured Node/jose and SDK interop cases are separate. RFC7523.CLIENT, RFC7523.GRANT and RFC7523.POLICY record the adopted inherited scope; execution artifacts qualify only named cases."
     },
     {
       "id": "CC.ALG",
@@ -757,7 +757,7 @@
         "lib/arbor_mcp/authorization/credential_store.ex"
       ],
       "cases": [],
-      "notes": "Cross-cutting dependencies need separate requirement expansion and deployment policy."
+      "notes": "CORE.AUTH_SECURITY, RFC6750.STORAGE, RFC7523.POLICY and OAUTH.DEPLOYMENT record adopted cross-cutting dispositions; host storage, TLS and deployment policy remain separate duties."
     },
     {
       "id": "EMA.SSO",
@@ -911,7 +911,7 @@
         "idjag.signature",
         "idjag.expiry"
       ],
-      "notes": "Full incorporated claim inventory, tenant policy and replay handling must be classified separately."
+      "notes": "IDJAG.CLAIMS, IDJAG.IDP_POLICY, IDJAG.GRANT and IDJAG.TRUST record incorporated claim and policy dispositions. Named helper assertions do not qualify host tenant policy, authenticated-client binding or replay consumption."
     },
     {
       "id": "EMA.GRANT",
@@ -1045,7 +1045,7 @@
         "ema.exchange.bearer_type",
         "ema.exchange.missing_token_type"
       ],
-      "notes": "Wrong or missing issued token type and wrong/null token_type are rejected before forwarding. Broader OAuth error and issuer/credential-separation cases remain under inventory expansion."
+      "notes": "Wrong or missing issued token type and wrong/null token_type are rejected before forwarding. RFC6749.RESPONSES, RFC8693.RESPONSE and CORE.AUTH_ISSUER record the adopted response and issuer scope; executable qualification remains limited to their named cases."
     },
     {
       "id": "TASKS.TTL",
