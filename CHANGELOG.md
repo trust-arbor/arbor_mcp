@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Require JSV 0.26.2: indeterminate regex checks remain validation errors and
+  modern string lengths count Unicode code points. Diagnostics remain bounded
+  and omit backend context data.
+
 - Published Tasks compatibility: nullable peer TTLs retain their required key,
   task HTTP methods mirror `taskId` in routing headers, and unknown or unauthorized
   IDs return JSON-RPC invalid-params errors. Input keys cannot be reused across

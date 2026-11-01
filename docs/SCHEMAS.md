@@ -85,8 +85,14 @@ target. It rejects `jsv-cast`/`x-jsv-cast` keys, file/local/jsv reference scheme
 JSV/file/local `$id` bases, and unknown required vocabularies. This deliberately
 also rejects otherwise inert occurrences of those reserved extensions.
 Ordinary annotations such as `x-mcp-header` remain valid.
-[JSV internal resolver](https://github.com/lud/jsv/blob/v0.25.0/lib/jsv/resolver/internal.ex),
-[JSV cast vocabulary](https://github.com/lud/jsv/blob/v0.25.0/lib/jsv/vocabulary/cast.ex)
+[JSV internal resolver](https://github.com/lud/jsv/blob/v0.26.2/lib/jsv/resolver/internal.ex),
+[JSV cast vocabulary](https://github.com/lud/jsv/blob/v0.26.2/lib/jsv/vocabulary/cast.ex)
+
+The modern backend requires JSV 0.26.2 or later within the 0.26 series. String
+length assertions count Unicode code points, including combining marks as
+separate code points. Regex budget exhaustion rejects validation even inside
+`not` or `anyOf`; it is not treated as a successful non-match. Diagnostics keep
+the existing bounded message/path shape and discard backend error context data.
 
 Only prefetched policy-approved documents and bundled standard meta-schemas
 are exposed to JSV's resolver. No application resolver, default HTTP resolver,
