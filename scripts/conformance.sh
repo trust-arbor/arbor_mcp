@@ -315,6 +315,8 @@ run_extensions() {
     run_client_tests "$scenario" "$SPEC_VERSION" core true || exit_code=1
   done
 
+  python3 -B "$PROJECT_DIR/scripts/check_conformance_evidence.py" "$OUTPUT_FILE" || exit_code=1
+
   return "$exit_code"
 }
 

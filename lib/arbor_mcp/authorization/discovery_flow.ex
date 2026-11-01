@@ -8,6 +8,7 @@ defmodule Arbor.MCP.Authorization.DiscoveryFlow do
   """
 
   alias Arbor.MCP.Authorization.{
+    ClientCredentialsPolicy,
     OAuthFlow,
     OIDCDiscovery,
     ProtectedResourceMetadata,
@@ -59,14 +60,29 @@ defmodule Arbor.MCP.Authorization.DiscoveryFlow do
   """
   @spec execute(config()) :: {:ok, map()} | {:error, term()}
   def execute(config) do
-    with {:ok, as_info} <- discover_authorization_server(config),
+    with {:ok, {as_info, resource}} <- discover_authorization_server(config),
+         :ok <- validate_requested_resource(config[:resource], resource),
          {:ok, as_metadata} <- discover_as_metadata(as_info, config),
          {:ok, _selection} <- bind_pre_registered_secret(as_metadata, config),
          {:ok, auth_method} <- select_auth_method(config, as_metadata),
-         {:ok, token} <- obtain_token(auth_method, as_metadata, config) do
+         :ok <-
+           ClientCredentialsPolicy.validate_auth(
+             auth_method,
+             as_metadata,
+             config[:alg] || "RS256"
+           ),
+         {:ok, token} <-
+           obtain_token(auth_method, as_metadata, Map.put(config, :resource, resource)) do
       {:ok, Map.put(token, :authorization_server, as_info)}
     end
   end
+
+  defp validate_requested_resource(nil, _expected), do: :ok
+  defp validate_requested_resource(resource, resource), do: :ok
+  defp validate_requested_resource([resource], resource), do: :ok
+
+  defp validate_requested_resource(requested, expected),
+    do: {:error, {:resource_mismatch, requested, expected}}
 
   defp bind_pre_registered_secret(as_metadata, config) do
     case RegistrationPolicy.select(as_metadata, config) do
@@ -84,8 +100,8 @@ defmodule Arbor.MCP.Authorization.DiscoveryFlow do
   # Step 1: Discover which AS protects the resource
   defp discover_authorization_server(%{resource_url: resource_url} = config) do
     case ProtectedResourceMetadata.discover(resource_url, metadata_fetch_options(config)) do
-      {:ok, %{authorization_servers: [first | _]}} ->
-        {:ok, first}
+      {:ok, %{authorization_servers: [first | _]} = metadata} ->
+        {:ok, {first, metadata[:resource] || resource_url}}
 
       {:ok, %{authorization_servers: []}} ->
         {:error, :no_authorization_servers}
@@ -108,9 +124,10 @@ defmodule Arbor.MCP.Authorization.DiscoveryFlow do
 
   # Step 3: Select auth method based on config preference and server capabilities
   defp select_auth_method(%{auth_method: :private_key_jwt} = config, as_metadata) do
-    supported = Map.get(as_metadata, "token_endpoint_auth_methods_supported", [])
+    supported =
+      Map.get(as_metadata, "token_endpoint_auth_methods_supported", ["client_secret_basic"])
 
-    if supported == [] or "private_key_jwt" in supported do
+    if is_list(supported) and "private_key_jwt" in supported do
       if Map.has_key?(config, :private_key) do
         {:ok, :private_key_jwt}
       else
@@ -122,7 +139,7 @@ defmodule Arbor.MCP.Authorization.DiscoveryFlow do
   end
 
   defp select_auth_method(%{auth_method: :client_secret} = config, as_metadata) do
-    if Map.has_key?(config, :client_secret) do
+    if usable_secret?(config[:client_secret]) do
       supported =
         Map.get(as_metadata, "token_endpoint_auth_methods_supported", ["client_secret_basic"])
 
@@ -144,6 +161,8 @@ defmodule Arbor.MCP.Authorization.DiscoveryFlow do
   defp select_auth_method(%{auth_method: method}, _) do
     {:error, {:invalid_auth_method, method}}
   end
+
+  defp usable_secret?(secret), do: is_binary(secret) and byte_size(secret) > 0
 
   # Step 4: Obtain token using selected method
   defp obtain_token(auth_method, as_metadata, config)

@@ -315,8 +315,17 @@ defmodule Arbor.MCP.Authorization.EnterpriseIdPAuthTest do
   defp respond_with_token(conn, tag, token, opts) do
     if tag == :idp_request and opts[:idp_status] == 401,
       do: json(conn, %{"error" => "invalid_client"}, 401),
-      else: json(conn, %{"access_token" => token, "token_type" => "Bearer"})
+      else: json(conn, token_response(tag, token))
   end
+
+  defp token_response(:idp_request, token),
+    do: %{
+      "access_token" => token,
+      "token_type" => "N_A",
+      "issued_token_type" => "urn:ietf:params:oauth:token-type:id-jag"
+    }
+
+  defp token_response(_tag, token), do: %{"access_token" => token, "token_type" => "Bearer"}
 
   defp json(conn, data, status \\ 200) do
     conn

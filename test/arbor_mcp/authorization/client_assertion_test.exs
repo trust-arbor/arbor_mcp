@@ -9,6 +9,7 @@ defmodule Arbor.MCP.Authorization.ClientAssertionTest do
   end
 
   describe "build_assertion/1" do
+    @tag assurance: ["assertion.valid"]
     test "builds a valid JWT assertion", %{rsa_key: rsa_key} do
       assert {:ok, assertion} =
                ClientAssertion.build_assertion(
@@ -95,6 +96,7 @@ defmodule Arbor.MCP.Authorization.ClientAssertionTest do
   end
 
   describe "verify_assertion/3" do
+    @tag assurance: ["assertion.verify.valid"]
     test "verifies a valid assertion", %{rsa_key: rsa_key} do
       assert {:ok, assertion} =
                ClientAssertion.build_assertion(
@@ -115,6 +117,7 @@ defmodule Arbor.MCP.Authorization.ClientAssertionTest do
       assert claims["sub"] == "my-client"
     end
 
+    @tag assurance: ["assertion.verify.client"]
     test "rejects assertion with wrong client_id", %{rsa_key: rsa_key} do
       assert {:ok, assertion} =
                ClientAssertion.build_assertion(
@@ -132,6 +135,7 @@ defmodule Arbor.MCP.Authorization.ClientAssertionTest do
                )
     end
 
+    @tag assurance: ["assertion.verify.audience"]
     test "rejects assertion with wrong token_endpoint audience", %{rsa_key: rsa_key} do
       assert {:ok, assertion} =
                ClientAssertion.build_assertion(
@@ -149,6 +153,7 @@ defmodule Arbor.MCP.Authorization.ClientAssertionTest do
                )
     end
 
+    @tag assurance: ["assertion.verify.key"]
     test "rejects assertion with wrong signing key", %{rsa_key: rsa_key} do
       other_key = JWT.generate_rsa_key(size: 2048)
 

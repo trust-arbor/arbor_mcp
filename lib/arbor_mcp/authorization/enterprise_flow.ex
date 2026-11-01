@@ -9,16 +9,22 @@ defmodule Arbor.MCP.Authorization.EnterpriseFlow do
   """
 
   alias Arbor.MCP.Authorization.{
-    IdPAuthentication,
+    EnterpriseMetadata,
+    EnterpriseSubject,
     JWTBearerAssertion,
     OIDCDiscovery,
-    TokenExchange
+    ResourceASAuthentication
   }
 
   @type config :: %{
-          required(:id_token) => String.t(),
+          optional(:id_token) => String.t(),
+          optional(:idp_subject) => %{
+            type: :id_token | :refresh_token | :saml2,
+            token: String.t()
+          },
           optional(:idp_token_endpoint) => String.t(),
           optional(:idp_auth) => Arbor.MCP.Authorization.FullOAuthFlow.idp_auth() | nil,
+          optional(:as_auth) => Arbor.MCP.Authorization.FullOAuthFlow.idp_auth() | nil,
           required(:as_issuer) => String.t(),
           optional(:as_token_endpoint) => String.t(),
           optional(:resource_url) => String.t(),
@@ -38,7 +44,12 @@ defmodule Arbor.MCP.Authorization.EnterpriseFlow do
   3. Presents the ID-JAG to the AS via JWT bearer grant to get an access token
 
   ## Config
-    - `:id_token` (required) - OIDC ID token from prior authentication
+    - `:id_token` - OIDC ID token from prior authentication; required without `:idp_subject`
+    - `:idp_subject` - Alternative `%{type: :id_token | :refresh_token | :saml2,
+      token: token}`. SAML requires `:idp_auth` and transitions through a refresh
+      token. Conflicting legacy and explicit subject inputs are rejected.
+    - `:as_auth` - Optional separate issuer-bound resource-AS Basic/POST/JWT
+      registration with the same map fields as `:idp_auth`.
     - `:idp_token_endpoint` - Required without `:idp_auth`; otherwise discovered
       from the configured IdP issuer. An explicit endpoint must match discovery.
     - `:idp_auth` - Optional issuer-bound IdP client authentication; see
@@ -116,6 +127,15 @@ defmodule Arbor.MCP.Authorization.EnterpriseFlow do
 
   # Private helpers
 
+  defp resolve_as_token_endpoint(%{as_auth: auth} = config) when not is_nil(auth) do
+    with {:ok, metadata} <-
+           OIDCDiscovery.discover(config[:as_issuer], metadata_fetch_options(config)),
+         :ok <- EnterpriseMetadata.validate(metadata),
+         {:ok, _info} <- ResourceASAuthentication.client_info(metadata, config) do
+      {:ok, metadata["token_endpoint"]}
+    end
+  end
+
   defp resolve_as_token_endpoint(%{as_token_endpoint: endpoint}) when is_binary(endpoint) do
     {:ok, endpoint}
   end
@@ -123,9 +143,11 @@ defmodule Arbor.MCP.Authorization.EnterpriseFlow do
   defp resolve_as_token_endpoint(%{as_issuer: as_issuer} = config) do
     case OIDCDiscovery.discover(as_issuer, metadata_fetch_options(config)) do
       {:ok, metadata} ->
-        case Map.get(metadata, "token_endpoint") do
-          nil -> {:error, :missing_token_endpoint}
-          endpoint -> {:ok, endpoint}
+        with :ok <- EnterpriseMetadata.validate(metadata) do
+          case Map.get(metadata, "token_endpoint") do
+            nil -> {:error, :missing_token_endpoint}
+            endpoint -> {:ok, endpoint}
+          end
         end
 
       {:error, reason} ->
@@ -137,40 +159,27 @@ defmodule Arbor.MCP.Authorization.EnterpriseFlow do
     {:error, :missing_as_issuer}
   end
 
-  # Step 2: Exchange ID token for ID-JAG at IdP
-  defp exchange_for_id_jag(%{idp_auth: auth} = config) when not is_nil(auth) do
+  defp exchange_for_id_jag(config) do
+    EnterpriseSubject.exchange(config, :id_token, config[:as_issuer], config[:client_id])
+  end
+
+  # Step 3: Present ID-JAG to AS via JWT bearer grant
+  defp present_id_jag_to_as(exchange_result, endpoint, %{as_auth: auth} = config)
+       when not is_nil(auth) do
+    metadata = %{"issuer" => config[:as_issuer], "token_endpoint" => endpoint}
+
     body =
       [
-        {"grant_type", TokenExchange.grant_type()},
-        {"subject_token", config.id_token},
-        {"subject_token_type", TokenExchange.token_type_id()},
-        {"requested_token_type", TokenExchange.token_type_id_jag()},
-        {"audience", config.as_issuer},
+        {"grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"},
+        {"assertion", exchange_result.access_token},
         {"resource", config[:resource_url]},
         {"scope", config[:scope]}
       ]
       |> Enum.reject(fn {_key, value} -> is_nil(value) end)
 
-    IdPAuthentication.exchange(body, config)
+    ResourceASAuthentication.exchange(body, metadata, config)
   end
 
-  defp exchange_for_id_jag(config) do
-    exchange_opts = [
-      token_endpoint: config.idp_token_endpoint,
-      id_token: config.id_token,
-      audience: config.as_issuer
-    ]
-
-    exchange_opts =
-      exchange_opts
-      |> maybe_add_opt(config, :resource_url, :resource)
-      |> maybe_add_opt(config, :client_id, :client_id)
-      |> maybe_add_opt(config, :scope, :scope)
-
-    TokenExchange.exchange_id_token_for_id_jag(exchange_opts)
-  end
-
-  # Step 3: Present ID-JAG to AS via JWT bearer grant
   defp present_id_jag_to_as(exchange_result, as_token_endpoint, config) do
     # The exchange result should contain the ID-JAG as the access_token
     id_jag = exchange_result.access_token

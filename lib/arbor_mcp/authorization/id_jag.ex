@@ -19,7 +19,9 @@ defmodule Arbor.MCP.Authorization.IdJag do
     - `:issuer` (required) - The IdP issuer identifier
     - `:subject` (required) - The user's subject identifier
     - `:audience` (required) - The authorization server's issuer URI
-    - `:resource` (required) - The MCP server resource URI
+    - `:resource` - MCP server resource URI; required under the default policy
+    - `:resource_policy` - `:required` (default) or `:if_present`. The latter
+      permits omission; the issuing host must still restrict access tokens.
     - `:client_id` (required) - The OAuth client identifier
     - `:scope` - Requested scope (optional)
     - `:alg` - Signing algorithm (default: "RS256")
@@ -33,7 +35,11 @@ defmodule Arbor.MCP.Authorization.IdJag do
     issuer = Keyword.fetch!(opts, :issuer)
     subject = Keyword.fetch!(opts, :subject)
     audience = Keyword.fetch!(opts, :audience)
-    resource = Keyword.fetch!(opts, :resource)
+    resource_policy = Keyword.get(opts, :resource_policy, :required)
+
+    resource =
+      if resource_policy == :required, do: Keyword.fetch!(opts, :resource), else: opts[:resource]
+
     client_id = Keyword.fetch!(opts, :client_id)
     alg = Keyword.get(opts, :alg, "RS256")
     kid = Keyword.get(opts, :kid)
@@ -43,16 +49,17 @@ defmodule Arbor.MCP.Authorization.IdJag do
     now = System.system_time(:second)
 
     claims =
-      Map.merge(additional_claims, %{
+      Map.merge(Map.delete(additional_claims, "resource"), %{
         "iss" => issuer,
         "sub" => subject,
         "aud" => audience,
-        "resource" => resource,
         "client_id" => client_id,
         "jti" => JWT.generate_jti(),
         "exp" => now + lifetime,
         "iat" => now
       })
+
+    claims = if is_nil(resource), do: claims, else: Map.put(claims, "resource", resource)
 
     claims =
       case Keyword.get(opts, :scope) do
@@ -63,7 +70,10 @@ defmodule Arbor.MCP.Authorization.IdJag do
     sign_opts = [alg: alg, typ: @typ]
     sign_opts = if kid, do: Keyword.put(sign_opts, :kid, kid), else: sign_opts
 
-    JWT.sign(claims, private_key, sign_opts)
+    with :ok <- validate_resource_policy(resource_policy),
+         :ok <- validate_resource_value(resource, resource_policy) do
+      JWT.sign(claims, private_key, sign_opts)
+    end
   end
 
   @doc """
@@ -73,6 +83,8 @@ defmodule Arbor.MCP.Authorization.IdJag do
     - `:idp_keys` (required) - JWK or list of JWKs from the IdP
     - `:expected_audience` (required) - Expected audience (AS issuer)
     - `:expected_resource` (required) - Expected resource (MCP server URI)
+    - `:resource_policy` - `:required` (default) or `:if_present`; the latter
+      accepts an absent claim but still compares a present claim exactly.
     - `:max_lifetime` - Maximum allowed lifetime in seconds (default: 600)
   """
   @spec validate(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
@@ -81,15 +93,20 @@ defmodule Arbor.MCP.Authorization.IdJag do
     expected_audience = Keyword.fetch!(opts, :expected_audience)
     expected_resource = Keyword.fetch!(opts, :expected_resource)
     max_lifetime = Keyword.get(opts, :max_lifetime, 600)
+    resource_policy = Keyword.get(opts, :resource_policy, :required)
+    required = ["iss", "sub", "aud", "client_id", "jti", "exp", "iat"]
+    required = if resource_policy == :required, do: ["resource" | required], else: required
 
-    with :ok <- validate_typ_header(token),
+    with :ok <- validate_resource_policy(resource_policy),
+         :ok <- validate_resource_value(expected_resource, :required),
+         :ok <- validate_typ_header(token),
          {:ok, claims} <-
            JWT.verify_and_validate(token, List.wrap(idp_keys),
              aud: expected_audience,
              max_age: max_lifetime,
-             required: ["iss", "sub", "aud", "resource", "client_id", "jti", "exp", "iat"]
+             required: required
            ),
-         :ok <- validate_resource_claim(claims, expected_resource) do
+         :ok <- validate_resource_claim(claims, expected_resource, resource_policy) do
       {:ok, claims}
     end
   end
@@ -126,7 +143,18 @@ defmodule Arbor.MCP.Authorization.IdJag do
     end
   end
 
-  defp validate_resource_claim(%{"resource" => resource}, expected_resource) do
+  defp validate_resource_policy(policy) when policy in [:required, :if_present], do: :ok
+  defp validate_resource_policy(_policy), do: {:error, :invalid_resource_policy}
+
+  defp validate_resource_value(nil, :if_present), do: :ok
+
+  defp validate_resource_value(resource, _policy)
+       when is_binary(resource) and byte_size(resource) > 0,
+       do: :ok
+
+  defp validate_resource_value(_resource, _policy), do: {:error, :invalid_expected_resource}
+
+  defp validate_resource_claim(%{"resource" => resource}, expected_resource, _policy) do
     if resource == expected_resource do
       :ok
     else
@@ -134,5 +162,9 @@ defmodule Arbor.MCP.Authorization.IdJag do
     end
   end
 
-  defp validate_resource_claim(_, _), do: {:error, :missing_resource_claim}
+  defp validate_resource_claim(claims, _expected, :if_present)
+       when not is_map_key(claims, "resource"),
+       do: :ok
+
+  defp validate_resource_claim(_, _, _), do: {:error, :missing_resource_claim}
 end

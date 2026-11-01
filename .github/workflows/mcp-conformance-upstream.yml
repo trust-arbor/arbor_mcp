@@ -26,7 +26,7 @@ env:
 
 jobs:
   conformance:
-    name: Highest published MCP conformance
+    name: Newest published MCP conformance
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -59,7 +59,7 @@ jobs:
       run: mix deps.get
 
     - id: harness
-      name: Resolve highest published conformance harness
+      name: Resolve newest published conformance harness
       shell: bash
       env:
         REQUESTED_VERSION: ${{ inputs.package_version }}
@@ -70,20 +70,8 @@ jobs:
         source="manual workflow input"
 
         if [ -z "$version" ]; then
-          version="$(
-            npm view @modelcontextprotocol/conformance versions --json |
-              node -e '
-                let input = "";
-                process.stdin.on("data", chunk => input += chunk);
-                process.stdin.on("end", () => {
-                  const parsed = JSON.parse(input);
-                  const versions = Array.isArray(parsed) ? parsed : [parsed];
-                  if (versions.length === 0) process.exit(1);
-                  process.stdout.write(versions[versions.length - 1]);
-                });
-              '
-          )"
-          source="highest version published to npm"
+          version="$(python3 -B scripts/check_mcp_tooling.py --resolve-harness)"
+          source="newest npm publication timestamp"
         fi
 
         if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
@@ -111,7 +99,11 @@ jobs:
     - name: Compile
       run: mix compile
 
+    - name: Review SDK releases and all available harness scenarios
+      run: python3 -B scripts/check_mcp_tooling.py --version '${{ steps.harness.outputs.version }}'
+
     - name: Run complete modern suites with newest harness
+      if: always() && steps.harness.outputs.version != ''
       run: ./scripts/conformance.sh modern
       env:
         CONFORMANCE_ALPHA_VERSION: ${{ steps.harness.outputs.version }}
@@ -141,6 +133,7 @@ jobs:
         name: mcp-conformance-upstream-${{ steps.harness.outputs.version || 'unresolved' }}
         path: |
           tmp/conformance_upstream_version.txt
+          tmp/mcp-tooling/
           tmp/conformance-modern/
           tmp/conformance-extensions/
           tmp/conformance_output.txt

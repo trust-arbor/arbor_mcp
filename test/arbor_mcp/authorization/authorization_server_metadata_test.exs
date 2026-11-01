@@ -15,6 +15,21 @@ defmodule Arbor.MCP.Authorization.AuthorizationServerMetadataTest do
   end
 
   describe "build_metadata/0" do
+    @tag assurance: ["ema.discovery.publisher"]
+    test "publishes the configured ID-JAG authorization grant profile" do
+      Application.put_env(:arbor_mcp, :oauth2_authorization_server_metadata,
+        issuer: "https://as.example",
+        authorization_endpoint: "https://as.example/authorize",
+        token_endpoint: "https://as.example/token",
+        authorization_grant_profiles_supported: ["urn:ietf:params:oauth:grant-profile:id-jag"]
+      )
+
+      assert AuthorizationServerMetadata.build_metadata()[
+               "authorization_grant_profiles_supported"
+             ] ==
+               ["urn:ietf:params:oauth:grant-profile:id-jag"]
+    end
+
     test "builds complete metadata from configuration" do
       # Set up test configuration
       Application.put_env(:arbor_mcp, :oauth2_authorization_server_metadata,

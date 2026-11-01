@@ -297,6 +297,20 @@ jobs:
       if: matrix.quality
       run: ./scripts/check_skip_tags.sh all
 
+    - name: Check requirement register and execute local evidence
+      if: matrix.quality
+      run: |
+        python3 -B -m unittest discover -s scripts/tests -p 'test_mcp_*.py' -v
+        python3 -B scripts/check_mcp_assurance.py --run
+
+    - name: Preserve requirement contract evidence
+      if: always() && matrix.quality
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      with:
+        name: mcp-requirement-contracts
+        path: tmp/mcp-assurance/
+        if-no-files-found: error
+
     - name: Check for unused dependencies
       if: matrix.quality
       run: mix deps.unlock --check-unused
@@ -502,6 +516,19 @@ jobs:
 
     - name: Run modern Arbor.MCP HTTP client to everything server tests
       run: mix test --only interop_everything_modern
+
+    - name: Run Auth SDK interop and independent verifying peers
+      run: |
+        npm ci --prefix test/interop --ignore-scripts --no-audit --no-fund
+        python3 -B scripts/check_mcp_assurance.py --run --kind interop --kind independent_fixture --output tmp/mcp-assurance/interop.json
+
+    - name: Preserve Auth interop evidence
+      if: always()
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      with:
+        name: mcp-auth-interop
+        path: tmp/mcp-assurance/
+        if-no-files-found: error
 
   external-conformance:
     name: MCP external conformance

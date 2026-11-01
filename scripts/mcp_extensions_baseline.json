@@ -53,14 +53,14 @@
       "revision": "cf599cc462406accc90ec3ca7879e3a22a9fc2a8"
     },
     "modelcontextprotocol/ext-auth": {
-      "assessment": "compatible_with_documented_limits",
-      "notes": "A1 corrected. Official client-credentials Basic/JWT and public-client IdP enterprise scenarios pass. Approved optional issuer-bound idp_auth qualifies separate confidential IdP Basic/POST/JWT exchanges locally; existing public/Basic resource-AS grant limits remain explicit.",
-      "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
-      "review_status": "reviewed",
-      "revision": "15ca394e00a66434520b9ade26294999295a43ae",
+      "assessment": "partial_requirement_qualification",
+      "notes": "Named requirement evidence and separate contract, independent verifying fixture and SDK helper lanes are recorded in docs/MCP_REQUIREMENTS.md. Client credential and enterprise profiles are implemented; inherited core/RFC clause inventory and host AS/IdP policy are not certified.",
       "resolved_findings": [
         "A1"
-      ]
+      ],
+      "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
+      "review_status": "reviewed",
+      "revision": "15ca394e00a66434520b9ade26294999295a43ae"
     },
     "modelcontextprotocol/ext-server-card": {
       "assessment": "not_implemented",
@@ -78,17 +78,17 @@
     },
     "modelcontextprotocol/ext-tasks": {
       "assessment": "implemented_with_documented_limits",
-      "notes": "T1–T5 corrected with regressions and official Tasks server conformance. Node-local store retains finite TTL and byte quotas; upstream notification scenario remains a stub, with actual HTTP delivery tested locally.",
-      "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
-      "review_status": "reviewed",
-      "revision": "b3d28aceaa6d49f5f92258e3d06b61ad6f111e84",
+      "notes": "T1\u2013T5 corrected with regressions and official Tasks server conformance. Node-local store retains finite TTL and byte quotas; upstream notification scenario remains a stub, with actual HTTP delivery tested locally.",
       "resolved_findings": [
         "T1",
         "T2",
         "T3",
         "T4",
         "T5"
-      ]
+      ],
+      "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
+      "review_status": "reviewed",
+      "revision": "b3d28aceaa6d49f5f92258e3d06b61ad6f111e84"
     },
     "modelcontextprotocol/modelcontextprotocol": {
       "assessment": "framework_policy_reviewed",

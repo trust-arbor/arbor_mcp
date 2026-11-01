@@ -1,0 +1,239 @@
+{
+  "allowed_skips": {
+    "tasks-status-notifications": "Pinned upstream stub awaiting subscriptions/listen rewrite. Not qualified notification coverage."
+  },
+  "execution": {
+    "arrays": 13,
+    "checks": [
+      {
+        "count": 3,
+        "id": "authorization-server-metadata",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-credentials-basic-auth",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "client-credentials-jwt-verified",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "complete-flow-jwt-bearer",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "complete-flow-token-exchange",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 6,
+        "id": "prm-pathbased-requested",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2663-cancel-ack-empty-result",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2663-durable-create-strong-consistency",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2663-legacy-task-param-ignored",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2663-mrtr-synchronous-before-task-creation",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2663-result-type-task-on-create",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2663-routing-headers-accepted-on-tasks-get",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2663-server-rejects-mismatched-mcp-name-on-tasks-get",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2663-server-rejects-undeclared-client",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2663-server-returns-missing-capability-data-shape",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2663-server-returns-missing-capability-when-required",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2663-tasks-get-invalid-task-id-32602",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2663-tasks-get-status-completed",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2663-tasks-get-status-failed",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2663-tasks-get-status-input-required",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2663-tasks-get-status-working",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2663-tasks-methods-non-declaring",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2663-tasks-result-removed-method-not-found",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "sep-2663-tool-error-uses-completed-status",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tasks-cancel-terminal-idempotent-ack",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tasks-create-result-no-request-state",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tasks-extension-advertised",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tasks-get-detailed-no-request-state",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tasks-headers-reject-mismatched-method",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tasks-headers-tolerate-mcp-method-on-tools-call",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tasks-immediate-result-shortcut",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tasks-mrtr-partial-fulfillment",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tasks-mrtr-tasks-update-resumes",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tasks-no-early-ttl-expiry",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tasks-no-related-task-meta-on-inlined-result",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tasks-per-request-meta-opt-in",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tasks-removed-tasks-list",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tasks-result-type-complete-on-non-task-responses",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tasks-server-directed-creation-no-hint",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tasks-status-notifications",
+        "status": "SKIPPED"
+      },
+      {
+        "count": 1,
+        "id": "tasks-sync-tool-call",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 1,
+        "id": "tasks-wire-field-renames",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 3,
+        "id": "token-request",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 9,
+        "id": "valid-bearer-token",
+        "status": "SUCCESS"
+      },
+      {
+        "count": 9,
+        "id": "wire-schema-valid",
+        "status": "SUCCESS"
+      }
+    ]
+  },
+  "harness": "@modelcontextprotocol/conformance@0.2.0-alpha.12",
+  "notes": "Manually reviewed execution inventory, 2026-11-01. Informational traces are not assertion passes. Changes require reviewed baseline PR; no update mode is provided.",
+  "protocol": "2026-07-28",
+  "version": 1
+}

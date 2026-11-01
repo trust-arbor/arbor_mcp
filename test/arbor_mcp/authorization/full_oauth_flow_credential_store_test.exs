@@ -131,7 +131,7 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlowCredentialStoreTest do
              |> FullOAuthFlow.execute()
   end
 
-  test "preserves token endpoint errors across the client credentials flow" do
+  test "preserves token endpoint errors across the authorization code flow" do
     {:ok, store_agent} =
       Agent.start_link(fn -> %{index: %{}, registrations: %{}, tokens: %{}} end)
 
@@ -161,10 +161,12 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlowCredentialStoreTest do
         |> flow_config({StoreAdapter, store_agent})
         |> Map.put(:application_type, application_type)
 
+      expected_redirect = "http://127.0.0.1:#{server.redirect_port}/callback"
+
       assert {:error,
               {:redirect_uri_rejected,
                application_type: ^application_type,
-               redirect_uri: "http://127.0.0.1:45321/callback",
+               redirect_uri: ^expected_redirect,
                status: 400,
                response: ^response}} = FullOAuthFlow.execute(config)
 
@@ -173,7 +175,7 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlowCredentialStoreTest do
       assert state.tokens == 0
       assert [request] = state.registration_requests
       assert request["application_type"] == Atom.to_string(application_type)
-      assert request["redirect_uris"] == ["http://127.0.0.1:45321/callback"]
+      assert request["redirect_uris"] == [expected_redirect]
     end
   end
 
@@ -201,7 +203,9 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlowCredentialStoreTest do
       :telemetry.attach_many(
         handler_id,
         events,
-        fn event, _measurements, metadata, pid -> send(pid, {event, metadata}) end,
+        fn event, _measurements, metadata, pid ->
+          if self() == pid, do: send(pid, {event, metadata})
+        end,
         owner
       )
 
@@ -254,7 +258,9 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlowCredentialStoreTest do
       :telemetry.attach(
         handler_id,
         [:arbor_mcp, :auth, :flow, :failed],
-        fn event, _measurements, metadata, pid -> send(pid, {event, metadata}) end,
+        fn event, _measurements, metadata, pid ->
+          if self() == pid, do: send(pid, {event, metadata})
+        end,
         owner
       )
 
@@ -289,6 +295,9 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlowCredentialStoreTest do
     issuer = "https://#{issuer_host}"
     resource_origin = "https://#{resource_host}"
     actual_origin = "http://localhost:#{bypass.port}"
+    {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false])
+    {:ok, {_address, redirect_port}} = :inet.sockname(listener)
+    :ok = :gen_tcp.close(listener)
     metadata_issuer = metadata_issuer || issuer
 
     {:ok, counter} =
@@ -312,7 +321,7 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlowCredentialStoreTest do
               "authorization_endpoint" => actual_origin <> "/authorize",
               "token_endpoint" => actual_origin <> "/token",
               "registration_endpoint" => actual_origin <> "/register",
-              "grant_types_supported" => ["client_credentials"],
+              "grant_types_supported" => ["authorization_code", "refresh_token"],
               "token_endpoint_auth_methods_supported" => ["client_secret_post"]
             }
 
@@ -347,6 +356,15 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlowCredentialStoreTest do
       end
     end)
 
+    Bypass.stub(bypass, "GET", "/authorize", fn conn ->
+      params = URI.decode_query(conn.query_string)
+      query = URI.encode_query(%{"code" => "fixture-code", "state" => params["state"]})
+
+      conn
+      |> Plug.Conn.put_resp_header("location", params["redirect_uri"] <> "?" <> query)
+      |> Plug.Conn.resp(302, "")
+    end)
+
     Bypass.stub(bypass, "POST", "/token", fn conn ->
       {:ok, body, conn} = Plug.Conn.read_body(conn)
       params = URI.decode_query(body)
@@ -376,6 +394,7 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlowCredentialStoreTest do
       issuer: issuer,
       resource_origin: resource_origin,
       actual_origin: actual_origin,
+      redirect_port: redirect_port,
       metadata_client: metadata_client,
       counter: counter
     }
@@ -387,7 +406,8 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlowCredentialStoreTest do
       www_authenticate: ~s(Bearer resource_metadata="#{server.resource_origin}/prm"),
       client_registration: :auto,
       application_type: :native,
-      redirect_port: 45_321,
+      redirect_port: server.redirect_port,
+      oauth_http: [allow_insecure_loopback: true],
       credential_store: store,
       credential_context: "test-installation",
       scopes: ["tools:read"],

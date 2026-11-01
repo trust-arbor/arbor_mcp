@@ -31,9 +31,13 @@ public-client path. The official enterprise scenario continues to qualify the
 public-client IdP flow; confidential-client evidence is local and separate.
 
 The host still acquires the initial ID token. On the resource AS side,
-`EnterpriseFlow` retains its public-client JWT bearer grant; `FullOAuthFlow`
-retains its public or Basic-authenticated cross-app grant. This scope does not
-qualify arbitrary AS registrations or add a vendor-specific IdP integration.
+Both orchestrators now offer optional separate `:as_auth` Basic/POST/JWT
+credentials and `:idp_subject` OIDC/refresh/SAML-transition inputs. These later
+profiles have named contract evidence, a verifying independent Node/jose peer
+and scoped SDK Auth-helper interop. The [requirement register](MCP_REQUIREMENTS.md)
+supersedes the earlier AS-grant limits below. Initial SSO, XML validation and
+IdP/AS issuance, tenant and replay policy remain host-owned. This scope does not
+qualify arbitrary vendor deployments or constitute complete inherited-spec coverage.
 
 ## Initial outcome
 
@@ -55,7 +59,7 @@ above records their subsequent corrections.
 | Source | Reviewed revision | Disposition |
 | --- | --- | --- |
 | Framework and extension index | [`d0e246e`](https://github.com/modelcontextprotocol/modelcontextprotocol/tree/d0e246ea3c69eafaa2806bc4cd28025703ba2c2b/docs/extensions) | Reviewed: optional adoption, explicit opt-in, maturity and revision rules. |
-| Authorization | [`15ca394`](https://github.com/modelcontextprotocol/ext-auth/tree/15ca394e00a66434520b9ade26294999295a43ae) | Reviewed: A1 corrected; separate confidential IdP credentials qualified locally, with documented AS-grant limits. |
+| Authorization | [`15ca394`](https://github.com/modelcontextprotocol/ext-auth/tree/15ca394e00a66434520b9ade26294999295a43ae) | Reviewed for recorded scope; expanded Auth profiles and separate contract/fixture/SDK evidence are in the requirement register. Inherited requirement inventory remains partial. |
 | Tasks | [`b3d28ac`](https://github.com/modelcontextprotocol/ext-tasks/tree/b3d28aceaa6d49f5f92258e3d06b61ad6f111e84) | Reviewed after T1–T5 corrections; documented finite store and node-lifetime limits. |
 | Apps | [`cf599cc`](https://github.com/modelcontextprotocol/ext-apps/tree/cf599cc462406accc90ec3ca7879e3a22a9fc2a8) | Reviewed: no built-in or qualified Apps integration. |
 | Skills | [`649f7ae`](https://github.com/modelcontextprotocol/ext-skills/tree/649f7aee87d631ac4d1fdd3b12eef0c6264fdb3a) | Reviewed: Skills transport methods and host loading semantics are not implemented. |

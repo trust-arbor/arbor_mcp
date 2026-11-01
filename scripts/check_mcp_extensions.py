@@ -3,6 +3,7 @@
 import argparse
 from datetime import datetime, timezone
 import html
+import hashlib
 from http.client import HTTPException
 import json
 import os
@@ -131,7 +132,7 @@ class GitHub:
 
 def watched(repository, path):
     if repository == CATALOG:
-        return path.startswith("docs/extensions/") or path in {
+        return path.startswith(("docs/extensions/", "docs/specification/", "schema/", "schemas/")) or path in {
             "docs/seps/2133-extensions.mdx", "docs/seps/3392-extension-lifecycle.mdx",
             "seps/2133-extensions.md", "seps/3392-extension-lifecycle.md"}
     parts = path.split("/")
@@ -194,7 +195,18 @@ def compare(client, baseline):
             status = "new_repository" if previous is None else "changed" if changed else "unchanged"
             result.update(status=status, needs_review=changed or previous is None or
                           result["review_status"] == "pending")
+            result["diff_blobs"] = {
+                kind: {path: (old if kind == "removed" else current)[path]
+                       for path in result[kind]}
+                for kind in ("added", "modified", "removed")}
         results.append(result)
+        # A stable key ties repeated weekly observations to the same source diff.
+        # It is a review identifier, never an automatic compatibility verdict.
+        review_input = {key: result.get(key) for key in [
+            "repository", "baseline_revision", "diff_blobs",
+            "status", "archive_state_changed"]}
+        result["review_key"] = hashlib.sha256(
+            json.dumps(review_input, sort_keys=True).encode()).hexdigest()
     return {"status": "complete", "checked_at": datetime.now(timezone.utc).isoformat(),
             "needs_review": any(r["needs_review"] for r in results), "sources": results}
 
@@ -205,7 +217,7 @@ def safe_text(value):
 
 
 def markdown(report):
-    lines = ["# MCP extension source check", ""]
+    lines = ["# MCP core and extension source check", ""]
     if report["status"] == "error":
         return "\n".join(lines + ["**Check incomplete. No clean-drift conclusion is available.**", "",
                                      safe_text(report["error"]), ""])
@@ -226,6 +238,7 @@ def markdown(report):
         repo = source["repository"]
         old, current = source["baseline_revision"], source["current_revision"]
         lines += ["", f"## {repo}", ""]
+        lines += [f"Review key: `{source['review_key']}`. Repeated observations retain this key.", ""]
         if source["status"] == "missing_repository":
             lines += ["No longer present in complete public repository discovery. Check for a rename,",
                       "removal or visibility change before changing local support."]

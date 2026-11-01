@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Requirement-level Auth evidence with immutable source references, generated
+  coverage documentation and CI checks that reject missing, skipped or stale
+  test results. Independent verifying OAuth peers and pinned TypeScript SDK
+  Auth helper interoperability are recorded separately.
+- Optional enterprise `:as_auth` credentials and `:idp_subject` inputs for OIDC,
+  refresh tokens and the SAML-to-refresh-token exchange. ID-JAG helpers accept
+  an opt-in `resource_policy: :if_present` while retaining the strict default.
+- Weekly core specification/schema and SDK/harness scenario inventory checks,
+  with stable source-diff review identifiers and no automatic pin updates.
+
 - Optional issuer-bound `:idp_auth` in both enterprise OAuth orchestrators, with
   separate IdP Basic, POST, or JWT client authentication and unchanged defaults.
   Discovery and advertised methods are checked before credentials are sent.
@@ -34,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   beyond MCP protocol coverage, with public entrypoints and limits.
 
 ### Fixed
+
+- Client-credentials-only flows reject DCR and unauthenticated token requests;
+  both discovery orchestrators check JWT signing-algorithm metadata. Dedicated
+  discovery carries the discovered resource identifier into token requests.
 
 - Require JSV 0.26.2: indeterminate regex checks remain validation errors and
   modern string lengths count Unicode code points. Diagnostics remain bounded
