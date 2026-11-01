@@ -24,7 +24,7 @@ defmodule Arbor.MCP.Authorization.JWTVerifierTest do
     end
 
     opts = [
-      jwks_uri: "http://localhost:#{bypass.port}/jwks",
+      jwks_uri: fixture_jwks_uri(bypass),
       oauth_http: [allow_insecure_loopback: true]
     ]
 
@@ -47,6 +47,11 @@ defmodule Arbor.MCP.Authorization.JWTVerifierTest do
   end
 
   defp now, do: System.system_time(:second)
+
+  # Bypass ports can be reused while cached keys are still live. Keep every
+  # fixture distinct without changing caching between requests in one test.
+  defp fixture_jwks_uri(bypass),
+    do: "http://localhost:#{bypass.port}/jwks?fixture=#{System.unique_integer([:positive])}"
 
   test "a token signed with a published key gives its claims", %{publish: publish, opts: opts} do
     key = JWT.generate_rsa_key()
@@ -126,7 +131,7 @@ defmodule Arbor.MCP.Authorization.JWTVerifierTest do
     end)
 
     opts = [
-      jwks_uri: "http://localhost:#{bypass.port}/jwks",
+      jwks_uri: fixture_jwks_uri(bypass),
       oauth_http: [allow_insecure_loopback: true]
     ]
 
