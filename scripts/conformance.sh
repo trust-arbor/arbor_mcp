@@ -308,7 +308,7 @@ PY
 )" || return 1
   local scenario
   while IFS= read -r scenario; do
-    run_client_tests "$scenario" "$SPEC_VERSION" || exit_code=1
+    run_client_tests "$scenario" "$SPEC_VERSION" </dev/null || exit_code=1
   done <<< "$scenarios"
   python3 -B "$PROJECT_DIR/scripts/check_mcp_core_evidence.py" "$RESULTS_DIR" \
     --harness "$CONFORMANCE_PACKAGE_VERSION" || exit_code=1
