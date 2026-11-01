@@ -330,9 +330,12 @@ defmodule Arbor.MCP.Tasks.Store.ETS do
   defp validate_input_keys(entry, {:require_input, requests}) when is_map(requests) do
     keys = request_keys(requests)
 
-    if MapSet.size(keys) == map_size(requests) and MapSet.disjoint?(entry.issued_input_keys, keys),
-      do: :ok,
-      else: {:error, :invalid_transition}
+    with true <- MapSet.size(keys) == map_size(requests),
+         true <- MapSet.disjoint?(entry.issued_input_keys, keys) do
+      :ok
+    else
+      false -> {:error, :invalid_transition}
+    end
   rescue
     _error in [Protocol.UndefinedError, UnicodeConversionError, ArgumentError] ->
       {:error, :invalid_transition}
