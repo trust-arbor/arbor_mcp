@@ -53,10 +53,14 @@ API; HTTP redirects are refused and upstream code is never executed.
 ## Reviewing and advancing a baseline
 
 `scripts/mcp_extensions_baseline.json` records exact source commits and a
-`review_status`. The initial six entries are an **observed inventory**, all
-marked `pending`. They do not assert that ArborMCP implements or is compatible
-with those revisions. Experimental repositories discovered outside that initial
-inventory appear as new sources and also require assessment.
+`review_status`. The initial six entries were an **observed inventory**, all
+marked `pending`. The
+[baseline assessment](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md)
+now covers twelve sources. Ten are acknowledged as reviewed for their recorded
+scope; Tasks and auth remain pending compatibility work. A reviewed source whose
+`assessment` is `not_implemented` is an acknowledgement of current scope, not a
+compatibility claim or a decision against future adoption. Newly discovered
+repositories still require assessment before being added to the baseline.
 
 Review applicable specifications/schemas against local behavior and tests.
 Record whether a source calls for a fix, a new optional feature, documentation,

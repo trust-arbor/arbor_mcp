@@ -126,7 +126,7 @@ Test paths in this table are relative to `test/arbor_mcp/`.
 | Bidirectional official TypeScript SDK v2 interop over stdio and HTTP | ✅ | `integration/modern_interop_test.exs`, `../interop/modern_ts_*.mjs` |
 | Reverse-proxy header validation | ✅ | `http_reverse_proxy_test.exs` |
 | Modern OAuth, CIMD, registration policy, issuer binding, and metadata SSRF controls | ✅ | `authorization/compatibility_matrix_test.exs`, `authorization/registration_policy_test.exs`, `authorization/client_id_metadata_test.exs`, `authorization/metadata_fetcher_test.exs`, `client/modern_http_stream_auth_test.exs` |
-| `io.modelcontextprotocol/tasks` capability, server store, and wire shape | ✅ | `tasks/extension_test.exs`, `tasks/server_test.exs`, `tasks/store_test.exs`, `tasks/task_test.exs` |
+| `io.modelcontextprotocol/tasks` capability, server store, and wire shape | ⚠️ | Core paths tested in `tasks/extension_test.exs`, `tasks/server_test.exs`, `tasks/store_test.exs`, `tasks/task_test.exs`; [baseline review T1–T5](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md#tasks-required-compatibility-work) records open extension compatibility gaps. |
 | Trace context and telemetry redaction/cardinality | ✅ | `protocol/trace_context_test.exs`, `operational_telemetry_test.exs` |
 | 2026 type surface and synced schema mapping | ✅ | `types/v20260728_test.exs`, `spec_sync/file_mapper_test.exs` |
 | Optional response-cache storage and reuse | ⚠️ | Required `ttlMs`/`cacheScope` validation is covered; ArborMCP 1.0 deliberately does not store or reuse responses |
