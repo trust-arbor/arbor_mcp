@@ -495,6 +495,7 @@ defmodule Arbor.MCP.Client.EraProbeTest do
     :ok = Client.disconnect(second_client)
   end
 
+  @tag assurance: ["core.era.pinned"]
   test "a modern observation blocks automatic downgrade until explicitly reset" do
     cache_key = make_ref()
     {:ok, mode_agent} = Agent.start_link(fn -> :modern end)

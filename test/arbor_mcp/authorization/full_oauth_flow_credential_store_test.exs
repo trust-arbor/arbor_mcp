@@ -99,6 +99,7 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlowCredentialStoreTest do
     assert %{authorizations: 0, tokens: 0} = Agent.get(server.counter, & &1)
   end
 
+  @tag assurance: ["oauth.dcr.issuer"]
   test "reuses DCR credentials only for the same issuer and re-registers after an AS change" do
     {:ok, store_agent} =
       Agent.start_link(fn -> %{index: %{}, registrations: %{}, tokens: %{}} end)

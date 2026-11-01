@@ -1326,6 +1326,7 @@ defmodule Arbor.MCP.HttpPlugTest do
       assert error["data"]["reason"] == "unknown_subscription_filter"
     end
 
+    @tag assurance: ["tasks.notification.capability"]
     test "preserves the missing-capability error for task subscriptions" do
       request =
         modern_request(

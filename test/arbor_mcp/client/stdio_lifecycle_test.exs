@@ -38,6 +38,7 @@ defmodule Arbor.MCP.Client.StdioLifecycleTest do
     refute Stdio.connected?(transport)
   end
 
+  @tag assurance: ["core.stdio.reap"]
   test "hard actor death disconnects the live client and reaps its child" do
     {client, transport} = start_client()
     monitor = Process.monitor(transport.reader_pid)

@@ -1,5 +1,6 @@
 """Protect against false coverage claims and incomplete execution artifacts."""
 import copy
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -19,13 +20,14 @@ class AssuranceTest(unittest.TestCase):
         self.root = Path(self.temporary.name)
         (self.root / "case.exs").write_text("test input")
         self.data = {
-            "version": 1,
+            "version": 2,
+            "work_items": [],
             "sources": {"spec": {"url": "https://example.test/spec", "revision": "a" * 40,
                                   "inventory": "partial", "scope": "client"}},
             "cases": {"case.pass": {"file": "case.exs", "kind": "contract", "asserts": "reject wrong audience"}},
             "requirements": [{"id": "SPEC.AUD", "source": "spec", "section": "3", "role": "client",
                               "profiles": ["JWT"], "level": "MUST", "requirement": "bind audience",
-                              "status": "implemented", "implementation": ["case.exs"],
+                              "status": "supported", "library_scope": "bind audience", "external_duties": "", "implementation": ["case.exs"],
                               "cases": ["case.pass"], "notes": "client scope"}]}
         self.report = {"source_digest": "digest", "tests": [
             {"file": "case.exs", "name": "test audience", "cases": ["case.pass"], "state": "passed"}]}
@@ -38,6 +40,78 @@ class AssuranceTest(unittest.TestCase):
     def test_actual_execution_accepts_all_expected_cases(self):
         self.load(self.data)
         self.assertEqual(set(CHECK.validate_results(self.data, self.report, "digest")), {"case.pass"})
+
+    def test_blanket_partial_and_unscoped_support_are_rejected(self):
+        for mutation in [{"status": "partial"}, {"library_scope": ""}]:
+            data = copy.deepcopy(self.data)
+            data["requirements"][0].update(mutation)
+            with self.subTest(mutation=mutation), self.assertRaises(CHECK.AssuranceError):
+                self.load(data)
+
+    def test_work_has_actionable_closure_and_cannot_close_without_evidence(self):
+        item = {"id": "WORK.AUD", "kind": "implementation", "status": "open",
+                "requirements": ["SPEC.AUD"], "action": "Reject wrong audiences",
+                "closure": "Signed wrong-audience input fails before token use"}
+        self.data["work_items"] = [item]
+        self.data["requirements"][0]["status"] = "gap"
+        self.load(self.data)
+        for field, value in [("requirements", ["UNKNOWN"]), ("closure", ""), ("status", "closed")]:
+            data = copy.deepcopy(self.data)
+            data["work_items"][0][field] = value
+            with self.subTest(field=field), self.assertRaises(CHECK.AssuranceError):
+                self.load(data)
+        self.data["requirements"][0]["status"] = "supported"
+        item.update(status="closed", cases=["case.pass"])
+        self.load(self.data)
+        rendered = CHECK.markdown(self.data)
+        self.assertIn("No known open library work", rendered)
+        self.assertIn("Signed wrong-audience input", rendered)
+
+    def test_gap_cannot_disappear_into_a_note_or_an_aggregate_cycle(self):
+        self.data["requirements"][0]["status"] = "gap"
+        with self.assertRaisesRegex(CHECK.AssuranceError, "open implementation"):
+            self.load(self.data)
+        row = self.data["requirements"][0]
+        row.update(status="aggregate", depends_on=["SPEC.OTHER"])
+        self.data["requirements"].append(dict(row, id="SPEC.OTHER", depends_on=["SPEC.AUD"]))
+        with self.assertRaisesRegex(CHECK.AssuranceError, "Cyclic"):
+            self.load(self.data)
+
+    def test_tasks_inventory_requires_both_pinned_snapshots_and_every_section_and_export(self):
+        self.data["sources"]["TASKS"] = self.data["sources"].pop("spec")
+        self.data["requirements"][0]["source"] = "TASKS"
+        manifest = {"version": 1, "source": "TASKS", "revision": "a" * 40, "files": {}}
+        for remote, name, content, dispositions in [
+            ("specification/2026-07-28/tasks.md", "tasks.md", "## Lifecycle\n",
+             {"sections": {"Lifecycle": {"requirements": ["SPEC.AUD"]}}}),
+            ("schema/2026-07-28/schema.ts", "tasks.ts", "export type Task = unknown;\n",
+             {"exports": {"Task": ["SPEC.AUD"]}})
+        ]:
+            (self.root / name).write_text(content)
+            manifest["files"][remote] = dict(dispositions, local=name,
+                                              sha256=hashlib.sha256(content.encode()).hexdigest())
+        path = self.root / "tasks-manifest.json"
+        path.write_text(json.dumps(manifest))
+        self.data["tasks_source_manifest"] = path.name
+        self.load(self.data)
+        schema = "schema/2026-07-28/schema.ts"
+        for mutation in ["pin", "file", "export", "section", "reference", "content"]:
+            broken = copy.deepcopy(manifest)
+            if mutation == "pin":
+                broken["revision"] = "b" * 40
+            elif mutation == "file":
+                del broken["files"][schema]
+            elif mutation == "export":
+                broken["files"][schema]["exports"] = {}
+            elif mutation == "section":
+                broken["files"]["specification/2026-07-28/tasks.md"]["sections"] = {}
+            elif mutation == "reference":
+                broken["files"][schema]["exports"]["Task"] = ["UNKNOWN"]
+            else:
+                (self.root / "tasks.ts").write_text("changed source")
+            path.write_text(json.dumps(broken))
+            with self.subTest(mutation=mutation), self.assertRaises(CHECK.AssuranceError):
+                self.load(self.data)
 
     def test_missing_or_wrong_commit_identity_cannot_qualify_an_artifact(self):
         for value in [None, "b" * 40]:
@@ -129,11 +203,11 @@ class AssuranceTest(unittest.TestCase):
 
     def test_host_responsibilities_do_not_become_implementation_passes(self):
         row = self.data["requirements"][0]
-        row.update(status="host", implementation=[], cases=[])
+        row.update(status="host", implementation=[], cases=[], external_duties="host trust policy")
         self.data["cases"] = {}
         self.load(self.data)
         rendered = CHECK.markdown(self.data)
-        self.assertIn("None recorded", rendered)
+        self.assertIn("host trust policy", rendered)
         self.assertIn("partial", rendered)
         self.assertIn("Host responsibilities", rendered)
 

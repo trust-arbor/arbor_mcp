@@ -47,6 +47,7 @@ defmodule Arbor.MCP.Tasks.ExtensionTest do
     refute Map.has_key?(notification["params"], "toolName")
   end
 
+  @tag assurance: ["tasks.shapes"]
   test "validates task handles and status-specific detailed state" do
     base = %{
       "resultType" => "task",

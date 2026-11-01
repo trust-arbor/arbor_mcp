@@ -3,6 +3,19 @@ defmodule Arbor.MCP.Authorization.AccessTokenProfileTest do
 
   alias Arbor.MCP.AuthExtensionFixture
   alias Arbor.MCP.Authorization.FullOAuthFlow
+  alias Arbor.MCP.Authorization.HTTPClient
+
+  @tag assurance: ["access.generic.compatibility"]
+  test "generic token helper retains its omitted-type compatibility default" do
+    bypass = Bypass.open()
+
+    Bypass.expect_once(bypass, "POST", "/token", fn conn ->
+      Plug.Conn.resp(conn, 200, Jason.encode!(%{"access_token" => "generic-token"}))
+    end)
+
+    assert {:ok, %{token_type: "Bearer", access_token: "generic-token"}} =
+             HTTPClient.make_token_request("http://localhost:#{bypass.port}/token", [])
+  end
 
   for profile <- [:client_credentials, :enterprise] do
     @profile profile
@@ -16,6 +29,13 @@ defmodule Arbor.MCP.Authorization.AccessTokenProfileTest do
 
         assert {:error, :invalid_token_response} = FullOAuthFlow.execute(config)
       end
+    end
+
+    @tag :bearer_profile
+    @tag assurance: ["access.#{profile}.missing_type"]
+    test "#{@profile} rejects a final access token without its required type" do
+      assert {:error, _reason} =
+               FullOAuthFlow.execute(config(@profile, %{"access_token" => "untyped-token"}))
     end
 
     @tag :bearer_profile

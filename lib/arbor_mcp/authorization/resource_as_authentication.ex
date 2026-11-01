@@ -1,7 +1,7 @@
 defmodule Arbor.MCP.Authorization.ResourceASAuthentication do
   @moduledoc false
 
-  alias Arbor.MCP.Authorization.{IdPAuthentication, Issuer, RegistrationPolicy}
+  alias Arbor.MCP.Authorization.{HTTPClient, IdPAuthentication, Issuer, RegistrationPolicy}
 
   def client_info(metadata, config) do
     with {:ok, auth} <- IdPAuthentication.validate_config(config[:as_auth]),
@@ -26,7 +26,7 @@ defmodule Arbor.MCP.Authorization.ResourceASAuthentication do
         |> Map.put(:idp_token_endpoint, metadata["token_endpoint"])
         |> Map.put(:client_assertion_audience, metadata["issuer"])
 
-      case IdPAuthentication.exchange(body, request) do
+      case IdPAuthentication.exchange(body, request, &HTTPClient.make_mcp_token_request/3) do
         {:ok, token} -> {:ok, token}
         {:error, reason} -> {:error, {:as_auth_failed, reason}}
       end

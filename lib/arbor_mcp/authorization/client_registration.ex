@@ -76,7 +76,7 @@ defmodule Arbor.MCP.Authorization.ClientRegistration do
          :ok <- Validator.validate_https_endpoint(request.registration_endpoint) do
       case make_registration_request(request.registration_endpoint, registration_body) do
         {:ok, response} ->
-          {:ok, parse_client_information(response)}
+          parse_client_information(response)
 
         error ->
           error
@@ -113,7 +113,7 @@ defmodule Arbor.MCP.Authorization.ClientRegistration do
         {:ok, {{_, 200, _}, _headers, body}} ->
           case Jason.decode(body) do
             {:ok, client_data} ->
-              {:ok, parse_client_information(client_data)}
+              parse_client_information(client_data)
 
             {:error, reason} ->
               {:error, {:json_decode_error, reason}}
@@ -150,7 +150,7 @@ defmodule Arbor.MCP.Authorization.ClientRegistration do
             {:ok, {{_, 200, _}, _headers, response_body}} ->
               case Jason.decode(response_body) do
                 {:ok, client_data} ->
-                  {:ok, parse_client_information(client_data)}
+                  parse_client_information(client_data)
 
                 {:error, reason} ->
                   {:error, {:json_decode_error, reason}}
@@ -281,18 +281,22 @@ defmodule Arbor.MCP.Authorization.ClientRegistration do
   defp make_http_request(method, url, headers, body),
     do: SecureHTTP.request(method, url, headers, body)
 
-  defp parse_client_information(data) do
-    %{
-      client_id: Map.fetch!(data, "client_id"),
-      client_secret: Map.get(data, "client_secret"),
-      client_secret_expires_at: Map.get(data, "client_secret_expires_at"),
-      registration_access_token: Map.get(data, "registration_access_token"),
-      registration_client_uri: Map.get(data, "registration_client_uri"),
-      client_name: Map.get(data, "client_name"),
-      redirect_uris: Map.get(data, "redirect_uris", []),
-      grant_types: Map.get(data, "grant_types", ["authorization_code"]),
-      response_types: Map.get(data, "response_types", ["code"]),
-      scope: Map.get(data, "scope", "")
-    }
+  defp parse_client_information(%{"client_id" => client_id} = data)
+       when is_binary(client_id) and byte_size(client_id) > 0 do
+    {:ok,
+     %{
+       client_id: Map.fetch!(data, "client_id"),
+       client_secret: Map.get(data, "client_secret"),
+       client_secret_expires_at: Map.get(data, "client_secret_expires_at"),
+       registration_access_token: Map.get(data, "registration_access_token"),
+       registration_client_uri: Map.get(data, "registration_client_uri"),
+       client_name: Map.get(data, "client_name"),
+       redirect_uris: Map.get(data, "redirect_uris", []),
+       grant_types: Map.get(data, "grant_types", ["authorization_code"]),
+       response_types: Map.get(data, "response_types", ["code"]),
+       scope: Map.get(data, "scope", "")
+     }}
   end
+
+  defp parse_client_information(_data), do: {:error, :invalid_registration_response}
 end

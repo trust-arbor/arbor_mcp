@@ -79,6 +79,37 @@ defmodule Arbor.MCP.Authorization.IdJagTest do
   end
 
   describe "validate/2" do
+    for field <- ~w(iss sub client_id jti scope),
+        {value, label} <- [{nil, "null"}, {42, "number"}, {[], "array"}, {%{}, "object"}] do
+      @field field
+      @value value
+      @tag :claim_types
+      @tag assurance: ["idjag.type.#{field}.#{label}"]
+      test "rejects signed #{@field} with #{inspect(@value)} instead of a string", ctx do
+        assert {:ok, token} =
+                 IdJag.create(
+                   private_key: ctx.idp_key,
+                   issuer: "https://idp.example.com",
+                   subject: "user123",
+                   audience: "https://as.example.com",
+                   resource: "https://mcp.example.com",
+                   client_id: "my-client"
+                 )
+
+        assert {:ok, claims} = JWT.verify(token, ctx.idp_public)
+
+        assert {:ok, malformed} =
+                 JWT.sign(Map.put(claims, @field, @value), ctx.idp_key, typ: IdJag.typ())
+
+        assert {:error, {:invalid_claim_type, @field}} =
+                 IdJag.validate(malformed,
+                   idp_keys: [ctx.idp_public],
+                   expected_audience: "https://as.example.com",
+                   expected_resource: "https://mcp.example.com"
+                 )
+      end
+    end
+
     for field <- ~w(iss sub aud client_id jti exp iat resource) do
       @field field
       @tag assurance: ["idjag.missing.#{field}"]

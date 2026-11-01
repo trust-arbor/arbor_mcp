@@ -167,13 +167,17 @@ The [assurance process](MCP_ASSURANCE.md) and generated
 [requirement evidence](MCP_REQUIREMENTS.md) separate source inventory, scoped
 implementation, executable contracts and independently qualified peer behavior.
 
+For known unfinished implementation or qualification work, start with
+[Remaining library work](MCP_REQUIREMENTS.md#remaining-library-work). External
+responsibilities and unadopted optional extensions are listed separately.
+
 A green check means the **stated library role** is implemented with tests, as in
 the core table. Qualification and limits are listed separately: it does not
 certify every inherited clause, every provider, or host/IdP/AS duties.
 
 | Extension | Published target / maturity | Implemented library role | Qualification and limits |
 |---|---|---|---|
-| Tasks (`io.modelcontextprotocol/tasks`) | `2026-07-28`, Beta | ✅ Opt-in client/server methods, bounded node-local store, input rounds, cooperative cancellation and notifications. Peer TTLs may be null; the bundled store retains a finite TTL policy. | `tasks/`, `client/modern_result_validation_test.exs`, `transport/http_request_headers_test.exs`, `client/modern_http_subscription_test.exs`; official Tasks server scenarios below. Full clause/schema and client interop inventories remain pending. |
+| Tasks (`io.modelcontextprotocol/tasks`) | `2026-07-28`, Beta | ✅ Opt-in client/server methods, bounded node-local store, input rounds, cooperative cancellation and notifications. Peer TTLs may be null; the bundled store retains a finite TTL policy. | `tasks/`, `client/modern_result_validation_test.exs`, `transport/http_request_headers_test.exs`, `client/modern_http_subscription_test.exs`; official Tasks server scenarios below. Reviewed prose/schema inventory and named server/client HTTP lifecycle evidence are in [the register](MCP_REQUIREMENTS.md). Hosts drive polling/persistence/input approvals; independent Tasks SDK interop is not qualified. |
 | OAuth Client Credentials | `2026-07-28`, Stable | ✅ Client profiles: pre-registered Basic/body credentials and JWT, issuer binding, advertised JWT algorithms, no DCR or anonymous fallback. Scoped core and inherited requirements are mapped separately from executable qualification. | Named contracts, independent Node OAuth peer, pinned SDK helpers, official Basic/JWT scenarios and real Keycloak client-credentials tests below. AS metadata/issuance/deployment duties are separate; see [requirement evidence](MCP_REQUIREMENTS.md). |
 | Enterprise-Managed Authorization | `2026-07-28`, Stable | ✅ Client orchestrators for OIDC, refresh-token and SAML-to-refresh-token inputs; separate optional issuer-bound IdP and resource-AS Basic/POST/JWT credentials. Opt-in resource omission retains strict defaults. Initial SSO, IdP policy and AS issuance/replay/tenant policy remain host-owned. | Named confidential-IdP contracts, both orchestrators against a verifying independent peer including fetched CIMD/inline or URL keys, SDK OIDC helper interop and official public-IdP scenario; [requirement evidence](MCP_REQUIREMENTS.md) separates implemented, tested, interop and host scope. |
 | Apps | `2026-01-26`, Stable | — No built-in or qualified Apps integration. | Generic tools/resources/metadata are building blocks, not an Apps qualification. |
