@@ -15,6 +15,36 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
   pre-existing credentials. For clients with credentials, use
   `Arbor.MCP.Authorization.DiscoveryFlow` instead.
 
+  ## Enterprise IdP authentication
+
+  The cross-app flow uses `:idp_id_token` to obtain an ID-JAG. By default it
+  retains the public-client exchange using `:idp_token_endpoint` and optional
+  `:idp_client_id`. A confidential IdP registration can instead supply:
+
+      idp_auth: %{
+        issuer: "https://idp.example",
+        client_id: "client-at-idp",
+        auth_method: :client_secret_basic,
+        client_secret: "idp-specific-secret"
+      }
+
+  `:auth_method` is required and supports `:client_secret_basic`,
+  `:client_secret_post`, or `:private_key_jwt`. JWT authentication requires
+  `:private_key`, accepts `:signing_algorithm` (default `"RS256"`) and `:key_id`,
+  and uses the discovered IdP token endpoint as its assertion audience.
+
+  Discovery binds exactly to `:issuer`, validates endpoint policy, and checks
+  the advertised method and signing algorithm before sending a token request.
+  Missing method metadata defaults to Basic. Existing `:idp_issuer`,
+  `:idp_client_id`, and `:idp_token_endpoint`, if supplied, must agree with the
+  new configuration and discovery. The endpoint can otherwise be omitted.
+
+  IdP credentials are never inferred from the top-level authorization-server
+  credentials. `:metadata_fetch` / `:http_client` control metadata discovery;
+  `:oauth_http` controls the authenticated IdP token request. These options also
+  apply to `Arbor.MCP.Authorization.EnterpriseFlow`, which accepts `:id_token`
+  instead of `:idp_id_token` and keeps its existing public-client AS grant.
+
   ## Usage
 
       {:ok, token} = FullOAuthFlow.execute(%{
@@ -40,6 +70,7 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
     ClientRegistration,
     CredentialStore,
     HTTPClient,
+    IdPAuthentication,
     Issuer,
     MetadataFetcher,
     OAuthFlow,
@@ -50,6 +81,17 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
   }
 
   alias Arbor.RPC.LogSummary
+
+  @typedoc "Issuer-bound client credentials used only for the IdP's ID-JAG exchange."
+  @type idp_auth :: %{
+          required(:issuer) => String.t(),
+          required(:client_id) => String.t(),
+          required(:auth_method) => :client_secret_basic | :client_secret_post | :private_key_jwt,
+          optional(:client_secret) => String.t(),
+          optional(:private_key) => JOSE.JWK.t() | map() | String.t(),
+          optional(:signing_algorithm) => String.t(),
+          optional(:key_id) => String.t()
+        }
 
   @type config :: %{
           required(:resource_url) => String.t(),
@@ -65,6 +107,11 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
           optional(:private_key) => JOSE.JWK.t(),
           optional(:signing_algorithm) => String.t(),
           optional(:key_id) => String.t(),
+          optional(:idp_id_token) => String.t(),
+          optional(:idp_issuer) => String.t(),
+          optional(:idp_token_endpoint) => String.t(),
+          optional(:idp_client_id) => String.t(),
+          optional(:idp_auth) => idp_auth() | nil,
           optional(:scopes) => [String.t()],
           optional(:resource) => String.t() | [String.t()],
           optional(:http_client) => module() | function(),
@@ -817,7 +864,7 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
       {"resource", resource}
     ]
 
-    # Add client auth if we have IdP client credentials
+    # Keep the legacy public-client ID; authenticated exchanges supply their own ID.
     exchange_body =
       if config[:idp_client_id] do
         exchange_body ++ [{"client_id", config[:idp_client_id]}]
@@ -825,7 +872,7 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
         exchange_body
       end
 
-    case HTTPClient.make_token_request(idp_token_endpoint, exchange_body, auth_method: :none) do
+    case exchange_at_idp(idp_token_endpoint, exchange_body, config) do
       {:ok, exchange_result} ->
         id_jag = exchange_result[:access_token] || exchange_result["access_token"]
 
@@ -862,6 +909,12 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
         {:error, {:token_exchange_failed, reason}}
     end
   end
+
+  defp exchange_at_idp(_endpoint, body, %{idp_auth: auth} = config) when not is_nil(auth),
+    do: IdPAuthentication.exchange(body, config)
+
+  defp exchange_at_idp(endpoint, body, _config),
+    do: HTTPClient.make_token_request(endpoint, body, auth_method: :none)
 
   defp build_client_credentials_body(client_info, config, :private_key_jwt) do
     # JWT-based client authentication for client_credentials grant

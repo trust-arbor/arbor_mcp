@@ -148,7 +148,7 @@ An acknowledged source baseline does not imply that its protocol is implemented.
 |---|---|---|---|
 | Tasks (`io.modelcontextprotocol/tasks`) | `2026-07-28`, Beta | ✅ Opt-in client/server methods, bounded node-local store, input rounds, cooperative cancellation and notifications. Peer TTLs may be null; the bundled store retains a finite TTL policy. | `tasks/`, `client/modern_result_validation_test.exs`, `transport/http_request_headers_test.exs`, `client/modern_http_subscription_test.exs`; official Tasks server scenarios below. |
 | OAuth Client Credentials | `2026-07-28`, Stable | ✅ Client flows for Basic, body credentials and JWT assertions, including issuer-bound discovery. | `authorization/discovery_flow_auth_methods_test.exs`, `authorization/client_assertion_test.exs`, `authorization/oauth_flow_test.exs`; official Basic/JWT client scenarios below. |
-| Enterprise-Managed Authorization | `2026-07-28`, Stable | ⚠️ ID-JAG token exchange and JWT bearer grant. The high-level public-IdP flow is covered; separate confidential-IdP credential configuration is not yet available. | `authorization/enterprise_flow_test.exs`, `authorization/token_exchange_test.exs`, `authorization/id_jag_test.exs`, `authorization/id_jag_handler_test.exs`; official enterprise client scenario below. |
+| Enterprise-Managed Authorization | `2026-07-28`, Stable | ⚠️ ID-JAG exchange supports public clients or separate issuer-bound IdP Basic/POST/JWT credentials via `:idp_auth`. Hosts acquire the initial ID token. Resource AS grants retain their documented scope: public clients in `EnterpriseFlow`, public or Basic in `FullOAuthFlow`. | `authorization/enterprise_idp_auth_test.exs`, `authorization/enterprise_flow_test.exs`, `authorization/token_exchange_test.exs`, `authorization/id_jag_test.exs`, `authorization/id_jag_handler_test.exs`; official enterprise client scenario below. |
 | Apps | `2026-01-26`, Stable | — No built-in or qualified Apps integration. | Generic tools/resources/metadata are building blocks, not an Apps qualification. |
 | Skills | Beta | — Skills methods, manifests and host loading semantics are not implemented. | No extension conformance claim. |
 | Server Cards | Beta | — Card publication and card-based discovery are not implemented. | No extension conformance claim. |
@@ -174,7 +174,7 @@ defaults its Auth extension peers to legacy MCP traffic.
 |---|---|---|
 | Tasks server over Streamable HTTP | Official harness client: lifecycle, capabilities, wire fields, request-state removal, task input rounds, routing headers, dispatch/envelopes, required capabilities and MRTR-to-task composition | 44 checks passed across nine executed scenarios. |
 | Client-credentials client | Official harness authorization servers: `auth/client-credentials-basic`, `auth/client-credentials-jwt` | 16 checks passed. |
-| Enterprise client | Official harness IdP and authorization server: `auth/enterprise-managed-authorization` | 9 checks passed for the public-IdP profile. |
+| Enterprise client | Official harness IdP and authorization server: `auth/enterprise-managed-authorization` | 9 checks passed for the public-client IdP profile. |
 
 These are maintainer-recorded results from 2026-10-31 (America/Chicago), not live
 badges. The tenth selected Tasks scenario, `tasks-status-notifications`, is an
@@ -182,6 +182,13 @@ upstream skipped stub awaiting a `subscriptions/listen` rewrite. It is not count
 as external notification coverage. Actual HTTP task notification delivery and
 malformed-event rejection are tested locally in
 `client/modern_http_subscription_test.exs`.
+
+Confidential IdP Basic/POST/JWT exchanges are covered separately by local mock
+IdP/AS HTTP peers in `authorization/enterprise_idp_auth_test.exs`. These tests
+verify issuer/endpoint and method checks, signed assertions, credential separation
+and the unchanged defaults for both orchestrators. They are not additional
+official-harness scenarios or vendor certifications. See
+[IdP configuration](CONFIGURATION.md#enterprise-idp-client-authentication).
 
 The TypeScript SDK v2 interop lanes above currently exercise core MCP. They do
 not provide a separate SDK-extension qualification for Tasks or Auth. The explicit

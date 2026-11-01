@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Optional issuer-bound `:idp_auth` in both enterprise OAuth orchestrators, with
+  separate IdP Basic, POST, or JWT client authentication and unchanged defaults.
+  Discovery and advertised methods are checked before credentials are sent.
+
 - A separate MCP extensions coverage matrix and an explicit official conformance
   run for the supported Tasks and Auth profiles, preserved independently from
   core conformance in CI.

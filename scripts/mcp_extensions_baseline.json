@@ -53,10 +53,10 @@
       "revision": "cf599cc462406accc90ec3ca7879e3a22a9fc2a8"
     },
     "modelcontextprotocol/ext-auth": {
-      "assessment": "enterprise_profile_qualification_pending",
-      "notes": "A1 metadata selection corrected; official Basic/JWT and public-IdP enterprise client scenarios pass. Separate confidential-IdP orchestration remains outside the high-level API pending profile/API qualification.",
+      "assessment": "compatible_with_documented_limits",
+      "notes": "A1 corrected. Official client-credentials Basic/JWT and public-client IdP enterprise scenarios pass. Approved optional issuer-bound idp_auth qualifies separate confidential IdP Basic/POST/JWT exchanges locally; existing public/Basic resource-AS grant limits remain explicit.",
       "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
-      "review_status": "pending",
+      "review_status": "reviewed",
       "revision": "15ca394e00a66434520b9ade26294999295a43ae",
       "resolved_findings": [
         "A1"

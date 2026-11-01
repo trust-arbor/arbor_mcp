@@ -54,12 +54,12 @@ defmodule Arbor.MCP.Authorization.ClientAssertion do
   @doc """
   Builds form parameters for JWT client authentication at the token endpoint.
 
-  Returns a keyword list with `client_assertion_type`, `client_assertion`, and `client_id`
+  Returns a form parameter list with `client_assertion_type`, `client_assertion`, and `client_id`
   ready to be merged into the token request body.
 
   Accepts the same options as `build_assertion/1`.
   """
-  @spec build_assertion_params(keyword()) :: {:ok, keyword()} | {:error, term()}
+  @spec build_assertion_params(keyword()) :: {:ok, [{String.t(), String.t()}]} | {:error, term()}
   def build_assertion_params(opts) do
     client_id = Keyword.fetch!(opts, :client_id)
 

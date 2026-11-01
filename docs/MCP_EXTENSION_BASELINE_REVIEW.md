@@ -21,11 +21,19 @@ HTTP delivery is covered locally. See the separate
 [extension coverage matrix](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md#mcp-extensions)
 for roles, evidence and remaining limits.
 
-Tasks can be acknowledged at its pinned revision after these corrections.
-Auth's A1 is corrected, but the source baseline remains pending the enterprise
-profile boundary: the high-level APIs currently cover the public-IdP flow and
-lack separate confidential-IdP credential configuration. No new IdP API or
-optional extension is enabled by these fixes.
+Tasks and Auth are acknowledged at their pinned revisions for the recorded
+scope. On 2026-11-01 the maintainer approved optional `:idp_auth` in both
+enterprise orchestrators. It provides exact issuer-bound discovery and separate
+IdP Basic, POST or JWT credentials, with method/algorithm validation before
+the exchange. Mock IdP/AS HTTP tests cover credential separation, invalid
+config, discovery/endpoint mismatches, rejected authentication and the unchanged
+public-client path. The official enterprise scenario continues to qualify the
+public-client IdP flow; confidential-client evidence is local and separate.
+
+The host still acquires the initial ID token. On the resource AS side,
+`EnterpriseFlow` retains its public-client JWT bearer grant; `FullOAuthFlow`
+retains its public or Basic-authenticated cross-app grant. This scope does not
+qualify arbitrary AS registrations or add a vendor-specific IdP integration.
 
 ## Initial outcome
 
@@ -47,7 +55,7 @@ above records their subsequent corrections.
 | Source | Reviewed revision | Disposition |
 | --- | --- | --- |
 | Framework and extension index | [`d0e246e`](https://github.com/modelcontextprotocol/modelcontextprotocol/tree/d0e246ea3c69eafaa2806bc4cd28025703ba2c2b/docs/extensions) | Reviewed: optional adoption, explicit opt-in, maturity and revision rules. |
-| Authorization | [`15ca394`](https://github.com/modelcontextprotocol/ext-auth/tree/15ca394e00a66434520b9ade26294999295a43ae) | A1 corrected; pending enterprise profile qualification. |
+| Authorization | [`15ca394`](https://github.com/modelcontextprotocol/ext-auth/tree/15ca394e00a66434520b9ade26294999295a43ae) | Reviewed: A1 corrected; separate confidential IdP credentials qualified locally, with documented AS-grant limits. |
 | Tasks | [`b3d28ac`](https://github.com/modelcontextprotocol/ext-tasks/tree/b3d28aceaa6d49f5f92258e3d06b61ad6f111e84) | Reviewed after T1–T5 corrections; documented finite store and node-lifetime limits. |
 | Apps | [`cf599cc`](https://github.com/modelcontextprotocol/ext-apps/tree/cf599cc462406accc90ec3ca7879e3a22a9fc2a8) | Reviewed: no built-in or qualified Apps integration. |
 | Skills | [`649f7ae`](https://github.com/modelcontextprotocol/ext-skills/tree/649f7aee87d631ac4d1fdd3b12eef0c6264fdb3a) | Reviewed: Skills transport methods and host loading semantics are not implemented. |
@@ -195,8 +203,9 @@ account or vendor service is used.
 
 The original probes are historical evidence of the six findings. The follow-up
 adds passing regressions and explicit extension conformance gates. Tasks is
-acknowledged after its corrections; Auth remains pending enterprise profile
-qualification. No new optional protocol or confidential-IdP API is implied.
+acknowledged after its corrections. Auth is acknowledged after its A1 correction
+and the separately approved `:idp_auth` addition, with the profile limits above.
+No additional optional protocol is enabled.
 
 [tasks-spec]: https://github.com/modelcontextprotocol/ext-tasks/blob/b3d28aceaa6d49f5f92258e3d06b61ad6f111e84/specification/2026-07-28/tasks.md
 [tasks-schema]: https://github.com/modelcontextprotocol/ext-tasks/blob/b3d28aceaa6d49f5f92258e3d06b61ad6f111e84/schema/2026-07-28/schema.ts
