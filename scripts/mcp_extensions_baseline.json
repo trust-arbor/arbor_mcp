@@ -1,6 +1,6 @@
 {
   "inventory_date": "2026-10-31",
-  "notes": "Source/current-scope assessment and corrections are recorded in docs/MCP_EXTENSION_BASELINE_REVIEW.md. Reviewed is not universal compatibility. Tasks corrections are acknowledged; Auth remains pending enterprise profile qualification. Optional protocols are not enabled by this inventory.",
+  "notes": "Source/current-scope assessment and corrections are recorded in docs/MCP_EXTENSION_BASELINE_REVIEW.md. Reviewed is not universal compatibility. Tasks and Auth are acknowledged for their recorded scope; complete scoped inventories are separate from executable qualification and host policy. Optional protocols are not enabled by this inventory.",
   "reviewed_at": "2026-11-01T02:21:59.838435+00:00",
   "sources": {
     "modelcontextprotocol/experimental-ext-file-uploads": {
@@ -54,7 +54,7 @@
     },
     "modelcontextprotocol/ext-auth": {
       "assessment": "partial_requirement_qualification",
-      "notes": "Named requirement evidence and separate contract, independent verifying fixture and SDK helper lanes are recorded in docs/MCP_REQUIREMENTS.md. Client credential and enterprise profiles are implemented; inherited core/RFC clause inventory and host AS/IdP policy are not certified.",
+      "notes": "Named requirement evidence and separate contract, independent verifying fixture and SDK helper lanes are recorded in docs/MCP_REQUIREMENTS.md. Client-credentials and enterprise profiles are implemented. Adopted core/OAuth/ID-JAG sections have scoped requirement dispositions in docs/MCP_SOURCE_REVIEW.md; partial executable evidence and host AS/IdP policy remain explicit limits.",
       "resolved_findings": [
         "A1"
       ],
@@ -78,7 +78,7 @@
     },
     "modelcontextprotocol/ext-tasks": {
       "assessment": "implemented_with_documented_limits",
-      "notes": "T1\u2013T5 corrected with regressions and official Tasks server conformance. Node-local store retains finite TTL and byte quotas; upstream notification scenario remains a stub, with actual HTTP delivery tested locally.",
+      "notes": "T1\u2013T5 corrected with regressions and official Tasks server conformance. Node-local store retains finite TTL and byte quotas; upstream notification scenario remains a stub, with actual HTTP delivery tested locally. Complete clause/schema and client interop inventories remain pending.",
       "resolved_findings": [
         "T1",
         "T2",

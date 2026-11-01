@@ -1,6 +1,10 @@
 # MCP extension baseline assessment
 
-Review date: 2026-10-31 (America/Chicago). ArborMCP source: [`5ea3884`](https://github.com/trust-arbor/arbor_mcp/tree/5ea3884cb8f3941a354b1c65b40176dc8bbaa429).
+Initial review: 2026-10-31 (America/Chicago), ArborMCP source
+[`5ea3884`](https://github.com/trust-arbor/arbor_mcp/tree/5ea3884cb8f3941a354b1c65b40176dc8bbaa429).
+Current status reconciled on 2026-11-01 through
+[PR #208](https://github.com/trust-arbor/arbor_mcp/pull/208), merged as
+[`f05a669`](https://github.com/trust-arbor/arbor_mcp/tree/f05a66990a9657aea103641d38a7de0ddfd11248).
 Upstream revisions are the immutable commits recorded in the initial inventory,
 not moving default branches. This is an assessment of implementation scope and
 compatibility gaps, not certification of every role in each extension.
@@ -30,14 +34,24 @@ config, discovery/endpoint mismatches, rejected authentication and the unchanged
 public-client path. The official enterprise scenario continues to qualify the
 public-client IdP flow; confidential-client evidence is local and separate.
 
-The host still acquires the initial ID token. On the resource AS side,
 Both orchestrators now offer optional separate `:as_auth` Basic/POST/JWT
 credentials and `:idp_subject` OIDC/refresh/SAML-transition inputs. These later
 profiles have named contract evidence, a verifying independent Node/jose peer
 and scoped SDK Auth-helper interop. The [requirement register](MCP_REQUIREMENTS.md)
-supersedes the earlier AS-grant limits below. Initial SSO, XML validation and
-IdP/AS issuance, tenant and replay policy remain host-owned. This scope does not
-qualify arbitrary vendor deployments or constitute complete inherited-spec coverage.
+supersedes the historical enterprise API gaps below. ID-JAG helpers and the grant
+handler also offer opt-in `resource_policy: :if_present`, retaining required
+resource binding by default. Exchanged token types are checked before forwarding.
+Initial SSO, SAML XML/NameID validation and IdP/AS issuance, tenant and replay
+policy remain host-owned.
+
+The adopted core and inherited OAuth/ID-JAG sections now have complete scoped
+requirement inventories; see the [source review](MCP_SOURCE_REVIEW.md) for exact
+revisions, sections and exclusions. This means responsibilities have dispositions,
+not that every clause has implementation or executable proof. Partial evidence,
+host duties and unadopted profiles remain explicit. Automatic authorization-code
+flows now require discovered S256 support; this is an inherited core authorization
+check, not another extension. The complete Tasks clause/schema and client interop
+inventories remain pending. No arbitrary vendor deployment is certified.
 
 ## Initial outcome
 
@@ -59,8 +73,8 @@ above records their subsequent corrections.
 | Source | Reviewed revision | Disposition |
 | --- | --- | --- |
 | Framework and extension index | [`d0e246e`](https://github.com/modelcontextprotocol/modelcontextprotocol/tree/d0e246ea3c69eafaa2806bc4cd28025703ba2c2b/docs/extensions) | Reviewed: optional adoption, explicit opt-in, maturity and revision rules. |
-| Authorization | [`15ca394`](https://github.com/modelcontextprotocol/ext-auth/tree/15ca394e00a66434520b9ade26294999295a43ae) | Reviewed for recorded scope; expanded Auth profiles and separate contract/fixture/SDK evidence are in the requirement register. Inherited requirement inventory remains partial. |
-| Tasks | [`b3d28ac`](https://github.com/modelcontextprotocol/ext-tasks/tree/b3d28aceaa6d49f5f92258e3d06b61ad6f111e84) | Reviewed after T1–T5 corrections; documented finite store and node-lifetime limits. |
+| Authorization | [`15ca394`](https://github.com/modelcontextprotocol/ext-auth/tree/15ca394e00a66434520b9ade26294999295a43ae) | Reviewed for recorded scope; direct profiles and adopted inherited sections have scoped requirement dispositions. Contract, independent-fixture and SDK evidence remain separate from inventory completeness and host duties. |
+| Tasks | [`b3d28ac`](https://github.com/modelcontextprotocol/ext-tasks/tree/b3d28aceaa6d49f5f92258e3d06b61ad6f111e84) | Reviewed after T1–T5 corrections; documented finite store and node-lifetime limits. Full clause/schema and client interop inventories remain pending. |
 | Apps | [`cf599cc`](https://github.com/modelcontextprotocol/ext-apps/tree/cf599cc462406accc90ec3ca7879e3a22a9fc2a8) | Reviewed: no built-in or qualified Apps integration. |
 | Skills | [`649f7ae`](https://github.com/modelcontextprotocol/ext-skills/tree/649f7aee87d631ac4d1fdd3b12eef0c6264fdb3a) | Reviewed: Skills transport methods and host loading semantics are not implemented. |
 | Server Cards | [`526201b`](https://github.com/modelcontextprotocol/ext-server-card/tree/526201bbc80231daa40ffcdecfc9da4e54e5dc93) | Reviewed: card publication and discovery are not implemented. |
@@ -71,7 +85,7 @@ above records their subsequent corrections.
 | Experimental triggers/events | [`d5316be`](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/tree/d5316be214be2e76e51462069c1d67e00a5a7619) | Reviewed: proposed event delivery methods are not implemented. |
 | Experimental variants | [`cfc05d6`](https://github.com/modelcontextprotocol/experimental-ext-variants/tree/cfc05d6f5eb8829f9896d44a6d47360bd15c3b5c) | Reviewed: no maintained Variants protocol integration. |
 
-## Tasks: findings and corrections
+## Historical Tasks findings (resolved)
 
 The [published 2026-07-28 task contract][tasks-spec] and its
 [extension schema][tasks-schema] are the targets. The empty extension settings
@@ -84,7 +98,7 @@ results, synchronous store insertion, owner isolation, partial input responses,
 cooperative cancellation, expiry and complete notification payloads. The initial suite did
 not expose the following gaps; regression tests now cover their corrections.
 
-| ID | Published requirement and observed behavior | Required follow-up |
+| ID | Published requirement and initial observed behavior | Implemented correction |
 | --- | --- | --- |
 | T1 | `ttlMs` is required and may be null. The task-response validator rejects null, so a valid unlimited-lifetime peer task can be rejected. The pure task serializer also omits a null TTL. | Accept the published nullable wire value and preserve the required key. Keep the bundled store's finite retention policy separate from accepting a peer's result. |
 | T2 | HTTP `tasks/get`, `tasks/update` and `tasks/cancel` carry `Mcp-Name: taskId`. The request-header builder omits it for all three methods. Its shared name validator also lacks those mappings. | Add task-ID header generation and corresponding body/header validation. |
@@ -102,7 +116,15 @@ apply their authentication policy to task endpoints and provide the correct
 principal/tenant/audience context. Existing ownership tests cover that binding;
 the review does not certify arbitrary host authentication configuration.
 
-## Authorization: required compatibility work and profile boundaries
+## Historical authorization findings (resolved API gaps)
+
+The descriptions in this section refer to the initial `5ea3884` implementation.
+A1 was corrected in [PR #205](https://github.com/trust-arbor/arbor_mcp/pull/205).
+The enterprise API gaps were addressed by the approved options in
+[PR #206](https://github.com/trust-arbor/arbor_mcp/pull/206) and
+[PR #207](https://github.com/trust-arbor/arbor_mcp/pull/207). They are retained
+here to explain the original disposition; current qualification and host
+responsibilities are recorded above and in the requirement register.
 
 The reviewed files are the published 2026-07-28
 [client-credentials profile][auth-client] and
@@ -135,11 +157,11 @@ high-level paths are not qualified for arbitrary confidential-IdP registrations.
 Lower-level `TokenExchange` can carry a client secret, and applications can
 compose their own requests, but that does not close the high-level API gap.
 
-Before clearing this baseline, fix A1 and explicitly choose/document the
-supported enterprise profiles. Supporting distinct confidential IdP and resource
-authorization-server registrations needs an API design; do not reuse one
-authority's credential at another. IdP policy, access-token issuance and host
-authorization remain application/authorization-server responsibilities.
+The original baseline required correcting A1 and an explicit design for distinct
+confidential IdP and resource-AS registrations. Those follow-ups are complete;
+one authority's credentials must still never be reused at another. IdP policy,
+access-token issuance and host authorization remain application/authorization-server
+responsibilities.
 
 ## Optional extensions: acknowledged current scope
 
@@ -193,10 +215,10 @@ transport, capability, API and test plan.
 [SEP-3392][lifecycle] leaves extension adoption to SDKs and retains explicit
 opt-in. Maturity does not force adoption. A stable published revision is a
 different target from an experimental/beta iteration or a future draft.
-ArborMCP's task opt-in and legacy/modern separation fit that model; they do not
-waive the outstanding task requirements above.
+ArborMCP's task opt-in and legacy/modern separation fit that model. The corrected
+task requirements above remain regression obligations.
 
-The review used pinned source documents, implementation/test inspection and
+The initial review used pinned source documents, implementation/test inspection and
 controlled local probes. The existing focused Tasks/auth suite passed 142
 checks. Seven additional contract probes exposed six findings: T1–T5, with T3
 checked through two dispatch paths, and A1. Those probes intentionally fail
@@ -208,8 +230,8 @@ account or vendor service is used.
 The original probes are historical evidence of the six findings. The follow-up
 adds passing regressions and explicit extension conformance gates. Tasks is
 acknowledged after its corrections. Auth is acknowledged after its A1 correction
-and the separately approved `:idp_auth` addition, with the profile limits above.
-No additional optional protocol is enabled.
+and the separately approved enterprise options, with current scoped inventories
+and qualification limits recorded above. No additional optional protocol is enabled.
 
 [tasks-spec]: https://github.com/modelcontextprotocol/ext-tasks/blob/b3d28aceaa6d49f5f92258e3d06b61ad6f111e84/specification/2026-07-28/tasks.md
 [tasks-schema]: https://github.com/modelcontextprotocol/ext-tasks/blob/b3d28aceaa6d49f5f92258e3d06b61ad6f111e84/schema/2026-07-28/schema.ts

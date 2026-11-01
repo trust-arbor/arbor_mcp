@@ -2,8 +2,12 @@
 
 This document maps ArborMCP's local and external conformance coverage to the MCP
 protocol revisions it implements. Release evidence is associated with each tagged package graph separately; see
-the [release checklist](RELEASING.md). The historical 1.0 results below retain
-their original source/date.
+the [release checklist](RELEASING.md). Current results below were reconciled on
+2026-11-01 against [PR #208](https://github.com/trust-arbor/arbor_mcp/pull/208)
+([`f05a669`](https://github.com/trust-arbor/arbor_mcp/tree/f05a66990a9657aea103641d38a7de0ddfd11248)).
+They describe the tested source checkout, including changes after the published
+`2.0.0-rc.7` candidate; they do not qualify a new Hex release. Historical 1.0
+qualification is recorded separately below.
 
 ## Protocol Status
 
@@ -11,10 +15,11 @@ their original source/date.
 - **Newest legacy revision:** `2025-11-25`.
 - **Other retained legacy revisions:** `2025-06-18`, `2025-03-26`, and
   `2024-11-05`.
-- **Current stable release:** `1.0.0` enables `2026-07-28` through
-  `:prefer_modern` and `:modern_only` and defaults to `:prefer_modern`. Every
-  legacy revision remains available, and
-  `:legacy_only` preserves the legacy protocol era (not an exact rc.5 package rollback).
+- **Current source line:** ArborMCP 2.0, based on `2.0.0-rc.7` plus the
+  [unreleased changes](../CHANGELOG.md#unreleased). Stable ArborMCP 2.0 has not
+  been released. `2026-07-28` is available through `:prefer_modern` and
+  `:modern_only`; the default is `:prefer_modern`. Every legacy revision remains
+  available, and `:legacy_only` preserves the legacy protocol era.
 
 The protocol revision is stable even though its official conformance runner is
 still published as a prerelease. Do not describe `2026-07-28` itself as a
@@ -24,13 +29,15 @@ draft.
 
 | Target | Runner | Command | Last recorded result |
 |---|---|---|---|
-| MCP 2026-07-28, complete server suite | `@modelcontextprotocol/conformance@0.2.0-alpha.12`, Node.js 22+ | `./scripts/conformance.sh modern` | 150/150 checks passed |
-| MCP 2026-07-28, complete client suite | `@modelcontextprotocol/conformance@0.2.0-alpha.12`, Node.js 22+ | `./scripts/conformance.sh modern` | 411/411 checks passed |
+| MCP 2026-07-28, complete server suite | `@modelcontextprotocol/conformance@0.2.0-alpha.12`, Node.js 22+ | `./scripts/conformance.sh modern` | 152 checks passed across 40 scenarios; no skips |
+| MCP 2026-07-28, complete client suite | `@modelcontextprotocol/conformance@0.2.0-alpha.12`, Node.js 22+ | `./scripts/conformance.sh modern` | 418 checks passed across 33 scenarios; two legacy-only header checks skipped |
 | Published legacy/core server suite | `@modelcontextprotocol/conformance@0.1.16` | `./scripts/conformance.sh server` | 39/39 checks passed |
 | Published legacy/core client suite | `@modelcontextprotocol/conformance@0.1.16` | `./scripts/conformance.sh client` | 218/218 checks passed |
 
-The modern results have zero warnings and no expected-failure entries. The
-legacy runner remains pinned separately because the published stable package
+The modern results have zero warnings and no expected-failure entries. The two
+exact skips concern `initialize` and `notifications/initialized` headers, which
+do not exist in modern MCP and are exercised by the separate legacy gate.
+The legacy runner remains pinned separately because its published stable package
 does not exercise the 2026-07-28 wire model. CI's `MCP external conformance`
 job gates all four suites: the modern ones with `./scripts/conformance.sh
 modern` and the legacy core ones with `./scripts/conformance.sh all`. `./scripts/conformance.sh
@@ -40,16 +47,19 @@ the 2026-07-28 qualification command.
 The weekly `MCP conformance upstream` workflow selects the highest version in
 the package's published npm version list and runs the same complete modern
 suites. It is an advisory early-warning lane: it uploads the selected version
-and full logs for core and supported-extension runs, but it does not mutate the
-reviewed pin used by release CI.
+and raw results for core and supported-extension runs, but it does not mutate the
+reviewed pin used by release CI. A newer, unreviewed runner produces exploratory
+evidence without qualified requirement case IDs; a version difference alone is
+not a failure. New or missing assertions at the reviewed pin, failures, warnings
+and unreviewed skips fail the corresponding evidence gate.
 Manual runs may select an exact package version. Review any failure against the
 upstream release diff, add a local regression test for newly exposed behavior,
 and advance the pinned gate only after the new harness passes.
 
-The separate weekly **MCP extensions upstream** workflow discovers official
-extension repositories and compares specification/schema sources with recorded
-baselines. It reports new sources, file drift and pending reviews without
-changing implementation or conformance pins. See
+The separate weekly **MCP extensions upstream** workflow monitors core
+specification prose/schema, discovers official extension repositories and compares
+their sources with recorded baselines. It reports new sources, file drift and
+pending reviews without changing implementation or conformance pins. See
 [extension source tracking](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/EXTENSION_SYNC.md)
 for local commands, comparison scope and the baseline review process.
 
@@ -92,9 +102,12 @@ explicit legacy-only skips in the modern header scenario. See
 for scoped inventory and host responsibilities; this is not full-spec certification.
 
 The totals above are dated maintainer-recorded snapshots, not live badges.
-The rc.8 CI workflow preserves the complete modern conformance output as a
-build artifact, and the GitHub prerelease links the exact tag commit and
-qualifying run. Update this table if the pinned versions or results change.
+PR #208's [qualifying CI run](https://github.com/trust-arbor/arbor_mcp/actions/runs/41344271749)
+preserves raw core results, the strict evidence receipt and separate extension
+output in the `mcp-conformance` artifact. Its `mcp-requirement-contracts` and
+`mcp-auth-interop` artifacts retain the named local/peer case results. Update this
+table if the pinned versions or results change; release tags require their own
+qualification receipts.
 
 ## Local Revision Coverage
 
@@ -134,6 +147,7 @@ Test paths in this table are relative to `test/arbor_mcp/`.
 | Bidirectional official TypeScript SDK v2 interop over stdio and HTTP | ✅ | `integration/modern_interop_test.exs`, `../interop/modern_ts_*.mjs` |
 | Reverse-proxy header validation | ✅ | `http_reverse_proxy_test.exs` |
 | Modern OAuth, CIMD, registration policy, issuer binding, and metadata SSRF controls | ✅ | `authorization/compatibility_matrix_test.exs`, `authorization/registration_policy_test.exs`, `authorization/client_id_metadata_test.exs`, `authorization/metadata_fetcher_test.exs`, `client/modern_http_stream_auth_test.exs` |
+| Discovered S256 support before automatic authorization-code flows | ✅ | `authorization/full_oauth_flow_credential_store_test.exs`; absent, empty, plain-only or malformed metadata and guessed endpoint fallback are rejected. Manually configured low-level `OAuthFlow` callers own the discovery check. |
 | Trace context and telemetry redaction/cardinality | ✅ | `protocol/trace_context_test.exs`, `operational_telemetry_test.exs` |
 | 2026 type surface and synced schema mapping | ✅ | `types/v20260728_test.exs`, `spec_sync/file_mapper_test.exs` |
 | Optional response-cache storage and reuse | ✅ | Client-local bounded storage, invalidation and per-call bypass are tested in `client/response_cache_test.exs`; core cache-hint validation has separate external coverage. |
@@ -155,7 +169,7 @@ implementation, executable contracts and independently qualified peer behavior.
 
 | Extension | Published target / maturity | ArborMCP support | Coverage |
 |---|---|---|---|
-| Tasks (`io.modelcontextprotocol/tasks`) | `2026-07-28`, Beta | ✅ Opt-in client/server methods, bounded node-local store, input rounds, cooperative cancellation and notifications. Peer TTLs may be null; the bundled store retains a finite TTL policy. | `tasks/`, `client/modern_result_validation_test.exs`, `transport/http_request_headers_test.exs`, `client/modern_http_subscription_test.exs`; official Tasks server scenarios below. |
+| Tasks (`io.modelcontextprotocol/tasks`) | `2026-07-28`, Beta | ✅ Opt-in client/server methods, bounded node-local store, input rounds, cooperative cancellation and notifications. Peer TTLs may be null; the bundled store retains a finite TTL policy. | `tasks/`, `client/modern_result_validation_test.exs`, `transport/http_request_headers_test.exs`, `client/modern_http_subscription_test.exs`; official Tasks server scenarios below. Full clause/schema and client interop inventories remain pending. |
 | OAuth Client Credentials | `2026-07-28`, Stable | ⚠️ Implemented client profiles: pre-registered Basic/body credentials and JWT, issuer binding, advertised JWT algorithms, no DCR or anonymous fallback. Scoped core and inherited requirements are mapped separately from executable qualification. | Named contract cases, verifying Node OAuth peer, pinned SDK Auth helpers and official Basic/JWT scenarios; see [requirement evidence](MCP_REQUIREMENTS.md). |
 | Enterprise-Managed Authorization | `2026-07-28`, Stable | ⚠️ OIDC, refresh-token and SAML-to-refresh-token client inputs; separate optional issuer-bound IdP and resource-AS Basic/POST/JWT credentials. Opt-in resource omission retains strict defaults. Initial SSO, IdP policy and AS issuance/replay/tenant policy remain host-owned. | Contract tests, both orchestrators against a verifying independent peer, SDK OIDC helper interop and official public-IdP scenario; [requirement evidence](MCP_REQUIREMENTS.md) separates implemented, tested, interop and host scope. |
 | Apps | `2026-01-26`, Stable | — No built-in or qualified Apps integration. | Generic tools/resources/metadata are building blocks, not an Apps qualification. |
@@ -185,7 +199,7 @@ defaults its Auth extension peers to legacy MCP traffic.
 | Client-credentials client | Official harness authorization servers: `auth/client-credentials-basic`, `auth/client-credentials-jwt` | 16 checks passed. |
 | Enterprise client | Official harness IdP and authorization server: `auth/enterprise-managed-authorization` | 9 checks passed for the public-client IdP profile. |
 
-These are maintainer-recorded results from 2026-10-31 (America/Chicago), not live
+These are maintainer-recorded results revalidated in PR #208 on 2026-11-01, not live
 badges. The tenth selected Tasks scenario, `tasks-status-notifications`, is an
 upstream skipped stub awaiting a `subscriptions/listen` rewrite. It is not counted
 as external notification coverage. Actual HTTP task notification delivery and
@@ -198,6 +212,15 @@ verify issuer/endpoint and method checks, signed assertions, credential separati
 and the unchanged defaults for both orchestrators. They are not additional
 official-harness scenarios or vendor certifications. See
 [IdP configuration](CONFIGURATION.md#enterprise-idp-client-authentication).
+
+Separate resource-AS authentication, refresh/SAML-transition inputs and opt-in
+resource omission have additional named contracts and verifying Node/jose peer
+cases. The pinned SDK Auth-helper lane qualifies client credentials and OIDC
+enterprise exchanges; it does not qualify SDK SAML/refresh-subject or confidential
+IdP JWT profiles. Initial SSO, XML validation, authenticated AS-client binding,
+replay consumption and token issuance remain host/IdP/AS duties. The
+[source review](MCP_SOURCE_REVIEW.md) maps the adopted inherited sections; complete
+scoped inventories do not mean complete executable qualification.
 
 The TypeScript SDK v2 interop lanes above currently exercise core MCP. They do
 not provide a separate SDK-extension qualification for Tasks. Auth helpers have
@@ -225,10 +248,16 @@ the four `version_*_test.exs` files, and the transport integration suites. MCP
 2026-07-28 removals are tested separately so retaining a legacy feature cannot
 accidentally expose it on the modern wire path.
 
-## Stable Release Qualification
+## Release Qualification
+
+Current ArborMCP 2.0 stable promotion follows the [release checklist](RELEASING.md).
+Passing source CI and the scoped inventories above do not establish that stable
+promotion or publication has happened.
+
+### Historical 1.0 qualification
 
 The implementation, test coverage, and final-candidate soak for stable ArborMCP
-1.0 are complete. Ongoing qualification policy is:
+1.0 were recorded as complete. The historical policy was:
 
 1. Replace the prerelease modern conformance runner with a stable 2026-aware
    release when available. Until then, retain the now-passing pinned official
