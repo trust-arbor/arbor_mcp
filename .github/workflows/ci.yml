@@ -436,6 +436,50 @@ jobs:
     - name: Run performance and stress tests
       run: mix test.suite performance
 
+
+  oauth_provider:
+    name: Real OAuth provider (Keycloak 26.8.1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+    - name: Check out shared RPC at its release commit
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        repository: trust-arbor/arbor_rpc
+        ref: d48a3d2fdfd8f9545ab266ac7eb5f2b35b99b894
+        path: .arbor-v2/rpc
+        persist-credentials: false
+    - name: Set up Elixir
+      uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
+      with:
+        otp-version: ${{ env.CI_OTP_VERSION }}
+        elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+        version-type: strict
+    - name: Restore deps/_build cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: |
+          deps
+          _build
+        key: ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-${{ hashFiles('**/mix.lock') }}
+    - name: Install dependencies
+      run: mix deps.get
+    - name: Run real-provider requirement evidence
+      run: python3 -B scripts/check_mcp_assurance.py --run --kind real_provider --output tmp/mcp-assurance/real-provider.json
+    - name: Preserve real-provider evidence and logs
+      if: always()
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      with:
+        name: mcp-real-provider
+        path: tmp/mcp-assurance/
+        if-no-files-found: error
+    - name: Remove this run's provider containers
+      if: always()
+      run: docker ps -aq --filter "label=arbor.mcp.auth.run=$GITHUB_RUN_ID" | xargs -r docker rm --force
+
   interop:
     name: Cross-language interop (Node.js)
     runs-on: ubuntu-latest

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A pinned real Keycloak authorization-server integration lane for Basic/JWT
+  client credentials, token signature/resource validation, introspection and
+  authenticated Arbor client/server requests, with preserved execution evidence.
+- Named confidential-IdP/JWT/ID-JAG evidence, required-claim and AS-error contracts,
+  and independent enterprise CIMD document/JWKS retrieval and rejection tests.
+  Extension support is now shown separately from qualification and host limits.
+
 - Scoped core and inherited OAuth/ID-JAG requirement mappings that reuse the
   existing official core conformance scenarios and local assertions. CI now
   preserves and checks raw core assertion outcomes, including explicit skips.
@@ -50,6 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   beyond MCP protocol coverage, with public entrypoints and limits.
 
 ### Fixed
+
+- `EnterpriseFlow` retains discovered CIMD support through resource-AS client
+  authentication instead of rejecting a supported metadata-document registration.
 
 - Automatic OAuth code authorization now requires discovered S256 PKCE support
   before starting authorization, returning `:pkce_s256_not_supported` when the

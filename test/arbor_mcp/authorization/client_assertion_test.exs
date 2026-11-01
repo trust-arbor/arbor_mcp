@@ -31,6 +31,7 @@ defmodule Arbor.MCP.Authorization.ClientAssertionTest do
       assert is_binary(claims["jti"])
     end
 
+    @tag assurance: ["assertion.algorithm"]
     test "respects custom algorithm and kid", %{rsa_key: rsa_key} do
       assert {:ok, assertion} =
                ClientAssertion.build_assertion(
@@ -46,6 +47,7 @@ defmodule Arbor.MCP.Authorization.ClientAssertionTest do
       assert header["kid"] == "key-1"
     end
 
+    @tag assurance: ["assertion.lifetime"]
     test "respects custom lifetime", %{rsa_key: rsa_key} do
       now = System.system_time(:second)
 
@@ -80,6 +82,7 @@ defmodule Arbor.MCP.Authorization.ClientAssertionTest do
   end
 
   describe "build_assertion_params/1" do
+    @tag assurance: ["assertion.form"]
     test "returns correct form parameters", %{rsa_key: rsa_key} do
       assert {:ok, params} =
                ClientAssertion.build_assertion_params(
@@ -173,6 +176,7 @@ defmodule Arbor.MCP.Authorization.ClientAssertionTest do
                )
     end
 
+    @tag assurance: ["assertion.verify.no_keys"]
     test "returns error when no keys configured" do
       assert {:error, :no_client_keys_configured} =
                ClientAssertion.verify_assertion("some.jwt.token", "client",

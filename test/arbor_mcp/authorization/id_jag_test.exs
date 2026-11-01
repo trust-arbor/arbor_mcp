@@ -10,6 +10,7 @@ defmodule Arbor.MCP.Authorization.IdJagTest do
   end
 
   describe "create/1" do
+    @tag assurance: ["idjag.creation"]
     test "creates a valid ID-JAG", %{idp_key: idp_key, idp_public: idp_public} do
       assert {:ok, token} =
                IdJag.create(
@@ -39,6 +40,7 @@ defmodule Arbor.MCP.Authorization.IdJagTest do
       assert is_integer(claims["iat"])
     end
 
+    @tag assurance: ["idjag.scope"]
     test "includes optional scope", %{idp_key: idp_key, idp_public: idp_public} do
       assert {:ok, token} =
                IdJag.create(
@@ -55,6 +57,7 @@ defmodule Arbor.MCP.Authorization.IdJagTest do
       assert claims["scope"] == "mcp:read mcp:write"
     end
 
+    @tag assurance: ["idjag.lifetime"]
     test "respects custom lifetime", %{idp_key: idp_key, idp_public: idp_public} do
       now = System.system_time(:second)
 
@@ -76,6 +79,34 @@ defmodule Arbor.MCP.Authorization.IdJagTest do
   end
 
   describe "validate/2" do
+    for field <- ~w(iss sub aud client_id jti exp iat resource) do
+      @field field
+      @tag assurance: ["idjag.missing.#{field}"]
+      test "rejects a signed ID-JAG missing required #{@field}", ctx do
+        now = System.system_time(:second)
+
+        claims = %{
+          "iss" => "https://idp.example.com",
+          "sub" => "user123",
+          "aud" => "https://as.example.com",
+          "client_id" => "my-client",
+          "jti" => "fixture-id",
+          "iat" => now,
+          "exp" => now + 60,
+          "resource" => "https://mcp.example.com"
+        }
+
+        assert {:ok, token} = JWT.sign(Map.delete(claims, @field), ctx.idp_key, typ: IdJag.typ())
+
+        assert {:error, _reason} =
+                 IdJag.validate(token,
+                   idp_keys: [ctx.idp_public],
+                   expected_audience: "https://as.example.com",
+                   expected_resource: "https://mcp.example.com"
+                 )
+      end
+    end
+
     @tag assurance: ["idjag.valid"]
     test "validates a valid ID-JAG", %{idp_key: idp_key, idp_public: idp_public} do
       assert {:ok, token} =
@@ -187,6 +218,7 @@ defmodule Arbor.MCP.Authorization.IdJagTest do
                )
     end
 
+    @tag assurance: ["idjag.type"]
     test "rejects non-ID-JAG token", %{idp_key: idp_key, idp_public: idp_public} do
       # Create a regular JWT (typ: "JWT")
       claims = %{

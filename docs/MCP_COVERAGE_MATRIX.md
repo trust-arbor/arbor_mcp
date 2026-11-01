@@ -167,11 +167,15 @@ The [assurance process](MCP_ASSURANCE.md) and generated
 [requirement evidence](MCP_REQUIREMENTS.md) separate source inventory, scoped
 implementation, executable contracts and independently qualified peer behavior.
 
-| Extension | Published target / maturity | ArborMCP support | Coverage |
+A green check means the **stated library role** is implemented with tests, as in
+the core table. Qualification and limits are listed separately: it does not
+certify every inherited clause, every provider, or host/IdP/AS duties.
+
+| Extension | Published target / maturity | Implemented library role | Qualification and limits |
 |---|---|---|---|
 | Tasks (`io.modelcontextprotocol/tasks`) | `2026-07-28`, Beta | ✅ Opt-in client/server methods, bounded node-local store, input rounds, cooperative cancellation and notifications. Peer TTLs may be null; the bundled store retains a finite TTL policy. | `tasks/`, `client/modern_result_validation_test.exs`, `transport/http_request_headers_test.exs`, `client/modern_http_subscription_test.exs`; official Tasks server scenarios below. Full clause/schema and client interop inventories remain pending. |
-| OAuth Client Credentials | `2026-07-28`, Stable | ⚠️ Implemented client profiles: pre-registered Basic/body credentials and JWT, issuer binding, advertised JWT algorithms, no DCR or anonymous fallback. Scoped core and inherited requirements are mapped separately from executable qualification. | Named contract cases, verifying Node OAuth peer, pinned SDK Auth helpers and official Basic/JWT scenarios; see [requirement evidence](MCP_REQUIREMENTS.md). |
-| Enterprise-Managed Authorization | `2026-07-28`, Stable | ⚠️ OIDC, refresh-token and SAML-to-refresh-token client inputs; separate optional issuer-bound IdP and resource-AS Basic/POST/JWT credentials. Opt-in resource omission retains strict defaults. Initial SSO, IdP policy and AS issuance/replay/tenant policy remain host-owned. | Contract tests, both orchestrators against a verifying independent peer, SDK OIDC helper interop and official public-IdP scenario; [requirement evidence](MCP_REQUIREMENTS.md) separates implemented, tested, interop and host scope. |
+| OAuth Client Credentials | `2026-07-28`, Stable | ✅ Client profiles: pre-registered Basic/body credentials and JWT, issuer binding, advertised JWT algorithms, no DCR or anonymous fallback. Scoped core and inherited requirements are mapped separately from executable qualification. | Named contracts, independent Node OAuth peer, pinned SDK helpers, official Basic/JWT scenarios and real Keycloak client-credentials tests below. AS metadata/issuance/deployment duties are separate; see [requirement evidence](MCP_REQUIREMENTS.md). |
+| Enterprise-Managed Authorization | `2026-07-28`, Stable | ✅ Client orchestrators for OIDC, refresh-token and SAML-to-refresh-token inputs; separate optional issuer-bound IdP and resource-AS Basic/POST/JWT credentials. Opt-in resource omission retains strict defaults. Initial SSO, IdP policy and AS issuance/replay/tenant policy remain host-owned. | Named confidential-IdP contracts, both orchestrators against a verifying independent peer including fetched CIMD/inline or URL keys, SDK OIDC helper interop and official public-IdP scenario; [requirement evidence](MCP_REQUIREMENTS.md) separates implemented, tested, interop and host scope. |
 | Apps | `2026-01-26`, Stable | — No built-in or qualified Apps integration. | Generic tools/resources/metadata are building blocks, not an Apps qualification. |
 | Skills | Beta | — Skills methods, manifests and host loading semantics are not implemented. | No extension conformance claim. |
 | Server Cards | Beta | — Card publication and card-based discovery are not implemented. | No extension conformance claim. |
@@ -228,6 +232,40 @@ the additional scoped interop described in the requirement evidence; this is not
 a certification of a complete OAuth authorization server. The explicit
 extension harness run supplies independent wire peers for the roles shown here;
 local suites cover additional library paths and documented limits.
+
+
+### Real-provider integration
+
+CI's **Real OAuth provider (Keycloak 26.8.1)** job starts the official Keycloak
+image at the immutable digest in `test/support/keycloak_fixture.ex`. It imports
+an ephemeral realm and separate Basic/JWT and resource-server registrations.
+No cloud account or production credentials are used.
+
+`integration/keycloak_auth_test.exs` exercises both discovery orchestrators with
+Basic and private-key JWT client credentials. It verifies real access-token
+signatures using the AS JWKS, issuer/resource/expiry and active introspection.
+An actual Arbor client completes discovery and ping against a mounted Arbor
+HTTP server; an application-owned `ServerGuard` validates the Keycloak token.
+Missing/invalid bearer tokens and a wrong client secret are rejected. The
+fixture uses explicitly allowed loopback HTTP, so production TLS, DNS, provider
+administration and arbitrary Keycloak configurations are not qualified.
+
+```sh
+python3 -B scripts/check_mcp_assurance.py --run --kind real_provider --output tmp/mcp-assurance/real-provider.json
+```
+
+Docker is required. The dedicated lane fails if the provider cannot start or an
+assertion fails; it never substitutes a mock or silently skips. CI retains the
+checkout-bound receipt and provider logs in `mcp-real-provider` and removes
+only containers owned by that run.
+
+This provider lane qualifies **client credentials**, not the complete enterprise
+chain. Keycloak's [ID-JAG guide](https://www.keycloak.org/securing-apps/identity-assertion-jwt-authorization-grant)
+describes an experimental receiver based on draft-01 and an unimplemented issuer.
+Our adopted enterprise target incorporates draft-04. Enterprise qualification
+therefore remains the explicitly scoped official/SDK and independent-peer
+coverage above; no real-provider ID-JAG issuance, SAML SSO or tenant policy is
+claimed by the Keycloak lane.
 
 ## Legacy Feature Coverage
 

@@ -65,9 +65,9 @@ defmodule Arbor.MCP.Authorization.EnterpriseFlow do
   """
   @spec execute(config()) :: {:ok, map()} | {:error, term()}
   def execute(config) do
-    with {:ok, as_token_endpoint} <- resolve_as_token_endpoint(config),
+    with {:ok, as_token_endpoint, as_metadata} <- resolve_as_token_endpoint(config),
          {:ok, exchange_result} <- exchange_for_id_jag(config) do
-      present_id_jag_to_as(exchange_result, as_token_endpoint, config)
+      present_id_jag_to_as(exchange_result, as_token_endpoint, config, as_metadata)
     end
   end
 
@@ -132,12 +132,12 @@ defmodule Arbor.MCP.Authorization.EnterpriseFlow do
            OIDCDiscovery.discover(config[:as_issuer], metadata_fetch_options(config)),
          :ok <- EnterpriseMetadata.validate(metadata),
          {:ok, _info} <- ResourceASAuthentication.client_info(metadata, config) do
-      {:ok, metadata["token_endpoint"]}
+      {:ok, metadata["token_endpoint"], metadata}
     end
   end
 
   defp resolve_as_token_endpoint(%{as_token_endpoint: endpoint}) when is_binary(endpoint) do
-    {:ok, endpoint}
+    {:ok, endpoint, nil}
   end
 
   defp resolve_as_token_endpoint(%{as_issuer: as_issuer} = config) do
@@ -146,7 +146,7 @@ defmodule Arbor.MCP.Authorization.EnterpriseFlow do
         with :ok <- EnterpriseMetadata.validate(metadata) do
           case Map.get(metadata, "token_endpoint") do
             nil -> {:error, :missing_token_endpoint}
-            endpoint -> {:ok, endpoint}
+            endpoint -> {:ok, endpoint, metadata}
           end
         end
 
@@ -164,10 +164,8 @@ defmodule Arbor.MCP.Authorization.EnterpriseFlow do
   end
 
   # Step 3: Present ID-JAG to AS via JWT bearer grant
-  defp present_id_jag_to_as(exchange_result, endpoint, %{as_auth: auth} = config)
+  defp present_id_jag_to_as(exchange_result, _endpoint, %{as_auth: auth} = config, metadata)
        when not is_nil(auth) do
-    metadata = %{"issuer" => config[:as_issuer], "token_endpoint" => endpoint}
-
     body =
       [
         {"grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"},
@@ -180,7 +178,7 @@ defmodule Arbor.MCP.Authorization.EnterpriseFlow do
     ResourceASAuthentication.exchange(body, metadata, config)
   end
 
-  defp present_id_jag_to_as(exchange_result, as_token_endpoint, config) do
+  defp present_id_jag_to_as(exchange_result, as_token_endpoint, config, _metadata) do
     # The exchange result should contain the ID-JAG as the access_token
     id_jag = exchange_result.access_token
 

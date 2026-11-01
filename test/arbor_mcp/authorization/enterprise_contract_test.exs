@@ -7,6 +7,78 @@ defmodule Arbor.MCP.Authorization.EnterpriseContractTest do
 
   for {flow, label} <- [{EnterpriseFlow, "explicit"}, {FullOAuthFlow, "discovery"}] do
     @flow flow
+
+    @tag assurance: ["ema.as.#{label}.oauth_error"]
+    test "#{inspect(flow)} preserves an AS denial without retrying with IdP credentials" do
+      config =
+        AuthExtensionFixture.config(as_status: 400, as_response: %{"error" => "invalid_scope"})
+
+      config =
+        Map.put(config, :as_auth, %{
+          issuer: config.as_issuer,
+          client_id: "as-client",
+          auth_method: :client_secret_basic,
+          client_secret: "fake-as-secret"
+        })
+
+      reason = {:as_auth_failed, {:oauth_error, 400, %{"error" => "invalid_scope"}}}
+      expected = if @flow == FullOAuthFlow, do: {:jwt_bearer_failed, reason}, else: reason
+      assert {:error, ^expected} = @flow.execute(config)
+
+      assert_received {:idp, _, _}
+      assert_received {:as, [header], _}
+      assert header == "Basic " <> Base.encode64("as-client:fake-as-secret")
+      refute_received {:as, _, _}
+    end
+
+    @tag assurance: ["ema.as.#{label}.invalid_response"]
+    test "#{inspect(flow)} rejects an AS success response without an access token" do
+      config = AuthExtensionFixture.config(as_response: %{"token_type" => "Bearer"})
+
+      config =
+        Map.put(config, :as_auth, %{
+          issuer: config.as_issuer,
+          client_id: "as-client",
+          auth_method: :client_secret_basic,
+          client_secret: "fake-as-secret"
+        })
+
+      reason = {:as_auth_failed, :invalid_token_response}
+      expected = if @flow == FullOAuthFlow, do: {:jwt_bearer_failed, reason}, else: reason
+      assert {:error, ^expected} = @flow.execute(config)
+      assert_received {:as, _, _}
+      refute_received {:as, _, _}
+    end
+
+    @tag :cimd_auth_contract
+    @tag assurance: ["ema.cimd.#{label}.exchange"]
+    test "#{inspect(flow)} preserves discovered CIMD support through the AS exchange" do
+      client_id = "https://client-contract.example/metadata.json"
+      key = JWT.generate_ec_key()
+
+      config =
+        AuthExtensionFixture.config(cimd: true)
+        |> Map.put(:client_id, client_id)
+        |> Map.put(:client_registration, {:cimd, client_id})
+        |> Map.put(:as_auth, %{
+          issuer: "https://as-contract.example",
+          client_id: client_id,
+          auth_method: :private_key_jwt,
+          private_key: key,
+          signing_algorithm: "ES256"
+        })
+
+      assert {:ok, %{access_token: "resource-token"}} = @flow.execute(config)
+      assert_received {:as, [], grant}
+      assert grant["client_id"] == client_id
+
+      assert {:ok, _claims} =
+               ClientAssertion.verify_assertion(grant["client_assertion"], client_id,
+                 token_endpoint: config.as_issuer,
+                 client_jwks: JWT.to_public_key(key)
+               )
+    end
+
     for method <- [:client_secret_basic, :client_secret_post, :private_key_jwt] do
       @method method
       @tag assurance: ["ema.as.#{label}.#{method}"]

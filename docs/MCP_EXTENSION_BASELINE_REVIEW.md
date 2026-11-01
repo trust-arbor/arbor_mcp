@@ -53,6 +53,17 @@ flows now require discovered S256 support; this is an inherited core authorizati
 check, not another extension. The complete Tasks clause/schema and client interop
 inventories remain pending. No arbitrary vendor deployment is certified.
 
+
+The subsequent Auth qualification follow-up attaches the existing confidential-IdP,
+JWT and ID-JAG contracts to the register, adds required-claim and AS-error cases,
+and qualifies independent CIMD document/key retrieval with both orchestrators.
+Its regression exposed and corrected `EnterpriseFlow` discarding discovered
+CIMD support before the AS exchange. A separate pinned real Keycloak lane
+qualifies client credentials; it does not qualify real enterprise ID-JAG issuance.
+See [real-provider integration](MCP_COVERAGE_MATRIX.md#real-provider-integration).
+The matrix's green checks describe implemented library roles; qualification and
+host/provider limits are separate columns.
+
 ## Initial outcome
 
 Twelve source baselines were assessed. Ten were acknowledged in the initial assessment:
