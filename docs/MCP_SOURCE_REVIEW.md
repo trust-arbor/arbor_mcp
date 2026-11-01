@@ -7,7 +7,7 @@ every optional profile, a deployed host or a third-party identity provider.
 A source marked `complete` means its stated **inventory scope** has dispositions:
 supported behavior, partial evidence, host duties and unadopted profiles are mapped.
 It does not mean implementation or executable qualification is complete. The register
-contains 114 requirement bundles, 90 named local/peer cases and mappings to all 73
+contains 114 requirement bundles, 163 named local/peer/provider cases and mappings to all 73
 existing official modern core scenarios.
 
 ## Core revision

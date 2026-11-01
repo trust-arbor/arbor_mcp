@@ -572,6 +572,371 @@
       "file": "test/arbor_mcp/authorization/full_oauth_flow_credential_store_test.exs",
       "kind": "contract",
       "asserts": "When every metadata endpoint returns404, guessed endpoints cannot fabricate S256 support or initiate any protocol HTTP request."
+    },
+    "ema.idp.explicit.client_secret_basic": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "explicit orchestrator authenticates the IdP leg with client_secret_basic; resource-AS credentials remain distinct, signed JWT claims/method and target audience/resource are checked."
+    },
+    "ema.idp.explicit.client_secret_post": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "explicit orchestrator authenticates the IdP leg with client_secret_post; resource-AS credentials remain distinct, signed JWT claims/method and target audience/resource are checked."
+    },
+    "ema.idp.explicit.private_key_jwt": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "explicit orchestrator authenticates the IdP leg with private_key_jwt; resource-AS credentials remain distinct, signed JWT claims/method and target audience/resource are checked."
+    },
+    "ema.idp.explicit.public_default": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "explicit enterprise orchestrator retains its public-client exchange when idp_auth is absent or nil."
+    },
+    "ema.idp.explicit.discovery": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "explicit enterprise orchestrator discovers the token endpoint when only idp_auth supplies the IdP."
+    },
+    "ema.idp.explicit.binding": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "explicit enterprise orchestrator rejects issuer and endpoint conflicts before posting any token."
+    },
+    "ema.idp.explicit.issuer": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "explicit enterprise orchestrator rejects discovery for another issuer before sending credentials."
+    },
+    "ema.idp.explicit.methods": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "explicit enterprise orchestrator requires an advertised method and defaults absent metadata to Basic."
+    },
+    "ema.idp.explicit.config": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "explicit enterprise orchestrator rejects malformed config without falling back to AS credentials."
+    },
+    "ema.idp.explicit.algorithms": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "explicit enterprise orchestrator rejects incompatible JWT signing metadata."
+    },
+    "ema.idp.explicit.default_algorithm": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "explicit enterprise orchestrator defaults JWT signing to RS256 when signing metadata is absent."
+    },
+    "ema.idp.explicit.rejected": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "explicit enterprise orchestrator does not retry rejected IdP authentication with AS credentials."
+    },
+    "ema.cimd.explicit.exchange": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "asserts": "explicit orchestrator retains discovered CIMD support through resource-AS JWT authentication; assertion client identity, signature and audience are verified."
+    },
+    "peer.ema.explicit.cimd.inline": {
+      "kind": "independent_fixture",
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "asserts": "Independent AS retrieves CIMD and inline keys, verifies the client JWT and ID-JAG and issues a token accepted at the protected resource. Explicit logical HTTPS-to-loopback mapping, not production DNS/TLS qualification."
+    },
+    "peer.ema.explicit.cimd.jwks_uri": {
+      "kind": "independent_fixture",
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "asserts": "Independent AS retrieves CIMD and jwks_uri keys, verifies the client JWT and ID-JAG and issues a token accepted at the protected resource. Explicit logical HTTPS-to-loopback mapping, not production DNS/TLS qualification."
+    },
+    "peer.ema.explicit.cimd.reject.client_id": {
+      "kind": "independent_fixture",
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "asserts": "Independent AS rejects CIMD client_id mismatch; no token is issued and resource is not accessed."
+    },
+    "peer.ema.explicit.cimd.reject.key": {
+      "kind": "independent_fixture",
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "asserts": "Independent AS rejects CIMD key mismatch; no token is issued and resource is not accessed."
+    },
+    "ema.idp.discovery.client_secret_basic": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "discovery orchestrator authenticates the IdP leg with client_secret_basic; resource-AS credentials remain distinct, signed JWT claims/method and target audience/resource are checked."
+    },
+    "ema.idp.discovery.client_secret_post": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "discovery orchestrator authenticates the IdP leg with client_secret_post; resource-AS credentials remain distinct, signed JWT claims/method and target audience/resource are checked."
+    },
+    "ema.idp.discovery.private_key_jwt": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "discovery orchestrator authenticates the IdP leg with private_key_jwt; resource-AS credentials remain distinct, signed JWT claims/method and target audience/resource are checked."
+    },
+    "ema.idp.discovery.public_default": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "discovery enterprise orchestrator retains its public-client exchange when idp_auth is absent or nil."
+    },
+    "ema.idp.discovery.discovery": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "discovery enterprise orchestrator discovers the token endpoint when only idp_auth supplies the IdP."
+    },
+    "ema.idp.discovery.binding": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "discovery enterprise orchestrator rejects issuer and endpoint conflicts before posting any token."
+    },
+    "ema.idp.discovery.issuer": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "discovery enterprise orchestrator rejects discovery for another issuer before sending credentials."
+    },
+    "ema.idp.discovery.methods": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "discovery enterprise orchestrator requires an advertised method and defaults absent metadata to Basic."
+    },
+    "ema.idp.discovery.config": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "discovery enterprise orchestrator rejects malformed config without falling back to AS credentials."
+    },
+    "ema.idp.discovery.algorithms": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "discovery enterprise orchestrator rejects incompatible JWT signing metadata."
+    },
+    "ema.idp.discovery.default_algorithm": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "discovery enterprise orchestrator defaults JWT signing to RS256 when signing metadata is absent."
+    },
+    "ema.idp.discovery.rejected": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_idp_auth_test.exs",
+      "asserts": "discovery enterprise orchestrator does not retry rejected IdP authentication with AS credentials."
+    },
+    "ema.cimd.discovery.exchange": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "asserts": "discovery orchestrator retains discovered CIMD support through resource-AS JWT authentication; assertion client identity, signature and audience are verified."
+    },
+    "peer.ema.discovery.cimd.inline": {
+      "kind": "independent_fixture",
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "asserts": "Independent AS retrieves CIMD and inline keys, verifies the client JWT and ID-JAG and issues a token accepted at the protected resource. Explicit logical HTTPS-to-loopback mapping, not production DNS/TLS qualification."
+    },
+    "peer.ema.discovery.cimd.jwks_uri": {
+      "kind": "independent_fixture",
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "asserts": "Independent AS retrieves CIMD and jwks_uri keys, verifies the client JWT and ID-JAG and issues a token accepted at the protected resource. Explicit logical HTTPS-to-loopback mapping, not production DNS/TLS qualification."
+    },
+    "peer.ema.discovery.cimd.reject.client_id": {
+      "kind": "independent_fixture",
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "asserts": "Independent AS rejects CIMD client_id mismatch; no token is issued and resource is not accessed."
+    },
+    "peer.ema.discovery.cimd.reject.key": {
+      "kind": "independent_fixture",
+      "file": "test/arbor_mcp/integration/auth_extension_interop_test.exs",
+      "asserts": "Independent AS rejects CIMD key mismatch; no token is issued and resource is not accessed."
+    },
+    "assertion.algorithm": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/client_assertion_test.exs",
+      "asserts": "Custom asymmetric algorithm and kid are preserved."
+    },
+    "assertion.lifetime": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/client_assertion_test.exs",
+      "asserts": "Custom assertion lifetime bounds the signed exp."
+    },
+    "assertion.form": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/client_assertion_test.exs",
+      "asserts": "JWT authentication parameters carry the exact assertion type and client ID."
+    },
+    "assertion.verify.no_keys": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/client_assertion_test.exs",
+      "asserts": "Missing client verification keys are rejected."
+    },
+    "idjag.creation": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "asserts": "Created ID-JAG has typed header, issuer, subject, audience, client ID, resource, unique-ID and time fields."
+    },
+    "idjag.scope": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "asserts": "Optional scope is preserved in the signed ID-JAG."
+    },
+    "idjag.lifetime": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "asserts": "Configured grant lifetime bounds signed expiry."
+    },
+    "idjag.type": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "asserts": "A signed regular JWT is rejected as an ID-JAG."
+    },
+    "keycloak.cc.basic.mcp": {
+      "kind": "real_provider",
+      "file": "test/arbor_mcp/integration/keycloak_auth_test.exs",
+      "asserts": "basic authentication: Arbor MCP client obtains credentials via discovery and completes a request to the real Arbor HTTP server, whose ServerGuard validates the token with Keycloak introspection."
+    },
+    "keycloak.cc.full.basic": {
+      "kind": "real_provider",
+      "file": "test/arbor_mcp/integration/keycloak_auth_test.exs",
+      "asserts": "basic authentication: FullOAuthFlow obtains a token from real Keycloak; AS JWKS verifies signature and issuer/resource/expiry, and real introspection confirms active."
+    },
+    "keycloak.cc.dedicated.basic": {
+      "kind": "real_provider",
+      "file": "test/arbor_mcp/integration/keycloak_auth_test.exs",
+      "asserts": "basic authentication: DiscoveryFlow obtains a token from real Keycloak; AS JWKS verifies signature and issuer/resource/expiry, and real introspection confirms active."
+    },
+    "keycloak.cc.jwt.mcp": {
+      "kind": "real_provider",
+      "file": "test/arbor_mcp/integration/keycloak_auth_test.exs",
+      "asserts": "jwt authentication: Arbor MCP client obtains credentials via discovery and completes a request to the real Arbor HTTP server, whose ServerGuard validates the token with Keycloak introspection."
+    },
+    "keycloak.cc.full.jwt": {
+      "kind": "real_provider",
+      "file": "test/arbor_mcp/integration/keycloak_auth_test.exs",
+      "asserts": "jwt authentication: FullOAuthFlow obtains a token from real Keycloak; AS JWKS verifies signature and issuer/resource/expiry, and real introspection confirms active."
+    },
+    "keycloak.cc.dedicated.jwt": {
+      "kind": "real_provider",
+      "file": "test/arbor_mcp/integration/keycloak_auth_test.exs",
+      "asserts": "jwt authentication: DiscoveryFlow obtains a token from real Keycloak; AS JWKS verifies signature and issuer/resource/expiry, and real introspection confirms active."
+    },
+    "keycloak.cc.bad_secret": {
+      "kind": "real_provider",
+      "file": "test/arbor_mcp/integration/keycloak_auth_test.exs",
+      "asserts": "Real Keycloak rejects a wrong pre-registered client secret."
+    },
+    "keycloak.mcp.unauthorized": {
+      "kind": "real_provider",
+      "file": "test/arbor_mcp/integration/keycloak_auth_test.exs",
+      "asserts": "Application-owned ServerGuard before the real mounted Arbor HTTP plug rejects missing and invalid bearer tokens; authentication is explicitly enabled."
+    },
+    "ema.as.explicit.oauth_error": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "asserts": "explicit enterprise orchestrator: AS OAuth denial retains its status/error and is not retried using IdP credentials."
+    },
+    "ema.as.explicit.invalid_response": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "asserts": "explicit enterprise orchestrator: AS success without access_token is rejected; the AS leg is not retried."
+    },
+    "ema.as.discovery.oauth_error": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "asserts": "discovery enterprise orchestrator: AS OAuth denial retains its status/error and is not retried using IdP credentials."
+    },
+    "ema.as.discovery.invalid_response": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/enterprise_contract_test.exs",
+      "asserts": "discovery enterprise orchestrator: AS success without access_token is rejected; the AS leg is not retried."
+    },
+    "idjag.missing.iss": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "asserts": "A correctly signed, typed grant lacking required iss is rejected; existing positive grant case supplies the acceptance control."
+    },
+    "idjag.missing.sub": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "asserts": "A correctly signed, typed grant lacking required sub is rejected; existing positive grant case supplies the acceptance control."
+    },
+    "idjag.missing.aud": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "asserts": "A correctly signed, typed grant lacking required aud is rejected; existing positive grant case supplies the acceptance control."
+    },
+    "idjag.missing.client_id": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "asserts": "A correctly signed, typed grant lacking required client_id is rejected; existing positive grant case supplies the acceptance control."
+    },
+    "idjag.missing.jti": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "asserts": "A correctly signed, typed grant lacking required jti is rejected; existing positive grant case supplies the acceptance control."
+    },
+    "idjag.missing.exp": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "asserts": "A correctly signed, typed grant lacking required exp is rejected; existing positive grant case supplies the acceptance control."
+    },
+    "idjag.missing.iat": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "asserts": "A correctly signed, typed grant lacking required iat is rejected; existing positive grant case supplies the acceptance control."
+    },
+    "idjag.missing.resource": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/id_jag_test.exs",
+      "asserts": "A correctly signed, typed grant lacking required resource is rejected; existing positive grant case supplies the acceptance control."
+    },
+    "access.client_credentials.reject.mac": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic client_credentials token adoption rejects mac token responses before persistence/Bearer use; generic token exchange helpers are unchanged."
+    },
+    "access.client_credentials.reject.null": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic client_credentials token adoption rejects null token responses before persistence/Bearer use; generic token exchange helpers are unchanged."
+    },
+    "access.client_credentials.reject.number": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic client_credentials token adoption rejects number token responses before persistence/Bearer use; generic token exchange helpers are unchanged."
+    },
+    "access.client_credentials.empty": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic client_credentials token adoption rejects empty token responses before persistence/Bearer use; generic token exchange helpers are unchanged."
+    },
+    "access.client_credentials.case_insensitive": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic client_credentials token adoption accepts case-insensitive Bearer types."
+    },
+    "access.enterprise.reject.mac": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic enterprise token adoption rejects mac token responses before persistence/Bearer use; generic token exchange helpers are unchanged."
+    },
+    "access.enterprise.reject.null": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic enterprise token adoption rejects null token responses before persistence/Bearer use; generic token exchange helpers are unchanged."
+    },
+    "access.enterprise.reject.number": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic enterprise token adoption rejects number token responses before persistence/Bearer use; generic token exchange helpers are unchanged."
+    },
+    "access.enterprise.empty": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic enterprise token adoption rejects empty token responses before persistence/Bearer use; generic token exchange helpers are unchanged."
+    },
+    "access.enterprise.case_insensitive": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
+      "asserts": "Automatic enterprise token adoption accepts case-insensitive Bearer types."
+    },
+    "access.refresh.reject.mac": {
+      "kind": "contract",
+      "file": "test/arbor_mcp/authorization/provider_oauth_refresh_test.exs",
+      "asserts": "Refreshing with an unsupported token_type cannot replace provider Bearer credentials or advance provider acquisitions; existing error fallback retains the previous state."
     }
   },
   "requirements": [
@@ -588,7 +953,7 @@
       "status": "partial",
       "implementation": [],
       "cases": [],
-      "notes": "Adopted core and incorporated-reference sections have scoped requirement dispositions below; partial executable evidence, host duties and unadopted profiles preclude a full-compliance claim."
+      "notes": "Adopted core/reference sections have scoped dispositions. The matrix marks implemented client roles separately from broad inherited bundles, partial executable evidence and host/AS obligations; no full-system compliance claim."
     },
     {
       "id": "CC.PREREG",
@@ -607,7 +972,10 @@
         "lib/arbor_mcp/authorization/registration_policy.ex"
       ],
       "cases": [
-        "cc.no_dcr"
+        "cc.no_dcr",
+        "keycloak.cc.basic.mcp",
+        "keycloak.cc.full.basic",
+        "keycloak.cc.dedicated.basic"
       ],
       "notes": "Authorization-code DCR remains separate."
     },
@@ -632,7 +1000,19 @@
         "cc.basic",
         "sdk.auth.basic",
         "cc.discovery.secret.empty",
-        "cc.discovery.secret.nil"
+        "cc.discovery.secret.nil",
+        "keycloak.cc.basic.mcp",
+        "keycloak.cc.full.basic",
+        "keycloak.cc.dedicated.basic",
+        "keycloak.cc.jwt.mcp",
+        "keycloak.cc.full.jwt",
+        "keycloak.cc.dedicated.jwt",
+        "keycloak.cc.bad_secret",
+        "access.client_credentials.reject.mac",
+        "access.client_credentials.reject.null",
+        "access.client_credentials.reject.number",
+        "access.client_credentials.empty",
+        "access.client_credentials.case_insensitive"
       ],
       "notes": "POST is supported as a configured secret method; AS metadata has separate obligations."
     },
@@ -646,7 +1026,7 @@
       ],
       "level": "inherited",
       "requirement": "JWT authentication uses the client-assertion type and signed assertion profile.",
-      "status": "partial",
+      "status": "implemented",
       "implementation": [
         "lib/arbor_mcp/authorization/client_assertion.ex"
       ],
@@ -659,9 +1039,16 @@
         "assertion.verify.client",
         "assertion.verify.audience",
         "assertion.verify.key",
-        "peer.cc.bad_key"
+        "peer.cc.bad_key",
+        "assertion.algorithm",
+        "assertion.lifetime",
+        "assertion.form",
+        "assertion.verify.no_keys",
+        "keycloak.cc.jwt.mcp",
+        "keycloak.cc.full.jwt",
+        "keycloak.cc.dedicated.jwt"
       ],
-      "notes": "Builder and verifier contracts plus configured Node/jose and SDK interop cases are separate. RFC7523.CLIENT, RFC7523.GRANT and RFC7523.POLICY record the adopted inherited scope; execution artifacts qualify only named cases."
+      "notes": "Named builder/verifier, independent jose peer, SDK helper and real Keycloak JWT cases qualify the adopted client-authentication profile. RFC7523.POLICY retains AS trust, provisioning and replay duties; these are not claimed as client implementation."
     },
     {
       "id": "CC.ALG",
@@ -730,16 +1117,22 @@
       ],
       "level": "inherited",
       "requirement": "Discover the resource AS and obtain a resource-bound token before authenticated MCP use.",
-      "status": "partial",
+      "status": "implemented",
       "implementation": [
         "lib/arbor_mcp/authorization/full_oauth_flow.ex",
         "lib/arbor_mcp/authorization/discovery_flow.ex"
       ],
       "cases": [
         "cc.basic",
-        "cc.resource_mismatch"
+        "cc.resource_mismatch",
+        "keycloak.cc.basic.mcp",
+        "keycloak.cc.full.basic",
+        "keycloak.cc.dedicated.basic",
+        "keycloak.cc.jwt.mcp",
+        "keycloak.cc.full.jwt",
+        "keycloak.cc.dedicated.jwt"
       ],
-      "notes": "Local token-flow coverage is not complete transport-level interop."
+      "notes": "Named discovery binding contracts plus real Keycloak Basic/JWT token and mounted Arbor client/server cases. Provider qualification is confined to the configured client-credentials profiles on loopback HTTP; production DNS/TLS and AS deployment policy remain separate."
     },
     {
       "id": "CC.SECURITY",
@@ -787,7 +1180,7 @@
       ],
       "level": "MUST",
       "requirement": "Exchange the identity assertion for an ID-JAG with audience equal to the resource-AS issuer.",
-      "status": "partial",
+      "status": "implemented",
       "implementation": [
         "lib/arbor_mcp/authorization/enterprise_flow.ex",
         "lib/arbor_mcp/authorization/full_oauth_flow.ex",
@@ -800,9 +1193,15 @@
         "peer.ema.discovery.id_token",
         "peer.ema.discovery.refresh_token",
         "peer.ema.discovery.saml2",
-        "sdk.auth.enterprise"
+        "sdk.auth.enterprise",
+        "ema.idp.explicit.client_secret_basic",
+        "ema.idp.explicit.client_secret_post",
+        "ema.idp.explicit.private_key_jwt",
+        "ema.idp.discovery.client_secret_basic",
+        "ema.idp.discovery.client_secret_post",
+        "ema.idp.discovery.private_key_jwt"
       ],
-      "notes": "Named positive and negative exchange cases are being added."
+      "notes": "Both orchestrators exercise the selected subject exchange, target AS/resource binding and separate IdP credentials against the verifying independent peer; initial SSO and IdP issuance policy are host-owned."
     },
     {
       "id": "EMA.IDP-AUTH",
@@ -814,12 +1213,37 @@
       ],
       "level": "profile",
       "requirement": "Authenticate the exchange when the IdP registration requires authentication.",
-      "status": "partial",
+      "status": "implemented",
       "implementation": [
         "lib/arbor_mcp/authorization/idp_authentication.ex"
       ],
-      "cases": [],
-      "notes": "Optional issuer-bound Basic/POST/JWT exists; register its executable evidence and independent peer."
+      "cases": [
+        "ema.idp.explicit.client_secret_basic",
+        "ema.idp.explicit.client_secret_post",
+        "ema.idp.explicit.private_key_jwt",
+        "ema.idp.explicit.public_default",
+        "ema.idp.explicit.discovery",
+        "ema.idp.explicit.binding",
+        "ema.idp.explicit.issuer",
+        "ema.idp.explicit.methods",
+        "ema.idp.explicit.config",
+        "ema.idp.explicit.algorithms",
+        "ema.idp.explicit.default_algorithm",
+        "ema.idp.explicit.rejected",
+        "ema.idp.discovery.client_secret_basic",
+        "ema.idp.discovery.client_secret_post",
+        "ema.idp.discovery.private_key_jwt",
+        "ema.idp.discovery.public_default",
+        "ema.idp.discovery.discovery",
+        "ema.idp.discovery.binding",
+        "ema.idp.discovery.issuer",
+        "ema.idp.discovery.methods",
+        "ema.idp.discovery.config",
+        "ema.idp.discovery.algorithms",
+        "ema.idp.discovery.default_algorithm",
+        "ema.idp.discovery.rejected"
+      ],
+      "notes": "Both orchestrators have named Basic/POST/JWT, method/algorithm/configuration/issuer binding and rejected-authentication contracts. Independent JWT exchanges are recorded under EMA.EXCHANGE; production IdP registration/policy is separate."
     },
     {
       "id": "EMA.SUBJECTS",
@@ -901,7 +1325,7 @@
       ],
       "level": "inherited",
       "requirement": "Validate signature, audience, expiry, typed header and required ID-JAG claims.",
-      "status": "partial",
+      "status": "implemented",
       "implementation": [
         "lib/arbor_mcp/authorization/id_jag.ex",
         "lib/arbor_mcp/authorization/jwt.ex"
@@ -909,9 +1333,21 @@
       "cases": [
         "idjag.audience",
         "idjag.signature",
-        "idjag.expiry"
+        "idjag.expiry",
+        "idjag.creation",
+        "idjag.scope",
+        "idjag.lifetime",
+        "idjag.type",
+        "idjag.missing.iss",
+        "idjag.missing.sub",
+        "idjag.missing.aud",
+        "idjag.missing.client_id",
+        "idjag.missing.jti",
+        "idjag.missing.exp",
+        "idjag.missing.iat",
+        "idjag.missing.resource"
       ],
-      "notes": "IDJAG.CLAIMS, IDJAG.IDP_POLICY, IDJAG.GRANT and IDJAG.TRUST record incorporated claim and policy dispositions. Named helper assertions do not qualify host tenant policy, authenticated-client binding or replay consumption."
+      "notes": "Named signature/audience/resource/expiry/type, creation/scope/lifetime and each-required-key rejection contracts qualify the helper claim-validation role. Semantic identity/tenant resolution, authenticated-client authorization and replay consumption remain host/IdP/AS duties under the separate IDJAG policy bundles."
     },
     {
       "id": "EMA.GRANT",
@@ -938,7 +1374,11 @@
         "ema.as.discovery.client_secret_post",
         "ema.as.discovery.private_key_jwt",
         "ema.as.discovery.mismatch",
-        "peer.ema.key_separation"
+        "peer.ema.key_separation",
+        "peer.ema.explicit.cimd.inline",
+        "peer.ema.explicit.cimd.jwks_uri",
+        "peer.ema.discovery.cimd.inline",
+        "peer.ema.discovery.cimd.jwks_uri"
       ],
       "notes": "Optional as_auth Basic/POST/JWT has explicit issuer/client/endpoint bindings; legacy behavior retained when absent."
     },
@@ -952,7 +1392,7 @@
       ],
       "level": "MAY",
       "requirement": "A non-preregistered client can use a configured metadata document identifier.",
-      "status": "partial",
+      "status": "implemented",
       "implementation": [
         "lib/arbor_mcp/authorization/registration_policy.ex",
         "lib/arbor_mcp/authorization/client_id_metadata.ex"
@@ -960,9 +1400,19 @@
       "cases": [
         "ema.cimd.supported",
         "ema.cimd.unsupported",
-        "ema.cimd.invalid_url"
+        "ema.cimd.invalid_url",
+        "ema.cimd.explicit.exchange",
+        "peer.ema.explicit.cimd.inline",
+        "peer.ema.explicit.cimd.jwks_uri",
+        "peer.ema.explicit.cimd.reject.client_id",
+        "peer.ema.explicit.cimd.reject.key",
+        "ema.cimd.discovery.exchange",
+        "peer.ema.discovery.cimd.inline",
+        "peer.ema.discovery.cimd.jwks_uri",
+        "peer.ema.discovery.cimd.reject.client_id",
+        "peer.ema.discovery.cimd.reject.key"
       ],
-      "notes": "Explicit as_auth CIMD retains AS-support and URL checks. A complete independent CIMD document-fetch/registration qualification is still pending."
+      "notes": "Both orchestrators preserve discovered CIMD support and authenticate with the metadata-document client ID. Independent AS fetches metadata/inline or URL JWKS and rejects identity/key mismatches. Explicit fixture transport mapping does not qualify production DNS/TLS or a vendor CIMD AS."
     },
     {
       "id": "EMA.ISSUANCE",
@@ -1043,9 +1493,20 @@
         "ema.exchange.token_type",
         "ema.exchange.missing_type",
         "ema.exchange.bearer_type",
-        "ema.exchange.missing_token_type"
+        "ema.exchange.missing_token_type",
+        "ema.idp.explicit.rejected",
+        "ema.idp.discovery.rejected",
+        "ema.as.explicit.oauth_error",
+        "ema.as.explicit.invalid_response",
+        "ema.as.discovery.oauth_error",
+        "ema.as.discovery.invalid_response",
+        "access.enterprise.reject.mac",
+        "access.enterprise.reject.null",
+        "access.enterprise.reject.number",
+        "access.enterprise.empty",
+        "access.enterprise.case_insensitive"
       ],
-      "notes": "Wrong or missing issued token type and wrong/null token_type are rejected before forwarding. RFC6749.RESPONSES, RFC8693.RESPONSE and CORE.AUTH_ISSUER record the adopted response and issuer scope; executable qualification remains limited to their named cases."
+      "notes": "Named cases reject wrong/missing exchanged token types and missing AS access_token, preserve AS OAuth denial, and reject failed IdP authentication without cross-authority credential retries. Broader mixed client/issuer and AS response/issuance duties remain separately scoped under RFC6749.RESPONSES, RFC8693.RESPONSE and CORE.AUTH_ISSUER."
     },
     {
       "id": "TASKS.TTL",
@@ -2102,7 +2563,20 @@
         "lib/arbor_mcp/authorization/jwt_verifier.ex",
         "lib/arbor_mcp/authorization/server_guard.ex"
       ],
-      "cases": [],
+      "cases": [
+        "keycloak.mcp.unauthorized",
+        "access.client_credentials.reject.mac",
+        "access.client_credentials.reject.null",
+        "access.client_credentials.reject.number",
+        "access.client_credentials.empty",
+        "access.client_credentials.case_insensitive",
+        "access.enterprise.reject.mac",
+        "access.enterprise.reject.null",
+        "access.enterprise.reject.number",
+        "access.enterprise.empty",
+        "access.enterprise.case_insensitive",
+        "access.refresh.reject.mac"
+      ],
       "conformance": [],
       "notes": "Existing authorization/provider/transport tests remain authoritative. The client Auth conformance scenarios do not certify arbitrary resource-server policy or upstream token separation."
     },
@@ -2121,7 +2595,9 @@
         "lib/arbor_mcp/authorization/full_oauth_flow.ex",
         "lib/arbor_mcp/authorization/credential_store.ex"
       ],
-      "cases": [],
+      "cases": [
+        "access.refresh.reject.mac"
+      ],
       "conformance": [
         "official.client.auth-offline-access-scope",
         "official.client.auth-offline-access-not-supported"
@@ -2335,7 +2811,22 @@
         "ema.exchange.token_type",
         "ema.exchange.missing_type",
         "ema.exchange.bearer_type",
-        "ema.exchange.missing_token_type"
+        "ema.exchange.missing_token_type",
+        "ema.as.explicit.oauth_error",
+        "ema.as.explicit.invalid_response",
+        "ema.as.discovery.oauth_error",
+        "ema.as.discovery.invalid_response",
+        "access.client_credentials.reject.mac",
+        "access.client_credentials.reject.null",
+        "access.client_credentials.reject.number",
+        "access.client_credentials.empty",
+        "access.client_credentials.case_insensitive",
+        "access.enterprise.reject.mac",
+        "access.enterprise.reject.null",
+        "access.enterprise.reject.number",
+        "access.enterprise.empty",
+        "access.enterprise.case_insensitive",
+        "access.refresh.reject.mac"
       ],
       "conformance": [],
       "notes": "The named exchange regressions test typed enterprise responses. General OAuth error/status/cache-control issuance is an AS duty and not certified by them."
@@ -2396,7 +2887,11 @@
         "assertion.valid",
         "assertion.verify.valid",
         "assertion.verify.audience",
-        "assertion.verify.key"
+        "assertion.verify.key",
+        "assertion.algorithm",
+        "assertion.lifetime",
+        "assertion.form",
+        "assertion.verify.no_keys"
       ],
       "conformance": [],
       "notes": "Named existing assertion cases and independent verifying peers exercise the adopted client assertion profile."
@@ -2621,7 +3116,9 @@
         "ema.exchange.missing_type",
         "ema.exchange.bearer_type",
         "ema.exchange.missing_token_type",
-        "ema.subject.saml_response"
+        "ema.subject.saml_response",
+        "ema.idp.explicit.rejected",
+        "ema.idp.discovery.rejected"
       ],
       "conformance": [],
       "notes": "Existing regressions reject wrong/missing response types and prevent the next token leg."
@@ -2780,10 +3277,20 @@
       "cases": [
         "ema.as.explicit.private_key_jwt",
         "ema.as.discovery.private_key_jwt",
-        "peer.ema.key_separation"
+        "peer.ema.key_separation",
+        "ema.cimd.explicit.exchange",
+        "peer.ema.explicit.cimd.inline",
+        "peer.ema.explicit.cimd.jwks_uri",
+        "peer.ema.explicit.cimd.reject.client_id",
+        "peer.ema.explicit.cimd.reject.key",
+        "ema.cimd.discovery.exchange",
+        "peer.ema.discovery.cimd.inline",
+        "peer.ema.discovery.cimd.jwks_uri",
+        "peer.ema.discovery.cimd.reject.client_id",
+        "peer.ema.discovery.cimd.reject.key"
       ],
       "conformance": [],
-      "notes": "Only the enterprise-referenced draft01 subsection is adopted. Public JWKS hosting, rotation and AS registration trust are host-owned."
+      "notes": "Separate IdP/AS credentials and CIMD client-ID assertions are qualified by contracts and an independent AS fetching document and inline/URL keys, with identity/key rejection cases. Explicit fixture transport mapping is separate from production DNS/TLS and vendor CIMD qualification."
     },
     {
       "id": "IDJAG.CLAIMS",
@@ -2803,7 +3310,19 @@
         "idjag.valid",
         "idjag.audience",
         "idjag.signature",
-        "idjag.expiry"
+        "idjag.expiry",
+        "idjag.creation",
+        "idjag.scope",
+        "idjag.lifetime",
+        "idjag.type",
+        "idjag.missing.iss",
+        "idjag.missing.sub",
+        "idjag.missing.aud",
+        "idjag.missing.client_id",
+        "idjag.missing.jti",
+        "idjag.missing.exp",
+        "idjag.missing.iat",
+        "idjag.missing.resource"
       ],
       "conformance": [],
       "notes": "Helpers cover signature/required-key/time/audience/resource checks, not semantic validation of every optional claim, subject identity, authenticated-client authorization or replay."
@@ -2844,7 +3363,13 @@
         "ema.subject.explicit.refresh",
         "ema.subject.discovery.refresh",
         "peer.ema.explicit.id_token",
-        "peer.ema.discovery.id_token"
+        "peer.ema.discovery.id_token",
+        "ema.idp.explicit.client_secret_basic",
+        "ema.idp.explicit.client_secret_post",
+        "ema.idp.explicit.private_key_jwt",
+        "ema.idp.discovery.client_secret_basic",
+        "ema.idp.discovery.client_secret_post",
+        "ema.idp.discovery.private_key_jwt"
       ],
       "conformance": [],
       "notes": "Official scenarios cover the named wire assertions; the broader bundle is not a certification of every clause or host policy."

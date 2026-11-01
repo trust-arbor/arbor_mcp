@@ -82,6 +82,45 @@ helper interoperability tests, separate from the existing core MCP transport
 lanes. SDK SAML, refresh-subject and confidential IdP JWT qualification is not
 claimed by this lane. Qualify a peer's actual capabilities before adding a claim.
 
+
+Automatic resource authorization and refresh reject unsupported/null/non-string
+access-token types and empty tokens before persistence or Bearer use. Bearer
+matching is case-insensitive. Generic token-exchange helpers retain their token
+representations, including ID-JAG's `N_A`; the access-token check runs only after
+the final resource grant or refresh.
+
+## Real authorization-server interoperability
+
+The separately pinned Keycloak 26.8.1 lane is `real_provider` evidence, distinct
+from both `independent_fixture` and SDK `interop`. With Docker available:
+
+```sh
+python3 -B scripts/check_mcp_assurance.py --run --kind real_provider --output tmp/mcp-assurance/real-provider.json
+```
+
+The test starts the official image by digest, creates an ephemeral realm and
+registrations, and exercises Basic/JWT discovery, signed/resource-bound tokens,
+real introspection and an authenticated Arbor client/server request. It also
+rejects wrong secrets and missing/invalid bearer credentials. Startup/assertion
+failures fail the lane; there is no credential-dependent skip or mock fallback.
+The provider runs only on loopback HTTP with fake local credentials. Its CA/TLS,
+production deployment, tenant administration and every provider profile are not
+certified. The dedicated CI job retains `mcp-real-provider` receipts/logs and
+cleans only its labelled containers; image upgrades require a reviewed rerun.
+
+Keycloak's experimental ID-JAG receiver is documented against draft-01 and its
+issuer is not implemented. This real-provider lane therefore qualifies only
+client credentials. The enterprise draft-04 client roles retain official, SDK
+OIDC and verifying independent-peer evidence. The latter now fetches CIMD and
+inline/URL JWKS and rejects document identity/key mismatches under an explicit
+logical HTTPS-to-loopback transport mapping.
+
+Existing confidential-IdP, JWT assertion and ID-JAG tests have named register
+cases; host duties are not marked implemented merely because a fixture enforces
+its own policy. Green matrix symbols describe the stated library role. Broad
+mixed-role requirement bundles can remain partial without implying a known
+missing client API; their exact evidence and limits remain in the register.
+
 ## Official conformance and drift
 
 Core evidence reuses the official harness assertions. `conformance.sh modern`

@@ -63,7 +63,7 @@ def load_register(path=REGISTER, root=ROOT):
             raise AssuranceError("Each source needs an immutable pin and inventory scope")
     cases = data.get("cases", {})
     for case, info in cases.items():
-        if not ID.fullmatch(case) or info.get("kind") not in {"contract", "independent_fixture", "interop"}:
+        if not ID.fullmatch(case) or info.get("kind") not in {"contract", "independent_fixture", "interop", "real_provider"}:
             raise AssuranceError(f"Invalid evidence case: {case}")
         local_file(root, info["file"])
         if not info.get("asserts"):
@@ -196,7 +196,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write-docs", action="store_true")
     parser.add_argument("--run", action="store_true", help="Execute every registered ExUnit evidence file")
-    parser.add_argument("--kind", action="append", choices=["contract", "independent_fixture", "interop"],
+    parser.add_argument("--kind", action="append", choices=["contract", "independent_fixture", "interop", "real_provider"],
                         help="Evidence kinds to execute/validate (default: contract)")
     parser.add_argument("--results", type=Path, help="Validate a previous checkout-bound execution artifact")
     parser.add_argument("--output", type=Path, default=ROOT / "tmp/mcp-assurance/results.json")

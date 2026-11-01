@@ -233,6 +233,7 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
 
   defp run_and_persist_token(as_metadata, client_info, config) do
     with {:ok, token_data} <- select_and_run_grant_flow(as_metadata, client_info, config),
+         :ok <- validate_bearer_access_token(token_data),
          :ok <- persist_token(token_data, as_metadata, client_info, config) do
       {:ok,
        token_data
@@ -240,6 +241,20 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
        |> Map.put(:refresh_context, refresh_context(token_data, as_metadata, client_info, config))}
     else
       {:error, _reason} = error -> error
+    end
+  end
+
+  # Automatic MCP authorization supplies a Bearer-only transport. Generic token
+  # exchange helpers can return other token types (including ID-JAG's N_A),
+  # but those responses must not become resource access credentials here.
+  defp validate_bearer_access_token(token_data) do
+    with token when is_binary(token) and byte_size(token) > 0 <-
+           token_field(token_data, :access_token),
+         type when is_binary(type) <- token_field(token_data, :token_type),
+         true <- String.valid?(type) and String.downcase(type) == "bearer" do
+      :ok
+    else
+      _invalid -> {:error, :invalid_token_response}
     end
   end
 
@@ -815,6 +830,7 @@ defmodule Arbor.MCP.Authorization.FullOAuthFlow do
            maybe_add_client_assertion(base, client_info, context.token_endpoint, config, method),
          {:ok, token_data} <-
            HTTPClient.make_token_request(context.token_endpoint, body, auth_method: method),
+         :ok <- validate_bearer_access_token(token_data),
          # A server that doesn't rotate refresh tokens, or omits the granted
          # scope, leaves the earlier ones in force.
          refresh_token = token_field(token_data, :refresh_token) || refresh_token,

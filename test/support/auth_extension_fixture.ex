@@ -50,9 +50,11 @@ defmodule Arbor.MCP.AuthExtensionFixture do
             do: Map.delete(response, "issued_token_type"),
             else: response
 
+        {response, status} = response_options(leg, response, opts)
+
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(status, Jason.encode!(response))
       end)
     end
 
@@ -73,6 +75,7 @@ defmodule Arbor.MCP.AuthExtensionFixture do
             "issuer" => issuer,
             "authorization_endpoint" => origin <> "/authorize",
             "token_endpoint" => origin <> "/token",
+            "client_id_metadata_document_supported" => Keyword.get(opts, :cimd, false),
             "grant_types_supported" =>
               Keyword.get(opts, :grants, ["urn:ietf:params:oauth:grant-type:jwt-bearer"]),
             "authorization_grant_profiles_supported" =>
@@ -113,4 +116,9 @@ defmodule Arbor.MCP.AuthExtensionFixture do
       ]
     }
   end
+
+  defp response_options(:as, response, opts),
+    do: {Keyword.get(opts, :as_response, response), Keyword.get(opts, :as_status, 200)}
+
+  defp response_options(_leg, response, _opts), do: {response, 200}
 end

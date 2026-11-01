@@ -57,6 +57,31 @@ defmodule Arbor.MCP.AuthExtensionInteropTest do
 
   for {flow, label} <- [{EnterpriseFlow, "explicit"}, {FullOAuthFlow, "discovery"}] do
     @flow flow
+
+    for key_source <- [:inline, :jwks_uri] do
+      @key_source key_source
+      @tag assurance: ["peer.ema.#{label}.cimd.#{key_source}"]
+      test "#{inspect(flow)} redeems an ID-JAG after the independent AS fetches #{key_source} CIMD keys",
+           ctx do
+        config = cimd_config(ctx, @key_source)
+        assert {:ok, token} = @flow.execute(config)
+        assert_resource(token, ctx)
+        Port.command(ctx.port, "counts\n")
+        assert %{"idp" => 1, "as" => 1, "resource" => 1} = read_json(ctx.port)
+      end
+    end
+
+    for failure <- [:client_id, :key] do
+      @failure failure
+      @tag assurance: ["peer.ema.#{label}.cimd.reject.#{failure}"]
+      test "#{inspect(flow)} cannot redeem with a CIMD #{@failure} mismatch", ctx do
+        config = cimd_config(ctx, :inline, @failure)
+        assert {:error, _reason} = @flow.execute(config)
+        Port.command(ctx.port, "counts\n")
+        assert %{"idp" => 1, "as" => 0, "resource" => 0} = read_json(ctx.port)
+      end
+    end
+
     for type <- [:id_token, :refresh_token, :saml2] do
       @subject_type type
       @tag assurance: ["peer.ema.#{label}.#{type}"]
@@ -251,6 +276,65 @@ defmodule Arbor.MCP.AuthExtensionInteropTest do
       private_key: if(leg == :idp, do: ctx.idp_key, else: ctx.key),
       signing_algorithm: "ES256"
     }
+
+  defp cimd_config(ctx, key_source, failure \\ nil) do
+    client_id = "https://client-fixture.example/metadata.json"
+    bypass = Bypass.open()
+    origin = "http://127.0.0.1:#{bypass.port}"
+    key = JWT.to_public_key(if(failure == :key, do: ctx.idp_key, else: ctx.key))
+    {_type, public_jwk} = JOSE.JWK.to_map(key)
+
+    document = %{
+      "client_id" => if(failure == :client_id, do: client_id <> "?other", else: client_id),
+      "client_name" => "Independent CIMD contract",
+      "redirect_uris" => ["https://client-fixture.example/callback"],
+      "token_endpoint_auth_method" => "private_key_jwt"
+    }
+
+    document =
+      if key_source == :inline,
+        do: Map.put(document, "jwks", %{"keys" => [public_jwk]}),
+        else: Map.put(document, "jwks_uri", client_id <> "/jwks")
+
+    Bypass.expect_once(bypass, "GET", "/metadata.json", fn conn ->
+      assert Plug.Conn.get_req_header(conn, "authorization") == []
+
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.resp(200, Jason.encode!(document))
+    end)
+
+    if key_source == :jwks_uri do
+      Bypass.expect_once(bypass, "GET", "/jwks.json", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{"keys" => [public_jwk]}))
+      end)
+    end
+
+    Port.command(
+      ctx.port,
+      Jason.encode!(%{
+        cimd: %{
+          client_id: client_id,
+          metadata_url: origin <> "/metadata.json",
+          jwks_url: origin <> "/jwks.json"
+        }
+      }) <> "\n"
+    )
+
+    assert %{"configured" => true} = read_json(ctx.port)
+
+    config(ctx)
+    |> Map.merge(%{
+      as_issuer: ctx.origin <> "/as",
+      client_id: client_id,
+      client_registration: {:cimd, client_id},
+      idp_subject: %{type: :id_token, token: "fixture-id-token"},
+      idp_auth: auth(ctx, :idp),
+      as_auth: Map.put(auth(ctx, :as), :client_id, client_id)
+    })
+  end
 
   defp config(ctx) do
     %{

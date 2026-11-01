@@ -7,11 +7,12 @@ defmodule Arbor.MCP.Authorization.EnterpriseIdPAuthTest do
     {:ok, key: JWT.generate_ec_key(), rsa_key: JWT.generate_rsa_key()}
   end
 
-  for flow <- [EnterpriseFlow, FullOAuthFlow] do
+  for {flow, label} <- [{EnterpriseFlow, "explicit"}, {FullOAuthFlow, "discovery"}] do
     @flow flow
 
     for method <- [:client_secret_basic, :client_secret_post, :private_key_jwt] do
       @method method
+      @tag assurance: ["ema.idp.#{label}.#{method}"]
       test "#{inspect(flow)} authenticates to the IdP with #{method} and separate AS credentials",
            %{key: key} do
         config = fixture()
@@ -73,6 +74,7 @@ defmodule Arbor.MCP.Authorization.EnterpriseIdPAuthTest do
       end
     end
 
+    @tag assurance: ["ema.idp.#{label}.public_default"]
     test "#{inspect(flow)} retains its public-client exchange when idp_auth is absent or nil" do
       for value <- [:absent, nil] do
         config = fixture()
@@ -85,6 +87,7 @@ defmodule Arbor.MCP.Authorization.EnterpriseIdPAuthTest do
       end
     end
 
+    @tag assurance: ["ema.idp.#{label}.discovery"]
     test "#{inspect(flow)} discovers the token endpoint when only idp_auth supplies the IdP" do
       config = fixture() |> Map.delete(:idp_token_endpoint) |> Map.delete(:idp_issuer)
       config = Map.put(config, :idp_auth, auth(:client_secret_basic, nil))
@@ -93,6 +96,7 @@ defmodule Arbor.MCP.Authorization.EnterpriseIdPAuthTest do
       assert_receive {:as_request, _headers, _body}
     end
 
+    @tag assurance: ["ema.idp.#{label}.binding"]
     test "#{inspect(flow)} rejects issuer and endpoint conflicts before posting any token" do
       for changes <- [
             [idp_issuer: "https://other-idp.example"],
@@ -109,6 +113,7 @@ defmodule Arbor.MCP.Authorization.EnterpriseIdPAuthTest do
       end
     end
 
+    @tag assurance: ["ema.idp.#{label}.issuer"]
     test "#{inspect(flow)} rejects discovery for another issuer before sending credentials" do
       config = fixture(issuer: "https://other-idp.example")
 
@@ -119,6 +124,7 @@ defmodule Arbor.MCP.Authorization.EnterpriseIdPAuthTest do
       refute_received {:as_request, _headers, _body}
     end
 
+    @tag assurance: ["ema.idp.#{label}.methods"]
     test "#{inspect(flow)} requires an advertised method and defaults absent metadata to Basic" do
       for methods <- [["none"], [], nil, "client_secret_basic"] do
         config = fixture(methods: methods)
@@ -139,6 +145,7 @@ defmodule Arbor.MCP.Authorization.EnterpriseIdPAuthTest do
       assert_receive {:as_request, _headers, _body}
     end
 
+    @tag assurance: ["ema.idp.#{label}.config"]
     test "#{inspect(flow)} rejects malformed config without falling back to AS credentials",
          %{key: key} do
       base = auth(:client_secret_basic, nil)
@@ -167,6 +174,7 @@ defmodule Arbor.MCP.Authorization.EnterpriseIdPAuthTest do
       end
     end
 
+    @tag assurance: ["ema.idp.#{label}.algorithms"]
     test "#{inspect(flow)} rejects incompatible JWT signing metadata", %{key: key} do
       for algorithms <- [["RS256"], [], nil, "ES256"] do
         config =
@@ -179,9 +187,10 @@ defmodule Arbor.MCP.Authorization.EnterpriseIdPAuthTest do
     end
   end
 
-  for flow <- [EnterpriseFlow, FullOAuthFlow] do
+  for {flow, label} <- [{EnterpriseFlow, "explicit"}, {FullOAuthFlow, "discovery"}] do
     @flow flow
 
+    @tag assurance: ["ema.idp.#{label}.default_algorithm"]
     test "#{inspect(flow)} defaults JWT signing to RS256 when signing metadata is absent",
          %{rsa_key: key} do
       config = fixture(algorithms: :omitted)
@@ -199,6 +208,7 @@ defmodule Arbor.MCP.Authorization.EnterpriseIdPAuthTest do
       assert_receive {:as_request, _headers, _body}
     end
 
+    @tag assurance: ["ema.idp.#{label}.rejected"]
     test "#{inspect(flow)} does not retry rejected IdP authentication with AS credentials" do
       config = fixture(idp_status: 401) |> Map.put(:idp_auth, auth(:client_secret_basic, nil))
       assert {:error, _reason} = @flow.execute(config)
