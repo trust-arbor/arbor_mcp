@@ -24,7 +24,7 @@ unimplemented or host-owned obligation explicitly rather than counting a nearby
 passing test as its implementation.
 
 The register includes scoped core and inherited OAuth/ID-JAG requirement bundles,
-in addition to Auth and the Tasks prose/schema dispositions. Each source declares the exact
+in addition to Auth, Tasks and Apps prose/schema dispositions. Each source declares the exact
 revision and adopted sections; a complete **scoped inventory** means those
 responsibilities have been mapped, not that every clause has executable proof.
 The generated register separates remaining library work, scoped support/evidence,
@@ -179,3 +179,43 @@ relevant, update affected requirements/tests, then advance pins in a reviewed
 PR. The read-only workflows never acknowledge a change or upgrade a dependency
 automatically. Artifact retention is finite; committed pins, requirement records
 and `scripts/mcp_upstream_reviews.json` provide the durable review history.
+
+## MCP Apps browser qualification
+
+Apps adds a separate `browser` evidence kind; contract and SDK interop evidence
+remain separate. The source register fingerprints the example source/builder
+and exact lockfiles as well as production/tests. The browser case always
+rebuilds `dist/view.html`, so cached bundles cannot provide stale evidence.
+
+From the repository root, with Node.js 24+ and supported Elixir/OTP:
+
+```sh
+mix deps.get
+MIX_ENV=test mix compile
+npm ci --prefix test/interop --ignore-scripts --no-audit --no-fund
+npm ci --prefix examples/mcp_apps --ignore-scripts --no-audit --no-fund
+python3 -m venv .apps-venv
+.apps-venv/bin/python -m pip install -r test/interop/apps-browser-requirements.txt
+.apps-venv/bin/python -m playwright install chromium
+MCP_APPS_PYTHON="$PWD/.apps-venv/bin/python" python3 -B scripts/check_mcp_assurance.py --run --kind browser --output tmp/mcp-assurance/apps-browser.json
+```
+
+On Linux CI, Playwright installs system dependencies with `--with-deps`.
+The dedicated `mcp-apps.yml` job requires this environment; it does not silently
+skip a missing browser. Its `mcp-apps-browser` artifact retains checkout-bound
+execution evidence, the rebuilt HTML SHA-256/size and light/dark/mobile
+screenshots. The standard interop lane runs named official-SDK HTTP/stdio cases
+using `--kind interop`; standard contract assurance covers helper/native cases.
+
+The controlled Host uses official AppBridge and the verbatim upstream sandbox
+proxy at the reviewed Apps revision (attribution/license in
+`test/interop/apps_upstream/`). Chromium exercises actual shipped HTML through
+different-origin frames, initialization before tool data, app-only recalculation,
+result metadata, a non-step-aligned 123 GB input/result round trip, denied
+model-only calls and a registered app-only tool on a second real server
+connection. Its CSP check uses a reachable local CORS-enabled endpoint, observes
+a real `connect-src` violation and confirms no request reaches that endpoint.
+It also checks theme/size changes and teardown. Host policy in this fixture is
+not a production Host API, and these checks are not an official all-method Apps
+conformance suite or certification of a specific vendor host. Existing official
+core conformance is reused unchanged.

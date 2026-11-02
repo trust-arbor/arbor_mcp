@@ -30,6 +30,16 @@ def check_peer_pins(root=ROOT):
         if package != "@modelcontextprotocol/conformance":
             if lock["packages"]["node_modules/" + package]["version"] != pin:
                 raise AssuranceError(f"Peer pin changed without updating reviewed evidence: {package}")
+    example = tooling.get("apps_example")
+    if example:
+        example_lock = json.loads(local_file(root, example["lock"]).read_text())
+        for package, pin in example["packages"].items():
+            entry = example_lock.get("packages", {}).get("node_modules/" + package, {})
+            if entry.get("version") != pin:
+                raise AssuranceError(f"Apps example pin changed without review: {package}")
+            reviewed = tooling["packages"].get(package)
+            if reviewed and reviewed != pin:
+                raise AssuranceError(f"Apps example and peer pins disagree: {package}")
     harness = tooling["packages"]["@modelcontextprotocol/conformance"]
     selectors = re.findall(r"CONFORMANCE_ALPHA_VERSION:-([^}]+)",
                            (root / "scripts/conformance.sh").read_text())
@@ -50,6 +60,56 @@ def local_file(root, value):
     return path
 
 
+def prose_sections(content, depth):
+    if depth not in {2, 3, 4}:
+        raise AssuranceError("Invalid source section depth")
+    stack = []
+    names = []
+    for match in re.finditer(r"^(#{2,4}) (.+)$", content, re.MULTILINE):
+        level, title = len(match[1]), match[2]
+        if level > depth:
+            continue
+        stack = [(n, value) for n, value in stack if n < level]
+        stack.append((level, title))
+        names.append(" / ".join(value for _level, value in stack))
+    return names
+
+
+def check_extension_sources(data, root, source, field, expected):
+    title = source.title()
+    if data["sources"].get(source, {}).get("inventory") == "complete" and not data.get(field):
+        raise AssuranceError(f"Complete {title} inventory needs its source manifest")
+    if not data.get(field):
+        return
+    manifest = json.loads(local_file(root, data[field]).read_text())
+    if (manifest.get("version") != 1 or manifest.get("source") != source or
+            manifest.get("revision") != data["sources"][source]["revision"]):
+        raise AssuranceError(f"{title} source review differs from its immutable pin")
+    if set(manifest.get("files", {})) != expected:
+        raise AssuranceError(f"{title} prose and schema both need dispositions")
+    identifiers = {row["id"] for row in data["requirements"] if row["source"] == source}
+    mapped = set()
+    for name, info in manifest["files"].items():
+        if not re.fullmatch(r"[0-9a-f]{64}", info.get("sha256", "")):
+            raise AssuranceError(f"{title} source needs a content pin")
+        content = local_file(root, info.get("local")).read_bytes()
+        if hashlib.sha256(content).hexdigest() != info["sha256"]:
+            raise AssuranceError(f"{title} source snapshot differs from its content pin")
+        prose = name.endswith((".md", ".mdx"))
+        entries = info.get("sections" if prose else "exports", {})
+        names = (prose_sections(content.decode(), info.get("section_depth", 2)) if prose else
+                 re.findall(r"^export (?:interface|type|const) (\w+)", content.decode(), re.MULTILINE))
+        if not entries or len(names) != len(set(names)) or set(entries) != set(names):
+            raise AssuranceError(f"{title} source needs every section/export disposition")
+        for disposition in entries.values():
+            references = disposition.get("requirements", []) if isinstance(disposition, dict) else disposition
+            if not references or not set(references) <= identifiers:
+                raise AssuranceError(f"Invalid {title} source disposition")
+            mapped.update(references)
+    if mapped != identifiers:
+        raise AssuranceError(f"{title} requirement is missing its source disposition")
+
+
 def load_register(path=REGISTER, root=ROOT):
     data = json.loads(path.read_text())
     if (not isinstance(data, dict) or data.get("version") != 2 or
@@ -63,7 +123,7 @@ def load_register(path=REGISTER, root=ROOT):
             raise AssuranceError("Each source needs an immutable pin and inventory scope")
     cases = data.get("cases", {})
     for case, info in cases.items():
-        if not ID.fullmatch(case) or info.get("kind") not in {"contract", "independent_fixture", "interop", "real_provider"}:
+        if not ID.fullmatch(case) or info.get("kind") not in {"contract", "independent_fixture", "interop", "real_provider", "browser"}:
             raise AssuranceError(f"Invalid evidence case: {case}")
         local_file(root, info["file"])
         if not info.get("asserts"):
@@ -179,36 +239,10 @@ def load_register(path=REGISTER, root=ROOT):
             mapped.update(source["requirements"])
         if mapped != core_ids:
             raise AssuranceError("Core requirement is missing its source disposition")
-    if data["sources"].get("TASKS", {}).get("inventory") == "complete" and not data.get("tasks_source_manifest"):
-        raise AssuranceError("Complete Tasks inventory needs its source manifest")
-    if data.get("tasks_source_manifest"):
-        manifest = json.loads(local_file(root, data["tasks_source_manifest"]).read_text())
-        if (manifest.get("version") != 1 or manifest.get("source") != "TASKS" or
-                manifest.get("revision") != data["sources"]["TASKS"]["revision"]):
-            raise AssuranceError("Tasks source review differs from its immutable pin")
-        expected = {"specification/2026-07-28/tasks.md", "schema/2026-07-28/schema.ts"}
-        if set(manifest.get("files", {})) != expected:
-            raise AssuranceError("Tasks prose and schema both need dispositions")
-        task_ids = {row["id"] for row in data["requirements"] if row["source"] == "TASKS"}
-        mapped = set()
-        for name, info in manifest["files"].items():
-            if not re.fullmatch(r"[0-9a-f]{64}", info.get("sha256", "")):
-                raise AssuranceError("Tasks source needs a content pin")
-            content = local_file(root, info.get("local")).read_bytes()
-            if hashlib.sha256(content).hexdigest() != info["sha256"]:
-                raise AssuranceError("Tasks source snapshot differs from its content pin")
-            entries = info.get("sections" if name.endswith(".md") else "exports", {})
-            pattern = r"^## (.+)$" if name.endswith(".md") else r"^export (?:interface|type) (\w+)"
-            names = re.findall(pattern, content.decode(), re.MULTILINE)
-            if not entries or set(entries) != set(names):
-                raise AssuranceError("Tasks source needs every section/export disposition")
-            for disposition in entries.values():
-                references = disposition.get("requirements", []) if isinstance(disposition, dict) else disposition
-                if not references or not set(references) <= task_ids:
-                    raise AssuranceError("Invalid Tasks source disposition")
-                mapped.update(references)
-        if mapped != task_ids:
-            raise AssuranceError("Tasks requirement is missing its source disposition")
+    check_extension_sources(data, root, "TASKS", "tasks_source_manifest", {
+        "specification/2026-07-28/tasks.md", "schema/2026-07-28/schema.ts"})
+    check_extension_sources(data, root, "APPS", "apps_source_manifest", {
+        "specification/2026-01-26/apps.mdx", "src/spec.types.ts"})
     return data
 
 
@@ -219,9 +253,10 @@ def fingerprint(data, root=ROOT):
     paths.update(str(path.relative_to(root)) for pattern in ("mcp_*.json", "check_mcp_*.py")
                  for path in (root / "scripts").glob(pattern))
     paths.update(path for row in data["requirements"] for path in row.get("implementation", []))
-    if data.get("tasks_source_manifest"):
-        manifest = json.loads(local_file(root, data["tasks_source_manifest"]).read_text())
-        paths.update(info["local"] for info in manifest["files"].values())
+    for field in ["tasks_source_manifest", "apps_source_manifest"]:
+        if data.get(field):
+            manifest = json.loads(local_file(root, data[field]).read_text())
+            paths.update(info["local"] for info in manifest["files"].values())
     for directory in ["lib", "dev", "test", "config"]:
         paths.update(str(path.relative_to(root)) for path in (root / directory).rglob("*")
                      if path.is_file() and "node_modules" not in path.parts)
@@ -316,7 +351,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write-docs", action="store_true")
     parser.add_argument("--run", action="store_true", help="Execute every registered ExUnit evidence file")
-    parser.add_argument("--kind", action="append", choices=["contract", "independent_fixture", "interop", "real_provider"],
+    parser.add_argument("--kind", action="append", choices=["contract", "independent_fixture", "interop", "real_provider", "browser"],
                         help="Evidence kinds to execute/validate (default: contract)")
     parser.add_argument("--results", type=Path, help="Validate a previous checkout-bound execution artifact")
     parser.add_argument("--output", type=Path, default=ROOT / "tmp/mcp-assurance/results.json")

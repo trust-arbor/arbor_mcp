@@ -120,6 +120,12 @@
       "revision": "c151a4abab7704f2efa9b00530dcfeeefb3de6acbdbdf5ba05c9903f1de2a318",
       "inventory": "complete",
       "scope": "Section 2 application_type and redirect registration constraints inherited by optional DCR. Other OIDC registration profiles are not adopted."
+    },
+    "APPS": {
+      "url": "https://github.com/modelcontextprotocol/ext-apps/blob/cf599cc462406accc90ec3ca7879e3a22a9fc2a8/specification/2026-01-26/apps.mdx",
+      "revision": "cf599cc462406accc90ec3ca7879e3a22a9fc2a8",
+      "inventory": "complete",
+      "scope": "Stable 2026-01-26 prose through fourth-level headings and exported protocol types/constants at the same SDK revision. Server authoring helpers and the official-SDK example are qualified separately from browser Host/View duties and deferred formats. This is a scoped source inventory, not exhaustive Host implementation or vendor certification."
     }
   },
   "cases": {
@@ -1182,6 +1188,81 @@
       "file": "test/arbor_mcp/authorization/access_token_profile_test.exs",
       "kind": "contract",
       "asserts": "Generic token helper retains its omitted-type compatibility default; automatic MCP parsing is stricter."
+    },
+    "apps.capability": {
+      "file": "test/arbor_mcp/apps_test.exs",
+      "kind": "contract",
+      "asserts": "Explicit extension/MIME negotiation and malformed capabilities."
+    },
+    "apps.tool.metadata": {
+      "file": "test/arbor_mcp/apps_test.exs",
+      "kind": "contract",
+      "asserts": "Nested tool linkage, legacy alias and unrelated metadata preservation."
+    },
+    "apps.tool.invalid": {
+      "file": "test/arbor_mcp/apps_test.exs",
+      "kind": "contract",
+      "asserts": "Reject conflicting aliases, invalid resource URIs and visibility."
+    },
+    "apps.visibility": {
+      "file": "test/arbor_mcp/apps_test.exs",
+      "kind": "contract",
+      "asserts": "Default, empty, model-only and app-only visibility predicates."
+    },
+    "apps.fallback": {
+      "file": "test/arbor_mcp/apps_test.exs",
+      "kind": "contract",
+      "asserts": "Capability-aware catalog filtering and UI metadata removal."
+    },
+    "apps.resource": {
+      "file": "test/arbor_mcp/apps_test.exs",
+      "kind": "contract",
+      "asserts": "Exact MIME, ui URI and nonempty text/base64 resource contents."
+    },
+    "apps.resource.metadata": {
+      "file": "test/arbor_mcp/apps_test.exs",
+      "kind": "contract",
+      "asserts": "CSP, permission, domain and border field types."
+    },
+    "apps.catalog": {
+      "file": "test/arbor_mcp/apps_test.exs",
+      "kind": "contract",
+      "asserts": "Referenced resources must exist, including hidden registered resources."
+    },
+    "apps.wire.modern": {
+      "file": "test/arbor_mcp/apps_wire_test.exs",
+      "kind": "contract",
+      "asserts": "Modern HTTP tool/resource metadata, text/structured/private results and invalid arguments."
+    },
+    "apps.wire.legacy": {
+      "file": "test/arbor_mcp/apps_wire_test.exs",
+      "kind": "contract",
+      "asserts": "Legacy HTTP tool/resource metadata, text/structured/private results and invalid arguments."
+    },
+    "apps.wire.fallback": {
+      "file": "test/arbor_mcp/apps_wire_test.exs",
+      "kind": "contract",
+      "asserts": "Real client without Apps gets text fallback and no app-only tools."
+    },
+    "apps.wire.profiles": {
+      "file": "test/arbor_mcp/apps_wire_test.exs",
+      "kind": "contract",
+      "asserts": "Distinct legacy clients and modern per-call capability overrides do not share UI profiles."
+    },
+    "apps.sdk.interop": {
+      "file": "test/arbor_mcp/integration/apps_interop_test.exs",
+      "kind": "interop",
+      "asserts": "Official SDK validates actual HTTP declarations and exchanges initialize/input/result, app-only call, read and teardown through AppBridge."
+    },
+    "apps.sdk.stdio": {
+      "file": "test/arbor_mcp/integration/apps_interop_test.exs",
+      "kind": "interop",
+      "asserts": "The documented stdio launcher serves built HTML and supports the same official SDK/AppBridge exchange."
+    },
+    "apps.browser.example": {
+      "file": "test/arbor_mcp/integration/apps_browser_test.exs",
+      "kind": "browser",
+      "asserts": "Rebuilt shipped View in Chromium through official AppBridge/cross-origin sandbox: input/result with exact 123 GB round trip, theme/size and teardown; host model-only/registered second-server denials; real connect-src violation plus zero deliveries to a reachable local endpoint."
     }
   },
   "requirements": [
@@ -4296,6 +4377,270 @@
         "tasks.client.http_lifecycle"
       ],
       "notes": "Named local assertions qualify these library mechanisms. The official task-notification scenario is a stub; real HTTP notification evidence is local."
+    },
+    {
+      "id": "APPS.NEGOTIATION",
+      "source": "APPS",
+      "section": "Extension Identifier; Client<>Server Capability Negotiation",
+      "role": "server",
+      "profiles": [
+        "2026-01-26 HTML Apps"
+      ],
+      "level": "MUST/SHOULD",
+      "requirement": "Explicitly negotiate io.modelcontextprotocol/ui and required mimeTypes; use UI metadata only for capable hosts.",
+      "status": "supported",
+      "library_scope": "Pure capability builder/detector and active-profile tool selection.",
+      "external_duties": "Only rendering hosts should advertise Apps. Applications invoke selection with active capabilities; this is not automatically enabled globally.",
+      "implementation": [
+        "lib/arbor_mcp/apps.ex"
+      ],
+      "cases": [
+        "apps.capability",
+        "apps.fallback",
+        "apps.wire.profiles",
+        "apps.sdk.interop"
+      ],
+      "notes": "Named evidence qualifies the stated server mechanisms, not every browser-host behavior."
+    },
+    {
+      "id": "APPS.TOOL_LINKS",
+      "source": "APPS",
+      "section": "Resource Discovery; Predeclared Resources",
+      "role": "server",
+      "profiles": [
+        "2026-01-26 HTML Apps"
+      ],
+      "level": "MUST/SHOULD",
+      "requirement": "Link tools through _meta.ui.resourceUri to a registered resource; retain deprecated flat alias for compatibility.",
+      "status": "supported",
+      "library_scope": "Validated nested/alias metadata and an explicit complete-catalog authoring check.",
+      "external_duties": "Authors supply every registered resource to validate_catalog; dynamic read callbacks must return the declared UI. UI-only resources may be omitted from resources/list.",
+      "implementation": [
+        "lib/arbor_mcp/apps.ex"
+      ],
+      "cases": [
+        "apps.tool.metadata",
+        "apps.tool.invalid",
+        "apps.catalog",
+        "apps.wire.modern",
+        "apps.wire.legacy"
+      ],
+      "notes": "Named evidence qualifies the stated server mechanisms, not every browser-host behavior."
+    },
+    {
+      "id": "APPS.VISIBILITY",
+      "source": "APPS",
+      "section": "Resource Discovery / Visibility",
+      "role": "server",
+      "profiles": [
+        "2026-01-26 HTML Apps"
+      ],
+      "level": "MUST/SHOULD",
+      "requirement": "Default model/app visibility; hosts filter model catalogs, reject non-app calls and bind app-only calls to the originating server.",
+      "status": "supported",
+      "library_scope": "Validated visibility metadata, fail-closed audience predicate and non-Apps catalog filtering.",
+      "external_duties": "The Host enforces model/app access and connection affinity. Tool dispatch has no trusted app/model caller signal; metadata is not server authorization.",
+      "implementation": [
+        "lib/arbor_mcp/apps.ex"
+      ],
+      "cases": [
+        "apps.visibility",
+        "apps.fallback",
+        "apps.sdk.interop"
+      ],
+      "notes": "Named evidence qualifies the stated server mechanisms, not every browser-host behavior."
+    },
+    {
+      "id": "APPS.RESOURCE",
+      "source": "APPS",
+      "section": "UI Resource Format / Content Requirements",
+      "role": "server",
+      "profiles": [
+        "2026-01-26 HTML Apps"
+      ],
+      "level": "MUST/SHOULD",
+      "requirement": "ui:// resource with exact text/html;profile=mcp-app MIME and text or base64 valid HTML5 content.",
+      "status": "supported",
+      "library_scope": "Resource declaration and content builders check URI, MIME, nonempty UTF-8 text or decoded bytes.",
+      "external_duties": "Authors provide valid HTML5 and implement resources/read. Hosts fetch referenced content and decode blob content.",
+      "implementation": [
+        "lib/arbor_mcp/apps.ex"
+      ],
+      "cases": [
+        "apps.resource",
+        "apps.wire.modern",
+        "apps.wire.legacy"
+      ],
+      "notes": "Helpers do not parse or sanitize HTML5. The example is built and rendered in Chromium; arbitrary caller-authored documents are not certified."
+    },
+    {
+      "id": "APPS.RESOURCE_META",
+      "source": "APPS",
+      "section": "UI Resource Format; CSP Enforcement",
+      "role": "server",
+      "profiles": [
+        "2026-01-26 HTML Apps"
+      ],
+      "level": "MUST/SHOULD",
+      "requirement": "Resource content declares required CSP origins, requested permissions, host-defined domain and border preference.",
+      "status": "supported",
+      "library_scope": "Preserve resource metadata and validate known field wire types; unknown fields remain extensible.",
+      "external_duties": "The Host validates domain syntax against its own policy and applies CSP/Permissions Policy; these helpers do not validate trusted origins or grant browser permissions.",
+      "implementation": [
+        "lib/arbor_mcp/apps.ex"
+      ],
+      "cases": [
+        "apps.resource.metadata",
+        "apps.wire.modern",
+        "apps.wire.legacy"
+      ],
+      "notes": "Named evidence qualifies the stated server mechanisms, not every browser-host behavior."
+    },
+    {
+      "id": "APPS.FALLBACK",
+      "source": "APPS",
+      "section": "Resource Discovery / Behavior; Client<>Server Capability Negotiation / Server Behavior",
+      "role": "server",
+      "profiles": [
+        "2026-01-26 HTML Apps"
+      ],
+      "level": "MUST/SHOULD",
+      "requirement": "Meaningful content is required even with a UI; provide text-only fallback for unsupported hosts.",
+      "status": "supported",
+      "library_scope": "Catalog selection preserves non-UI metadata, removes UI metadata and app-only tools; example returns meaningful text.",
+      "external_duties": "Authors must provide meaningful fallback content in each tool callback. The helpers cannot infer it from HTML.",
+      "implementation": [
+        "lib/arbor_mcp/apps.ex"
+      ],
+      "cases": [
+        "apps.fallback",
+        "apps.wire.fallback",
+        "apps.wire.profiles"
+      ],
+      "notes": "Named evidence qualifies the stated server mechanisms, not every browser-host behavior."
+    },
+    {
+      "id": "APPS.RESULTS",
+      "source": "APPS",
+      "section": "Data Passing",
+      "role": "server",
+      "profiles": [
+        "2026-01-26 HTML Apps"
+      ],
+      "level": "MUST/SHOULD",
+      "requirement": "Deliver original arguments and complete tool results to the View; keep UI metadata out of model context.",
+      "status": "supported",
+      "library_scope": "Existing MCP paths preserve content, structuredContent and _meta; official SDK fixture delivers input/result to the View.",
+      "external_duties": "The Host controls model context and must keep _meta and UI-targeted data out of it. Arbor transports return complete results, not a model prompt.",
+      "implementation": [
+        "lib/arbor_mcp/apps.ex",
+        "examples/mcp_apps/server.exs"
+      ],
+      "cases": [
+        "apps.wire.modern",
+        "apps.wire.legacy",
+        "apps.sdk.interop",
+        "apps.browser.example"
+      ],
+      "notes": "Named evidence qualifies the stated server mechanisms, not every browser-host behavior."
+    },
+    {
+      "id": "APPS.EXAMPLE",
+      "source": "APPS",
+      "section": "Lifecycle; Data Passing / Interactive Updates",
+      "role": "server",
+      "profiles": [
+        "2026-01-26 HTML Apps"
+      ],
+      "level": "MUST/SHOULD",
+      "requirement": "A View initializes before receiving tool input/result, can request same-server updates, adapts to Host context and tears down.",
+      "status": "supported",
+      "library_scope": "Runnable Elixir server and self-contained HTML View using the official Apps SDK; HTTP/stdio SDK and real Chromium qualification.",
+      "external_duties": "",
+      "implementation": [
+        "lib/arbor_mcp/apps.ex",
+        "examples/mcp_apps/server.exs",
+        "examples/mcp_apps/run.exs",
+        "examples/mcp_apps/view.html",
+        "examples/mcp_apps/view.ts",
+        "examples/mcp_apps/build.mjs",
+        "examples/mcp_apps/package.json",
+        "examples/mcp_apps/package-lock.json"
+      ],
+      "cases": [
+        "apps.sdk.interop",
+        "apps.sdk.stdio",
+        "apps.browser.example"
+      ],
+      "notes": "Controlled test Host implements only the exercised profile. No arbitrary vendor-host certification, full browser Host SDK, or all UI-method coverage is claimed."
+    },
+    {
+      "id": "APPS.HOST_SANDBOX",
+      "source": "APPS",
+      "section": "Sandbox proxy; UI Resource Format / Host Behavior; Security Implications",
+      "role": "Host",
+      "profiles": [
+        "2026-01-26 HTML Apps"
+      ],
+      "level": "MUST/SHOULD",
+      "requirement": "Web Hosts use different-origin double iframes, minimum sandbox permissions, validated messages, CSP and auditable routing.",
+      "status": "host",
+      "library_scope": "",
+      "external_duties": "Embedding Host owns source/origin validation, cross-origin proxy, CSP construction/defaults, browser permissions, template review/audit and resource limits. The Chromium fixture demonstrates the example\u2019s no-external-domain profile, not a reusable production Host.",
+      "implementation": [],
+      "cases": [],
+      "notes": "Named evidence qualifies the stated server mechanisms, not every browser-host behavior."
+    },
+    {
+      "id": "APPS.HOST_ACTIONS",
+      "source": "APPS",
+      "section": "Host Capabilities; MCP Apps Specific Messages; Standard MCP Messages",
+      "role": "Host",
+      "profiles": [
+        "2026-01-26 HTML Apps"
+      ],
+      "level": "MUST/SHOULD",
+      "requirement": "Advertise supported UI operations; validate and authorize tool/resource requests, messages, links, downloads, model-context and display actions.",
+      "status": "host",
+      "library_scope": "",
+      "external_duties": "The Host implements advertised UI methods and consent/validation, model filtering, app visibility and originating-connection binding. Official AppBridge plus fixture policy exercise call/read and denials; link/download/message/model-context/fullscreen/pip host features are not supplied by ArborMCP.",
+      "implementation": [],
+      "cases": [],
+      "notes": "Named evidence qualifies the stated server mechanisms, not every browser-host behavior."
+    },
+    {
+      "id": "APPS.VIEW",
+      "source": "APPS",
+      "section": "App Capabilities; Host Context; Container Dimensions; Display Modes; Theming; Lifecycle",
+      "role": "View/Host",
+      "profiles": [
+        "2026-01-26 HTML Apps"
+      ],
+      "level": "MUST/SHOULD",
+      "requirement": "Views negotiate capabilities, wait for initialization, obey host dimensions, merge context changes, handle input/results/cancellation and teardown.",
+      "status": "host",
+      "library_scope": "",
+      "external_duties": "Browser View and Host use the official JS SDK. The included View exercises inline display, input/result, app-tool updates, theme/resize and teardown. Optional host-requested actions, partial inputs, cancellation and other display modes remain application integrations; no native Elixir UI protocol is implemented.",
+      "implementation": [],
+      "cases": [],
+      "notes": "Named evidence qualifies the stated server mechanisms, not every browser-host behavior."
+    },
+    {
+      "id": "APPS.FUTURE",
+      "source": "APPS",
+      "section": "Extensibility",
+      "role": "server/Host/View",
+      "profiles": [
+        "2026-01-26 HTML Apps"
+      ],
+      "level": "MUST/SHOULD",
+      "requirement": "Additional content types and advanced future features are deferred by the stable MVP.",
+      "status": "not_adopted",
+      "library_scope": "",
+      "external_duties": "externalUrl/remote content formats, multiple UI resources per response, persistence/restore, custom sandbox policies, View-to-View and screenshot generation APIs are not adopted.",
+      "implementation": [],
+      "cases": [],
+      "notes": "Named evidence qualifies the stated server mechanisms, not every browser-host behavior."
     }
   ],
   "conformance_cases": {
@@ -5394,7 +5739,42 @@
         "oauth.dcr.response.get",
         "oauth.dcr.response.update"
       ]
+    },
+    {
+      "id": "WORK.APPS",
+      "kind": "implementation",
+      "status": "closed",
+      "requirements": [
+        "APPS.NEGOTIATION",
+        "APPS.TOOL_LINKS",
+        "APPS.VISIBILITY",
+        "APPS.RESOURCE",
+        "APPS.RESOURCE_META",
+        "APPS.FALLBACK",
+        "APPS.RESULTS",
+        "APPS.EXAMPLE"
+      ],
+      "action": "Add the stable Apps server authoring profile and a runnable official-SDK View example.",
+      "closure": "Validated authoring helpers, profile-isolated modern/legacy catalogs, official SDK HTTP/stdio exchanges and rebuilt View Chromium qualification are registered separately from Host duties.",
+      "cases": [
+        "apps.capability",
+        "apps.tool.metadata",
+        "apps.tool.invalid",
+        "apps.visibility",
+        "apps.fallback",
+        "apps.resource",
+        "apps.resource.metadata",
+        "apps.catalog",
+        "apps.wire.modern",
+        "apps.wire.legacy",
+        "apps.wire.fallback",
+        "apps.wire.profiles",
+        "apps.sdk.interop",
+        "apps.sdk.stdio",
+        "apps.browser.example"
+      ]
     }
   ],
-  "tasks_source_manifest": "scripts/mcp_tasks_requirement_sources.json"
+  "tasks_source_manifest": "scripts/mcp_tasks_requirement_sources.json",
+  "apps_source_manifest": "scripts/mcp_apps_requirement_sources.json"
 }

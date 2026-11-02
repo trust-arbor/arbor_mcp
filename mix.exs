@@ -221,6 +221,7 @@ defmodule Arbor.MCP.MixProject do
           docs/ROADMAP.md
           docs/MAINTENANCE_POLICY.md
           docs/MCP_REQUIREMENTS.md
+          docs/MCP_APPS.md
           docs/MCP_ASSURANCE.md
           docs/MCP_SOURCE_REVIEW.md
         )
@@ -258,6 +259,7 @@ defmodule Arbor.MCP.MixProject do
         "README.md",
         "docs/FEATURES.md",
         "docs/MCP_REQUIREMENTS.md",
+        "docs/MCP_APPS.md",
         "docs/MCP_ASSURANCE.md",
         "docs/MCP_SOURCE_REVIEW.md",
         {"usage-rules.md", title: "Agent usage rules"},

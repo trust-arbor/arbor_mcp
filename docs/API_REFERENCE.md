@@ -14,6 +14,7 @@ configuration changes and the different return shapes of retained root wrappers.
 | Collect every list page | `Client.all_tools`, `all_resources`, `all_resource_templates`, `all_prompts` |
 | Start, supervise and stop servers | `Arbor.MCP.Server.start_link/1`, `child_spec/1`, `stop/1,2` |
 | Server callbacks and declarations | `Server.Handler`, `Server.DSL`, [DSL guide](DSL_GUIDE.md) |
+| MCP Apps server authoring (unreleased after rc.7) | `Arbor.MCP.Apps.tool/2`, `resource/1,2`, `html/2,3`, `blob/2,3`, `validate_catalog/2`, `tools_for_client/2`, `visible_to?/2`, capability helpers; [Apps guide](MCP_APPS.md) |
 | Callback output and context | `Server.Result`, `Server.Context`, `Content` constructors |
 | Complete response fields | `Arbor.MCP.Response`, including `to_raw/1`, `error?/1`, `text_content/1`, `all_text_content/1`, `structured_content/1` |
 | Operational inspection | `Client.status/1,2`, `Server.stats/1`, with explicit `status!` / `stats!` variants |
@@ -24,8 +25,9 @@ or `{:ok, wire_map}` with `format: :map`. Ordinary list operations for those
 features preserve a complete page; other methods use their documented result types.
 A delivered tool result with `isError: true` remains a successful protocol
 response; inspect it or choose an extraction API. Operational inspection returns
-tagged success/error tuples. Pure constructors, predicates and accessors return
-bare values.
+tagged success/error tuples. Many pure constructors, predicates and accessors return bare values. Apps
+authoring builders return tagged success/error tuples; its capability builder
+and predicates return bare values.
 
 Pagination collectors share one finite total deadline and page/item/byte
 limits. They discard page metadata deliberately; use ordinary `list_*` calls

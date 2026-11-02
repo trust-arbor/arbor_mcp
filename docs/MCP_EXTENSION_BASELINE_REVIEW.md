@@ -2,9 +2,8 @@
 
 Initial review: 2026-10-31 (America/Chicago), ArborMCP source
 [`5ea3884`](https://github.com/trust-arbor/arbor_mcp/tree/5ea3884cb8f3941a354b1c65b40176dc8bbaa429).
-Current status reconciled on 2026-11-01 through
-[PR #208](https://github.com/trust-arbor/arbor_mcp/pull/208), merged as
-[`f05a669`](https://github.com/trust-arbor/arbor_mcp/tree/f05a66990a9657aea103641d38a7de0ddfd11248).
+Current status reconciled on 2026-11-01, including the Apps server authoring
+profile and subsequent requirement-disposition cleanup.
 Upstream revisions are the immutable commits recorded in the initial inventory,
 not moving default branches. This is an assessment of implementation scope and
 compatibility gaps, not certification of every role in each extension.
@@ -50,8 +49,8 @@ revisions, sections and exclusions. This means responsibilities have disposition
 not that every clause has implementation or executable proof. Partial evidence,
 host duties and unadopted profiles remain explicit. Automatic authorization-code
 flows now require discovered S256 support; this is an inherited core authorization
-check, not another extension. The complete Tasks clause/schema and client interop
-inventories remain pending. No arbitrary vendor deployment is certified.
+check, not another extension. Tasks prose/schema dispositions and named client/server HTTP lifecycle evidence
+are now mapped. Independent Tasks SDK interop remains unqualified. No arbitrary vendor deployment is certified.
 
 
 The subsequent Auth qualification follow-up attaches the existing confidential-IdP,
@@ -86,7 +85,7 @@ above records their subsequent corrections.
 | Framework and extension index | [`d0e246e`](https://github.com/modelcontextprotocol/modelcontextprotocol/tree/d0e246ea3c69eafaa2806bc4cd28025703ba2c2b/docs/extensions) | Reviewed: optional adoption, explicit opt-in, maturity and revision rules. |
 | Authorization | [`15ca394`](https://github.com/modelcontextprotocol/ext-auth/tree/15ca394e00a66434520b9ade26294999295a43ae) | Reviewed for recorded scope; direct profiles and adopted inherited sections have scoped requirement dispositions. Contract, independent-fixture and SDK evidence remain separate from inventory completeness and host duties. |
 | Tasks | [`b3d28ac`](https://github.com/modelcontextprotocol/ext-tasks/tree/b3d28aceaa6d49f5f92258e3d06b61ad6f111e84) | Reviewed after T1–T5 corrections; documented finite store and node-lifetime limits. Prose/schema dispositions and named client/server HTTP lifecycle evidence are now recorded in the requirements register. Independent Tasks SDK interop remains unqualified; polling/persistence/UI policy belongs to hosts. |
-| Apps | [`cf599cc`](https://github.com/modelcontextprotocol/ext-apps/tree/cf599cc462406accc90ec3ca7879e3a22a9fc2a8) | Reviewed: no built-in or qualified Apps integration. |
+| Apps | [`cf599cc`](https://github.com/modelcontextprotocol/ext-apps/tree/cf599cc462406accc90ec3ca7879e3a22a9fc2a8) | Reviewed: stable server authoring helpers and official-SDK View example; HTTP/stdio SDK and Chromium qualification. Host duties are explicit in the requirements tracker. |
 | Skills | [`649f7ae`](https://github.com/modelcontextprotocol/ext-skills/tree/649f7aee87d631ac4d1fdd3b12eef0c6264fdb3a) | Reviewed: Skills transport methods and host loading semantics are not implemented. |
 | Server Cards | [`526201b`](https://github.com/modelcontextprotocol/ext-server-card/tree/526201bbc80231daa40ffcdecfc9da4e54e5dc93) | Reviewed: card publication and discovery are not implemented. |
 | Experimental file uploads | [`e4b12c9`](https://github.com/modelcontextprotocol/experimental-ext-file-uploads/tree/e4b12c99aa01ef16a53c3c99a620c7da38b292fd) | Reviewed: repository is an incubation placeholder; no protocol adopted. |
@@ -178,9 +177,12 @@ responsibilities.
 
 - **Apps.** The [published Apps specification][apps-spec] defines UI resource
   metadata plus a separate UI protocol and host rendering/sandbox behavior.
-  ArborMCP's tools/resources and metadata can be building blocks for a host,
-  but there is no built-in Apps host, UI lifecycle or tested Apps integration.
-  Generic HTML resources alone are not that integration.
+  `Arbor.MCP.Apps` now supplies validated server authoring helpers and an
+  official-SDK calculator View with HTTP/stdio SDK and Chromium qualification.
+  A pinned section/export manifest maps server, Host/View and deferred duties.
+  The embedding Host still owns rendering, sandbox/CSP enforcement, visibility,
+  consent and advertised UI actions. No full browser Host or arbitrary vendor
+  compatibility is claimed. See the [Apps guide](MCP_APPS.md).
 - **Skills.** The [canonical beta specification][skills-spec] adds `skills/list`,
   `skills/get` and optional `resources/directory/read`, plus manifests, content
   verification, per-origin identity and host approval/loading rules. These are

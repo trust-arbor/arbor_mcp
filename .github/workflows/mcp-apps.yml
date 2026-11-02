@@ -1,0 +1,65 @@
+name: MCP Apps
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  MIX_ENV: test
+  ARBOR_RPC_PATH: ${{ github.workspace }}/.arbor-v2/rpc
+  MCP_APPS_PYTHON: ${{ github.workspace }}/.apps-venv/bin/python
+
+jobs:
+  browser:
+    name: MCP Apps (SDK View in Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check out shared RPC at its release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: trust-arbor/arbor_rpc
+          ref: d48a3d2fdfd8f9545ab266ac7eb5f2b35b99b894
+          path: .arbor-v2/rpc
+          persist-credentials: false
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
+        with:
+          otp-version: '27.0'
+          elixir-version: '1.17.3'
+          version-type: strict
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+      - name: Install and compile Elixir dependencies
+        run: |
+          mix deps.get
+          mix compile --warnings-as-errors
+      - name: Install pinned SDK peers and example builder
+        run: |
+          npm ci --prefix test/interop --ignore-scripts --no-audit --no-fund
+          npm ci --prefix examples/mcp_apps --ignore-scripts --no-audit --no-fund
+      - name: Install pinned Playwright and Chromium
+        run: |
+          python3 -m venv .apps-venv
+          .apps-venv/bin/python -m pip install -r test/interop/apps-browser-requirements.txt
+          .apps-venv/bin/python -m playwright install --with-deps chromium
+      - name: Qualify rebuilt View in a cross-origin browser sandbox
+        run: python3 -B scripts/check_mcp_assurance.py --run --kind browser --output tmp/mcp-assurance/apps-browser.json
+      - name: Preserve browser evidence and screenshots
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: mcp-apps-browser
+          path: |
+            tmp/mcp-assurance/
+            tmp/mcp-apps/
+          if-no-files-found: error

@@ -22,6 +22,9 @@ Upgrading from `ex_mcp` 1.x? Start with the [v1-to-v2 migration guide](docs/guid
 
 Alongside MCP protocol support, ArborMCP provides:
 
+- **MCP Apps:** validated interactive-tool/resource helpers and an
+  [official-SDK calculator View](https://github.com/trust-arbor/arbor_mcp/tree/master/examples/mcp_apps), with text fallback, SDK
+  interoperability and Chromium tests. [Apps guide](docs/MCP_APPS.md).
 - **Forwarding and embedded proxies:** manual MRTR, per-request capabilities,
   per-call progress targets and caller-exit cancellation for application-owned
   forwarding handlers.
@@ -44,7 +47,7 @@ See the [library features guide](docs/FEATURES.md) for APIs, examples and limits
 The [MCP feature matrix](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md)
 tracks core protocol coverage and has a dedicated
 [MCP extensions section](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md#mcp-extensions)
-for Tasks, both Auth profiles and unimplemented optional protocols.
+for Apps, Tasks, both Auth profiles and unimplemented optional protocols.
 Forwarding hooks are implemented; the
 [embedded gateway example](https://github.com/trust-arbor/arbor_mcp/tree/master/examples/forwarding_gateway)
 qualifies a controlled integration rather than providing a turnkey gateway.

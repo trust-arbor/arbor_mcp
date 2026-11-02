@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Stable MCP Apps server authoring helpers, capability-aware text fallback,
+  and an official-SDK calculator example with HTTP/stdio interop and a Chromium
+  sandbox qualification lane. Apps requirements, Host duties and source pins
+  are recorded separately in the coverage/requirements guides.
+
 - Actionable MCP requirement work items, separate library/evidence/host dispositions,
   and a hash-checked Tasks prose/schema inventory with named existing assertions
   and a public-client HTTP input/completion/cancellation test.
