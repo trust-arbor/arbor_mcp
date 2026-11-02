@@ -1263,6 +1263,11 @@
       "file": "test/arbor_mcp/integration/apps_browser_test.exs",
       "kind": "browser",
       "asserts": "Rebuilt shipped View in Chromium through official AppBridge/cross-origin sandbox: input/result with exact 123 GB round trip, theme/size and teardown; host model-only/registered second-server denials; real connect-src violation plus zero deliveries to a reachable local endpoint."
+    },
+    "apps.browser.phoenix_host": {
+      "file": "test/arbor_mcp/integration/apps_phoenix_host_test.exs",
+      "kind": "browser",
+      "asserts": "Actual Phoenix LiveView host and real native MCP clients: model/app catalog separation, tool/read forwarding and denials, self-contained resource policy contracts, cross-origin CSP, private metadata, theme/close/reopen, same-context two-tab independence, LiveView reconnect, and all client PIDs exit after browser closure."
     }
   },
   "requirements": [
@@ -4555,7 +4560,7 @@
       "level": "MUST/SHOULD",
       "requirement": "A View initializes before receiving tool input/result, can request same-server updates, adapts to Host context and tears down.",
       "status": "supported",
-      "library_scope": "Runnable Elixir server and self-contained HTML View using the official Apps SDK; HTTP/stdio SDK and real Chromium qualification.",
+      "library_scope": "Runnable Elixir server and self-contained official-SDK View, plus a local Phoenix LiveView host example with native per-browser clients; HTTP/stdio SDK and real Chromium qualification.",
       "external_duties": "",
       "implementation": [
         "lib/arbor_mcp/apps.ex",
@@ -4565,14 +4570,38 @@
         "examples/mcp_apps/view.ts",
         "examples/mcp_apps/build.mjs",
         "examples/mcp_apps/package.json",
-        "examples/mcp_apps/package-lock.json"
+        "examples/mcp_apps/package-lock.json",
+        "examples/mcp_apps/phoenix_host/.formatter.exs",
+        "examples/mcp_apps/phoenix_host/.gitignore",
+        "examples/mcp_apps/phoenix_host/README.md",
+        "examples/mcp_apps/phoenix_host/assets/host.css",
+        "examples/mcp_apps/phoenix_host/assets/host.js",
+        "examples/mcp_apps/phoenix_host/assets/vendor/LICENSE",
+        "examples/mcp_apps/phoenix_host/assets/vendor/README.md",
+        "examples/mcp_apps/phoenix_host/assets/vendor/sandbox.ts",
+        "examples/mcp_apps/phoenix_host/build.mjs",
+        "examples/mcp_apps/phoenix_host/config/config.exs",
+        "examples/mcp_apps/phoenix_host/config/runtime.exs",
+        "examples/mcp_apps/phoenix_host/lib/mcp_apps_host/application.ex",
+        "examples/mcp_apps/phoenix_host/lib/mcp_apps_host/connection.ex",
+        "examples/mcp_apps/phoenix_host/lib/mcp_apps_host_web/endpoint.ex",
+        "examples/mcp_apps/phoenix_host/lib/mcp_apps_host_web/host_live.ex",
+        "examples/mcp_apps/phoenix_host/lib/mcp_apps_host_web/http.ex",
+        "examples/mcp_apps/phoenix_host/lib/mcp_apps_host_web/layouts.ex",
+        "examples/mcp_apps/phoenix_host/lib/mcp_apps_host_web/router.ex",
+        "examples/mcp_apps/phoenix_host/mix.exs",
+        "examples/mcp_apps/phoenix_host/mix.lock",
+        "examples/mcp_apps/phoenix_host/test/browser_driver.exs",
+        "examples/mcp_apps/phoenix_host/test/connection_test.exs",
+        "examples/mcp_apps/phoenix_host/test/test_helper.exs"
       ],
       "cases": [
         "apps.sdk.interop",
         "apps.sdk.stdio",
-        "apps.browser.example"
+        "apps.browser.example",
+        "apps.browser.phoenix_host"
       ],
-      "notes": "Controlled test Host implements only the exercised profile. No arbitrary vendor-host certification, full browser Host SDK, or all UI-method coverage is claimed."
+      "notes": "Controlled fixture and Phoenix example qualify their local self-contained HTML profile. No production Host SDK, arbitrary vendor certification or all UI-method coverage is claimed."
     },
     {
       "id": "APPS.HOST_SANDBOX",
@@ -4586,7 +4615,7 @@
       "requirement": "Web Hosts use different-origin double iframes, minimum sandbox permissions, validated messages, CSP and auditable routing.",
       "status": "host",
       "library_scope": "",
-      "external_duties": "Embedding Host owns source/origin validation, cross-origin proxy, CSP construction/defaults, browser permissions, template review/audit and resource limits. The Chromium fixture demonstrates the example\u2019s no-external-domain profile, not a reusable production Host.",
+      "external_duties": "Embedding Host owns source/origin validation, cross-origin proxy, CSP construction/defaults, browser permissions, template review/audit and resource limits. The Chromium fixture demonstrates the example\u2019s no-external-domain profile, not a reusable production Host. The repository includes a local Phoenix example of this restricted no-external-domain profile, qualified under APPS.EXAMPLE; it is not a production Host SDK.",
       "implementation": [],
       "cases": [],
       "notes": "Named evidence qualifies the stated server mechanisms, not every browser-host behavior."
@@ -5772,6 +5801,19 @@
         "apps.sdk.interop",
         "apps.sdk.stdio",
         "apps.browser.example"
+      ]
+    },
+    {
+      "id": "WORK.APPS_PHOENIX",
+      "kind": "implementation",
+      "status": "closed",
+      "requirements": [
+        "APPS.EXAMPLE"
+      ],
+      "action": "Add a runnable Phoenix LiveView Apps host with native MCP forwarding and separate-origin sandbox.",
+      "closure": "The shipped project builds and runs in Chromium; scoped host policy and two-tab/native-client ownership checks pass.",
+      "cases": [
+        "apps.browser.phoenix_host"
       ]
     }
   ],

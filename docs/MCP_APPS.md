@@ -7,6 +7,11 @@ uses existing MCP tools/resources and transports. The
 [runnable calculator example](https://github.com/trust-arbor/arbor_mcp/tree/master/examples/mcp_apps)
 includes an official-SDK browser View and stdio/HTTP launchers.
 
+A [Phoenix LiveView host example](https://github.com/trust-arbor/arbor_mcp/tree/master/examples/mcp_apps/phoenix_host)
+shows the other side: native Elixir MCP clients per browser, official AppBridge,
+model/app visibility checks and a separate-origin sandbox. It is a local example
+for self-contained HTML, with explicit limits and browser qualification.
+
 Browser rendering and the separate `ui/*` protocol belong to the embedding Host
 and View. Use the official JavaScript Apps SDK there. Advertising Apps on an
 Elixir client alone does not create a rendering host.

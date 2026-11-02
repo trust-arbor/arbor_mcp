@@ -24,7 +24,8 @@ Alongside MCP protocol support, ArborMCP provides:
 
 - **MCP Apps:** validated interactive-tool/resource helpers and an
   [official-SDK calculator View](https://github.com/trust-arbor/arbor_mcp/tree/master/examples/mcp_apps), with text fallback, SDK
-  interoperability and Chromium tests. [Apps guide](docs/MCP_APPS.md).
+  interoperability and Chromium tests. A [Phoenix LiveView host](https://github.com/trust-arbor/arbor_mcp/tree/master/examples/mcp_apps/phoenix_host)
+  demonstrates native forwarding and a separate-origin sandbox. [Apps guide](docs/MCP_APPS.md).
 - **Forwarding and embedded proxies:** manual MRTR, per-request capabilities,
   per-call progress targets and caller-exit cancellation for application-owned
   forwarding handlers.

@@ -179,6 +179,8 @@ responsibilities.
   metadata plus a separate UI protocol and host rendering/sandbox behavior.
   `Arbor.MCP.Apps` now supplies validated server authoring helpers and an
   official-SDK calculator View with HTTP/stdio SDK and Chromium qualification.
+  A local Phoenix LiveView host example additionally qualifies native client
+  forwarding, per-browser ownership and two-origin sandboxing for self-contained HTML.
   A pinned section/export manifest maps server, Host/View and deferred duties.
   The embedding Host still owns rendering, sandbox/CSP enforcement, visibility,
   consent and advertised UI actions. No full browser Host or arbitrary vendor

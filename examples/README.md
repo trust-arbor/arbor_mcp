@@ -48,6 +48,8 @@ line is not a test verdict for every transport.
 HTML resource. It includes an Elixir Handler, official-SDK View and bundle
 builder, plus stdio/HTTP launchers. Build and run it from the repository root;
 its README documents Apps-capable host setup and SDK/browser qualification.
+The nested [Phoenix LiveView host](mcp_apps/phoenix_host/) provides a runnable
+local browser host with native MCP forwarding and a second-origin sandbox.
 
 ## Server Examples
 

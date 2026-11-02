@@ -45,6 +45,13 @@ accepts its own loopback Origin. Browser hosts with another Origin require an
 explicit application-owned allowlist; do not disable Origin validation.
 This local example has no authentication and is intended for local development.
 
+## Run an example host with Phoenix
+
+The [Phoenix LiveView host](phoenix_host/) connects to this server using native
+ArborMCP clients, renders the View in a separate-origin sandbox, and demonstrates
+model/app tool filtering, text/private-data separation, theme and close/reopen.
+Its README has complete two-terminal setup; no LLM account or Node server is needed.
+
 ## Files and responsibilities
 
 - `server.exs` uses `Arbor.MCP.Apps` to build validated tool/resource metadata,

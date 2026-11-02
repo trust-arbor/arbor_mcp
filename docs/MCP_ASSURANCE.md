@@ -219,3 +219,20 @@ It also checks theme/size changes and teardown. Host policy in this fixture is
 not a production Host API, and these checks are not an official all-method Apps
 conformance suite or certification of a specific vendor host. Existing official
 core conformance is reused unchanged.
+
+The same browser lane also builds `examples/mcp_apps/phoenix_host` with its
+independent pinned Mix lockfile and tests the shipped Phoenix/LiveView application.
+`apps.browser.phoenix_host` uses native ArborMCP clients through LiveView, separate
+host/sandbox endpoints and two browser tabs. It checks calculator updates and
+resource reads, model/app visibility and unsupported-action denials, actual CSP
+violation against a reachable local asset, private metadata separation, theme,
+close/reopen, LiveView reconnect and surviving-tab behavior. A controlled stdin
+driver monitors every native client PID (including the retired reconnect owner)
+and requires them to exit after browser closure. This driver
+is test-only and adds no web route. Nested policy tests must pass too.
+
+The register fingerprints all host source/config, build inputs and the pinned Mix
+lockfile. The case always rebuilds host assets; the artifact includes
+`phoenix-host-build.json` and `phoenix/{empty,light,dark,mobile}.png`. This qualifies
+the local self-contained HTML host profile, not a production Host or every UI
+method. [Run the Phoenix example](https://github.com/trust-arbor/arbor_mcp/tree/master/examples/mcp_apps/phoenix_host).
