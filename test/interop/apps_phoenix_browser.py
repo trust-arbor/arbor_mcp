@@ -1,10 +1,12 @@
 """Exercise the shipped Phoenix/LiveView host with two actual browser tabs."""
 import json
+import hashlib
 from pathlib import Path
 import sys
 from playwright.sync_api import sync_playwright, expect
 
-origin, sandbox_origin, output = sys.argv[1:4]
+origin, sandbox_origin, output, build_json = sys.argv[1:5]
+expected_assets = json.loads(build_json)
 destination = Path(output)
 destination.mkdir(parents=True, exist_ok=True)
 
@@ -39,6 +41,11 @@ with sync_playwright() as playwright:
         page = context.new_page()
         pages.append(page)
         page.on("pageerror", lambda error: errors.append(str(error)))
+        for base, name in [(origin, "host.js"), (origin, "host.css"), (sandbox_origin, "sandbox.js")]:
+            response = page.request.get(base + "/assets/" + name)
+            assert response.status == 200, f"Missing compiled asset {name}: HTTP {response.status}"
+            assert hashlib.sha256(response.body()).hexdigest() == expected_assets[name], f"Stale compiled asset: {name}"
+
         page.goto(origin)
         page.wait_for_load_state("networkidle")
         expect(page.locator("#connection-status")).to_contain_text("Connected", timeout=15000)

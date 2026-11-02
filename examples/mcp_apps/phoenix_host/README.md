@@ -119,3 +119,7 @@ isolation, theme, close/reopen, LiveView reconnect, two-tab independence and nat
 the browsers close. CI retains empty/light/dark/mobile screenshots and the built
 host asset hashes. See [assurance](../../../docs/MCP_ASSURANCE.md#mcp-apps-browser-qualification)
 from the repository root, or the [Apps guide](../../../docs/MCP_APPS.md).
+
+`priv/static/.gitkeep` keeps the asset directory present during the first Mix
+compile so Mix links it into the built application before the Node build runs.
+The browser test verifies the served asset bytes against the freshly built hashes.

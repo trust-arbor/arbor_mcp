@@ -1267,7 +1267,7 @@
     "apps.browser.phoenix_host": {
       "file": "test/arbor_mcp/integration/apps_phoenix_host_test.exs",
       "kind": "browser",
-      "asserts": "Actual Phoenix LiveView host and real native MCP clients: model/app catalog separation, tool/read forwarding and denials, self-contained resource policy contracts, cross-origin CSP, private metadata, theme/close/reopen, same-context two-tab independence, LiveView reconnect, and all client PIDs exit after browser closure."
+      "asserts": "Actual Phoenix LiveView host and real native MCP clients: model/app catalog separation, tool/read forwarding and denials, self-contained resource policy contracts, cross-origin CSP, private metadata, theme/close/reopen, same-context two-tab independence, LiveView reconnect, and all client PIDs exit after browser closure. Served host/sandbox asset bytes must match the current build before browser initialization."
     }
   },
   "requirements": [
@@ -4593,7 +4593,8 @@
         "examples/mcp_apps/phoenix_host/mix.lock",
         "examples/mcp_apps/phoenix_host/test/browser_driver.exs",
         "examples/mcp_apps/phoenix_host/test/connection_test.exs",
-        "examples/mcp_apps/phoenix_host/test/test_helper.exs"
+        "examples/mcp_apps/phoenix_host/test/test_helper.exs",
+        "examples/mcp_apps/phoenix_host/priv/static/.gitkeep"
       ],
       "cases": [
         "apps.sdk.interop",

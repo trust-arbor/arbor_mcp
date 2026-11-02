@@ -61,7 +61,8 @@ defmodule Arbor.MCP.AppsPhoenixHostTest do
             Path.join(root, "test/interop/apps_phoenix_browser.py"),
             ready["origin"],
             ready["sandboxOrigin"],
-            Path.join(root, "tmp/mcp-apps/phoenix")
+            Path.join(root, "tmp/mcp-apps/phoenix"),
+            Jason.encode!(build)
           ],
           stderr_to_stdout: true
         )
