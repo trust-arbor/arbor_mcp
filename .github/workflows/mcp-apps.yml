@@ -47,12 +47,18 @@ jobs:
         run: |
           npm ci --prefix test/interop --ignore-scripts --no-audit --no-fund
           npm ci --prefix examples/mcp_apps --ignore-scripts --no-audit --no-fund
+      - name: Compile the pinned Phoenix host example
+        working-directory: examples/mcp_apps/phoenix_host
+        run: |
+          MIX_ENV=dev mix deps.get
+          MIX_ENV=dev mix compile --warnings-as-errors
+          MIX_ENV=test mix compile --warnings-as-errors
       - name: Install pinned Playwright and Chromium
         run: |
           python3 -m venv .apps-venv
           .apps-venv/bin/python -m pip install -r test/interop/apps-browser-requirements.txt
           .apps-venv/bin/python -m playwright install --with-deps chromium
-      - name: Qualify rebuilt View in a cross-origin browser sandbox
+      - name: Qualify the rebuilt View and Phoenix host in Chromium
         run: python3 -B scripts/check_mcp_assurance.py --run --kind browser --output tmp/mcp-assurance/apps-browser.json
       - name: Preserve browser evidence and screenshots
         if: always()

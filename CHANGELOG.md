@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A runnable Phoenix LiveView MCP Apps host example with native per-browser
+  clients, official AppBridge and separate-origin sandboxing. Chromium tests
+  qualify its local self-contained HTML profile and client cleanup.
+
 - Stable MCP Apps server authoring helpers, capability-aware text fallback,
   and an official-SDK calculator example with HTTP/stdio interop and a Chromium
   sandbox qualification lane. Apps requirements, Host duties and source pins

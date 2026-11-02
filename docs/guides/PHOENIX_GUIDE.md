@@ -9,6 +9,16 @@ This source prepares ArborMCP `2.0.0-rc.7`. This guide describes the Runtime mou
 contract; see the [RC notes](V2_RELEASE_CANDIDATE.md) for current consumer scope
 and open stable-release gates.
 
+## Hosting MCP Apps in a browser
+
+To build the **client/embedding host** side, start with the runnable
+[Phoenix LiveView Apps host](https://github.com/trust-arbor/arbor_mcp/tree/master/examples/mcp_apps/phoenix_host).
+It uses `Arbor.MCP.Client` per connected browser, forwards selected requests over
+LiveView, and renders the official-SDK calculator View through a second-origin
+sandbox. Its README includes two-terminal setup, policy/ownership boundaries and
+browser tests. It is a local self-contained HTML example; it is separate from
+mounting an MCP server route as described below.
+
 ## Dependencies
 
 ```elixir

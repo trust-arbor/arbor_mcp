@@ -7,7 +7,7 @@ every optional profile, a deployed host or a third-party identity provider.
 A source marked `complete` means its stated **inventory scope** has dispositions:
 supported behavior, partial evidence, host duties and unadopted profiles are mapped.
 It does not mean implementation or executable qualification is complete. The register
-contains 131 requirement bundles, 227 named local/peer/provider/browser cases and mappings to all 73
+contains 131 requirement bundles, 228 named local/peer/provider/browser cases and mappings to all 73
 existing official modern core scenarios.
 
 ## Core revision
@@ -148,3 +148,7 @@ external duties; deferred content formats/features are unadopted. Inventory
 completeness does not assert all Host methods or arbitrary vendor compatibility.
 The extension watcher tracks prose/type changes, and the tooling baseline tracks
 Apps SDK/example pins. See [Apps](MCP_APPS.md) and [requirements](MCP_REQUIREMENTS.md).
+
+The local Phoenix host example adds `apps.browser.phoenix_host` evidence under
+APPS.EXAMPLE. It qualifies a two-origin, self-contained HTML profile with native
+per-browser client ownership, not a general production Host implementation.

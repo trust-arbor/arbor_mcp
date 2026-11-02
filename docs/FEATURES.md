@@ -47,7 +47,10 @@ proof of compatibility with every coding harness.
 visibility and CSP/permission metadata. Capability-aware catalog selection
 provides text fallback and keeps app-only tools out of non-Apps catalogs.
 The [calculator example](https://github.com/trust-arbor/arbor_mcp/tree/master/examples/mcp_apps)
-includes an official-SDK View and stdio/HTTP launchers, qualified against the
+includes an official-SDK View and stdio/HTTP launchers. A
+[Phoenix LiveView host](https://github.com/trust-arbor/arbor_mcp/tree/master/examples/mcp_apps/phoenix_host)
+shows native client forwarding, per-browser ownership and two-origin sandboxing
+for the local self-contained HTML profile. Both are qualified against the
 pinned SDK and Chromium. The embedding Host owns sandboxing, visibility
 enforcement and consent; ArborMCP supplies the server authoring APIs, not a
 browser Host. See the [Apps guide](MCP_APPS.md).
