@@ -65,3 +65,6 @@ test/interop/node_modules/
 
 # Temporary sibling source checkout used by prepublication CI.
 /.arbor-v2/
+
+# Owned local MCP Apps Playwright environment.
+/.apps-venv/

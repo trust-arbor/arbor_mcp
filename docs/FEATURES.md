@@ -6,7 +6,7 @@ features of the implementation, not new MCP protocol capabilities or claims
 that no other SDK provides them. For wire-level coverage, see the
 [MCP feature matrix](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md).
 Its [extensions section](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md#mcp-extensions)
-lists Tasks and the two Auth profiles separately from core MCP, including their
+lists Apps, Tasks and the two Auth profiles separately from core MCP, including their
 supported roles, tests and remaining limits.
 
 The library is on the v2 release-candidate line. Supported APIs are listed in
@@ -40,6 +40,17 @@ The repository's
 [embedded forwarding example](https://github.com/trust-arbor/arbor_mcp/tree/master/examples/forwarding_gateway)
 is a controlled Stage 0 integration fixture, not a packaged gateway product or
 proof of compatibility with every coding harness.
+
+## Interactive tools with MCP Apps
+
+`Arbor.MCP.Apps` builds validated tool-to-UI links, `ui://` HTML resources,
+visibility and CSP/permission metadata. Capability-aware catalog selection
+provides text fallback and keeps app-only tools out of non-Apps catalogs.
+The [calculator example](https://github.com/trust-arbor/arbor_mcp/tree/master/examples/mcp_apps)
+includes an official-SDK View and stdio/HTTP launchers, qualified against the
+pinned SDK and Chromium. The embedding Host owns sandboxing, visibility
+enforcement and consent; ArborMCP supplies the server authoring APIs, not a
+browser Host. See the [Apps guide](MCP_APPS.md).
 
 ## Server authoring and application integration
 

@@ -7,7 +7,7 @@ substitute for the qualification described in the
 
 `arbor_rpc` resolves from Hex; set `ARBOR_RPC_PATH` only to try a local RPC
 checkout. Source installation requires C17 on qualified macOS/Linux platforms.
-The standalone scripts load the local MCP project through `Mix.install/1`.
+Most standalone scripts load the local MCP project through `Mix.install/1`.
 
 **First runs:** Standalone scripts call `Mix.install/1`; its cache avoids repeated
 installation of unchanged dependencies, but cold runs can take minutes.
@@ -41,6 +41,13 @@ It does not prove a 2024 two-endpoint `/sse` connection or replay. Use the
 [protocol and transport guides](../docs/TRANSPORT_GUIDE.md) for that explicit flow.
 The script prints per-transport failures and continues; a final "Demo completed"
 line is not a test verdict for every transport.
+
+## MCP Apps
+
+[`mcp_apps/`](mcp_apps/) serves an interactive calculator through a predeclared
+HTML resource. It includes an Elixir Handler, official-SDK View and bundle
+builder, plus stdio/HTTP launchers. Build and run it from the repository root;
+its README documents Apps-capable host setup and SDK/browser qualification.
 
 ## Server Examples
 

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Workspace plan · Arbor</title>
+  <style>
+    :root{color-scheme:light;--paper:#f4f1e9;--ink:#19372e;--muted:#58645c;--line:#c7cfc4;--accent:#b64a29;--panel:#e5eadf}
+    :root[data-theme=dark]{color-scheme:dark;--paper:#172720;--ink:#f3efe4;--muted:#b7c5b8;--line:#496052;--accent:#f19c75;--panel:#243b2e}
+    *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:"Trebuchet MS","Gill Sans",sans-serif;font-size:15px}
+    main{max-width:860px;margin:auto;padding:30px 34px}header{display:flex;justify-content:space-between;gap:16px;align-items:center;border-bottom:1px solid var(--line);padding-bottom:16px;font-size:11px;text-transform:uppercase;letter-spacing:.16em}
+    .brand{font-weight:bold}.edition{color:var(--muted)}h1{font:normal clamp(34px,6vw,54px)/1.08 Charter,"Iowan Old Style",Georgia,serif;letter-spacing:-.035em;margin:27px 0 12px;max-width:12ch}p{color:var(--muted);line-height:1.55;margin:0}
+    .grid{display:grid;grid-template-columns:1fr .85fr;gap:36px;margin:30px 0 25px}.field{margin-bottom:30px}label{display:flex;justify-content:space-between;gap:12px;align-items:baseline;margin-bottom:15px}label strong{font-size:14px}output{font-variant-numeric:tabular-nums;font-size:21px;color:var(--accent)}input[type=range]{width:100%;accent-color:var(--ink);cursor:pointer}.ends{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:8px}
+    .estimate{background:var(--panel);padding:25px;display:flex;flex-direction:column;justify-content:space-between;min-height:240px}.eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.13em}.price{font:normal clamp(46px,8vw,70px)/1.05 Charter,Georgia,serif;letter-spacing:-.05em;display:block;margin:16px 0 4px;font-variant-numeric:tabular-nums}.period{font-size:12px}#summary{margin-top:20px;font-size:12px;line-height:1.5}
+    button{width:100%;background:var(--ink);color:var(--paper);border:1px solid var(--ink);border-radius:2px;padding:14px 18px;font:inherit;font-weight:bold;cursor:pointer;transition:opacity .15s}button:hover{opacity:.86}button:disabled{opacity:.45;cursor:wait}:focus-visible{outline:3px solid var(--accent);outline-offset:4px}#status{min-height:1.5em;font-size:12px;margin-top:13px}.footer{border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:16px;padding-top:16px;font-size:11px;color:var(--muted)}
+    @media(max-width:520px){main{padding:23px}.grid{grid-template-columns:1fr;gap:14px}.estimate{min-height:190px}.edition{display:none}.footer{flex-direction:column;gap:5px}}
+    @media(prefers-reduced-motion:reduce){button{transition:none}}
+  </style>
+</head>
+<body>
+<main>
+  <header><span class="brand">Arbor / Workspace</span><span class="edition">Plan study · 01</span></header>
+  <h1>Room for your next idea.</h1>
+  <p>Find a plan that fits your team. Adjust the space, then update your estimate.</p>
+  <section id="plan-form" aria-label="Plan calculator">
+    <div class="grid">
+      <section aria-label="Plan settings">
+        <div class="field"><label for="seats"><strong>Team seats</strong><output id="seats-label" for="seats">8</output></label><input id="seats" name="seats" type="range" min="1" max="50" value="8"><div class="ends"><span>Just you</span><span>50 people</span></div></div>
+        <div class="field"><label for="storage"><strong>Shared storage</strong><output id="storage-label" for="storage">100 GB</output></label><input id="storage" name="storage" type="range" min="0" max="2000" step="1" value="100"><div class="ends"><span>0 GB</span><span>2,000 GB</span></div></div>
+        <button id="update" type="button" disabled>Update estimate <span aria-hidden="true">↗</span></button>
+        <p id="status" role="status" aria-live="polite">Waiting for an MCP Apps host…</p>
+      </section>
+      <aside class="estimate" aria-label="Monthly estimate"><div><span class="eyebrow">Your monthly estimate</span><strong id="total" class="price">—</strong><span class="period">USD / month</span></div><p id="summary">Your estimate will appear here.</p></aside>
+    </div>
+  </section>
+  <div class="footer"><span>Illustrative pricing. Nothing is purchased.</span><span id="view-label">Arbor example</span></div>
+</main>
+<!-- APP_SCRIPT -->
+</body>
+</html>

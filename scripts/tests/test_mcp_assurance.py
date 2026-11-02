@@ -113,6 +113,48 @@ class AssuranceTest(unittest.TestCase):
             with self.subTest(mutation=mutation), self.assertRaises(CHECK.AssuranceError):
                 self.load(self.data)
 
+    def test_apps_manifest_binds_nested_headings_types_constants_and_source_bytes(self):
+        self.data["sources"]["APPS"] = dict(self.data["sources"].pop("spec"), inventory="complete")
+        self.data["requirements"][0]["source"] = "APPS"
+        with self.assertRaisesRegex(CHECK.AssuranceError, "source manifest"):
+            self.load(self.data)
+        prose = "## Specification\n### Resource\n#### Behavior\n### View\n#### Behavior\n"
+        types = "export const VERSION = '1';\nexport interface Meta {}\nexport type Theme = string;\n"
+        manifest = {"version": 1, "source": "APPS", "revision": "a" * 40, "files": {}}
+        for remote, name, content, fields in [
+            ("specification/2026-01-26/apps.mdx", "apps.mdx", prose,
+             {"section_depth": 4, "sections": {name: {"requirements": ["SPEC.AUD"]}
+                                                for name in CHECK.prose_sections(prose, 4)}}),
+            ("src/spec.types.ts", "apps.ts", types,
+             {"exports": {name: ["SPEC.AUD"] for name in ["VERSION", "Meta", "Theme"]}})
+        ]:
+            (self.root / name).write_text(content)
+            manifest["files"][remote] = dict(fields, local=name, sha256=hashlib.sha256(content.encode()).hexdigest())
+        path = self.root / "apps-manifest.json"
+        self.data["apps_source_manifest"] = path.name
+        path.write_text(json.dumps(manifest))
+        self.load(self.data)
+        self.assertIn("Specification / View / Behavior", manifest["files"]["specification/2026-01-26/apps.mdx"]["sections"])
+        for field in ["constant", "nested_heading", "content"]:
+            broken = copy.deepcopy(manifest)
+            if field == "constant":
+                del broken["files"]["src/spec.types.ts"]["exports"]["VERSION"]
+            elif field == "nested_heading":
+                del broken["files"]["specification/2026-01-26/apps.mdx"]["sections"]["Specification / View / Behavior"]
+            else:
+                (self.root / "apps.ts").write_text(types + "// changed\n")
+            path.write_text(json.dumps(broken))
+            with self.subTest(field=field), self.assertRaises(CHECK.AssuranceError):
+                self.load(self.data)
+
+    def test_browser_evidence_is_separate_and_cannot_be_skipped(self):
+        self.data["cases"]["case.pass"]["kind"] = "browser"
+        self.load(self.data)
+        CHECK.validate_results(self.data, self.report, "digest")
+        self.report["tests"][0]["state"] = "skipped"
+        with self.assertRaises(CHECK.AssuranceError):
+            CHECK.validate_results(self.data, self.report, "digest")
+
     def test_missing_or_wrong_commit_identity_cannot_qualify_an_artifact(self):
         for value in [None, "b" * 40]:
             report = dict(self.report)
@@ -168,7 +210,22 @@ class AssuranceTest(unittest.TestCase):
         script = self.root / "scripts/conformance.sh"
         script.write_text('${CONFORMANCE_ALPHA_VERSION:-0.2.0-alpha.12}')
         (self.root / "scripts/mcp_extension_checks.json").write_text(json.dumps({"harness": "@modelcontextprotocol/conformance@0.2.0-alpha.12"}))
+        example = self.root / "examples/apps/package-lock.json"
+        example.parent.mkdir(parents=True)
+        example.write_text(json.dumps(lock))
+        pins["apps_example"] = {"lock": "examples/apps/package-lock.json", "packages": {"@modelcontextprotocol/client": "2.4.0"}}
+        (self.root / "scripts/mcp_tooling_baseline.json").write_text(json.dumps(pins))
         CHECK.check_peer_pins(self.root)
+        example.write_text(json.dumps({"packages": {"node_modules/@modelcontextprotocol/client": {"version": "2.5.0"}}}))
+        with self.assertRaisesRegex(CHECK.AssuranceError, "Apps example pin"):
+            CHECK.check_peer_pins(self.root)
+        example.write_text(json.dumps(lock))
+        pins["apps_example"]["packages"]["@modelcontextprotocol/client"] = "2.5.0"
+        (self.root / "scripts/mcp_tooling_baseline.json").write_text(json.dumps(pins))
+        with self.assertRaisesRegex(CHECK.AssuranceError, "Apps example pin"):
+            CHECK.check_peer_pins(self.root)
+        pins["apps_example"]["packages"]["@modelcontextprotocol/client"] = "2.4.0"
+        (self.root / "scripts/mcp_tooling_baseline.json").write_text(json.dumps(pins))
         lock["packages"]["node_modules/@modelcontextprotocol/client"]["version"] = "2.5.0"
         path.write_text(json.dumps(lock))
         with self.assertRaises(CHECK.AssuranceError):

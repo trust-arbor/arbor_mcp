@@ -7,7 +7,7 @@ every optional profile, a deployed host or a third-party identity provider.
 A source marked `complete` means its stated **inventory scope** has dispositions:
 supported behavior, partial evidence, host duties and unadopted profiles are mapped.
 It does not mean implementation or executable qualification is complete. The register
-contains 119 requirement bundles, 212 named local/peer/provider cases and mappings to all 73
+contains 131 requirement bundles, 227 named local/peer/provider/browser cases and mappings to all 73
 existing official modern core scenarios.
 
 ## Core revision
@@ -130,3 +130,21 @@ and HTTP notification tests plus a public-client HTTP input/cancel cycle supply
 named evidence. The official notification scenario remains a stub; independent
 Tasks SDK interop is not qualified. Hosts drive polling and durable task-ID/input
 tracking; ETS alone does not survive a process/node restart.
+
+## MCP Apps stable profile
+
+The reviewed stable `2026-01-26` [Apps prose](https://github.com/modelcontextprotocol/ext-apps/blob/cf599cc462406accc90ec3ca7879e3a22a9fc2a8/specification/2026-01-26/apps.mdx)
+and [protocol types](https://github.com/modelcontextprotocol/ext-apps/blob/cf599cc462406accc90ec3ca7879e3a22a9fc2a8/src/spec.types.ts)
+are pinned together at `cf599cc462406accc90ec3ca7879e3a22a9fc2a8`.
+`scripts/mcp_apps_requirement_sources.json` content-hashes both local snapshots,
+maps all 69 prose headings (through level four) and 56 exported types/constants,
+and is checked against the 12 Apps responsibility bundles. Context/rationale
+headings are mapped for review completeness, not counted as executable passes.
+
+Server metadata/resource/capability helpers and the official-SDK View example
+have named contract, HTTP/stdio SDK and Chromium evidence. Browser Host actions,
+sandbox/CSP/consent, visibility enforcement and general View integration remain
+external duties; deferred content formats/features are unadopted. Inventory
+completeness does not assert all Host methods or arbitrary vendor compatibility.
+The extension watcher tracks prose/type changes, and the tooling baseline tracks
+Apps SDK/example pins. See [Apps](MCP_APPS.md) and [requirements](MCP_REQUIREMENTS.md).

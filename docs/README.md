@@ -6,6 +6,7 @@
 | Install ArborMCP and make a first call | [Quickstart](getting-started/QUICKSTART.md), [user guide](guides/USER_GUIDE.md) |
 | Move from ExMCP 1.x | [Migration guide](guides/MIGRATING_V1_TO_V2.md), [maintenance policy](MAINTENANCE_POLICY.md) |
 | Review supported API entrypoints | [Public API reference](API_REFERENCE.md), [server DSL](DSL_GUIDE.md) |
+| Add interactive tool Views | [MCP Apps](MCP_APPS.md), [calculator example](https://github.com/trust-arbor/arbor_mcp/tree/master/examples/mcp_apps) |
 | Host a server | [Runtime guide](RUNTIME_GUIDE.md), [HTTP listeners](HTTP_LISTENERS.md), [Phoenix](guides/PHOENIX_GUIDE.md) |
 | Choose limits and storage | [Configuration](CONFIGURATION.md), [storage](STORAGE.md) |
 | Understand protocol and validation | [Protocol guide](PROTOCOL_GUIDE.md), [transports](TRANSPORT_GUIDE.md), [schemas](SCHEMAS.md) |

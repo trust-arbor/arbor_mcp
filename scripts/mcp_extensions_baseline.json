@@ -1,6 +1,6 @@
 {
   "inventory_date": "2026-10-31",
-  "notes": "Source/current-scope assessment and corrections are recorded in docs/MCP_EXTENSION_BASELINE_REVIEW.md. Reviewed is not universal compatibility. Tasks and Auth are acknowledged for their recorded scope; complete scoped inventories are separate from executable qualification and host policy. Optional protocols are not enabled by this inventory.",
+  "notes": "Source/current-scope assessment and corrections are recorded in docs/MCP_EXTENSION_BASELINE_REVIEW.md. Reviewed is not universal compatibility. Apps server authoring, Tasks and Auth are acknowledged for their recorded scope; complete scoped inventories are separate from executable qualification and host policy. Optional protocols are not enabled by this inventory.",
   "reviewed_at": "2026-11-01T02:21:59.838435+00:00",
   "sources": {
     "modelcontextprotocol/experimental-ext-file-uploads": {
@@ -46,8 +46,8 @@
       "revision": "cfc05d6f5eb8829f9896d44a6d47360bd15c3b5c"
     },
     "modelcontextprotocol/ext-apps": {
-      "assessment": "not_implemented",
-      "notes": "No built-in or qualified Apps integration; generic tool/resource metadata is only a building block.",
+      "assessment": "server_profile_with_sdk_browser_qualification",
+      "notes": "Stable HTML Apps server authoring helpers and official SDK View example. Named HTTP/stdio SDK and Chromium evidence qualify the exercised profile; sandboxing, consent, UI-method handling and visibility enforcement belong to embedding Hosts. Every stable prose section/export has a pinned responsibility disposition; no full Host or vendor certification.",
       "review_report": "https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_EXTENSION_BASELINE_REVIEW.md",
       "review_status": "reviewed",
       "revision": "cf599cc462406accc90ec3ca7879e3a22a9fc2a8"
@@ -78,7 +78,7 @@
     },
     "modelcontextprotocol/ext-tasks": {
       "assessment": "implemented_with_documented_limits",
-      "notes": "T1\u2013T5 corrected with regressions and official Tasks server conformance. Node-local store retains finite TTL and byte quotas; upstream notification scenario remains a stub, with actual HTTP delivery tested locally. Complete clause/schema and client interop inventories remain pending.",
+      "notes": "T1\u2013T5 corrected with regressions and official Tasks server conformance. Node-local store retains finite TTL and byte quotas; upstream notification scenario remains a stub, with actual HTTP delivery tested locally. Scoped prose/schema dispositions and named client/server HTTP lifecycle evidence are recorded. Independent Tasks SDK qualification remains open to future work; no such compatibility claim is made.",
       "resolved_findings": [
         "T1",
         "T2",

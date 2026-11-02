@@ -180,7 +180,7 @@ certify every inherited clause, every provider, or host/IdP/AS duties.
 | Tasks (`io.modelcontextprotocol/tasks`) | `2026-07-28`, Beta | ✅ Opt-in client/server methods, bounded node-local store, input rounds, cooperative cancellation and notifications. Peer TTLs may be null; the bundled store retains a finite TTL policy. | `tasks/`, `client/modern_result_validation_test.exs`, `transport/http_request_headers_test.exs`, `client/modern_http_subscription_test.exs`; official Tasks server scenarios below. Reviewed prose/schema inventory and named server/client HTTP lifecycle evidence are in [the register](MCP_REQUIREMENTS.md). Hosts drive polling/persistence/input approvals; independent Tasks SDK interop is not qualified. |
 | OAuth Client Credentials | `2026-07-28`, Stable | ✅ Client profiles: pre-registered Basic/body credentials and JWT, issuer binding, advertised JWT algorithms, no DCR or anonymous fallback. Scoped core and inherited requirements are mapped separately from executable qualification. | Named contracts, independent Node OAuth peer, pinned SDK helpers, official Basic/JWT scenarios and real Keycloak client-credentials tests below. AS metadata/issuance/deployment duties are separate; see [requirement evidence](MCP_REQUIREMENTS.md). |
 | Enterprise-Managed Authorization | `2026-07-28`, Stable | ✅ Client orchestrators for OIDC, refresh-token and SAML-to-refresh-token inputs; separate optional issuer-bound IdP and resource-AS Basic/POST/JWT credentials. Opt-in resource omission retains strict defaults. Initial SSO, IdP policy and AS issuance/replay/tenant policy remain host-owned. | Named confidential-IdP contracts, both orchestrators against a verifying independent peer including fetched CIMD/inline or URL keys, SDK OIDC helper interop and official public-IdP scenario; [requirement evidence](MCP_REQUIREMENTS.md) separates implemented, tested, interop and host scope. |
-| Apps | `2026-01-26`, Stable | — No built-in or qualified Apps integration. | Generic tools/resources/metadata are building blocks, not an Apps qualification. |
+| Apps (`io.modelcontextprotocol/ui`) | `2026-01-26`, Stable | ✅ Server authoring: validated tool/UI links, HTML resources, visibility/resource metadata and capability-aware text fallback. Official-SDK View example. | [Apps guide](MCP_APPS.md), `apps_test.exs`, `apps_wire_test.exs`; official SDK HTTP/stdio and Chromium example tests below. Browser Host rendering, sandbox/CSP enforcement, consent, model filtering and connection affinity remain Host duties. No full Host or arbitrary vendor certification. |
 | Skills | Beta | — Skills methods, manifests and host loading semantics are not implemented. | No extension conformance claim. |
 | Server Cards | Beta | — Card publication and card-based discovery are not implemented. | No extension conformance claim. |
 | File uploads | Experimental | — No protocol adopted from the incubation placeholder. | No extension conformance claim. |
@@ -237,6 +237,20 @@ a certification of a complete OAuth authorization server. The explicit
 extension harness run supplies independent wire peers for the roles shown here;
 local suites cover additional library paths and documented limits.
 
+
+### Apps SDK and browser qualification
+
+The stable Apps server profile is tested separately from core conformance:
+
+| Lane | Executed profile | Limit |
+| --- | --- | --- |
+| Native contracts | Metadata/type/alias validation, UI resource existence, modern and legacy HTTP content/results, fallback and isolated capability profiles | Authors supply valid HTML5, meaningful text and application authorization. |
+| Official SDK peer | Pinned client 2.4.0 / Apps 2.0.4 validate Elixir wire declarations and exercise official App/AppBridge initialize, input/result, call/read and teardown over HTTP and the documented stdio launcher | Independent SDK integration, not an official Apps conformance scenario. |
+| Chromium | Rebuilt shipped View, official AppBridge and upstream different-origin sandbox proxy: interactive updates, private metadata, model-only/cross-server denial, undeclared network denial, theme/resize and teardown; screenshot/build-hash artifacts | Controlled no-external-domain Host fixture; no all-method Host implementation or universal vendor-host qualification. |
+
+The [requirements tracker](MCP_REQUIREMENTS.md) maps all reviewed stable Apps
+prose sections and exported protocol types/constants, distinguishing server
+support from Host/View duties and deferred formats. [Assurance setup](MCP_ASSURANCE.md#mcp-apps-browser-qualification).
 
 ### Real-provider integration
 

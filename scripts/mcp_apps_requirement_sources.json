@@ -1,0 +1,637 @@
+{
+  "version": 1,
+  "source": "APPS",
+  "revision": "cf599cc462406accc90ec3ca7879e3a22a9fc2a8",
+  "files": {
+    "specification/2026-01-26/apps.mdx": {
+      "local": "docs/mcp-specs/2026-01-26/extensions/apps.mdx",
+      "sha256": "ee452a7d1b9b7fb900acfeb4d6932d3963375b0f3f37d196a4b93eb80312af0e",
+      "section_depth": 4,
+      "sections": {
+        "Abstract": {
+          "requirements": [
+            "APPS.NEGOTIATION",
+            "APPS.EXAMPLE"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Motivation": {
+          "requirements": [
+            "APPS.NEGOTIATION",
+            "APPS.EXAMPLE"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification": {
+          "requirements": [
+            "APPS.NEGOTIATION",
+            "APPS.EXAMPLE"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Extension Identifier": {
+          "requirements": [
+            "APPS.NEGOTIATION",
+            "APPS.RESOURCE"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Overview": {
+          "requirements": [
+            "APPS.NEGOTIATION",
+            "APPS.EXAMPLE"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / UI Resource Format": {
+          "requirements": [
+            "APPS.RESOURCE",
+            "APPS.RESOURCE_META"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / UI Resource Format / Content Requirements:": {
+          "requirements": [
+            "APPS.RESOURCE",
+            "APPS.RESOURCE_META"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / UI Resource Format / Host Behavior:": {
+          "requirements": [
+            "APPS.HOST_SANDBOX"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Resource Discovery": {
+          "requirements": [
+            "APPS.TOOL_LINKS",
+            "APPS.FALLBACK"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Resource Discovery / Behavior:": {
+          "requirements": [
+            "APPS.TOOL_LINKS",
+            "APPS.FALLBACK"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Resource Discovery / Visibility:": {
+          "requirements": [
+            "APPS.VISIBILITY",
+            "APPS.HOST_ACTIONS"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Resource Discovery / Benefits:": {
+          "requirements": [
+            "APPS.TOOL_LINKS",
+            "APPS.FALLBACK"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Communication Protocol": {
+          "requirements": [
+            "APPS.HOST_ACTIONS"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Transport Layer": {
+          "requirements": [
+            "APPS.HOST_ACTIONS"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Sandbox proxy": {
+          "requirements": [
+            "APPS.HOST_SANDBOX"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Standard MCP Messages": {
+          "requirements": [
+            "APPS.HOST_ACTIONS"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / App Capabilities in `ui/initialize`": {
+          "requirements": [
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Host Context in `McpUiInitializeResult`": {
+          "requirements": [
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Host Capabilities": {
+          "requirements": [
+            "APPS.HOST_ACTIONS"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Container Dimensions": {
+          "requirements": [
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Container Dimensions / Dimension Modes": {
+          "requirements": [
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Container Dimensions / View Behavior": {
+          "requirements": [
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Container Dimensions / Host Behavior": {
+          "requirements": [
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Display Modes": {
+          "requirements": [
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Display Modes / Declaring Support": {
+          "requirements": [
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Display Modes / Requesting Changes": {
+          "requirements": [
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Display Modes / Notifying Changes": {
+          "requirements": [
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Display Modes / Requirements": {
+          "requirements": [
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Theming": {
+          "requirements": [
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Theming / Current Standardized Variables": {
+          "requirements": [
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Theming / Host Behavior": {
+          "requirements": [
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Theming / View Behavior": {
+          "requirements": [
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Theming / Custom Fonts": {
+          "requirements": [
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / MCP Apps Specific Messages": {
+          "requirements": [
+            "APPS.HOST_ACTIONS"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / MCP Apps Specific Messages / Requests (View \u2192 Host)": {
+          "requirements": [
+            "APPS.HOST_ACTIONS"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / MCP Apps Specific Messages / Notifications (Host \u2192 View)": {
+          "requirements": [
+            "APPS.HOST_ACTIONS"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / MCP Apps Specific Messages / Reserved Messages (Sandbox Proxy)": {
+          "requirements": [
+            "APPS.HOST_SANDBOX"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Lifecycle": {
+          "requirements": [
+            "APPS.EXAMPLE",
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Lifecycle / 1. Connection & Discovery": {
+          "requirements": [
+            "APPS.EXAMPLE",
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Lifecycle / 2. UI Initialization (Desktop/Native Hosts)": {
+          "requirements": [
+            "APPS.EXAMPLE",
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Lifecycle / 3. Interactive Phase": {
+          "requirements": [
+            "APPS.EXAMPLE",
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Lifecycle / 4. Cleanup": {
+          "requirements": [
+            "APPS.EXAMPLE",
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Lifecycle / Key Differences from Pre-SEP MCP-UI:": {
+          "requirements": [
+            "APPS.EXAMPLE",
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Data Passing": {
+          "requirements": [
+            "APPS.RESULTS",
+            "APPS.EXAMPLE"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Data Passing / 1. Tool Input (via `ui/notifications/tool-input` notification)": {
+          "requirements": [
+            "APPS.RESULTS",
+            "APPS.EXAMPLE"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Data Passing / 2. Tool Result (via `ui/notifications/tool-result` notification)": {
+          "requirements": [
+            "APPS.RESULTS",
+            "APPS.EXAMPLE"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Data Passing / 3. Interactive Updates": {
+          "requirements": [
+            "APPS.RESULTS",
+            "APPS.EXAMPLE"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Client\\<\\>Server Capability Negotiation": {
+          "requirements": [
+            "APPS.NEGOTIATION",
+            "APPS.FALLBACK"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Client\\<\\>Server Capability Negotiation / Client (Host) Capabilities": {
+          "requirements": [
+            "APPS.NEGOTIATION",
+            "APPS.FALLBACK"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Client\\<\\>Server Capability Negotiation / Server Behavior": {
+          "requirements": [
+            "APPS.NEGOTIATION",
+            "APPS.FALLBACK"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Specification / Extensibility": {
+          "requirements": [
+            "APPS.FUTURE"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Rationale": {
+          "requirements": [
+            "APPS.NEGOTIATION",
+            "APPS.EXAMPLE"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Rationale / Design Decisions": {
+          "requirements": [
+            "APPS.NEGOTIATION",
+            "APPS.EXAMPLE"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Rationale / Design Decisions / 1. Predeclared Resources vs. Inline Embedding": {
+          "requirements": [
+            "APPS.TOOL_LINKS"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Rationale / Design Decisions / 2. Host communication via MCP Transport": {
+          "requirements": [
+            "APPS.HOST_ACTIONS"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Rationale / Design Decisions / 3. Support Raw HTML Content Type": {
+          "requirements": [
+            "APPS.RESOURCE",
+            "APPS.FUTURE"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Rationale / Design Decisions / 4. Host Theming via CSS Variables": {
+          "requirements": [
+            "APPS.VIEW"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Rationale / Design Decisions / 5. Tool Visibility via Metadata": {
+          "requirements": [
+            "APPS.VISIBILITY"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Rationale / Backward Compatibility": {
+          "requirements": [
+            "APPS.NEGOTIATION",
+            "APPS.EXAMPLE"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Rationale / Reference Implementation": {
+          "requirements": [
+            "APPS.NEGOTIATION",
+            "APPS.EXAMPLE"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Security Implications": {
+          "requirements": [
+            "APPS.HOST_SANDBOX"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Security Implications / Threat Model": {
+          "requirements": [
+            "APPS.HOST_SANDBOX"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Security Implications / Mitigations": {
+          "requirements": [
+            "APPS.HOST_SANDBOX"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Security Implications / Mitigations / 1. Iframe Sandboxing": {
+          "requirements": [
+            "APPS.HOST_SANDBOX"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Security Implications / Mitigations / 2. Auditable Communication": {
+          "requirements": [
+            "APPS.HOST_SANDBOX"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Security Implications / Mitigations / 3. Predeclared Resource Review": {
+          "requirements": [
+            "APPS.HOST_SANDBOX"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Security Implications / Mitigations / 4. Content Security Policy Enforcement": {
+          "requirements": [
+            "APPS.HOST_SANDBOX"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Security Implications / Other risks": {
+          "requirements": [
+            "APPS.HOST_SANDBOX"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        },
+        "Reservations in MCP": {
+          "requirements": [
+            "APPS.NEGOTIATION",
+            "APPS.RESOURCE"
+          ],
+          "disposition": "Reviewed server/Host/View responsibility; contextual headings do not add a library pass."
+        }
+      }
+    },
+    "src/spec.types.ts": {
+      "local": "docs/mcp-specs/2026-01-26/extensions/apps-types.ts",
+      "sha256": "f46212be3355fa0437c81b01659187efacdeef6fa50be23be02a47d03610bc6a",
+      "exports": {
+        "LATEST_PROTOCOL_VERSION": [
+          "APPS.NEGOTIATION"
+        ],
+        "McpUiTheme": [
+          "APPS.VIEW"
+        ],
+        "McpUiDisplayMode": [
+          "APPS.VIEW"
+        ],
+        "McpUiStyleVariableKey": [
+          "APPS.VIEW"
+        ],
+        "McpUiStyles": [
+          "APPS.VIEW"
+        ],
+        "McpUiOpenLinkRequest": [
+          "APPS.HOST_ACTIONS"
+        ],
+        "McpUiOpenLinkResult": [
+          "APPS.HOST_ACTIONS"
+        ],
+        "McpUiDownloadFileRequest": [
+          "APPS.HOST_ACTIONS"
+        ],
+        "McpUiDownloadFileResult": [
+          "APPS.HOST_ACTIONS"
+        ],
+        "McpUiMessageRequest": [
+          "APPS.HOST_ACTIONS"
+        ],
+        "McpUiMessageResult": [
+          "APPS.HOST_ACTIONS"
+        ],
+        "McpUiSandboxProxyReadyNotification": [
+          "APPS.HOST_SANDBOX"
+        ],
+        "McpUiSandboxResourceReadyNotification": [
+          "APPS.HOST_SANDBOX"
+        ],
+        "McpUiSizeChangedNotification": [
+          "APPS.VIEW"
+        ],
+        "McpUiToolInputNotification": [
+          "APPS.RESULTS",
+          "APPS.VIEW"
+        ],
+        "McpUiToolInputPartialNotification": [
+          "APPS.RESULTS",
+          "APPS.VIEW"
+        ],
+        "McpUiToolResultNotification": [
+          "APPS.RESULTS",
+          "APPS.VIEW"
+        ],
+        "McpUiToolCancelledNotification": [
+          "APPS.VIEW"
+        ],
+        "McpUiHostCss": [
+          "APPS.VIEW"
+        ],
+        "McpUiHostStyles": [
+          "APPS.VIEW"
+        ],
+        "McpUiHostContext": [
+          "APPS.VIEW"
+        ],
+        "McpUiHostContextChangedNotification": [
+          "APPS.VIEW"
+        ],
+        "McpUiUpdateModelContextRequest": [
+          "APPS.HOST_ACTIONS"
+        ],
+        "McpUiResourceTeardownRequest": [
+          "APPS.VIEW"
+        ],
+        "McpUiResourceTeardownResult": [
+          "APPS.VIEW"
+        ],
+        "McpUiSupportedContentBlockModalities": [
+          "APPS.HOST_ACTIONS"
+        ],
+        "McpUiRequestTeardownNotification": [
+          "APPS.VIEW"
+        ],
+        "McpUiHostCapabilities": [
+          "APPS.VIEW"
+        ],
+        "McpUiAppCapabilities": [
+          "APPS.VIEW"
+        ],
+        "McpUiInitializeRequest": [
+          "APPS.VIEW"
+        ],
+        "McpUiInitializeResult": [
+          "APPS.VIEW"
+        ],
+        "McpUiInitializedNotification": [
+          "APPS.VIEW"
+        ],
+        "McpUiResourceCsp": [
+          "APPS.RESOURCE_META"
+        ],
+        "McpUiResourcePermissions": [
+          "APPS.RESOURCE_META"
+        ],
+        "McpUiResourceMeta": [
+          "APPS.RESOURCE_META"
+        ],
+        "McpUiRequestDisplayModeRequest": [
+          "APPS.VIEW"
+        ],
+        "McpUiRequestDisplayModeResult": [
+          "APPS.VIEW"
+        ],
+        "McpUiToolVisibility": [
+          "APPS.TOOL_LINKS",
+          "APPS.VISIBILITY"
+        ],
+        "McpUiToolMeta": [
+          "APPS.TOOL_LINKS",
+          "APPS.VISIBILITY"
+        ],
+        "OPEN_LINK_METHOD": [
+          "APPS.VIEW"
+        ],
+        "DOWNLOAD_FILE_METHOD": [
+          "APPS.VIEW"
+        ],
+        "MESSAGE_METHOD": [
+          "APPS.VIEW"
+        ],
+        "SANDBOX_PROXY_READY_METHOD": [
+          "APPS.VIEW"
+        ],
+        "SANDBOX_RESOURCE_READY_METHOD": [
+          "APPS.VIEW"
+        ],
+        "SIZE_CHANGED_METHOD": [
+          "APPS.VIEW"
+        ],
+        "TOOL_INPUT_METHOD": [
+          "APPS.VIEW"
+        ],
+        "TOOL_INPUT_PARTIAL_METHOD": [
+          "APPS.VIEW"
+        ],
+        "TOOL_RESULT_METHOD": [
+          "APPS.VIEW"
+        ],
+        "TOOL_CANCELLED_METHOD": [
+          "APPS.VIEW"
+        ],
+        "HOST_CONTEXT_CHANGED_METHOD": [
+          "APPS.VIEW"
+        ],
+        "REQUEST_TEARDOWN_METHOD": [
+          "APPS.VIEW"
+        ],
+        "RESOURCE_TEARDOWN_METHOD": [
+          "APPS.VIEW"
+        ],
+        "INITIALIZE_METHOD": [
+          "APPS.VIEW"
+        ],
+        "INITIALIZED_METHOD": [
+          "APPS.VIEW"
+        ],
+        "REQUEST_DISPLAY_MODE_METHOD": [
+          "APPS.VIEW"
+        ],
+        "McpUiClientCapabilities": [
+          "APPS.NEGOTIATION"
+        ]
+      }
+    }
+  }
+}
